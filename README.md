@@ -84,11 +84,11 @@ nginx转发配置参考
 server {
     listen 80;
     listen 443 ssl http2;
-    server_name dl.jsp47.com;
+    server_name dl.test.com;
 
     # SSL 证书（如果有）
-    ssl_certificate     /etc/nginx/ssl/dl.jsp47.com.crt;
-    ssl_certificate_key /etc/nginx/ssl/dl.jsp47.com.key;
+    ssl_certificate     /etc/nginx/ssl/dl.test.com.crt;
+    ssl_certificate_key /etc/nginx/ssl/dl.test.com.key;
 
     # 常见优化
     proxy_http_version 1.1;
