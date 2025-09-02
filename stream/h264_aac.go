@@ -174,7 +174,6 @@ func HandleH264AacStream(
 			return
 		}
 		naluWaitCount = 0 // 解码成功，重置计数
-
 		if firstVideoPkt {
 			lastVideoTS = pkt.Timestamp
 			videoPTS = 0
@@ -275,7 +274,7 @@ func HandleH264AacStream(
 		close(tsChan)
 	}()
 
-	preBuffer := make([][]byte, 0, 2048)
+	preBuffer := make([][]byte, 0, 4096)
 	preBufferDuration := 1 * time.Second
 	preBufferStart := time.Now()
 	buffering := true

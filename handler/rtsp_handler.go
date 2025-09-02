@@ -4,11 +4,13 @@ import (
 	// "bytes"
 	"context"
 	"fmt"
+
 	// "github.com/asticode/go-astits"
 	"github.com/bluenviron/gortsplib/v4"
 	"github.com/bluenviron/gortsplib/v4/pkg/base"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
 	"github.com/bluenviron/gortsplib/v4/pkg/format"
+
 	// "github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	// "github.com/pion/rtp"
 	"github.com/qist/tvgate/config"
@@ -16,12 +18,15 @@ import (
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/proxy"
 	"github.com/qist/tvgate/rules"
+
 	// "github.com/qist/tvgate/utils/buffer"
-	"github.com/qist/tvgate/stream"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/qist/tvgate/stream"
+
 	// "sync"
 	// "sync/atomic"
 	"time"
@@ -169,7 +174,16 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	if mpegtsFormat != nil {
-		if err := stream.HandleMpegtsStream(ctx, w, client, videoMedia, mpegtsFormat, r, rtspURL); err != nil {
+		// 获取或创建 StreamHub
+		hub := stream.GetOrCreateHubs(rtspURL)
+		defer func() {
+			if hub.ClientCount() == 0 {
+				stream.RemoveHub(rtspURL)
+			}
+		}()
+
+		// 调用 HandleMpegtsStream，传入 hub
+		if err := stream.HandleMpegtsStream(ctx, w, client, videoMedia, mpegtsFormat, r, rtspURL, hub); err != nil {
 			http.Error(w, "Stream error: "+err.Error(), 500)
 		}
 		return
