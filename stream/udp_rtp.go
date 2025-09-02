@@ -116,8 +116,14 @@ func (h *StreamHub) run() {
 				delete(h.Clients, ch)
 				close(ch)
 			}
+			clientCount := len(h.Clients)
 			h.Mu.Unlock()
-			logger.LogPrintf("➖ 客户端离开，当前=%d", len(h.Clients))
+			logger.LogPrintf("➖ 客户端离开，当前=%d", clientCount)
+			
+			// 如果没有客户端了，关闭UDP监听
+			if clientCount == 0 {
+				h.Close()
+			}
 
 		case <-h.Closed:
 			h.Mu.Lock()
@@ -133,6 +139,12 @@ func (h *StreamHub) run() {
 
 func (h *StreamHub) readLoop() {
 	for {
+		select {
+		case <-h.Closed:
+			return
+		default:
+		}
+		
 		buf := h.BufPool.Get().([]byte)
 		n, _, err := h.UdpConn.ReadFromUDP(buf)
 		if err != nil {
@@ -171,9 +183,19 @@ func (h *StreamHub) broadcast(data []byte) {
 }
 
 func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentType string) {
+	// 检查hub是否已经关闭
+	select {
+	case <-h.Closed:
+		http.Error(w, "Stream hub closed", http.StatusServiceUnavailable)
+		return
+	default:
+	}
+
 	ch := make(chan []byte, 20)
 	h.AddCh <- ch
-	defer func() { h.RemoveCh <- ch }()
+	defer func() { 
+		h.RemoveCh <- ch 
+	}()
 
 	w.Header().Set("Content-Type", contentType)
 	flusher, ok := w.(http.Flusher)
@@ -211,9 +233,16 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 				cancel()
 				logger.LogPrintf("写入超时，关闭连接")
 				return
+			case <-h.Closed:
+				cancel()
+				logger.LogPrintf("Hub关闭，断开客户端连接")
+				return
 			}
 		case <-ctx.Done():
 			logger.LogPrintf("客户端断开连接")
+			return
+		case <-h.Closed:
+			logger.LogPrintf("Hub关闭，断开客户端连接")
 			return
 		case <-time.After(60 * time.Second):
 			logger.LogPrintf("客户端空闲超时，关闭连接")
@@ -257,6 +286,18 @@ func (h *StreamHub) Close() {
 	}
 	h.Clients = nil
 	h.Mu.Unlock()
+	
+	// 从全局Hubs映射中移除
+	HubsMu.Lock()
+	for key, hub := range Hubs {
+		if hub == h {
+			delete(Hubs, key)
+			break
+		}
+	}
+	HubsMu.Unlock()
+	
+	logger.LogPrintf("UDP监听已关闭")
 }
 
 func HubKey(addr string, ifaces []string) string {
@@ -265,10 +306,19 @@ func HubKey(addr string, ifaces []string) string {
 
 func GetOrCreateHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 	key := HubKey(udpAddr, ifaces)
+	
 	HubsMu.Lock()
 	if hub, ok := Hubs[key]; ok {
-		HubsMu.Unlock()
-		return hub, nil
+		// 检查hub是否已关闭
+		select {
+		case <-hub.Closed:
+			// hub已关闭，从映射中删除
+			delete(Hubs, key)
+		default:
+			// hub仍在运行
+			HubsMu.Unlock()
+			return hub, nil
+		}
 	}
 	HubsMu.Unlock()
 

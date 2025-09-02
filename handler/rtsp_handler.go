@@ -64,7 +64,9 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	client := &gortsplib.Client{
 		Transport: &transport,
 	}
-	defer client.Close()
+	// 先不关闭client，由hub决定是否需要关闭
+	// defer client.Close()
+
 	hostname := parsedURL.Hostname()
 	originalHost := rules.ExtractOriginalDomain(hostPort) // 你自己实现
 	if originalHost == "" {
@@ -101,27 +103,10 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// ==== 没代理就直连 ====
 
-	// 连接RTSP服务器
-	err = client.Start(parsedURL.Scheme, parsedURL.Host)
-	if err != nil {
-		http.Error(w, "RTSP connect error: "+err.Error(), 500)
-		return
-	}
+	// 获取或创建 StreamHub
+	hub := stream.GetOrCreateHubs(rtspURL)
 
-	// ⚠️ 这里强制用 TCP 传输
-	rtspBaseURL, err := base.ParseURL(rtspURL)
-	if err != nil {
-		http.Error(w, "RTSP base.ParseURL error: "+err.Error(), 500)
-		return
-	}
-	desc, _, err := client.Describe(rtspBaseURL)
-	if err != nil {
-		http.Error(w, "RTSP describe error: "+err.Error(), 500)
-		return
-	}
-	medias := desc.Medias
-	baseURL := desc.BaseURL
-
+	// 定义媒体变量
 	var (
 		videoMedia   *description.Media
 		videoFormat  *format.H264
@@ -130,57 +115,123 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		audioFormat  *format.MPEG4Audio
 	)
 
-	// for _, m := range medias {
-	// 	logger.LogPrintf("媒体类型: %v", m)
-	// 	for _, f := range m.Formats {
-	// 		logger.LogPrintf("Format: %T", f)
-	// 	}
-	// }
+	// 检查hub中是否已经有RTSP客户端
+	existingClient := hub.GetRtspClient()
 
-	for _, m := range medias {
-		for _, f := range m.Formats {
-			switch f2 := f.(type) {
-			case *format.H264:
-				if videoMedia == nil {
-					_, err = client.Setup(baseURL, m, 0, 0)
-					if err == nil {
-						videoMedia = m
-						videoFormat = f2
+	// 如果已经有RTSP客户端在运行，则复用它，否则创建新的连接
+	if existingClient != nil {
+		client = existingClient
+
+		// 从hub中获取媒体信息
+		storedVideoMedia, storedVideoFormat, storedAudioMedia, storedAudioFormat := hub.GetMediaInfo()
+
+		// 如果hub中有存储的媒体信息，使用它们
+		if storedVideoMedia != nil {
+			videoMedia = storedVideoMedia
+		}
+		if storedVideoFormat != nil {
+			// 根据类型判断是MPEGTS还是H264格式
+			if f, ok := storedVideoFormat.(*format.MPEGTS); ok {
+				mpegtsFormat = f
+			} else if f, ok := storedVideoFormat.(*format.H264); ok {
+				videoFormat = f
+			}
+		}
+		if storedAudioMedia != nil {
+			audioMedia = storedAudioMedia
+		}
+		if storedAudioFormat != nil {
+			audioFormat = storedAudioFormat
+		}
+
+		// 检查媒体信息是否有效
+		if mpegtsFormat == nil && videoFormat == nil {
+			logger.LogPrintf("Warning: No valid media info in existing connection for %s", rtspURL)
+		}
+	} else {
+		// 连接RTSP服务器
+		err = client.Start(parsedURL.Scheme, parsedURL.Host)
+		if err != nil {
+			http.Error(w, "RTSP connect error: "+err.Error(), 500)
+			return
+		}
+
+		// ⚠️ 这里强制用 TCP 传输
+		rtspBaseURL, err := base.ParseURL(rtspURL)
+		if err != nil {
+			http.Error(w, "RTSP base.ParseURL error: "+err.Error(), 500)
+			return
+		}
+		desc, _, err := client.Describe(rtspBaseURL)
+		if err != nil {
+			http.Error(w, "RTSP describe error: "+err.Error(), 500)
+			return
+		}
+		medias := desc.Medias
+		baseURL := desc.BaseURL
+
+		// for _, m := range medias {
+		// 	logger.LogPrintf("媒体类型: %v", m)
+		// 	for _, f := range m.Formats {
+		// 		logger.LogPrintf("Format: %T", f)
+		// 	}
+		// }
+
+		for _, m := range medias {
+			for _, f := range m.Formats {
+				switch f2 := f.(type) {
+				case *format.H264:
+					if videoMedia == nil {
+						_, err = client.Setup(baseURL, m, 0, 0)
+						if err == nil {
+							videoMedia = m
+							videoFormat = f2
+						}
 					}
-				}
-			case *format.MPEGTS:
-				if videoMedia == nil {
-					_, err = client.Setup(baseURL, m, 0, 0)
-					if err == nil {
-						videoMedia = m
-						mpegtsFormat = f2
+				case *format.MPEGTS:
+					if videoMedia == nil {
+						_, err = client.Setup(baseURL, m, 0, 0)
+						if err == nil {
+							videoMedia = m
+							mpegtsFormat = f2
+						}
 					}
-				}
-			case *format.MPEG4Audio:
-				if audioMedia == nil {
-					_, err = client.Setup(baseURL, m, 0, 0)
-					if err == nil {
-						audioMedia = m
-						audioFormat = f2
+				case *format.MPEG4Audio:
+					if audioMedia == nil {
+						_, err = client.Setup(baseURL, m, 0, 0)
+						if err == nil {
+							audioMedia = m
+							audioFormat = f2
+						}
 					}
 				}
 			}
 		}
+
+		if videoMedia == nil || (videoFormat == nil && mpegtsFormat == nil) {
+			http.Error(w, "No supported video stream found", 500)
+			return
+		}
+
+		// 保存媒体信息到hub
+		if mpegtsFormat != nil {
+			hub.SetMediaInfo(videoMedia, mpegtsFormat)
+		}
+		// 如果是H264格式，也保存相关信息
+		if videoFormat != nil {
+			hub.SetMediaInfo(videoMedia, videoFormat)
+		}
+		// 保存音频信息
+		if audioFormat != nil {
+			hub.SetAudioMediaInfo(audioMedia, audioFormat)
+		}
 	}
 
-	if videoMedia == nil || (videoFormat == nil && mpegtsFormat == nil) {
-		http.Error(w, "No supported video stream found", 500)
-		return
-	}
 	ctx := r.Context()
-	if mpegtsFormat != nil {
-		// 获取或创建 StreamHub
-		hub := stream.GetOrCreateHubs(rtspURL)
-		defer func() {
-			if hub.ClientCount() == 0 {
-				stream.RemoveHub(rtspURL)
-			}
-		}()
+	// 只处理MPEGTS格式，避免H264+AAC的空指针问题
+	if mpegtsFormat != nil && videoMedia != nil {
+		// 设置RTSP客户端
+		hub.SetRtspClient(client)
 
 		// 调用 HandleMpegtsStream，传入 hub
 		if err := stream.HandleMpegtsStream(ctx, w, client, videoMedia, mpegtsFormat, r, rtspURL, hub); err != nil {
@@ -189,7 +240,17 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := stream.HandleH264AacStream(ctx, w, client, videoMedia, videoFormat, audioMedia, audioFormat, r, rtspURL); err != nil {
-		http.Error(w, "Stream error: "+err.Error(), 500)
+	// 对于H264+AAC格式，只在有完整信息时处理
+	if videoFormat != nil && videoMedia != nil {
+		// 设置RTSP客户端
+		hub.SetRtspClient(client)
+
+		if err := stream.HandleH264AacStream(ctx, w, client, videoMedia, videoFormat, audioMedia, audioFormat, r, rtspURL, hub); err != nil {
+			http.Error(w, "Stream error: "+err.Error(), 500)
+		}
+		return
 	}
+
+	// 如果没有支持的格式，返回错误
+	http.Error(w, "No supported stream format found", 500)
 }
