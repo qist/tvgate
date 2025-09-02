@@ -1,0 +1,26 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2006-2011 OpenWrt.org
+
+START=99
+STOP=15
+
+USE_PROCD=1
+PROG=/apps/TVGate/TVGate-linux-arm64
+
+start_service() {
+    echo "启动代理程序..."
+    procd_open_instance
+    procd_set_param command $PROG -config=/apps/TVGate/config.yaml
+    procd_set_param respawn
+    procd_close_instance
+}
+
+shutdown() {
+    stop
+
+    for pid in $(pidof TVGate-linux-arm64)
+    do
+        [ "$pid" = "$$" ] && continue
+        [ -e "/proc/$pid/stat" ] && kill $pid
+    done
+}

@@ -1,0 +1,13 @@
+[Unit]
+Description=TVGate - high performance web server
+After=network.target remote-fs.target nss-lookup.target
+
+[Service]
+LimitCORE=infinity
+LimitNOFILE=100000
+LimitNPROC=100000
+ExecStart=/usr/local/TVGate/TVGate-linux-amd64 -config=/usr/local/TVGate/config.yaml
+PrivateTmp=true
+ExecReload=/bin/kill -SIGHUP $MAINPID
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,171 @@
+server:
+  #监听端口
+  port: 8888
+  # 证书路径
+  certfile: ""
+  # 密钥路径
+  keyfile: ""
+  # SSL 协议版本 (空为默认 TLSv1.2~1.3)
+  ssl_protocols: "TLSv1.2 TLSv1.3"
+  # SSL 加密套件 (空为默认安全套件)
+  ssl_ciphers: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305:TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305:TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
+  # SSL ECDH 曲线 (支持 ML-KEM)
+  ssl_ecdh_curve: "X25519MLKEM768:X25519:P-384:P-256"
+
+  # 组播监听地址
+  multicast_ifaces: [] # 可留空表示默认接口 [ "eth0", "eth1" ]
+# 日志输出配置
+
+log:
+  # 是否输出日志
+  enabled: true
+  # 日志输出文件地址
+  file: "./access.log"
+  # 日志大小M单位
+  maxsize: 10
+  # 压缩文件备份个数
+  maxbackups: 10
+  # 日志保留天数
+  maxage: 28
+  # 是否压缩
+  compress: true
+http:
+  timeout: 0s # 整个请求超时时间 (0 表示不限制)
+  connect_timeout: 10s # 建立连接的超时时间
+  keepalive: 10s # 长连接的保活时间
+  response_header_timeout: 10s # 接收响应头的超时时间
+  idle_conn_timeout: 5s # 空闲连接在连接池中的保留时间
+  tls_handshake_timeout: 10s # TLS 握手超时时间
+  expect_continue_timeout: 1s # Expect: 100-continue 的等待超时时间
+  max_idle_conns: 100 # 最大空闲连接数（全局）
+  max_idle_conns_per_host: 4 # 每个主机最大空闲连接数
+  max_conns_per_host: 8 # 每个主机最大连接数（总数，含空闲和活跃）
+  disable_keepalives: false # 是否禁用长连接复用 (false 表示启用 KeepAlive)
+# 10 万并发参考
+#  http:
+#   timeout: 0s                       # 整体请求超时，不限制（由上层逻辑控制超时）
+#   connect_timeout: 3s               # 建立连接的超时时间（越短越好，失败快速切换）
+#   keepalive: 30s                    # 长连接保活时间，保证高并发时连接复用
+#   response_header_timeout: 5s       # 响应头超时，避免服务端卡死
+#   idle_conn_timeout: 90s            # 空闲连接保留时间，过短会频繁建连，过长会浪费 FD
+#   tls_handshake_timeout: 5s         # TLS 握手超时，CDN/直播源一般很快
+#   expect_continue_timeout: 1s       # 基本不用，保持默认
+
+#   max_idle_conns: 200000            # 全局最大空闲连接数（10 万并发需要翻倍冗余）
+#   max_idle_conns_per_host: 10000    # 单 host 的空闲连接上限，保证热点源站可复用
+#   max_conns_per_host: 20000         # 单 host 总连接数上限（活跃+空闲），防止热点源阻塞
+
+#   disable_keepalives: false         # 必须启用长连接，否则 10 万并发会把源站打爆
+
+# 配置文件重新加载时间(秒)
+reload: 5
+
+proxygroups:
+  蜀小果:
+    proxies:
+      - name: 服务器1
+        type: socks5
+        server: 1.1.1.1
+        port: 1080
+        udp: true
+      - name: 服务器2
+        type: https
+        server: 8.8.8.8
+        port: 1234
+        # headers:
+        #   Host: "1.3.236.22:443"
+        #   X-T5-Auth: "887766543"
+        #   User-Agent: "baiduboxapp"
+    #     - name: test1
+    #       type: socks5
+    #       server: 192.168.0.151
+    #       port: 7890
+    #       # username: "qist" # 账号
+    #       # password: "123456789" # 密码
+    #     - name: test2
+    #       type: socks4  #认证没实现
+    #       server: 192.168.0.151
+    #       port: 7891
+    #     - name: test2
+    #       type: socks4a  #认证没实现
+    #       server: 192.168.0.151
+    #       port: 7891
+    #     - name: test3
+    #       type: http
+    #       server: 192.168.0.151
+    #       port: 7890
+    #       # username: "qist" # 账号
+    #       # password: "123456789"  # 密码
+    #       # headers: # 代理服务器验证headers 配置
+    #       #   Host: "1.3.236.22:443"
+    #       #   X-T5-Auth: "887766543"
+    #       #   User-Agent: "baiduboxapp"
+    #     # - name: test4
+    #       # type: https
+    #       # server: 78.141.193.27
+    #       # port: 8888
+    #       # username: "qist"
+    #       # password: "123456789"
+    #       # headers: # 代理服务器验证headers 配置
+    #       #   Host: "1.3.236.22:443"
+    #       #   X-T5-Auth: "887766543"
+    #       #   User-Agent: "baiduboxapp"
+    domains: # 支持通配符号*
+      - live2.rxip.sc96655.com
+    interval: 180s # 秒 默认60s 健康检测时间
+    ipv6: false # IPv6开关 true 开启
+    loadbalance: round-robin # 负载均衡方案：round-robin 轮询 fastest 最快的优先
+    max_retries: 3 # 最大重试3次
+    retry_delay: 1s # 重试延迟1秒
+    max_rt: 100ms # 最大响应时间 默认800ms 大于800ms 不参与轮询 如果所有测速大于800ms 参数轮询
+  四川联通:
+    proxies:
+      - name: sclt1
+        type: socks5
+        server: 1.2.3.4
+        port: 1080
+        udp: true
+      - name: sclt2
+        type: socks5
+        server: 4.3.2.1
+        port: 1080
+        udp: true
+    domains: # 支持通配符号*
+      - "*.rrs.169ol.com" # 规则支持ip 192.168.1.1 子网 192.168.1.0/24 域名 *.rrs.169ol.com live2.rxip.sc96655.com ipv6：1234:5678::abcd:ef01/128
+    interval: 180s # 秒 默认60s 健康检测时间
+    ipv6: false # IPv6开关 true 开启
+    loadbalance: round-robin # 负载均衡方案：round-robin 轮询 fastest 最快的优先
+    max_retries: 3 # 最大重试3次
+    retry_delay: 1s # 重试延迟1秒
+    max_rt: 100ms # 最大响应时间 默认800ms 大于800ms 不参与轮询 如果所有测速大于800ms 参数轮询
+  浙江移动:
+    proxies:
+      - name: 浙江移动1
+        type: socks5
+        server: 192.168.100.1
+        port: 8080
+        udp: true
+    domains:
+      - hwltc.tv.cdn.zj.chinamobile.com
+      - 39.134.179.0/24
+      - 39.134.179.185/24
+      - 120.199.224.178/24
+    interval: 180s
+    loadbalance: round-robin
+    max_retries: 3 # 最大重试3次
+    retry_delay: 1s # 重试延迟1秒
+    max_rt: 200ms
+
+  mpd:
+    proxies:
+      - name: mpd1
+        type: socks5
+        server: 192.168.100.1
+        port: 8888
+    domains:
+      - 1.1.1.1
+      - "edgeware-live.edgeware.tvb.com"
+      - "*.edgeware.tvb.com"
+      - "hki*-edge*.edgeware.tvb.com"
+    interval: 180s
+    loadbalance: fastest
