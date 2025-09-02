@@ -12,8 +12,6 @@ import (
 	"github.com/qist/tvgate/logger"
 )
 
-var dropCount int64
-
 func HandleMpegtsStream(
 	ctx context.Context,
 	w http.ResponseWriter,

@@ -25,6 +25,8 @@ const (
 	// videoStep = 90000 / 25 // 25fps，步进3600
 )
 
+var dropCount int64
+
 var bufPool = sync.Pool{
 	New: func() interface{} {
 		return make([]byte, 188*512) // TS包一般188字节，按需调整
