@@ -1,0 +1,32 @@
+<h2>系统信息</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-bottom: 20px;">
+  <!-- 基础信息、CPU与内存保持不变 -->
+  
+  <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    <h3 style="margin-top: 0; color: #495057;">存储信息</h3>
+    {{if .TrafficStats.DiskPartitions}}
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr style="background-color: #e9ecef;">
+          <th style="text-align: left; padding: 8px; border: 1px solid #dee2e6; width: 25%;">挂载点</th>
+          <th style="text-align: left; padding: 8px; border: 1px solid #dee2e6; width: 25%;">文件系统</th>
+          <th style="text-align: left; padding: 8px; border: 1px solid #dee2e6; width: 25%;">已用/总量</th>
+          <th style="text-align: left; padding: 8px; border: 1px solid #dee2e6; width: 25%;">使用率</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .TrafficStats.DiskPartitions}}
+        <tr>
+          <td style="padding: 8px; border: 1px solid #dee2e6;">{{.MountPoint}}</td>
+          <td style="padding: 8px; border: 1px solid #dee2e6;">{{.FsType}}</td>
+          <td style="padding: 8px; border: 1px solid #dee2e6;">{{FormatBytes .Used}} / {{FormatBytes .Total}}</td>
+          <td style="padding: 8px; border: 1px solid #dee2e6;">{{printf "%.2f%%" .UsedPercent}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{end}}
+  </div>
+  
+  <!-- 网络流量保持不变 -->
+</div>

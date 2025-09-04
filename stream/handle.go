@@ -13,7 +13,7 @@ import (
 )
 
 // 统一处理响应（重定向、特殊类型、普通内容）
-func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, targetURL string, resp *http.Response) {
+func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, targetURL string, resp *http.Response, updateActive func()) {
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
 			logger.LogPrintf("关闭响应体错误: %v", err)
@@ -47,7 +47,7 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if err := copyWithContext(ctx, w, resp.Body, buf); err != nil {
+		if err := copyWithContext(ctx, w, resp.Body, buf, updateActive); err != nil {
 			handleCopyError(r, err, resp)
 		}
 	}()
@@ -215,7 +215,7 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 	return targetURL
 }
 
-func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte) error {
+func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, updateActive func()) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -235,6 +235,10 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []by
 				// 强制刷新（流式传输时推荐）
 				if f, ok := dst.(http.Flusher); ok {
 					f.Flush()
+				}
+				// 成功写入后更新活跃时间
+				if updateActive != nil {
+					updateActive()
 				}
 			}
 			if readErr != nil {

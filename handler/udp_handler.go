@@ -3,7 +3,10 @@ package handler
 import (
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/stream"
+	"strconv"
+	"time"
 	"net/http"
 	"strings"
 )
@@ -36,7 +39,23 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 		http.Error(w, "Failed to listen UDP: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// 注册活跃客户端
+	clientIP := monitor.GetClientIP(r)
+	connID := clientIP + "_" + addr + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
+		IP:             clientIP,
+		URL:            addr,
+		UserAgent:      r.UserAgent(),
+		ConnectionType: "UDP",
+		ConnectedAt:    time.Now(),
+		LastActive:     time.Now(),
+	})
+	defer monitor.ActiveClients.Unregister(connID)
 
+	// 定义更新活跃时间的回调
+	updateActive := func() {
+		monitor.ActiveClients.UpdateLastActive(connID, time.Now())
+	}
 	logger.LogRequestAndResponse(r, addr, &http.Response{StatusCode: http.StatusOK})
-	hub.ServeHTTP(w, r, "application/octet-stream")
+	hub.ServeHTTP(w, r, "application/octet-stream",updateActive)
 }

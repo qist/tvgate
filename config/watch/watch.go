@@ -2,20 +2,25 @@ package watch
 
 import (
 	"context"
-	"net/http"
-	"os"
-	"path/filepath"
-	"time"
-
 	"github.com/fsnotify/fsnotify"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/update"
+	h "github.com/qist/tvgate/handler"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/server"
+	httpclient "github.com/qist/tvgate/utils/http"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
 )
 
 func WatchConfigFile(configPath string, mux *http.ServeMux) {
+	var httpCancel context.CancelFunc
+	var muxMu sync.Mutex
 	if configPath == "" {
 		return
 	}
@@ -107,6 +112,27 @@ func WatchConfigFile(configPath string, mux *http.ServeMux) {
 			config.CfgMu.RLock()
 			update.UpdateHubsOnConfigChange(config.Cfg.Server.MulticastIfaces)
 			config.CfgMu.RUnlock()
+			// 添加监控路径处理
+			// 平滑替换 HTTP 服务
+			muxMu.Lock()
+			defer muxMu.Unlock()
+
+			if httpCancel != nil {
+				httpCancel() // 关闭旧服务
+			}
+			// 2️⃣ 设置默认值
+			config.Cfg.SetDefaults()
+			newMux := http.NewServeMux()
+			monitorPath := config.Cfg.Monitor.Path
+			if monitorPath == "" {
+				monitorPath = "/status"
+			}
+			client := httpclient.NewHTTPClient(&config.Cfg, nil)
+			newMux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.Handler)))
+			newMux.Handle("/", server.SecurityHeaders(http.HandlerFunc(h.Handler(client))))
+
+			ctx, cancel := context.WithCancel(context.Background())
+			httpCancel = cancel
 			// 启动新 HTTP 服务（startHTTPServer 内部会处理平滑替换）
 			go func() {
 				defer func() {
@@ -114,7 +140,7 @@ func WatchConfigFile(configPath string, mux *http.ServeMux) {
 						logger.LogPrintf("🔥 启动 HTTP 服务过程中发生 panic: %v", r)
 					}
 				}()
-				if err := server.StartHTTPServer(context.Background(), mux); err != nil && err != context.Canceled {
+				if err := server.StartHTTPServer(ctx, newMux); err != nil && err != context.Canceled {
 					logger.LogPrintf("❌ 启动 HTTP 服务失败: %v", err)
 				}
 			}()

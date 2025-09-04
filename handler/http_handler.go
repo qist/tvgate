@@ -7,12 +7,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/lb"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/proxy"
 	"github.com/qist/tvgate/rules"
 	"github.com/qist/tvgate/stream"
@@ -98,6 +100,18 @@ func Handler(client *http.Client) http.HandlerFunc {
 			http.Error(w, "无效的目标 URL", http.StatusBadRequest)
 			return
 		}
+		// 注册活跃客户端
+		clientIP := monitor.GetClientIP(r)
+		connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+		monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
+			IP:             clientIP,
+			URL:            parsedURL.String(),
+			UserAgent:      r.UserAgent(),
+			ConnectionType: parsedURL.Scheme,
+			ConnectedAt:    time.Now(),
+			LastActive:     time.Now(),
+		})
+		defer monitor.ActiveClients.Unregister(connID)
 
 		// 构造直连请求
 		var originBody io.ReadCloser
@@ -221,7 +235,11 @@ func Handler(client *http.Client) http.HandlerFunc {
 
 				// 成功处理响应
 				markProxyResult(pg, selectedProxy, true)
-				stream.HandleProxyResponse(ctx, w, r, targetURL, proxyResp)
+				// 定义更新活跃时间的回调
+				updateActive := func() {
+					monitor.ActiveClients.UpdateLastActive(connID, time.Now())
+				}
+				stream.HandleProxyResponse(ctx, w, r, targetURL, proxyResp, updateActive)
 				return
 			}
 		}
@@ -240,7 +258,11 @@ func Handler(client *http.Client) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("服务器返回错误状态码: %d", clientResp.StatusCode), http.StatusBadGateway)
 			return
 		}
-		stream.HandleProxyResponse(ctx, w, r, targetURL, clientResp)
+		// 定义更新活跃时间的回调
+		updateActive := func() {
+			monitor.ActiveClients.UpdateLastActive(connID, time.Now())
+		}
+		stream.HandleProxyResponse(ctx, w, r, targetURL, clientResp, updateActive)
 	}
 }
 

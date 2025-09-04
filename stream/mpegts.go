@@ -21,10 +21,11 @@ func HandleMpegtsStream(
 	r *http.Request,
 	rtspURL string,
 	hub *StreamHubs,
+	updateActive func(),
 ) error {
 	clientChan := make(chan []byte, 1024)
 	hub.AddClient(clientChan)
-	
+
 	// 检查是否需要启动播放或者恢复播放
 	shouldPlay := false
 
@@ -44,7 +45,7 @@ func HandleMpegtsStream(
 		hub.rtspClient = client
 	} else if hub.state == 2 { // error state
 		shouldPlay = true
-		hub.state = 1 // mark as playing to prevent duplicate starts
+		hub.state = 1       // mark as playing to prevent duplicate starts
 		hub.lastError = nil // clear last error
 		// 设置新的RTSP客户端
 		hub.rtspClient = client
@@ -72,7 +73,7 @@ func HandleMpegtsStream(
 				}
 				hub.mu.Unlock()
 			}
-			
+
 			// 在关闭RTSP客户端后，确保只关闭一次clientChan
 			// 注意：clientChan已经在RemoveClient中被关闭了，这里不需要再次关闭
 		}
@@ -94,8 +95,12 @@ func HandleMpegtsStream(
 					// 增加丢包计数
 					packetLossCount++
 				}
-				
+
 				hub.Broadcast(pkt.Payload)
+				// ⚡ 每次收到 RTP 包时更新活跃时间
+				if updateActive != nil {
+					updateActive()
+				}
 			})
 
 			_, err := client.Play(nil)
@@ -105,7 +110,7 @@ func HandleMpegtsStream(
 				hub.SetError(err)
 				return
 			}
-			
+
 			// 标记流为正在播放状态
 			hub.SetPlaying()
 		}()
@@ -135,6 +140,10 @@ func HandleMpegtsStream(
 			}
 			if flusher != nil {
 				flusher.Flush()
+			}
+			// ⚡ 同步更新客户端活跃时间
+			if updateActive != nil {
+				updateActive()
 			}
 		case <-ctx.Done():
 			return nil

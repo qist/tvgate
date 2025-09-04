@@ -4,7 +4,7 @@ import (
 	// "bytes"
 	"context"
 	"fmt"
-
+	"strconv"
 	// "github.com/asticode/go-astits"
 	"github.com/bluenviron/gortsplib/v4"
 	"github.com/bluenviron/gortsplib/v4/pkg/base"
@@ -16,6 +16,7 @@ import (
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/lb"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/proxy"
 	"github.com/qist/tvgate/rules"
 
@@ -59,6 +60,17 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "URL parse error: "+err.Error(), 500)
 		return
 	}
+	clientIP := monitor.GetClientIP(r)
+	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
+		IP:             clientIP,
+		URL:            rtspURL,
+		UserAgent:      r.UserAgent(),
+		ConnectionType: "RTSP",
+		ConnectedAt:    time.Now(),
+		LastActive:     time.Now(),
+	})
+	defer monitor.ActiveClients.Unregister(connID)
 
 	transport := gortsplib.TransportTCP
 	client := &gortsplib.Client{
@@ -228,13 +240,17 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	// 转发前每次更新活跃时间
+	updateActive := func() {
+		monitor.ActiveClients.UpdateLastActive(connID, time.Now())
+	}
 	// 只处理MPEGTS格式，避免H264+AAC的空指针问题
 	if mpegtsFormat != nil && videoMedia != nil {
 		// 设置RTSP客户端
 		hub.SetRtspClient(client)
 
 		// 调用 HandleMpegtsStream，传入 hub
-		if err := stream.HandleMpegtsStream(ctx, w, client, videoMedia, mpegtsFormat, r, rtspURL, hub); err != nil {
+		if err := stream.HandleMpegtsStream(ctx, w, client, videoMedia, mpegtsFormat, r, rtspURL, hub,updateActive); err != nil {
 			http.Error(w, "Stream error: "+err.Error(), 500)
 		}
 		return
@@ -245,7 +261,7 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		// 设置RTSP客户端
 		hub.SetRtspClient(client)
 
-		if err := stream.HandleH264AacStream(ctx, w, client, videoMedia, videoFormat, audioMedia, audioFormat, r, rtspURL, hub); err != nil {
+		if err := stream.HandleH264AacStream(ctx, w, client, videoMedia, videoFormat, audioMedia, audioFormat, r, rtspURL, hub,updateActive); err != nil {
 			http.Error(w, "Stream error: "+err.Error(), 500)
 		}
 		return

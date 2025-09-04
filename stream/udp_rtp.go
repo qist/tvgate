@@ -119,7 +119,7 @@ func (h *StreamHub) run() {
 			clientCount := len(h.Clients)
 			h.Mu.Unlock()
 			logger.LogPrintf("➖ 客户端离开，当前=%d", clientCount)
-			
+
 			// 如果没有客户端了，关闭UDP监听
 			if clientCount == 0 {
 				h.Close()
@@ -144,7 +144,7 @@ func (h *StreamHub) readLoop() {
 			return
 		default:
 		}
-		
+
 		buf := h.BufPool.Get().([]byte)
 		n, _, err := h.UdpConn.ReadFromUDP(buf)
 		if err != nil {
@@ -182,7 +182,7 @@ func (h *StreamHub) broadcast(data []byte) {
 	}
 }
 
-func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentType string) {
+func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentType string, updateActive func()) {
 	// 检查hub是否已经关闭
 	select {
 	case <-h.Closed:
@@ -193,8 +193,8 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 
 	ch := make(chan []byte, 20)
 	h.AddCh <- ch
-	defer func() { 
-		h.RemoveCh <- ch 
+	defer func() {
+		h.RemoveCh <- ch
 	}()
 
 	w.Header().Set("Content-Type", contentType)
@@ -229,6 +229,10 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 					return
 				}
 				flusher.Flush()
+				// 成功写入后更新活跃时间
+				if updateActive != nil {
+					updateActive()
+				}
 			case <-writeCtx.Done():
 				cancel()
 				logger.LogPrintf("写入超时，关闭连接")
@@ -286,7 +290,7 @@ func (h *StreamHub) Close() {
 	}
 	h.Clients = nil
 	h.Mu.Unlock()
-	
+
 	// 从全局Hubs映射中移除
 	HubsMu.Lock()
 	for key, hub := range Hubs {
@@ -296,7 +300,7 @@ func (h *StreamHub) Close() {
 		}
 	}
 	HubsMu.Unlock()
-	
+
 	logger.LogPrintf("UDP监听已关闭")
 }
 
@@ -306,7 +310,7 @@ func HubKey(addr string, ifaces []string) string {
 
 func GetOrCreateHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 	key := HubKey(udpAddr, ifaces)
-	
+
 	HubsMu.Lock()
 	if hub, ok := Hubs[key]; ok {
 		// 检查hub是否已关闭

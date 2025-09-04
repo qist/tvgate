@@ -9,6 +9,25 @@ import (
 	"errors"
 )
 
+var (
+	ConfigFilePath    *string
+	VersionFlag       *bool
+	ServerCtx         context.Context
+	Cancel            context.CancelFunc
+	LogConfigMutex    sync.Mutex
+	Cfg               Config
+	CfgMu             sync.RWMutex
+	StartTime         time.Time // 程序启动时间
+	initOnce          sync.Once
+)
+
+func init() {
+	ConfigFilePath = flag.String("config", "config.yaml", "YAML配置文件路径")
+	VersionFlag = flag.Bool("version", false, "显示程序版本")
+	ServerCtx, Cancel = context.WithCancel(context.Background())
+	StartTime = time.Now()
+}
+
 // Config 主配置结构
 type Config struct {
 	Server struct {
@@ -44,6 +63,10 @@ type Config struct {
 		MaxConnsPerHost     int  `yaml:"max_conns_per_host"`      // 每个主机的最大连接数
 		DisableKeepAlives   bool `yaml:"disable_keepalives"`      // 禁用keepalive
 	} `yaml:"http"`
+
+	Monitor struct {
+		Path string `yaml:"path"` // 监控路径
+	} `yaml:"monitor"`
 
 	ProxyGroups map[string]*ProxyGroupConfig `yaml:"proxygroups"`
 	Reload      int                          `yaml:"reload"` // 添加 Reload 字段
@@ -111,21 +134,14 @@ type RedirectChain struct {
 var RedirectCache = struct {
 	sync.RWMutex
 	Mapping map[string]*RedirectChain
-}{
-	Mapping: make(map[string]*RedirectChain),
+}{}
+
+func init() {
+	RedirectCache.Mapping = make(map[string]*RedirectChain)
 }
 
 //go:embed favicon.ico
 var FaviconFile []byte
-
-var (
-	ConfigFilePath    = flag.String("config", "config.yaml", "YAML配置文件路径")
-	VersionFlag       = flag.Bool("version", false, "显示程序版本")
-	ServerCtx, Cancel = context.WithCancel(context.Background())
-	LogConfigMutex    sync.Mutex
-	Cfg               Config
-	CfgMu             sync.RWMutex
-)
 
 type CachedGroup struct {
 	Group    *ProxyGroupConfig
@@ -135,29 +151,35 @@ type CachedGroup struct {
 var AccessCache = struct {
 	sync.RWMutex
 	Mapping map[string]*CachedGroup
-}{
-	Mapping: make(map[string]*CachedGroup),
+}{}
+
+func init() {
+	AccessCache.Mapping = make(map[string]*CachedGroup)
 }
 
-var BufferPools = map[int]*sync.Pool{
-	8 * 1024: {
-		New: func() any { return make([]byte, 8*1024) },
-	},
-	16 * 1024: {
-		New: func() any { return make([]byte, 16*1024) },
-	},
-	64 * 1024: {
-		New: func() any { return make([]byte, 64*1024) },
-	},
-	128 * 1024: {
-		New: func() any { return make([]byte, 128*1024) },
-	},
-	256 * 1024: {
-		New: func() any { return make([]byte, 256*1024) },
-	},
-	512 * 1024: {
-		New: func() any { return make([]byte, 512*1024) },
-	},
+var BufferPools = map[int]*sync.Pool{}
+
+func init() {
+	BufferPools = map[int]*sync.Pool{
+		8 * 1024: {
+			New: func() any { return make([]byte, 8*1024) },
+		},
+		16 * 1024: {
+			New: func() any { return make([]byte, 16*1024) },
+		},
+		64 * 1024: {
+			New: func() any { return make([]byte, 64*1024) },
+		},
+		128 * 1024: {
+			New: func() any { return make([]byte, 128*1024) },
+		},
+		256 * 1024: {
+			New: func() any { return make([]byte, 256*1024) },
+		},
+		512 * 1024: {
+			New: func() any { return make([]byte, 512*1024) },
+		},
+	}
 }
 
 const DefaultDialTimeout = 15 * time.Second
@@ -196,4 +218,11 @@ func (c *Config) SetDefaults() {
 	if c.HTTP.MaxConnsPerHost == 0 {
 		c.HTTP.MaxConnsPerHost = 8
 	}
+}
+
+// InitStartTime 初始化程序启动时间
+func InitStartTime() {
+	initOnce.Do(func() {
+		StartTime = time.Now()
+	})
 }

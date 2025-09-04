@@ -4,18 +4,20 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
+	"net/http"
+	"time"
+
 	"github.com/qist/tvgate/clear"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/watch"
 	"github.com/qist/tvgate/groupstats"
-	"github.com/qist/tvgate/logger"
-	"github.com/qist/tvgate/server"
 	h "github.com/qist/tvgate/handler"
+	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
+	"github.com/qist/tvgate/server"
 	httpclient "github.com/qist/tvgate/utils/http"
-	"log"
-	"net/http"
-	"time"
 )
 
 func main() {
@@ -57,6 +59,8 @@ func main() {
 		}
 	}
 	stopCleaner := make(chan struct{})
+	
+	go monitor.StartSystemStatsUpdater(30 * time.Second)
 
 	go clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
 
@@ -74,6 +78,13 @@ func main() {
 	mux := http.NewServeMux()
 	// 启动配置文件自动加载
 	go watch.WatchConfigFile(*config.ConfigFilePath, mux)
+
+	// 添加监控路径处理
+	monitorPath := config.Cfg.Monitor.Path
+	if monitorPath == "" {
+		monitorPath = "/status"
+	}
+	mux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.Handler)))
 
 	mux.Handle("/", server.SecurityHeaders(http.HandlerFunc(h.Handler(client))))
 

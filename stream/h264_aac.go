@@ -51,7 +51,7 @@ func (w *channelWriter) Write(p []byte) (n int, err error) {
 		atomic.AddInt64(&dropCount, 1)
 		bufPool.Put(buf) // 回收
 		// 添加日志记录，当缓冲区满时记录详细信息
-		if atomic.LoadInt64(&dropCount) % 10000 == 0 { // 每10000次记录一次，避免日志过多
+		if atomic.LoadInt64(&dropCount)%10000 == 0 { // 每10000次记录一次，避免日志过多
 			logger.LogPrintf("⚠️ TS packet dropped due to full buffer. Channel len: %d", len(w.ch))
 		}
 		return 0, nil
@@ -112,14 +112,15 @@ func HandleH264AacStream(
 	r *http.Request,
 	rtspURL string,
 	hub *StreamHubs,
+	updateActive func(),
 ) error {
 	// 创建客户端通道
 	clientChan := make(chan []byte, 1024)
 	hub.AddClient(clientChan)
-	
+
 	// 检查是否需要启动播放或者恢复播放
 	shouldPlay := false
-	
+
 	// 等待获取锁以检查当前状态
 	hub.mu.Lock()
 	if hub.isClosed {
@@ -127,7 +128,7 @@ func HandleH264AacStream(
 		close(clientChan)
 		return nil
 	}
-	
+
 	// 判断是否需要启动播放
 	if hub.state == 0 { // stopped state
 		shouldPlay = true
@@ -136,22 +137,22 @@ func HandleH264AacStream(
 		hub.rtspClient = client
 	} else if hub.state == 2 { // error state
 		shouldPlay = true
-		hub.state = 1 // mark as playing to prevent duplicate starts
+		hub.state = 1       // mark as playing to prevent duplicate starts
 		hub.lastError = nil // clear last error
 		// 设置新的RTSP客户端
 		hub.rtspClient = client
 	}
 	hub.mu.Unlock()
-	
+
 	defer func() {
 		hub.RemoveClient(clientChan)
-		
+
 		// 检查是否是最后一个客户端
 		hub.mu.Lock()
 		clientCount := len(hub.clients)
 		currentClient := hub.rtspClient
 		hub.mu.Unlock()
-		
+
 		if clientCount == 0 {
 			hub.SetStopped()
 			// 关闭RTSP客户端
@@ -235,7 +236,7 @@ func HandleH264AacStream(
 					naluWaitCount++
 					atomic.AddInt64(&videoDropCount, 1)
 					// 添加日志记录，每100次丢包记录一次
-					if naluWaitCount % 100 == 0 {
+					if naluWaitCount%100 == 0 {
 						logger.LogPrintf("%d RTP packets lost", naluWaitCount)
 						naluWaitCount = 0 // 重置计数
 					}
@@ -270,6 +271,10 @@ func HandleH264AacStream(
 						Data: buf.Bytes(),
 					},
 				})
+				// 更新活跃时间
+				if updateActive != nil {
+					updateActive()
+				}
 			})
 
 			go func() {
@@ -293,7 +298,7 @@ func HandleH264AacStream(
 					if err != nil || len(aus) == 0 {
 						audioDropCount++
 						// 添加日志记录，每10次丢包记录一次
-						if audioDropCount % 10 == 0 {
+						if audioDropCount%10 == 0 {
 							logger.LogPrintf("%d RTP packets lost", audioDropCount)
 							audioDropCount = 0 // 重置计数
 						}
@@ -332,7 +337,12 @@ func HandleH264AacStream(
 							audioPTS += float64(1024*90000) / float64(audioFormat.Config.SampleRate)
 						}
 					}
+					// 更新活跃时间
+					if updateActive != nil {
+						updateActive()
+					}
 				})
+
 			}
 
 			_, err := client.Play(nil)
@@ -342,13 +352,17 @@ func HandleH264AacStream(
 				hub.SetError(err)
 				return
 			}
-			
+
 			// 标记流为正在播放状态
 			hub.SetPlaying()
 
 			// 向所有客户端广播数据
 			for pkt := range tsChan {
 				hub.Broadcast(pkt)
+				// 更新活跃时间
+				if updateActive != nil {
+					updateActive()
+				}
 			}
 		}()
 	} else {
@@ -362,7 +376,7 @@ func HandleH264AacStream(
 	logger.LogRequestAndResponse(r, rtspURL, &http.Response{StatusCode: http.StatusOK})
 	w.Header().Set("Content-Type", "video/mp2t")
 	flusher, _ := w.(http.Flusher)
-	
+
 	// 预缓冲处理
 	preBuffer := make([][]byte, 0, 4096)
 	preBufferDuration := 1 * time.Second
@@ -416,6 +430,10 @@ func HandleH264AacStream(
 				if flusher != nil {
 					flusher.Flush()
 				}
+			}
+			// 更新活跃时间
+			if updateActive != nil {
+				updateActive()
 			}
 		case <-ctx.Done():
 			return ctx.Err()
