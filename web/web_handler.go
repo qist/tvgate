@@ -70,8 +70,16 @@ func (h *WebHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 	
 	// 如果请求的是根路径，则返回首页
 	if r.URL.Path == webPath {
+		// 获取监控路径，默认为/status
+		monitorPath := config.Cfg.Monitor.Path
+		if monitorPath == "" {
+			monitorPath = "/status"
+		}
+		
 		data := map[string]interface{}{
-			"title": "TVGate Web Management",
+			"title":       "TVGate Web Management",
+			"webPath":     webPath,
+			"monitorPath": monitorPath,
 		}
 
 		if err := h.renderTemplate(w, r, "index", "templates/index.html", data); err != nil {

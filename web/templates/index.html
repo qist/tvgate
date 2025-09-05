@@ -158,7 +158,7 @@
         <div class="menu">
             <a href="{{.webPath}}editor">总体配置编辑器</a>
             <a href="{{.webPath}}node-editor">节点配置编辑器</a>
-            <a href="/status" target="_blank">系统监控页面</a>
+            <a href="{{.monitorPath}}" target="_blank">系统监控页面</a>
         </div>
 
         <div class="monitor-section">
@@ -224,7 +224,7 @@
             // 获取配置并动态生成组链接
             Promise.all([
                 fetch(webPath + 'config'),
-                fetch('/status?format=json')
+                fetch('{{.monitorPath}}?format=json')
             ])
             .then(responses => Promise.all(responses.map(r => r.text())))
             .then(([configData, monitorData]) => {

@@ -171,9 +171,16 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// 获取监控路径，默认为/status
+		monitorPath := config.Cfg.Monitor.Path
+		if monitorPath == "" {
+			monitorPath = "/status"
+		}
+
 		data := map[string]interface{}{
-			"title": "TVGate Web管理",
-			"webPath": webPath,
+			"title":       "TVGate Web管理",
+			"webPath":     webPath,
+			"monitorPath": monitorPath,
 		}
 
 		// 设置响应头

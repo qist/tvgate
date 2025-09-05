@@ -38,6 +38,10 @@
             color: #ffffff;
             margin: 0;
         }
+        .nav-links {
+            display: flex;
+            gap: 10px;
+        }
         .toolbar {
             display: flex;
             gap: 10px;
@@ -147,6 +151,7 @@
             <h1 class="title">{{.title}}</h1>
             <div class="nav-links">
                 <a href="{{.webPath}}" class="btn">返回首页</a>
+                <a href="{{.webPath}}node-editor" class="btn">节点配置编辑器</a>
             </div>
         </div>
 
@@ -175,10 +180,6 @@
             <p>注意：编辑配置前请先备份配置文件，错误的配置可能导致服务异常。</p>
         </div>
 
-        <div class="footer-links">
-            <a href="{{.webPath}}node-editor">节点配置编辑器</a>
-            <a href="{{.webPath}}">返回首页</a>
-        </div>
     </div>
 
     <script>
