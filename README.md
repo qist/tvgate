@@ -1,8 +1,4 @@
 # TVGate iptv转发/代-理工具
-changelog
-1、v2.0.4 美化监控接口
-2、添加视频解析接口 http://127.0.0.1:8888/jx?jx=https://www.iqiyi.com/v_1yycejktqd0.html http://127.0.0.1:8888/jx?jx=%E7%88%B1%E6%83%85%E5%85%AC%E5%AF%933&id=11
-3、视频解析接口可自定义
 功能:
 1. 转发
 只要内网能访问的http rtsp rtp等资源,可以直接转发到外网.
