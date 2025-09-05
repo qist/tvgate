@@ -17,13 +17,11 @@ import (
 
 type JXHandler struct {
 	Config *config.JXConfig
-	Logf   func(format string, v ...interface{})
 }
 
-func NewJXHandler(cfg *config.JXConfig, logf func(format string, v ...interface{})) *JXHandler {
+func NewJXHandler(cfg *config.JXConfig) *JXHandler {
 	return &JXHandler{
 		Config: cfg,
-		Logf:   logf,
 	}
 }
 
@@ -87,7 +85,7 @@ func (h *JXHandler) handleRequest(w http.ResponseWriter, r *http.Request, name, 
 					time.Sleep(time.Second)
 					continue
 				} else {
-					h.Logf("请求失败: %v", err)
+					logger.LogPrintf("请求失败: %v", err)
 					break
 				}
 			}
@@ -102,7 +100,7 @@ func (h *JXHandler) handleRequest(w http.ResponseWriter, r *http.Request, name, 
 
 		var respData map[string]interface{}
 		if err := json.Unmarshal(respBody, &respData); err != nil {
-			h.Logf("解析JSON失败: %v", err)
+			logger.LogPrintf("解析JSON失败: %v", err)
 			continue
 		}
 

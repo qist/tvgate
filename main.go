@@ -59,10 +59,10 @@ func main() {
 			ProxyStats: make(map[string]*config.ProxyStats),
 		}
 	}
+    
+	go monitor.StartSystemStatsUpdater(10 * time.Second)
+
 	stopCleaner := make(chan struct{})
-
-	go monitor.StartSystemStatsUpdater(30 * time.Second)
-
 	go clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
 
 	stopAccessCleaner := make(chan struct{})
@@ -76,7 +76,9 @@ func main() {
 		MaxAgeDays: config.Cfg.Log.MaxAgeDays,
 		Compress:   config.Cfg.Log.Compress,
 	})
-	jxHandler := jx.NewJXHandler(&config.Cfg.JX, logger.LogPrintf)
+
+	// 初始化jx处理器
+	jxHandler := jx.NewJXHandler(&config.Cfg.JX)
 	mux := http.NewServeMux()
 	// 启动配置文件自动加载
 	go watch.WatchConfigFile(*config.ConfigFilePath, mux)

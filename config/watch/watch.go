@@ -123,7 +123,7 @@ func WatchConfigFile(configPath string, mux *http.ServeMux) {
 			}
 			// 2️⃣ 设置默认值
 			config.Cfg.SetDefaults()
-			jxHandler := jx.NewJXHandler(&config.Cfg.JX, logger.LogPrintf)
+			jxHandler := jx.NewJXHandler(&config.Cfg.JX)
 			newMux := http.NewServeMux()
 			monitorPath := config.Cfg.Monitor.Path
 			if monitorPath == "" {
