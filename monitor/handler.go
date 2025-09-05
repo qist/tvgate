@@ -28,6 +28,7 @@ type StatusData struct {
 
 // HTTP 处理入口
 func Handler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("server", "TVGate")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if r.Header.Get("Accept") == "application/json" || r.URL.Query().Get("format") == "json" {
 		handleJSONRequest(w, r)
@@ -38,6 +39,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 func handleJSONRequest(w http.ResponseWriter, r *http.Request) {
 	data := prepareStatusData(r)
+	w.Header().Set("server", "TVGate")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
 }
@@ -350,8 +352,8 @@ applyButtonUI();
 		"float64ToInt64": func(a float64) int64 {
 			return int64(a)
 		},
-		"FormatBytes": FormatBytes,
-		"FormatBytesPerSec": FormatBytesPerSec,
+		"FormatBytes":            FormatBytes,
+		"FormatBytesPerSec":      FormatBytesPerSec,
 		"FormatNetworkBandwidth": FormatNetworkBandwidth,
 	}).Parse(tmpl)
 
