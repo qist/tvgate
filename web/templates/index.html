@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .auth-section {
+            text-align: right;
+            margin-bottom: 20px;
+        }
+        .auth-section a {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+        .auth-section a.logout {
+            background-color: #dc3545;
+        }
+        .auth-section a:hover {
+            opacity: 0.8;
+        }
+        .menu {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin: 30px 0;
+            flex-wrap: wrap;
+        }
+        .menu a {
+            display: inline-block;
+            padding: 12px 24px;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        .menu a:hover {
+            background-color: #0056b3;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+        }
+        .section h2 {
+            margin-top: 0;
+        }
+        .info ul {
+            padding-left: 20px;
+        }
+        .info li {
+            margin-bottom: 10px;
+        }
+        .monitor-section {
+            margin: 30px 0;
+        }
+        .monitor-section h2 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .proxy-group {
+            margin-bottom: 30px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+        }
+        .proxy-group-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .proxy-group-title {
+            font-weight: bold;
+            font-size: 18px;
+        }
+        .edit-btn {
+            display: inline-block;
+            padding: 6px 12px;
+            background-color: #ffc107;
+            color: #212529;
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .edit-btn:hover {
+            background-color: #e0a800;
+        }
+        .proxy-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .proxy-table th,
+        .proxy-table td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        .proxy-table th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+        .status-alive {
+            color: green;
+            font-weight: bold;
+        }
+        .status-dead {
+            color: red;
+            font-weight: bold;
+        }
+        .status-cooldown {
+            color: orange;
+            font-weight: bold;
+        }
+        .status-unknown {
+            color: gray;
+            font-weight: bold;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="auth-section">
+            <a href="{{.webPath}}login" id="login-link" style="display:none;">登录</a>
+            <a href="{{.webPath}}logout" id="logout-link" class="logout" style="display:none;">退出</a>
+        </div>
+        
+        <h1>{{.title}}</h1>
+        
+        <div class="menu">
+            <a href="{{.webPath}}editor">总体配置编辑器</a>
+            <a href="{{.webPath}}node-editor">节点配置编辑器</a>
+            <a href="/status" target="_blank">系统监控页面</a>
+        </div>
+
+        <div class="monitor-section">
+            <h2>代理组监控</h2>
+            <div class="monitor-content" id="monitor-content">
+                <p>正在加载监控数据...</p>
+            </div>
+        </div>
+        
+        <div class="info">
+            <h2>使用说明</h2>
+            <ul>
+                <li>点击"总体配置编辑器"可以在线编辑完整 TVGate 配置文件</li>
+                <li>点击"节点配置编辑器"可以按节点编辑 TVGate 配置文件</li>
+                <li>点击"系统监控页面"可以在新窗口中查看详细系统监控信息</li>
+                <li>编辑完成后点击保存按钮将保存配置到服务器</li>
+                <li>系统会自动创建配置文件备份，文件名为原配置文件名加上 .backup 后缀</li>
+                <li>如果保存失败，系统会自动恢复备份文件</li>
+                <li>请确保配置文件格式正确，否则无法保存</li>
+            </ul>
+        </div>
+        
+        <div class="info">
+            <h2>安全提醒</h2>
+            <ul>
+                <li>请勿在公共网络环境下使用此功能</li>
+                <li>请定期更改管理账号密码</li>
+                <li>配置文件包含敏感信息，请妥善保管访问权限</li>
+            </ul>
+        </div>
+    </div>
+    
+    <script>
+        // 获取Web路径前缀
+        const webPath = "{{.webPath}}";
+        
+        // 检查用户认证状态
+        function checkAuthStatus() {
+            fetch(webPath + 'auth-status')
+                .then(response => response.json())
+                .then(data => {
+                    const loginLink = document.getElementById('login-link');
+                    const logoutLink = document.getElementById('logout-link');
+                    
+                    if (data.authenticated) {
+                        loginLink.style.display = 'none';
+                        logoutLink.style.display = 'inline-block';
+                        logoutLink.textContent = `退出 (${data.username})`;
+                    } else {
+                        loginLink.style.display = 'inline-block';
+                        logoutLink.style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    console.error('检查认证状态失败:', error);
+                });
+        }
+        
+        // 页面加载完成后检查认证状态
+        window.addEventListener('load', function() {
+            checkAuthStatus();
+            
+            // 获取配置并动态生成组链接
+            Promise.all([
+                fetch(webPath + 'config'),
+                fetch('/status?format=json')
+            ])
+            .then(responses => Promise.all(responses.map(r => r.text())))
+            .then(([configData, monitorData]) => {
+                const config = jsyaml.load(configData);
+                const monitor = JSON.parse(monitorData);
+                
+                // 显示监控信息
+                displayMonitorInfo(monitor);
+            })
+            .catch(error => {
+                console.error('加载数据失败:', error);
+                document.getElementById('monitor-content').innerHTML = '<p style="color: red;">加载监控数据失败: ' + error.message + '</p>';
+            });
+        });
+        
+        // 显示监控信息
+        function displayMonitorInfo(monitor) {
+            const monitorContent = document.getElementById('monitor-content');
+            
+            if (!monitor.ProxyGroups) {
+                monitorContent.innerHTML = '<p>暂无代理组监控数据</p>';
+                return;
+            }
+            
+            let html = '';
+            for (const [groupName, group] of Object.entries(monitor.ProxyGroups)) {
+                html += `
+                <div class="proxy-group">
+                    <div class="proxy-group-header">
+                        <span class="proxy-group-title">${groupName} (负载均衡: ${group.LoadBalance})</span>
+                        <a href="${webPath}node-editor?node=proxygroups&group=${encodeURIComponent(groupName)}" class="edit-btn">编辑组</a>
+                    </div>
+                    <table class="proxy-table">
+                        <thead>
+                            <tr>
+                                <th>代理</th>
+                                <th>类型</th>
+                                <th>服务器</th>
+                                <th>状态</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+                
+                for (const proxy of group.Proxies) {
+                    const stats = group.Stats && group.Stats.ProxyStats ? group.Stats.ProxyStats[proxy.Name] : null;
+                    let statusText = '<span class="status-unknown">⚪ 未初始化</span>';
+                    let statusClass = 'status-unknown';
+                    
+                    if (stats) {
+                        if (stats.Alive && (stats.ResponseTime > 0 || stats.FailCount > 0)) {
+                            statusText = '<span class="status-alive">✅ 活跃</span>';
+                            statusClass = 'status-alive';
+                        } else if (stats.CooldownUntil && new Date(stats.CooldownUntil) > new Date()) {
+                            statusText = '<span class="status-cooldown">🚫 冷却</span>';
+                            statusClass = 'status-cooldown';
+                        } else if (!stats.Alive && (stats.ResponseTime > 0 || stats.FailCount > 0)) {
+                            statusText = '<span class="status-dead">❌ 死亡</span>';
+                            statusClass = 'status-dead';
+                        } else {
+                            statusText = '<span class="status-unknown">⚪ 未测试</span>';
+                            statusClass = 'status-unknown';
+                        }
+                    }
+                    
+                    html += `
+                        <tr>
+                            <td>${proxy.Name}</td>
+                            <td>${proxy.Type || ''}</td>
+                            <td>${proxy.Server || ''}</td>
+                            <td>${statusText}</td>
+                        </tr>
+                    `;
+                }
+                
+                html += `
+                        </tbody>
+                    </table>
+                    <div style="margin-top: 10px;">
+                        <a href="${webPath}node-editor?node=proxygroups" class="edit-btn">编辑所有代理组</a>
+                    </div>
+                </div>
+                `;
+            }
+            
+            monitorContent.innerHTML = html;
+        }
+    </script>
+</body>
+</html>

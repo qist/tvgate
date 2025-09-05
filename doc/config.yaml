@@ -19,7 +19,14 @@ server:
 # 监控配置
 monitor:
   path: "/status"   # 一个页面显示所有状态信息 添加 各个转发模块的监控 包代理组一起不显示代理 server port 账号密码等，在加入流量监控 monitor 模块新建目录里面去实现
-    
+
+# 配置文件编辑接口
+web:
+    enabled: true
+    username: admin
+    password: admin
+    path: /web/ # 自定义路径
+
 log:
   # 是否输出日志
   enabled: true

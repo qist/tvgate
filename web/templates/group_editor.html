@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-darker.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/lint/lint.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/yaml/yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/lint/lint.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/matchbrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/closebrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/comment/comment.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #3c3c3c;
+        }
+        .title {
+            color: #ffffff;
+            margin: 0;
+        }
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .btn {
+            padding: 8px 16px;
+            background-color: #007acc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        .btn:hover {
+            background-color: #005a9e;
+        }
+        .btn.validate {
+            background-color: #4caf50;
+        }
+        .btn.validate:hover {
+            background-color: #388e3c;
+        }
+        .btn.format {
+            background-color: #ff9800;
+        }
+        .btn.format:hover {
+            background-color: #f57c00;
+        }
+        .btn.save {
+            background-color: #28a745;
+        }
+        .btn.save:hover {
+            background-color: #218838;
+        }
+        .btn.cancel {
+            background-color: #6c757d;
+        }
+        .btn.cancel:hover {
+            background-color: #5a6268;
+        }
+        .status {
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        .status.info {
+            background-color: #1e3a5f;
+            color: #4fc3f7;
+            border: 1px solid #4fc3f7;
+        }
+        .status.success {
+            background-color: #2e7d32;
+            color: #a5d6a7;
+            border: 1px solid #a5d6a7;
+        }
+        .status.error {
+            background-color: #c62828;
+            color: #ffcdd2;
+            border: 1px solid #ffcdd2;
+        }
+        .editor-container {
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .CodeMirror {
+            height: calc(100vh - 300px);
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+        }
+        .help-text {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #2d2d30;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #9e9e9e;
+        }
+        .help-text h3 {
+            margin-top: 0;
+            color: #ffffff;
+        }
+        .help-text ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .help-text li {
+            margin-bottom: 5px;
+        }
+        .help-text kbd {
+            display: inline-block;
+            padding: 2px 6px;
+            background-color: #3c3c3c;
+            border: 1px solid #555;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .footer-links {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .footer-links a {
+            color: #4fc3f7;
+            text-decoration: none;
+            margin: 0 10px;
+        }
+        .footer-links a:hover {
+            text-decoration: underline;
+        }
+        .usage-guide {
+            background-color: #2d2d30;
+            border-left: 4px solid #007acc;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 0 4px 4px 0;
+        }
+        .usage-guide h3 {
+            margin-top: 0;
+            color: #ffffff;
+        }
+        .usage-guide ol {
+            padding-left: 20px;
+        }
+        .usage-guide li {
+            margin-bottom: 10px;
+        }
+        .usage-guide a {
+            color: #4fc3f7;
+            font-weight: 500;
+        }
+        .validation-error {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            padding: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            max-width: 400px;
+            z-index: 1000;
+            display: none;
+        }
+        .validation-error-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            color: #ff6b6b;
+            font-weight: bold;
+        }
+        .close-error {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            color: #9e9e9e;
+        }
+        .error-content {
+            white-space: pre-wrap;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .cm-s-material-darker .cm-error {
+            background-color: rgba(255, 107, 107, 0.3);
+            text-decoration: underline dotted rgba(255, 107, 107, 0.8);
+        }
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            .toolbar {
+                flex-direction: column;
+            }
+            .btn {
+                width: 100%;
+                margin-bottom: 5px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 class="title">{{.title}}</h1>
+            <div class="nav-links">
+                {{if and .config .group}}
+                <a href="{{.webPath}}node-editor?node={{.config}}" class="btn">返回节点编辑器</a>
+                {{end}}
+                <a href="{{.webPath}}" class="btn">返回首页</a>
+            </div>
+        </div>
+
+        {{if and .config .group}}
+        <div class="toolbar">
+            <button class="btn save" onclick="saveConfig()">保存配置 (Ctrl+S)</button>
+            <button class="btn cancel" onclick="loadConfig()">重新加载 (Ctrl+R)</button>
+            <button class="btn validate" onclick="validateYaml()">验证格式 (Ctrl+Shift+V)</button>
+            <button class="btn format" onclick="formatYaml()">格式化 (Ctrl+Shift+F)</button>
+        </div>
+{{end}}
+        
+        <div id="status" class="status"></div>
+        
+        <div class="editor-container">
+            <textarea id="editor" placeholder="加载配置中..."></textarea>
+        </div>
+        
+        {{if and .config .group}}
+        <div class="help-text">
+            <h3>快捷键说明</h3>
+            <ul>
+                <li><kbd>Ctrl+S</kbd> - 保存配置</li>
+                <li><kbd>Ctrl+R</kbd> - 重新加载配置</li>
+                <li><kbd>Ctrl+Q</kbd> - 注释/取消注释</li>
+                <li><kbd>Ctrl+Shift+V</kbd> - 验证YAML格式</li>
+                <li><kbd>Ctrl+Shift+F</kbd> - 格式化YAML</li>
+            </ul>
+            <p>注意：编辑配置前请先备份配置文件，错误的配置可能导致服务异常。</p>
+        </div>
+{{end}}
+        {{else}}
+        <div class="usage-guide">
+            <h3>使用说明</h3>
+            <p>组编辑器需要通过节点编辑器访问特定组配置，不能直接访问。请按以下步骤操作：</p>
+            <ol>
+                <li>访问 <a href="{{.webPath}}node-editor">节点编辑器</a></li>
+                <li>选择要编辑的节点（如 jx 或 proxygroups）</li>
+                <li>在节点编辑器中选择要编辑的组</li>
+                <li>系统将自动跳转到此页面并加载相应组配置</li>
+            </ol>
+            <p>这样可以确保正确传递必要的参数（配置类型和组名称）以加载和保存组配置。</p>
+        </div>
+        {{end}}
+        
+        <div class="footer-links">
+            {{if and .config .group}}
+            <a href="{{.webPath}}node-editor?node={{.config}}">返回节点编辑器</a>
+            {{end}}
+            <a href="{{.webPath}}editor">总体配置编辑器</a>
+            <a href="{{.webPath}}">返回首页</a>
+        </div>
+    </div>
+    
+    <div class="validation-error" id="validationError">
+        <div class="validation-error-header">
+            <span>YAML 验证错误</span>
+            <button class="close-error" onclick="closeValidationError()">&times;</button>
+        </div>
+        <div class="error-content" id="errorContent"></div>
+    </div>
+
+    {{if and .config .group}}
+    <script>
+        // 获取Web路径前缀、配置类型和组名
+        const webPath = "{{.webPath}}";
+        const configType = "{{.config}}";
+        const groupName = "{{.group}}";
+        
+        // YAML linting function for CodeMirror
+        function yamlLint(text) {
+            const found = [];
+            try {
+                jsyaml.loadAll(text);
+            } catch (e) {
+                const loc = e.mark;
+                if (loc) {
+                    found.push({
+                        from: CodeMirror.Pos(loc.line, loc.column),
+                        to: CodeMirror.Pos(loc.line, loc.column + 1),
+                        message: e.message
+                    });
+                } else {
+                    found.push({
+                        from: CodeMirror.Pos(0, 0),
+                        to: CodeMirror.Pos(0, 0),
+                        message: e.message
+                    });
+                }
+            }
+            return found;
+        }
+        
+        // 初始化CodeMirror编辑器
+        const editor = CodeMirror.fromTextArea(document.getElementById("editor"), {
+            mode: "text/yaml",
+            theme: "material-darker",
+            lineNumbers: true,
+            lint: {
+                getAnnotations: yamlLint,
+                async: true
+            },
+            gutters: ["CodeMirror-linenumbers", "CodeMirror-lint-markers"],
+            autoCloseBrackets: true,
+            matchBrackets: true,
+            tabSize: 2,
+            indentUnit: 2,
+            indentWithTabs: false,
+            lineWrapping: true
+        });
+        
+        // 添加快捷键支持
+        editor.setOption("extraKeys", {
+            "Ctrl-S": function(cm) {
+                saveConfig();
+            },
+            "Ctrl-R": function(cm) {
+                loadConfig();
+            },
+            "Ctrl-Q": function(cm) {
+                toggleComment();
+            },
+            "Ctrl-Shift-V": function(cm) {
+                validateYaml();
+            },
+            "Ctrl-Shift-F": function(cm) {
+                formatYaml();
+            }
+        });
+        
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadConfig();
+        });
+    </script>
+    
+    <script>
+        // 更新状态显示
+        function updateStatus(message, type) {
+            const statusEl = document.getElementById('status');
+            const statusTextEl = document.getElementById('status-text');
+            
+            statusTextEl.textContent = message;
+            statusEl.className = 'status ' + type;
+            
+            // 3秒后自动隐藏成功和信息提示
+            if (type === 'success' || type === 'info') {
+                setTimeout(() => {
+                    statusEl.className = 'status';
+                }, 3000);
+            }
+        }
+
+        // 显示状态信息（别名函数，保持向后兼容）
+        function showStatus(message, type) {
+            updateStatus(message, type);
+        }
+
+        // 加载组配置内容
+        function loadConfig() {
+            // 检查必要参数是否存在
+            if (!configType || !groupName || configType.trim() === "" || groupName.trim() === "") {
+                updateStatus('缺少配置参数，请通过节点编辑器访问特定组配置', 'error');
+                return;
+            }
+            
+            updateStatus('正在加载配置...', 'info');
+            
+            fetch(webPath + 'config/group?config=' + encodeURIComponent(configType) + '&group=' + encodeURIComponent(groupName), {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'text/plain; charset=utf-8'
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        // 未授权，重定向到登录页面
+                        window.location.href = webPath + 'login';
+                        return;
+                    }
+                    throw new Error('网络响应异常 ' + response.status);
+                }
+                return response.text();
+            })
+            .then(data => {
+                editor.setValue(data);
+                updateStatus('配置加载成功', 'success');
+            })
+            .catch(error => {
+                console.error('加载配置失败:', error);
+                updateStatus('加载配置失败: ' + error.message, 'error');
+            });
+        }
+
+        // 保存配置文件
+        function saveConfig() {
+            // 检查必要参数
+            if (!configType || !groupName || configType.trim() === "" || groupName.trim() === "") {
+                updateStatus('缺少配置参数，无法保存', 'error');
+                return;
+            }
+            
+            const configContent = editor.getValue();
+            
+            if (!configContent.trim()) {
+                updateStatus('配置内容不能为空', 'error');
+                return;
+            }
+            
+            updateStatus('正在保存配置...', 'info');
+            
+            // 添加超时控制 (10秒)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
+            
+            fetch(webPath + 'config/save-group?config=' + encodeURIComponent(configType) + '&group=' + encodeURIComponent(groupName), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'text/plain; charset=utf-8'
+                },
+                body: configContent,
+                signal: controller.signal // 添加超时信号
+            })
+            .then(response => {
+                clearTimeout(timeoutId); // 清除超时
+                
+                // 检查响应状态码
+                if (!response.ok) {
+                    if (response.status === 403) {
+                        throw new Error('无保存权限 (403 Forbidden)');
+                    } else if (response.status === 401) {
+                        // 未授权，重定向到登录页面
+                        window.location.href = webPath + 'login';
+                        return;
+                    } else if (response.status === 413) {
+                        throw new Error('配置文件过大 (413 Payload Too Large)');
+                    } else {
+                        return response.text().then(text => {
+                            throw new Error(text || `保存失败 (${response.status})`);
+                        });
+                    }
+                }
+                
+                return response.text();
+            })
+            .then(data => {
+                try {
+                    const result = JSON.parse(data);
+                    if (result.status === 'success') {
+                        updateStatus('配置保存成功', 'success');
+                    } else {
+                        updateStatus('保存失败: ' + result.message, 'error');
+                    }
+                } catch (e) {
+                    // 如果不是JSON格式，直接显示返回内容
+                    updateStatus('配置保存成功', 'success');
+                }
+            })
+            .catch(error => {
+                clearTimeout(timeoutId); // 清除超时
+                
+                if (error.name === 'AbortError') {
+                    // 处理超时中断
+                    console.error('保存配置超时:', error);
+                    updateStatus('保存配置超时（10秒内未响应）', 'error');
+                } else if (error.name === 'TypeError' && error.message.includes('network error')) {
+                    // 处理网络错误
+                    console.error('网络错误:', error);
+                    updateStatus('网络错误：无法连接到服务器', 'error');
+                } else {
+                    // 处理其他错误
+                    console.error('保存配置失败:', error);
+                    updateStatus('保存配置失败: ' + error.message, 'error');
+                }
+            });
+        }
+
+        // 验证YAML格式
+        function validateYaml() {
+            const configContent = editor.getValue();
+            
+            if (!configContent.trim()) {
+                updateStatus('配置内容不能为空', 'error');
+                return;
+            }
+            
+            updateStatus('正在验证YAML格式...', 'info');
+            
+            // 使用服务端验证
+            fetch(webPath + 'config/validate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'text/plain; charset=utf-8'
+                },
+                body: configContent
+            })
+            .then(response => {
+                return response.text().then(text => {
+                    return { ok: response.ok, status: response.status, text: text };
+                });
+            })
+            .then(result => {
+                if (result.ok) {
+                    try {
+                        const data = JSON.parse(result.text);
+                        updateStatus(data.message || 'YAML格式验证通过', 'success');
+                    } catch (e) {
+                        updateStatus('YAML格式验证通过', 'success');
+                    }
+                } else {
+                    try {
+                        const data = JSON.parse(result.text);
+                        showValidationError(data.message || 'YAML格式验证失败');
+                        updateStatus(data.message || 'YAML格式验证失败', 'error');
+                    } catch (e) {
+                        showValidationError(result.text || 'YAML格式验证失败');
+                        updateStatus('YAML格式验证失败', 'error');
+                    }
+                }
+            })
+            .catch(error => {
+                showValidationError('验证过程中发生网络错误: ' + error.message);
+                updateStatus('YAML格式验证失败', 'error');
+            });
+        }
+
+        // 格式化YAML（简化版本，避免使用js-yaml导致注释丢失）
+        function formatYaml() {
+            const configContent = editor.getValue();
+            
+            if (!configContent.trim()) {
+                updateStatus('配置内容不能为空', 'error');
+                return;
+            }
+            
+            try {
+                // 使用正则表达式进行简单的格式化，保留注释
+                let formattedContent = configContent;
+                
+                // 确保缩进一致（2个空格）
+                formattedContent = formattedContent.replace(/^(\s+)/gm, function(match) {
+                    // 将制表符转换为空格
+                    match = match.replace(/\t/g, '  ');
+                    // 确保缩进是2的倍数
+                    const spaces = match.length;
+                    const newSpaces = Math.ceil(spaces / 2) * 2;
+                    return ' '.repeat(newSpaces);
+                });
+                
+                // 在列表项后添加空行（简单处理）
+                formattedContent = formattedContent.replace(/^(\s*)(- .*)$/gm, function(match, indent, item) {
+                    return match;
+                });
+                
+                editor.setValue(formattedContent);
+                updateStatus('YAML格式化完成（简化版，保留注释）', 'success');
+            } catch (e) {
+                console.error('YAML格式化失败:', e);
+                updateStatus('YAML格式化失败: ' + e.message, 'error');
+            }
+        }
+
+        // 注释/取消注释选中行
+        function toggleComment() {
+            try {
+                const from = editor.getCursor("from");
+                const to = editor.getCursor("to");
+                
+                // 如果有选中文本
+                if (from.line !== to.line || from.ch !== to.ch) {
+                    CodeMirror.commands.toggleComment(editor, {from: from, to: to});
+                } else {
+                    // 如果没有选中文本，处理当前行
+                    const line = from.line;
+                    const lineContent = editor.getLine(line);
+                    if (lineContent.trim()) {
+                        CodeMirror.commands.toggleComment(editor, {line: line, ch: 0}, {line: line, ch: lineContent.length});
+                    }
+                }
+            } catch (e) {
+                updateStatus('注释功能出错: ' + e.message, 'error');
+            }
+        }
+
+        // 显示验证错误
+        function showValidationError(message) {
+            try {
+                const errorElement = document.getElementById('validationError');
+                const errorContent = document.getElementById('errorContent');
+                
+                if (errorElement && errorContent) {
+                    errorContent.textContent = message;
+                    errorElement.style.display = 'block';
+                } else {
+                    console.error('无法找到错误显示元素');
+                }
+            } catch (e) {
+                console.error('显示错误信息时出错:', e);
+            }
+        }
+
+        // 关闭验证错误提示
+        function closeValidationError() {
+            try {
+                const errorElement = document.getElementById('validationError');
+                if (errorElement) {
+                    errorElement.style.display = 'none';
+                }
+            } catch (e) {
+                console.error('关闭错误信息时出错:', e);
+            }
+        }
+        
+        // 点击空白处关闭错误提示
+        document.addEventListener('click', function(e) {
+            try {
+                const errorElement = document.getElementById('validationError');
+                if (errorElement && errorElement.style.display === 'block' && 
+                    !errorElement.contains(e.target) && 
+                    e.target !== errorElement) {
+                    errorElement.style.display = 'none';
+                }
+            } catch (e) {
+                console.error('处理点击事件时出错:', e);
+            }
+        });
+    </script>
+    {{end}}
+</body>
+</html>

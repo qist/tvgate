@@ -19,6 +19,7 @@ import (
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/server"
 	httpclient "github.com/qist/tvgate/utils/http"
+	"github.com/qist/tvgate/web"
 )
 
 func main() {
@@ -35,6 +36,7 @@ func main() {
 	if err := load.LoadConfig(configPath); err != nil {
 		log.Fatalf("加载配置文件失败: %v", err)
 	}
+	
 	if *config.ConfigFilePath != "" {
 		err := load.LoadConfig(*config.ConfigFilePath)
 		if err != nil {
@@ -59,7 +61,7 @@ func main() {
 			ProxyStats: make(map[string]*config.ProxyStats),
 		}
 	}
-    
+
 	go monitor.StartSystemStatsUpdater(10 * time.Second)
 
 	stopCleaner := make(chan struct{})
@@ -80,8 +82,10 @@ func main() {
 	// 初始化jx处理器
 	jxHandler := jx.NewJXHandler(&config.Cfg.JX)
 	mux := http.NewServeMux()
+
+	
 	// 启动配置文件自动加载
-	go watch.WatchConfigFile(*config.ConfigFilePath, mux)
+	go watch.WatchConfigFile(*config.ConfigFilePath)
 
 	// 添加监控路径处理
 	monitorPath := config.Cfg.Monitor.Path
@@ -97,6 +101,21 @@ func main() {
 	mux.Handle(jxPath, server.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		jxHandler.Handle(w, r)
 	})))
+
+	// 注册 Web 管理界面处理器
+	if config.Cfg.Web.Enabled {
+		webConfig := web.WebConfig{
+			Username: config.Cfg.Web.Username,
+			Password: config.Cfg.Web.Password,
+			Enabled:  config.Cfg.Web.Enabled,
+			Path:     config.Cfg.Web.Path,
+		}
+		configHandler := web.NewConfigHandler(webConfig)
+		configHandler.ServeMux(mux)
+
+		webHandler := web.NewWebHandler(configHandler)
+		webHandler.ServeMux(mux)
+	}
 
 	mux.Handle("/", server.SecurityHeaders(http.HandlerFunc(h.Handler(client))))
 

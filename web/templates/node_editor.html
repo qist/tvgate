@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-darker.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/lint/lint.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/yaml/yaml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/lint/lint.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/comment/comment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #3c3c3c;
+        }
+        .title {
+            color: #ffffff;
+            margin: 0;
+        }
+        .nav-links {
+            display: flex;
+            gap: 10px;
+        }
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .btn {
+            padding: 8px 16px;
+            background-color: #007acc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        .btn:hover {
+            background-color: #005a9e;
+        }
+        .btn.validate {
+            background-color: #4caf50;
+        }
+        .btn.validate:hover {
+            background-color: #388e3c;
+        }
+        .btn.format {
+            background-color: #ff9800;
+        }
+        .btn.format:hover {
+            background-color: #f57c00;
+        }
+        .btn.group {
+            background-color: #9c27b0;
+        }
+        .btn.group:hover {
+            background-color: #7b1fa2;
+        }
+        .status {
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        .status.info {
+            background-color: #1e3a5f;
+            color: #4fc3f7;
+            border: 1px solid #4fc3f7;
+        }
+        .status.success {
+            background-color: #2e7d32;
+            color: #a5d6a7;
+            border: 1px solid #a5d6a7;
+        }
+        .status.error {
+            background-color: #c62828;
+            color: #ffcdd2;
+            border: 1px solid #ffcdd2;
+        }
+        .editor-container {
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .help-text {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #2d2d30;
+            border-radius: 4px;
+            border: 1px solid #3c3c3c;
+        }
+        .help-text h3 {
+            margin-top: 0;
+            color: #ffffff;
+        }
+        .help-text ul {
+            padding-left: 20px;
+        }
+        .help-text li {
+            margin-bottom: 8px;
+        }
+        .help-text kbd {
+            background-color: #3c3c3c;
+            padding: 2px 6px;
+            border-radius: 3px;
+            border: 1px solid #555;
+            font-family: monospace;
+        }
+        .help-text p {
+            margin-top: 15px;
+            color: #ffa500;
+            font-weight: bold;
+        }
+        .footer-links {
+            margin-top: 20px;
+            text-align: center;
+            padding-top: 15px;
+            border-top: 1px solid #3c3c3c;
+        }
+        .footer-links a {
+            color: #4fc3f7;
+            text-decoration: none;
+            margin: 0 10px;
+        }
+        .footer-links a:hover {
+            text-decoration: underline;
+        }
+        .node-selector {
+            background-color: #2d2d30;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            border: 1px solid #3c3c3c;
+        }
+        .node-selector h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: #ffffff;
+        }
+        .node-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .node-item {
+            padding: 8px 16px;
+            background-color: #3c3c3c;
+            color: #d4d4d4;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .node-item:hover {
+            background-color: #007acc;
+            color: white;
+            border-color: #007acc;
+        }
+        .node-item.active {
+            background-color: #007acc;
+            color: white;
+            border-color: #007acc;
+        }
+        .group-selector {
+            background-color: #2d2d30;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            border: 1px solid #3c3c3c;
+            display: none;
+        }
+        .group-selector h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: #ffffff;
+        }
+        .group-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .group-item {
+            padding: 8px 16px;
+            background-color: #3c3c3c;
+            color: #d4d4d4;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .group-item:hover {
+            background-color: #9c27b0;
+            color: white;
+            border-color: #9c27b0;
+        }
+        .group-item.active {
+            background-color: #9c27b0;
+            color: white;
+            border-color: #9c27b0;
+        }
+        .validation-error {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #2d2d30;
+            border: 2px solid #c62828;
+            border-radius: 4px;
+            padding: 20px;
+            z-index: 1000;
+            display: none;
+            max-width: 80%;
+            max-height: 80%;
+            overflow: auto;
+        }
+        .validation-error-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #3c3c3c;
+        }
+        .validation-error-header span {
+            font-weight: bold;
+            color: #c62828;
+            font-size: 18px;
+        }
+        .close-error {
+            background: none;
+            border: none;
+            color: #d4d4d4;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        .close-error:hover {
+            color: #c62828;
+        }
+        .error-content {
+            color: #d4d4d4;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 class="title">{{.title}}</h1>
+            <div class="nav-links">
+                <a href="{{.webPath}}" class="btn">返回首页</a>
+                <a href="{{.webPath}}editor" class="btn">总体编辑器</a>
+            </div>
+        </div>
+
+        <div class="node-selector">
+            <h3>选择配置节点</h3>
+            <div class="node-list" id="node-list">
+                <!-- 节点列表将通过JavaScript动态生成 -->
+            </div>
+        </div>
+
+        <div class="group-selector" id="group-selector">
+            <h3>选择组</h3>
+            <div class="group-list" id="group-list">
+                <!-- 组列表将通过JavaScript动态生成 -->
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <button class="btn" onclick="saveConfig()">保存配置 (Ctrl+S)</button>
+            <button class="btn" onclick="loadConfig()">重新加载 (Ctrl+R)</button>
+            <button class="btn validate" onclick="validateYaml()">验证格式 (Ctrl+Shift+V)</button>
+            <button class="btn format" onclick="formatYaml()">格式化 (Ctrl+Shift+F)</button>
+        </div>
+
+        <div id="status" class="status"></div>
+
+        <div class="editor-container">
+            <textarea id="editor"></textarea>
+        </div>
+
+        <div class="help-text">
+            <h3>快捷键说明</h3>
+            <ul>
+                <li><kbd>Ctrl+S</kbd> - 保存配置</li>
+                <li><kbd>Ctrl+R</kbd> - 重新加载配置</li>
+                <li><kbd>Ctrl+Q</kbd> - 注释/取消注释</li>
+                <li><kbd>Ctrl+Shift+V</kbd> - 验证YAML格式</li>
+                <li><kbd>Ctrl+Shift+F</kbd> - 格式化YAML</li>
+            </ul>
+            <p>注意：编辑配置前请先备份配置文件，错误的配置可能导致服务异常。</p>
+        </div>
+
+        <div class="footer-links">
+            <a href="{{.webPath}}editor">总体配置编辑器</a>
+            <a href="{{.webPath}}">返回首页</a>
+        </div>
+    </div>
+
+    <div class="validation-error" id="validationError">
+        <div class="validation-error-header">
+            <span>YAML 验证错误</span>
+            <button class="close-error" onclick="closeValidationError()">&times;</button>
+        </div>
+        <div class="error-content" id="errorContent"></div>
+    </div>
+
+    <script>
+        // 获取Web路径前缀
+        const webPath = "{{.webPath}}";
+        let currentNode = "{{.node}}" || "server";  // 如果没有指定节点，默认为server
+        let currentGroup = "{{.group}}";
+        let groupType = "";
+        let fullConfig = null;
+        let rawConfigData = "";
+        
+        // 初始化CodeMirror编辑器
+        const editor = CodeMirror.fromTextArea(document.getElementById("editor"), {
+            mode: "text/yaml",
+            theme: "material-darker",
+            lineNumbers: true,
+            lint: true,
+            gutters: ["CodeMirror-linenumbers", "CodeMirror-lint-markers"],
+            autoCloseBrackets: true,
+            matchBrackets: true,
+            tabSize: 2,
+            indentUnit: 2,
+            indentWithTabs: false,
+            lineWrapping: true
+        });
+        
+        // 添加快捷键支持
+        editor.setOption("extraKeys", {
+            "Ctrl-S": function(cm) {
+                saveConfig();
+            },
+            "Ctrl-R": function(cm) {
+                loadConfig();
+            },
+            "Ctrl-Q": function(cm) {
+                toggleComment();
+            },
+            "Ctrl-Shift-V": function(cm) {
+                validateYaml();
+            },
+            "Ctrl-Shift-F": function(cm) {
+                formatYaml();
+            }
+        });
+        
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 加载配置（这将动态更新节点选择器）
+            loadConfig();
+            
+            // 如果currentNode为默认值"server"，确保加载其配置
+            if (currentNode === "server") {
+                setTimeout(() => {
+                    loadNodeConfig();
+                }, 100);
+            }
+        });
+        
+        // YAML linting function for CodeMirror
+        function yamlLint(text) {
+            const found = [];
+            try {
+                jsyaml.loadAll(text);
+            } catch (e) {
+                const loc = e.mark;
+                if (loc) {
+                    found.push({
+                        from: CodeMirror.Pos(loc.line, loc.column),
+                        to: CodeMirror.Pos(loc.line, loc.column),
+                        message: e.message
+                    });
+                }
+            }
+            return found;
+        }
+        
+        // 显示状态信息
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = 'status ' + type;
+            statusEl.style.display = 'block';
+            
+            // 3秒后自动隐藏成功和信息提示
+            if (type === 'success' || type === 'info') {
+                setTimeout(() => {
+                    statusEl.style.display = 'none';
+                }, 3000);
+            }
+        }
+        
+        // 隐藏状态信息
+        function hideStatus() {
+            document.getElementById('status').style.display = 'none';
+        }
+        
+        // 显示验证错误
+        function showValidationError(message) {
+            const errorElement = document.getElementById('validationError');
+            const errorContentElement = document.getElementById('errorContent');
+            
+            errorContentElement.textContent = message;
+            errorElement.style.display = 'block';
+        }
+        
+        // 关闭验证错误提示
+        function closeValidationError() {
+            document.getElementById('validationError').style.display = 'none';
+        }
+        
+        // 切换注释
+        function toggleComment() {
+            editor.toggleComment();
+        }
+        
+        // 格式化YAML（简化版本，避免使用js-yaml导致注释丢失）
+        function formatYaml() {
+            const configContent = editor.getValue();
+            
+            if (!configContent.trim()) {
+                showStatus('配置内容不能为空', 'error');
+                return;
+            }
+            
+            try {
+                // 使用正则表达式进行简单的格式化，保留注释
+                let formattedContent = configContent;
+                
+                // 确保缩进一致（2个空格）
+                formattedContent = formattedContent.replace(/^(\s+)/gm, function(match) {
+                    // 将制表符转换为空格
+                    match = match.replace(/\t/g, '  ');
+                    // 确保缩进是2的倍数
+                    const spaces = match.length;
+                    const newSpaces = Math.ceil(spaces / 2) * 2;
+                    return ' '.repeat(newSpaces);
+                });
+                
+                // 在列表项后添加空行（简单处理）
+                formattedContent = formattedContent.replace(/^(\s*)(- .*)$/gm, function(match, indent, item) {
+                    return match;
+                });
+                
+                editor.setValue(formattedContent);
+                showStatus('YAML格式化完成（简化版，保留注释）', 'success');
+            } catch (e) {
+                console.error('YAML格式化失败:', e);
+                showStatus('YAML格式化失败: ' + e.message, 'error');
+            }
+        }
+        
+        // 加载配置文件内容
+        function loadConfig() {
+            showStatus('正在加载配置...', 'info');
+            
+            fetch(webPath + 'config', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'text/plain; charset=utf-8'
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        // 未授权，重定向到登录页面
+                        window.location.href = webPath + 'login';
+                        return;
+                    }
+                    throw new Error('网络响应异常 ' + response.status);
+                }
+                return response.text();
+            })
+            .then(data => {
+                if (!data) {
+                    throw new Error('配置数据为空');
+                }
+                
+                // 保存原始配置内容
+                rawConfigData = data;
+                
+                try {
+                    // 解析完整的配置
+                    fullConfig = jsyaml.load(data);
+                } catch (parseError) {
+                    console.error('解析配置失败:', parseError);
+                    throw new Error('配置解析失败: ' + parseError.message);
+                }
+                
+                // 更新节点选择器
+                updateNodeSelector();
+                
+                // 加载当前节点的配置
+                if (currentNode) {
+                    // 延迟加载以确保节点选择器已更新
+                    setTimeout(() => {
+                        loadNodeConfig();
+                    }, 50);
+                } else if (fullConfig) {
+                    // 如果没有当前节点但有配置数据，尝试加载第一个可用节点
+                    const firstNode = Object.keys(fullConfig)[0];
+                    if (firstNode) {
+                        currentNode = firstNode;
+                        setTimeout(() => {
+                            loadNodeConfig();
+                        }, 50);
+                    }
+                }
+                
+                showStatus('配置加载成功', 'success');
+                
+                // 如果有当前组，延迟加载组配置（确保组选择器已初始化）
+                if (currentGroup && (currentNode === 'jx' || currentNode === 'proxygroups')) {
+                    setTimeout(() => {
+                        loadGroupConfig(currentGroup);
+                        // 更新组选择器的选中状态
+                        updateGroupSelector();
+                    }, 100);
+                }
+            })
+            .catch(error => {
+                console.error('加载配置失败:', error);
+                showStatus('加载配置失败: ' + error.message, 'error');
+            });
+        }
+        
+        // 更新节点选择器
+        function updateNodeSelector() {
+            const nodeList = document.getElementById('node-list');
+            if (!nodeList) {
+                console.error('无法找到节点列表元素');
+                return;
+            }
+            
+            // 清空节点列表
+            nodeList.innerHTML = '';
+            
+            // 从配置中提取节点列表
+            const nodes = [];
+            if (fullConfig) {
+                for (const key in fullConfig) {
+                    if (fullConfig.hasOwnProperty(key)) {
+                        nodes.push(key);
+                    }
+                }
+            }
+            
+            // 如果没有从配置中提取到节点，则使用默认节点列表
+            if (nodes.length === 0) {
+                nodes.push('server', 'log', 'http', 'monitor', 'web', 'jx', 'proxygroups');
+            }
+            
+            // 添加节点选项
+            nodes.forEach(nodeName => {
+                const nodeItem = document.createElement('div');
+                nodeItem.className = 'node-item' + (currentNode === nodeName ? ' active' : '');
+                nodeItem.textContent = nodeName;
+                nodeItem.setAttribute('data-node', nodeName);
+                nodeItem.onclick = function() {
+                    selectNode(nodeName);
+                };
+                nodeList.appendChild(nodeItem);
+            });
+            
+            // 如果有当前节点，设置选中状态
+            if (currentNode) {
+                const selectedItem = document.querySelector(`.node-item[data-node="${currentNode}"]`);
+                if (selectedItem) {
+                    selectedItem.classList.add('active');
+                } else {
+                    // 如果当前节点不在节点列表中，但节点列表不为空，选择第一个节点
+                    if (nodes.length > 0 && !document.querySelector('.node-item.active')) {
+                        selectNode(nodes[0]);
+                    }
+                }
+            } else if (nodes.length > 0) {
+                // 如果没有当前节点但有节点列表，选择第一个节点
+                selectNode(nodes[0]);
+            }
+        }
+        
+        // 节点选择处理
+        function selectNode(nodeName) {
+            // 更新当前节点
+            currentNode = nodeName;
+            
+            // 取消所有节点项的active类
+            document.querySelectorAll('.node-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // 为当前节点项添加active类
+            const selectedItem = document.querySelector(`.node-item[data-node="${nodeName}"]`);
+            if (selectedItem) {
+                selectedItem.classList.add('active');
+            }
+            
+            // 重置当前组
+            currentGroup = null;
+            groupType = "";
+            
+            // 加载节点配置
+            loadNodeConfig();
+        }
+        
+        // 显示组选择器
+        function showGroupSelector() {
+            const groupSelector = document.getElementById('group-selector');
+            const groupList = document.getElementById('group-list');
+            
+            if (!groupSelector || !groupList) {
+                console.error('无法找到组选择器元素');
+                return;
+            }
+            
+            // 清空组列表
+            groupList.innerHTML = '';
+            
+            // 根据节点类型加载组
+            let groups = {};
+            if (currentNode === 'jx' && fullConfig && fullConfig.jx && fullConfig.jx.api_groups) {
+                groups = fullConfig.jx.api_groups;
+                groupType = 'jx';
+            } else if (currentNode === 'proxygroups' && fullConfig && fullConfig.proxygroups) {
+                groups = fullConfig.proxygroups;
+                groupType = 'proxygroups';
+            }
+            
+            // 添加"完整节点"选项
+            const fullNodeItem = document.createElement('div');
+            fullNodeItem.className = 'group-item' + (currentGroup === null ? ' active' : '');
+            fullNodeItem.textContent = '完整节点';
+            fullNodeItem.onclick = function() {
+                // 取消所有项的active类
+                document.querySelectorAll('.group-item').forEach(i => i.classList.remove('active'));
+                // 为当前项添加active类
+                this.classList.add('active');
+                // 重置当前组
+                currentGroup = null;
+                groupType = "";
+                // 加载完整节点配置
+                loadFullNodeConfig();
+            };
+            groupList.appendChild(fullNodeItem);
+            
+            // 检查是否有组
+            let groupCount = 0;
+            for (const groupName in groups) {
+                if (groups.hasOwnProperty(groupName)) {
+                    groupCount++;
+                    const groupItem = document.createElement('div');
+                    // 根据currentGroup设置初始选中状态
+                    groupItem.className = 'group-item' + (currentGroup === groupName ? ' active' : '');
+                    groupItem.textContent = groupName;
+                    groupItem.onclick = (function(name) {
+                        return function() {
+                            // 取消所有项的active类
+                            document.querySelectorAll('.group-item').forEach(i => i.classList.remove('active'));
+                            // 为当前项添加active类
+                            this.classList.add('active');
+                            // 更新当前组
+                            currentGroup = name;
+                            // 加载组配置
+                            loadGroupConfig(name);
+                        };
+                    })(groupName);
+                    groupList.appendChild(groupItem);
+                }
+            }
+            
+            // 只有当有组时才显示组选择器
+            if (groupCount > 0) {
+                groupSelector.style.display = 'block';
+            } else {
+                groupSelector.style.display = 'none';
+            }
+        }
+        
+        // 隐藏组选择器
+        function hideGroupSelector() {
+            const groupSelector = document.getElementById('group-selector');
+            if (groupSelector) {
+                groupSelector.style.display = 'none';
+            }
+        }
+        
+        // 更新组选择器
+        function updateGroupSelector() {
+            if (!currentGroup) {
+                // 如果没有当前组，选择"完整节点"项
+                const fullNodeItem = document.querySelector('.group-item');
+                if (fullNodeItem) {
+                    // 取消所有项的active类
+                    document.querySelectorAll('.group-item').forEach(i => i.classList.remove('active'));
+                    // 为第一项添加active类
+                    fullNodeItem.classList.add('active');
+                }
+                return;
+            }
+            
+            // 根据currentGroup设置选中状态
+            const selectedItem = document.querySelector(`.group-item:nth-child(n+2)`); // 跳过"完整节点"项
+            if (selectedItem && selectedItem.textContent === currentGroup) {
+                // 取消所有项的active类
+                document.querySelectorAll('.group-item').forEach(i => i.classList.remove('active'));
+                // 为当前项添加active类
+                selectedItem.classList.add('active');
+            }
+        }
+        
+        // 加载当前节点的配置
+        function loadNodeConfig() {
+            try {
+                if (currentNode === 'jx' || currentNode === 'proxygroups') {
+                    // 对于jx和proxygroups，显示组选择器
+                    showGroupSelector();
+                    // 显示完整节点内容
+                    loadFullNodeConfig();
+                } else {
+                    // 对于其他节点，直接显示节点内容
+                    hideGroupSelector();
+                    loadFullNodeConfig();
+                }
+            } catch (error) {
+                console.error('加载节点配置时出错:', error);
+                showStatus('加载节点配置时出错: ' + error.message, 'error');
+            }
+        }
+        
+        // 加载完整节点配置
+        function loadFullNodeConfig() {
+            if (!currentNode) {
+                console.error('未选择节点');
+                return;
+            }
+            
+            // 从后端获取节点配置（保留注释）
+            fetch(webPath + 'config/node?node=' + encodeURIComponent(currentNode))
+                .then(response => {
+                    if (!response.ok) {
+                        if (response.status === 401) {
+                            // 未授权，重定向到登录页面
+                            window.location.href = webPath + 'login';
+                            return;
+                        }
+                        throw new Error('网络响应异常 ' + response.status);
+                    }
+                    return response.text();
+                })
+                .then(data => {
+                    if (editor) {
+                        editor.setValue(data || '');
+                    }
+                    showStatus('节点配置加载成功', 'success');
+                })
+                .catch(error => {
+                    console.error('加载节点配置失败:', error);
+                    showStatus('加载节点配置失败: ' + error.message, 'error');
+                });
+        }
+        
+        // 加载组配置
+        function loadGroupConfig(groupName) {
+            if (!currentNode || !groupName) {
+                console.error('未指定节点或组名');
+                return;
+            }
+            
+            // 从后端获取组配置（保留注释）
+            fetch(webPath + 'config/group?config=' + encodeURIComponent(currentNode) + '&group=' + encodeURIComponent(groupName))
+                .then(response => {
+                    if (!response.ok) {
+                        if (response.status === 401) {
+                            // 未授权，重定向到登录页面
+                            window.location.href = webPath + 'login';
+                            return;
+                        }
+                        throw new Error('网络响应异常 ' + response.status);
+                    }
+                    return response.text();
+                })
+                .then(data => {
+                    if (editor) {
+                        editor.setValue(data || '');
+                    }
+                    showStatus('组配置加载成功', 'success');
+                })
+                .catch(error => {
+                    console.error('加载组配置失败:', error);
+                    showStatus('加载组配置失败: ' + error.message, 'error');
+                });
+        }
+        
+        // 保存配置文件
+        function saveConfig() {
+            const configContent = editor.getValue();
+            
+            if (!configContent.trim()) {
+                showStatus('配置内容不能为空', 'error');
+                return;
+            }
+            
+            showStatus('正在保存配置...', 'info');
+            
+            let saveUrl, saveParams;
+            if (currentGroup) {
+                // 保存组配置
+                saveUrl = webPath + 'config/save-group';
+                saveParams = `config=${encodeURIComponent(currentNode)}&group=${encodeURIComponent(currentGroup)}`;
+            } else {
+                // 保存节点配置
+                saveUrl = webPath + 'config/save-node';
+                saveParams = `node=${encodeURIComponent(currentNode)}`;
+            }
+            
+            // 添加超时控制 (10秒)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
+            
+            fetch(saveUrl + '?' + saveParams, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'text/plain'
+                },
+                body: configContent,
+                signal: controller.signal // 添加超时信号
+            })
+            .then(response => {
+                clearTimeout(timeoutId); // 清除超时
+                
+                if (!response.ok) {
+                    if (response.status === 403) {
+                        throw new Error('无保存权限 (403 Forbidden)');
+                    } else if (response.status === 401) {
+                        // 未授权，重定向到登录页面
+                        window.location.href = webPath + 'login';
+                        return;
+                    } else if (response.status === 413) {
+                        throw new Error('配置内容过大 (413 Content Too Large)');
+                    } else {
+                        return response.text().then(text => {
+                            throw new Error(text || '保存失败，HTTP状态码: ' + response.status);
+                        });
+                    }
+                }
+                
+                // 保存成功
+                showStatus('配置保存成功', 'success');
+            })
+            .catch(error => {
+                clearTimeout(timeoutId); // 清除超时
+                
+                if (error.name === 'AbortError') {
+                    // 处理超时中断
+                    console.error('保存配置超时:', error);
+                    showStatus('保存配置超时（10秒内未响应）', 'error');
+                } else if (error.name === 'TypeError' && error.message.includes('network error')) {
+                    // 处理网络错误
+                    console.error('网络错误:', error);
+                    showStatus('网络错误：无法连接到服务器', 'error');
+                } else {
+                    // 处理其他错误
+                    console.error('保存配置失败:', error);
+                    showStatus('保存配置失败: ' + error.message, 'error');
+                }
+            });
+        }
+        
+        // 验证YAML格式
+        function validateYaml() {
+            const configContent = editor.getValue();
+            
+            if (!configContent.trim()) {
+                showStatus('配置内容不能为空', 'error');
+                return;
+            }
+            
+            showStatus('正在验证YAML格式...', 'info');
+            
+            // 使用服务端验证
+            fetch(webPath + 'config/validate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'text/plain'
+                },
+                body: configContent
+            })
+            .then(response => {
+                return response.text().then(text => {
+                    return { ok: response.ok, status: response.status, text: text };
+                });
+            })
+            .then(result => {
+                if (result.ok) {
+                    try {
+                        const data = JSON.parse(result.text);
+                        showStatus(data.message || 'YAML格式验证通过', 'success');
+                    } catch (e) {
+                        showStatus('YAML格式验证通过', 'success');
+                    }
+                } else {
+                    try {
+                        const data = JSON.parse(result.text);
+                        showValidationError(data.message || 'YAML格式验证失败');
+                        showStatus(data.message || 'YAML格式验证失败', 'error');
+                    } catch (e) {
+                        showValidationError(result.text || 'YAML格式验证失败');
+                        showStatus('YAML格式验证失败', 'error');
+                    }
+                }
+            })
+            .catch(error => {
+                showValidationError('验证过程中发生网络错误: ' + error.message);
+                showStatus('YAML格式验证失败', 'error');
+            });
+        }
+        
+        // 点击空白处关闭错误提示
+        document.addEventListener('click', function(e) {
+            const errorElement = document.getElementById('validationError');
+            if (errorElement && errorElement.style.display === 'block' && 
+                !errorElement.contains(e.target) && 
+                e.target !== errorElement) {
+                errorElement.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>

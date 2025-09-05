@@ -242,9 +242,9 @@ body { font-family: 'Segoe UI', sans-serif; max-width:1200px;margin:20px auto;ba
 <td>
 {{ $stats := index $group.Stats.ProxyStats $proxy.Name }}
 {{if $stats}}
-{{if $stats.Alive}}<span class="status-alive">✅ 活跃</span>
+{{if and $stats.Alive (or (gt $stats.ResponseTime 0) (gt $stats.FailCount 0))}}<span class="status-alive">✅ 活跃</span>
 {{else if $stats.CooldownUntil.After $.Timestamp}}<span class="status-cooldown">🚫 冷却</span>
-{{else if and (not $stats.Alive) (or (not (eq $stats.ResponseTime 0)) (gt $stats.FailCount 0))}}<span class="status-dead">❌ 死亡</span>
+{{else if and (not $stats.Alive) (or (gt $stats.ResponseTime 0) (gt $stats.FailCount 0))}}<span class="status-dead">❌ 死亡</span>
 {{else}}<span class="status-unknown">⚪ 未测试</span>
 {{end}}
 {{else}}<span class="status-unknown">⚪ 未初始化</span>{{end}}

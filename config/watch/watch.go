@@ -12,6 +12,7 @@ import (
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/server"
 	httpclient "github.com/qist/tvgate/utils/http"
+	"github.com/qist/tvgate/web"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,7 +20,7 @@ import (
 	"time"
 )
 
-func WatchConfigFile(configPath string, mux *http.ServeMux) {
+func WatchConfigFile(configPath string) {
 	var httpCancel context.CancelFunc
 	var muxMu sync.Mutex
 	if configPath == "" {
@@ -139,6 +140,21 @@ func WatchConfigFile(configPath string, mux *http.ServeMux) {
 			newMux.Handle(jxPath, server.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				jxHandler.Handle(w, r)
 			})))
+			// 注册 Web 管理界面处理器
+			if config.Cfg.Web.Enabled {
+				webConfig := web.WebConfig{
+					Username: config.Cfg.Web.Username,
+					Password: config.Cfg.Web.Password,
+					Enabled:  config.Cfg.Web.Enabled,
+					Path:     config.Cfg.Web.Path,
+				}
+				configHandler := web.NewConfigHandler(webConfig)
+				configHandler.ServeMux(newMux)
+
+				webHandler := web.NewWebHandler(configHandler)
+				webHandler.ServeMux(newMux)
+			}
+
 			newMux.Handle("/", server.SecurityHeaders(http.HandlerFunc(h.Handler(client))))
 
 			ctx, cancel := context.WithCancel(context.Background())

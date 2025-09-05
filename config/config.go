@@ -68,6 +68,13 @@ type Config struct {
 		Path string `yaml:"path"` // 监控路径
 	} `yaml:"monitor"`
 
+	Web struct {
+		Enabled  bool   `yaml:"enabled"`  // 启用Web管理界面
+		Username string `yaml:"username"` // Web管理用户名
+		Password string `yaml:"password"` // Web管理密码
+		Path     string `yaml:"path"`     // Web管理路径，默认为/web/
+	} `yaml:"web"`
+
 	ProxyGroups map[string]*ProxyGroupConfig `yaml:"proxygroups"` // 代理组配置
 	JX          JXConfig                     `yaml:"jx"` // 视频解析配置
 	Reload      int                          `yaml:"reload"` // 添加 Reload 字段
