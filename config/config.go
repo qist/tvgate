@@ -3,22 +3,22 @@ package config
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"flag"
 	"sync"
 	"time"
-	"errors"
 )
 
 var (
-	ConfigFilePath    *string
-	VersionFlag       *bool
-	ServerCtx         context.Context
-	Cancel            context.CancelFunc
-	LogConfigMutex    sync.Mutex
-	Cfg               Config
-	CfgMu             sync.RWMutex
-	StartTime         time.Time // 程序启动时间
-	initOnce          sync.Once
+	ConfigFilePath *string
+	VersionFlag    *bool
+	ServerCtx      context.Context
+	Cancel         context.CancelFunc
+	LogConfigMutex sync.Mutex
+	Cfg            Config
+	CfgMu          sync.RWMutex
+	StartTime      time.Time // 程序启动时间
+	initOnce       sync.Once
 )
 
 func init() {
@@ -69,7 +69,30 @@ type Config struct {
 	} `yaml:"monitor"`
 
 	ProxyGroups map[string]*ProxyGroupConfig `yaml:"proxygroups"`
+	JX          JXConfig                     `yaml:"jx"`
 	Reload      int                          `yaml:"reload"` // 添加 Reload 字段
+}
+
+type JXConfig struct {
+	Path      string                          `yaml:"path"`
+	DefaultID string                          `yaml:"default_id"`
+	APIGroups map[string]*VideoAPIGroupConfig `yaml:"api_groups"`
+}
+
+// VideoAPIGroupConfig 视频解析接口组配置
+type VideoAPIGroupConfig struct {
+	Endpoints       []string          `yaml:"endpoints"`
+	Headers         map[string]string `yaml:"headers"`
+	Timeout         time.Duration     `yaml:"timeout"`
+	QueryTemplate   string            `yaml:"query_template"`
+	Primary         bool              `yaml:"primary"`
+	Weight          int               `yaml:"weight"`
+	Fallback        bool              `yaml:"fallback"`
+	MaxRetries      int               `yaml:"max_retries"`
+	Filters         map[string]string `yaml:"filters"`
+	Mapping         map[string]string `yaml:"mapping"`
+	TVIdRegex       string            `yaml:"tv_id_regex"`
+	InfoURLTemplate string            `yaml:"info_url_template"`
 }
 
 // ProxyGroupConfig 代理组配置

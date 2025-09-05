@@ -7,6 +7,7 @@ import (
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/update"
 	h "github.com/qist/tvgate/handler"
+	"github.com/qist/tvgate/jx"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/server"
@@ -122,6 +123,7 @@ func WatchConfigFile(configPath string, mux *http.ServeMux) {
 			}
 			// 2️⃣ 设置默认值
 			config.Cfg.SetDefaults()
+			jxHandler := jx.NewJXHandler(&config.Cfg.JX, logger.LogPrintf)
 			newMux := http.NewServeMux()
 			monitorPath := config.Cfg.Monitor.Path
 			if monitorPath == "" {
@@ -129,6 +131,14 @@ func WatchConfigFile(configPath string, mux *http.ServeMux) {
 			}
 			client := httpclient.NewHTTPClient(&config.Cfg, nil)
 			newMux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.Handler)))
+			// jx 路径
+			jxPath := config.Cfg.JX.Path
+			if jxPath == "" {
+				jxPath = "/jx"
+			}
+			newMux.Handle(jxPath, server.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				jxHandler.Handle(w, r)
+			})))
 			newMux.Handle("/", server.SecurityHeaders(http.HandlerFunc(h.Handler(client))))
 
 			ctx, cancel := context.WithCancel(context.Background())

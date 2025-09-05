@@ -14,6 +14,7 @@ import (
 	"github.com/qist/tvgate/config/watch"
 	"github.com/qist/tvgate/groupstats"
 	h "github.com/qist/tvgate/handler"
+	"github.com/qist/tvgate/jx"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/server"
@@ -59,7 +60,7 @@ func main() {
 		}
 	}
 	stopCleaner := make(chan struct{})
-	
+
 	go monitor.StartSystemStatsUpdater(30 * time.Second)
 
 	go clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
@@ -75,6 +76,7 @@ func main() {
 		MaxAgeDays: config.Cfg.Log.MaxAgeDays,
 		Compress:   config.Cfg.Log.Compress,
 	})
+	jxHandler := jx.NewJXHandler(&config.Cfg.JX, logger.LogPrintf)
 	mux := http.NewServeMux()
 	// 启动配置文件自动加载
 	go watch.WatchConfigFile(*config.ConfigFilePath, mux)
@@ -85,6 +87,14 @@ func main() {
 		monitorPath = "/status"
 	}
 	mux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.Handler)))
+	// jx 路径
+	jxPath := config.Cfg.JX.Path
+	if jxPath == "" {
+		jxPath = "/jx"
+	}
+	mux.Handle(jxPath, server.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jxHandler.Handle(w, r)
+	})))
 
 	mux.Handle("/", server.SecurityHeaders(http.HandlerFunc(h.Handler(client))))
 

@@ -20,6 +20,57 @@ server:
 monitor:
   path: "/status"   # 一个页面显示所有状态信息 添加 各个转发模块的监控 包代理组一起不显示代理 server port 账号密码等，在加入流量监控 monitor 模块新建目录里面去实现
 
+# jx 视频解析接口配置
+jx:
+  path: "/jx"           # jx 接口路径，可自定义，例如 /jx
+  default_id: "1"       # 默认集数，如果请求未传 id，则使用此值
+
+  # 多个视频 API 组配置，可以配置不同的视频源
+  api_groups:
+    # 爱奇艺 API 配置示例
+    iqiyi:
+      endpoints:
+        - "http://23.224.101.30"        # 主 API 地址
+        - "https://mozhuazy.com"     # 备用 API 地址
+      headers:                               # HTTP 请求头，可自定义
+        User-Agent: "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.25 Safari/537.36"
+        Referer: "https://www.iqiyi.com/"
+        Origin: "https://www.iqiyi.com"
+        Connection: "keep-alive"
+        Content-Type: "application/json; charset=utf-8"
+      timeout: 10s                             # 请求超时
+      query_template: "%s/api.php/provide/vod/?ac=detail&wd=%s"  # 查询 URL 模板，%s 会被替换为 endpoint 和搜索关键词
+      primary: true                            # 是否主 API
+      weight: 2                                # 权重，用于负载均衡
+      fallback: true                           # 是否可以作为备用 API
+      max_retries: 3                           # 请求失败重试次数
+      filters:
+        exclude: "电影解说"                     # 排除包含指定关键字的视频
+      mapping:
+        name: "vod_name"                        # 视频名称对应的 JSON 字段
+        playurl: "vod_play_url"                 # 播放地址对应的 JSON 字段
+      tv_id_regex: '"tvId":(.*?),'             # 正则提取 tvId
+      info_url_template: "https://pcw-api.iqiyi.com/video/video/baseinfo/%s"  # 获取视频信息 URL 模板
+
+    # # 其他视频 API 示例
+    # other_api:
+    #   endpoints:
+    #     - "https://mozhuazy.com"     # 备用 API 地址
+    #     - "http://23.224.101.30"        # 主 API 地址
+    #   headers:
+    #     User-Agent: "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.25 Safari/537.36"      # 自定义请求头
+    #   timeout: 5s                               # 请求超时
+    #   query_template: "%s/api.php/provide/vod/?ac=detail&wd=%s"  # 查询 URL 模板
+    #   primary: false                             # 是否主 API
+    #   weight: 1                                  # 权重
+    #   fallback: true                             # 是否备用 API
+    #   max_retries: 2                             # 最大重试次数
+    #   filters:
+    #     exclude: "不需要的内容"                   # 排除关键字
+    #   mapping:
+    #     name: "title"                             # 视频名称字段
+    #     playurl: "url"                            # 播放地址字段
+    
 log:
   # 是否输出日志
   enabled: true
