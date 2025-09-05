@@ -31,22 +31,22 @@ func init() {
 // Config 主配置结构
 type Config struct {
 	Server struct {
-		Port            int      `yaml:"port"`
-		CertFile        string   `yaml:"certfile"`
-		KeyFile         string   `yaml:"keyfile"`
-		SSLProtocols    string   `yaml:"ssl_protocols"`
-		SSLCiphers      string   `yaml:"ssl_ciphers"`
-		SSLECDHCurve    string   `yaml:"ssl_ecdh_curve"`
-		MulticastIfaces []string `yaml:"multicast_ifaces"`
+		Port            int      `yaml:"port"` 			  // 监听端口
+		CertFile        string   `yaml:"certfile"` 		  // TLS证书文件
+		KeyFile         string   `yaml:"keyfile"` 		  // TLS私钥文件
+		SSLProtocols    string   `yaml:"ssl_protocols"`  // 支持的TLS协议版本
+		SSLCiphers      string   `yaml:"ssl_ciphers"` 	  // 支持的TLS加密算法
+		SSLECDHCurve    string   `yaml:"ssl_ecdh_curve"` // 支持的TLS曲线
+		MulticastIfaces []string `yaml:"multicast_ifaces"` // 多播网卡列表
 	} `yaml:"server"`
 
 	Log struct {
-		Enabled    bool   `yaml:"enabled"`
-		File       string `yaml:"file"`
-		MaxSizeMB  int    `yaml:"maxsize"`
-		MaxBackups int    `yaml:"maxbackups"`
-		MaxAgeDays int    `yaml:"maxage"`
-		Compress   bool   `yaml:"compress"`
+		Enabled    bool   `yaml:"enabled"` 		  // 启用日志
+		File       string `yaml:"file"` 		  // 日志文件
+		MaxSizeMB  int    `yaml:"maxsize"` 		  // 日志文件最大大小
+		MaxBackups int    `yaml:"maxbackups"`  // 最大备份数量
+		MaxAgeDays int    `yaml:"maxage"` 		  // 最大保留天数
+		Compress   bool   `yaml:"compress"` 		  // 启用压缩
 	} `yaml:"log"`
 
 	HTTP struct {
@@ -68,31 +68,31 @@ type Config struct {
 		Path string `yaml:"path"` // 监控路径
 	} `yaml:"monitor"`
 
-	ProxyGroups map[string]*ProxyGroupConfig `yaml:"proxygroups"`
-	JX          JXConfig                     `yaml:"jx"`
+	ProxyGroups map[string]*ProxyGroupConfig `yaml:"proxygroups"` // 代理组配置
+	JX          JXConfig                     `yaml:"jx"` // 视频解析配置
 	Reload      int                          `yaml:"reload"` // 添加 Reload 字段
 }
 
 type JXConfig struct {
-	Path      string                          `yaml:"path"`
-	DefaultID string                          `yaml:"default_id"`
-	APIGroups map[string]*VideoAPIGroupConfig `yaml:"api_groups"`
+	Path      string                          `yaml:"path"` // 视频解析路径
+	DefaultID string                          `yaml:"default_id"` // 默认视频ID
+	APIGroups map[string]*VideoAPIGroupConfig `yaml:"api_groups"` // 视频API组配置
 }
 
 // VideoAPIGroupConfig 视频解析接口组配置
 type VideoAPIGroupConfig struct {
-	Endpoints       []string          `yaml:"endpoints"`
-	Headers         map[string]string `yaml:"headers"`
-	Timeout         time.Duration     `yaml:"timeout"`
-	QueryTemplate   string            `yaml:"query_template"`
-	Primary         bool              `yaml:"primary"`
-	Weight          int               `yaml:"weight"`
-	Fallback        bool              `yaml:"fallback"`
-	MaxRetries      int               `yaml:"max_retries"`
-	Filters         map[string]string `yaml:"filters"`
-	Mapping         map[string]string `yaml:"mapping"`
-	TVIdRegex       string            `yaml:"tv_id_regex"`
-	InfoURLTemplate string            `yaml:"info_url_template"`
+	Endpoints       []string          `yaml:"endpoints"` 	// API接口列表
+	Headers         map[string]string `yaml:"headers"`   // 自定义请求头
+	Timeout         time.Duration     `yaml:"timeout"`  // 请求超时
+	QueryTemplate   string            `yaml:"query_template"` // 查询模板
+	Primary         bool              `yaml:"primary"`  // 主API标记
+	Weight          int               `yaml:"weight"` // 权重
+	Fallback        bool              `yaml:"fallback"` // 备用API标记
+	MaxRetries      int               `yaml:"max_retries"` // 最大重试次数
+	Filters         map[string]string `yaml:"filters"` // 过滤条件
+	Mapping         map[string]string `yaml:"mapping"` // 映射
+	TVIdRegex       string            `yaml:"tv_id_regex"` // 电视ID正则表达式
+	InfoURLTemplate string            `yaml:"info_url_template"` // 电视信息URL模板
 }
 
 // ProxyGroupConfig 代理组配置
@@ -119,13 +119,13 @@ type GroupStats struct {
 
 // ProxyConfig 代理服务器配置
 type ProxyConfig struct {
-	Name     string            `yaml:"name"`
-	Type     string            `yaml:"type"`
-	Server   string            `yaml:"server"`
-	Port     int               `yaml:"port"`
-	UDP      bool              `yaml:"udp"`
-	Username string            `yaml:"username"`
-	Password string            `yaml:"password"`
+	Name     string            `yaml:"name"` 		// 代理名称
+	Type     string            `yaml:"type"` 		// 代理类型 (http, https, socks5, socks4)
+	Server   string            `yaml:"server"` 		// 代理地址 (IP或域名)
+	Port     int               `yaml:"port"` 		// 代理端口
+	UDP      bool              `yaml:"udp"` 		// UDP支持 (仅socks5)
+	Username string            `yaml:"username"`   	// 代理用户名 (可选)
+	Password string            `yaml:"password"`  	// 代理密码 (可选)
 	Headers  map[string]string `yaml:"headers"` // 添加自定义headers支持
 }
 
@@ -133,10 +133,10 @@ type ProxyConfig struct {
 type ProxyStats struct {
 	LastCheck     time.Time // 仅测速时更新
 	LastUsed      time.Time // 代理被用时更新
-	ResponseTime  time.Duration
-	Alive         bool
-	FailCount     int
-	CooldownUntil time.Time
+	ResponseTime  time.Duration // 响应时间
+	Alive         bool // 代理是否可用
+	FailCount     int // 测速失败次数
+	CooldownUntil time.Time // 冷却时间，防止频繁重试
 }
 
 // 全局定义测速结果结构体
