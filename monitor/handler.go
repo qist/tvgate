@@ -96,22 +96,47 @@ body { font-family: 'Segoe UI', sans-serif; max-width:1200px;margin:20px auto;ba
   <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
     <h3 style="margin-top: 0; color: #495057;">基础信息</h3>
     <ul style="list-style: none; padding: 0;">
+      <li style="padding: 5px 0;"><strong>操作系统:</strong> {{.TrafficStats.HostInfo.Platform}}</li>
+      <li style="padding: 5px 0;"><strong>内核版本:</strong> {{.TrafficStats.HostInfo.KernelVersion}}</li>
+      <li style="padding: 5px 0;"><strong>CPU架构:</strong> {{.TrafficStats.HostInfo.KernelArch}}</li>
       <li style="padding: 5px 0;"><strong>版本:</strong> {{.Version}}</li>
-      <li style="padding: 5px 0;"><strong>运行时间:</strong> {{.Uptime}}</li>
+      <li style="padding: 5px 0;"><strong>运行时间:</strong> 
+        {{$totalSeconds := .Uptime.Seconds}}
+        {{$days := float64ToInt64 (divFloat64 $totalSeconds 86400)}}
+        {{$hours := float64ToInt64 (divFloat64 (modFloat64 $totalSeconds 86400) 3600)}}
+        {{$minutes := float64ToInt64 (divFloat64 (modFloat64 $totalSeconds 3600) 60)}}
+        {{$seconds := float64ToInt64 (modFloat64 $totalSeconds 60)}}
+        {{if gt $days 0}}{{$days}}天{{end}}{{if gt $hours 0}}{{$hours}}小时{{end}}{{if gt $minutes 0}}{{$minutes}}分{{end}}{{$seconds}}秒
+      </li>
       <li style="padding: 5px 0;"><strong>Goroutines:</strong> {{.Goroutines}}</li>
       <li style="padding: 5px 0;"><strong>客户端IP:</strong> {{.ClientIP}}</li>
     </ul>
   </div>
   
   <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-    <h3 style="margin-top: 0; color: #495057;">CPU与内存</h3>
+    <h3 style="margin-top: 0; color: #495057;">网络流量</h3>
     <ul style="list-style: none; padding: 0;">
-      <li style="padding: 5px 0;"><strong>CPU 使用率:</strong> {{printf "%.2f%%" .TrafficStats.CPUUsage}}</li>
-      <li style="padding: 5px 0;"><strong>内存使用:</strong> {{FormatBytes .TrafficStats.MemoryUsage}}</li>
+      <li style="padding: 5px 0;"><strong>总流量:</strong> {{FormatBytes .TrafficStats.TotalBytes}}</li>
+      <li style="padding: 5px 0;"><strong>入口流量:</strong> {{FormatBytes .TrafficStats.InboundBytes}}</li>
+      <li style="padding: 5px 0;"><strong>出口流量:</strong> {{FormatBytes .TrafficStats.OutboundBytes}}</li>
+      <li style="padding: 5px 0;"><strong>实时总入带宽:</strong> {{FormatNetworkBandwidth .TrafficStats.InboundBandwidth}}</li>
+      <li style="padding: 5px 0;"><strong>实时总出带宽:</strong> {{FormatNetworkBandwidth .TrafficStats.OutboundBandwidth}}</li>
     </ul>
   </div>
   
-  <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); grid-column: auto / span 2;">
+  <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    <h3 style="margin-top: 0; color: #495057;">CPU与内存</h3>
+    <ul style="list-style: none; padding: 0;">
+      <li style="padding: 5px 0;"><strong>系统负载:</strong> {{printf "%.2f" .TrafficStats.LoadAverage.Load1}} / {{printf "%.2f" .TrafficStats.LoadAverage.Load5}} / {{printf "%.2f" .TrafficStats.LoadAverage.Load15}}</li>
+      <li style="padding: 5px 0;"><strong>CPU核心数:</strong> {{.TrafficStats.CPUCount}}</li> 
+	  <li style="padding: 5px 0;"><strong>CPU 使用率:</strong> {{printf "%.2f%%" .TrafficStats.CPUUsage}}</li>
+      <li style="padding: 5px 0;"><strong>内存使用:</strong> {{FormatBytes .TrafficStats.MemoryUsage}} / {{FormatBytes .TrafficStats.MemoryTotal}}</li>
+    </ul>
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+  <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
     <h3 style="margin-top: 0; color: #495057;">存储信息</h3>
     {{if .TrafficStats.DiskPartitions}}
     <table style="width: 100%; border-collapse: collapse;">
@@ -145,12 +170,31 @@ body { font-family: 'Segoe UI', sans-serif; max-width:1200px;margin:20px auto;ba
   </div>
   
   <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-    <h3 style="margin-top: 0; color: #495057;">网络流量</h3>
-    <ul style="list-style: none; padding: 0;">
-      <li style="padding: 5px 0;"><strong>总流量:</strong> {{FormatBytes .TrafficStats.TotalBytes}}</li>
-      <li style="padding: 5px 0;"><strong>入口流量:</strong> {{FormatBytes .TrafficStats.InboundBytes}}</li>
-      <li style="padding: 5px 0;"><strong>出口流量:</strong> {{FormatBytes .TrafficStats.OutboundBytes}}</li>
-    </ul>
+    <h3 style="margin-top: 0; color: #495057;">各网卡流量详情</h3>
+    {{if .TrafficStats.NetworkInterfaces}}
+    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+      <thead>
+        <tr style="background-color: #e9ecef;">
+          <th style="text-align: left; padding: 6px; border: 1px solid #dee2e6;">网卡</th>
+          <th style="text-align: left; padding: 6px; border: 1px solid #dee2e6;">接收</th>
+          <th style="text-align: left; padding: 6px; border: 1px solid #dee2e6;">发送</th>
+          <th style="text-align: left; padding: 6px; border: 1px solid #dee2e6;">接收带宽</th>
+          <th style="text-align: left; padding: 6px; border: 1px solid #dee2e6;">发送带宽</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .TrafficStats.NetworkInterfaces}}
+        <tr>
+          <td style="padding: 6px; border: 1px solid #dee2e6;">{{.Name}}</td>
+          <td style="padding: 6px; border: 1px solid #dee2e6;">{{FormatBytes .BytesRecv}}</td>
+          <td style="padding: 6px; border: 1px solid #dee2e6;">{{FormatBytes .BytesSent}}</td>
+          <td style="padding: 6px; border: 1px solid #dee2e6;">{{FormatNetworkBandwidth .RecvBandwidth}}</td>
+          <td style="padding: 6px; border: 1px solid #dee2e6;">{{FormatNetworkBandwidth .SendBandwidth}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{end}}
   </div>
 </div>
 
@@ -282,7 +326,33 @@ applyButtonUI();
 			}
 			return result
 		},
+		"modInt64": func(a int64, b int64) int64 {
+			if b != 0 {
+				return a % b
+			}
+			return 0
+		},
+		"divFloat64": func(a float64, b ...float64) float64 {
+			result := a
+			for _, v := range b {
+				if v != 0 {
+					result /= v
+				}
+			}
+			return result
+		},
+		"modFloat64": func(a float64, b float64) float64 {
+			if b != 0 {
+				return float64(int64(a) % int64(b))
+			}
+			return 0
+		},
+		"float64ToInt64": func(a float64) int64 {
+			return int64(a)
+		},
 		"FormatBytes": FormatBytes,
+		"FormatBytesPerSec": FormatBytesPerSec,
+		"FormatNetworkBandwidth": FormatNetworkBandwidth,
 	}).Parse(tmpl)
 
 	if err != nil {
@@ -307,6 +377,16 @@ func FormatBytes(b uint64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.2f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// 带宽格式化
+func FormatBytesPerSec(bytes uint64, _ uint64) string {
+	return FormatBytes(bytes) + "/s"
+}
+
+// 网络流量带宽格式化
+func FormatNetworkBandwidth(bytes uint64) string {
+	return FormatBytes(bytes) + "/s"
 }
 
 func prepareStatusData(r *http.Request) StatusData {
