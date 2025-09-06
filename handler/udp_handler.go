@@ -5,10 +5,10 @@ import (
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/stream"
-	"strconv"
-	"time"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
 func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
@@ -39,6 +39,12 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 		http.Error(w, "Failed to listen UDP: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// 确定连接类型 (从 prefix 取 "/udp/" 或 "/rtp/")
+	connectionType := "UDP"
+	if strings.HasPrefix(prefix, "/rtp/") {
+		connectionType = "RTP"
+	}
 	// 注册活跃客户端
 	clientIP := monitor.GetClientIP(r)
 	connID := clientIP + "_" + addr + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -46,16 +52,16 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 		IP:             clientIP,
 		URL:            addr,
 		UserAgent:      r.UserAgent(),
-		ConnectionType: "UDP",
+		ConnectionType: connectionType,
 		ConnectedAt:    time.Now(),
 		LastActive:     time.Now(),
 	})
-	defer monitor.ActiveClients.Unregister(connID)
+	defer monitor.ActiveClients.Unregister(connID,connectionType)
 
 	// 定义更新活跃时间的回调
 	updateActive := func() {
 		monitor.ActiveClients.UpdateLastActive(connID, time.Now())
 	}
 	logger.LogRequestAndResponse(r, addr, &http.Response{StatusCode: http.StatusOK})
-	hub.ServeHTTP(w, r, "application/octet-stream",updateActive)
+	hub.ServeHTTP(w, r, "application/octet-stream", updateActive)
 }

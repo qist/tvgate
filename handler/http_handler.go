@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
+	// "strconv"
 	"strings"
 	"time"
 
@@ -102,16 +102,16 @@ func Handler(client *http.Client) http.HandlerFunc {
 		}
 		// 注册活跃客户端
 		clientIP := monitor.GetClientIP(r)
-		connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+		connID := clientIP
 		monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
 			IP:             clientIP,
-			URL:            parsedURL.String(),
+			URL:            targetURL,
 			UserAgent:      r.UserAgent(),
-			ConnectionType: parsedURL.Scheme,
+			ConnectionType: strings.ToUpper(parsedURL.Scheme),
 			ConnectedAt:    time.Now(),
 			LastActive:     time.Now(),
 		})
-		defer monitor.ActiveClients.Unregister(connID)
+		defer monitor.ActiveClients.Unregister(connID, strings.ToUpper(parsedURL.Scheme))
 
 		// 构造直连请求
 		var originBody io.ReadCloser

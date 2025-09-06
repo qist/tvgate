@@ -70,7 +70,7 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		ConnectedAt:    time.Now(),
 		LastActive:     time.Now(),
 	})
-	defer monitor.ActiveClients.Unregister(connID)
+	defer monitor.ActiveClients.Unregister(connID,"RTSP")
 
 	transport := gortsplib.TransportTCP
 	client := &gortsplib.Client{

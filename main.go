@@ -36,7 +36,7 @@ func main() {
 	if err := load.LoadConfig(configPath); err != nil {
 		log.Fatalf("加载配置文件失败: %v", err)
 	}
-	
+
 	if *config.ConfigFilePath != "" {
 		err := load.LoadConfig(*config.ConfigFilePath)
 		if err != nil {
@@ -62,6 +62,8 @@ func main() {
 		}
 	}
 
+	go monitor.ActiveClients.StartCleaner(10*time.Second, 5*time.Second)
+
 	go monitor.StartSystemStatsUpdater(10 * time.Second)
 
 	stopCleaner := make(chan struct{})
@@ -83,7 +85,6 @@ func main() {
 	jxHandler := jx.NewJXHandler(&config.Cfg.JX)
 	mux := http.NewServeMux()
 
-	
 	// 启动配置文件自动加载
 	go watch.WatchConfigFile(*config.ConfigFilePath)
 
