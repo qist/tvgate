@@ -3,6 +3,8 @@ package handler
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -102,7 +104,10 @@ func Handler(client *http.Client) http.HandlerFunc {
 		}
 		// 注册活跃客户端
 		clientIP := monitor.GetClientIP(r)
-		connID := clientIP
+		raw := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+		h := md5.Sum([]byte(raw))
+		hashStr := hex.EncodeToString(h[:])
+		connID := clientIP + "_" + hashStr
 		monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
 			IP:             clientIP,
 			URL:            targetURL,
