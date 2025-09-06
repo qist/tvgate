@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
 	"io"
 	"net"
 	"net/http"
@@ -162,6 +163,9 @@ func (h *StreamHub) readLoop() {
 		data := append([]byte(nil), buf[:n]...)
 		h.BufPool.Put(buf)
 
+		// 统计入流量
+		monitor.AddAppInboundBytes(uint64(len(data)))
+
 		h.Mu.Lock()
 		h.LastFrame = data
 		h.Mu.Unlock()
@@ -229,6 +233,8 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 					return
 				}
 				flusher.Flush()
+				// 统计出流量
+				monitor.AddAppOutboundBytes(uint64(len(data)))
 				// 成功写入后更新活跃时间
 				if updateActive != nil {
 					updateActive()

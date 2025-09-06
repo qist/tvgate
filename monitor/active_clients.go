@@ -12,7 +12,7 @@ type ClientConnection struct {
 	URL            string
 	UserAgent      string
 	Referer        string
-	ConnectionType string // RTSP/HTTP/UDP
+	ConnectionType string // RTSP/HTTP/UDP/HTTPS
 	IsMobile       bool
 	ConnectedAt    time.Time
 	LastActive     time.Time
@@ -35,17 +35,18 @@ func (m *ActiveConnectionsManager) Register(connID string, conn *ClientConnectio
 	defer m.mu.Unlock()
 
 	conn.ID = connID
-
 	if existing, ok := m.conns[connID]; ok {
-		// 已存在，更新部分信息
+		// 已存在，更新
 		existing.URL = conn.URL
 		existing.UserAgent = conn.UserAgent
 		existing.Referer = conn.Referer
 		existing.ConnectionType = conn.ConnectionType
 		existing.IsMobile = conn.IsMobile
-		existing.LastActive = conn.LastActive
+		existing.LastActive = time.Now()
 	} else {
-		// 新连接，完整注册
+		// 新连接
+		conn.ConnectedAt = time.Now()
+		conn.LastActive = conn.ConnectedAt
 		m.conns[connID] = conn
 	}
 }
@@ -55,22 +56,22 @@ func (m *ActiveConnectionsManager) Unregister(connID string, connType string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// 对于 HTTP/HTTPS → 不立即删除，交给 Cleaner 处理
-	if connType == "HTTP" || connType == "HTTPS" {
-		if c, ok := m.conns[connID]; ok {
-			c.LastActive = time.Now()
+	if conn, ok := m.conns[connID]; ok {
+		if connType == "RTSP" || connType == "UDP" {
+			// RTSP/UDP → 立即删除
+			delete(m.conns, connID)
+		} else {
+			// HTTP/HTTPS → 更新最后活跃，等待 Cleaner 清理
+			conn.LastActive = time.Now()
 		}
-		return
 	}
-
-	// RTSP/UDP 立即删除
-	delete(m.conns, connID)
 }
 
 // GetAll 获取所有活跃客户端连接
 func (m *ActiveConnectionsManager) GetAll() []*ClientConnection {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
 	list := make([]*ClientConnection, 0, len(m.conns))
 	for _, c := range m.conns {
 		list = append(list, c)
@@ -96,6 +97,7 @@ func (m *ActiveConnectionsManager) GetConnectionsByIP(ip string) []*ClientConnec
 func (m *ActiveConnectionsManager) UpdateLastActive(connID string, t time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	if c, ok := m.conns[connID]; ok {
 		c.LastActive = t
 	}

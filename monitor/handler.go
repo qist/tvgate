@@ -121,8 +121,8 @@ body { font-family: 'Segoe UI', sans-serif; max-width:1200px;margin:20px auto;ba
       <li style="padding: 5px 0;"><strong>总流量:</strong> {{FormatBytes .TrafficStats.TotalBytes}}</li>
       <li style="padding: 5px 0;"><strong>入口流量:</strong> {{FormatBytes .TrafficStats.InboundBytes}}</li>
       <li style="padding: 5px 0;"><strong>出口流量:</strong> {{FormatBytes .TrafficStats.OutboundBytes}}</li>
-      <li style="padding: 5px 0;"><strong>实时总入带宽:</strong> {{FormatNetworkBandwidth .TrafficStats.InboundBandwidth}}</li>
-      <li style="padding: 5px 0;"><strong>实时总出带宽:</strong> {{FormatNetworkBandwidth .TrafficStats.OutboundBandwidth}}</li>
+      <li style="padding: 5px 0;"><strong>实时总带宽(入):</strong> {{FormatNetworkBandwidth .TrafficStats.InboundBandwidth}}</li>
+      <li style="padding: 5px 0;"><strong>实时总带宽(出):</strong> {{FormatNetworkBandwidth .TrafficStats.OutboundBandwidth}}</li>
     </ul>
   </div>
   
@@ -132,11 +132,25 @@ body { font-family: 'Segoe UI', sans-serif; max-width:1200px;margin:20px auto;ba
       <li style="padding: 5px 0;"><strong>系统负载:</strong> {{printf "%.2f" .TrafficStats.LoadAverage.Load1}} / {{printf "%.2f" .TrafficStats.LoadAverage.Load5}} / {{printf "%.2f" .TrafficStats.LoadAverage.Load15}}</li>
       <li style="padding: 5px 0;"><strong>CPU核心数:</strong> {{.TrafficStats.CPUCount}}</li> 
 	  <li style="padding: 5px 0;"><strong>CPU 使用率:</strong> {{printf "%.2f%%" .TrafficStats.CPUUsage}}</li>
-      <li style="padding: 5px 0;"><strong>内存使用:</strong> {{FormatBytes .TrafficStats.MemoryUsage}} / {{FormatBytes .TrafficStats.MemoryTotal}}</li>
+	  <li style="padding: 5px 0;"><strong>总内存:</strong> {{FormatBytes .TrafficStats.MemoryTotal}}</li>
+      <li style="padding: 5px 0;"><strong>内存使用:</strong> {{FormatBytes .TrafficStats.MemoryUsage}}</li>
+    </ul>
+  </div>
+  
+  <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    <h3 style="margin-top: 0; color: #495057;">TVGate监控</h3>
+    <ul style="list-style: none; padding: 0;">
+      <li style="padding: 5px 0;">
+    <strong>CPU:</strong> {{printf "%.2f%%" .TrafficStats.App.CPUPercent}}
+    <small style="color: #888; font-size: 10px;">（多核 CPU 时可能超过 100%）</small>
+       </li>
+      <li style="padding: 5px 0;"><strong>内存:</strong> {{FormatBytes .TrafficStats.App.MemoryUsage}}</li>
+	  <li style="padding: 5px 0;"><strong>总流量:</strong> {{FormatBytes .TrafficStats.App.TotalBytes}}</li>
+      <li style="padding: 5px 0;"><strong>流量入:</strong> {{FormatBytes .TrafficStats.App.InboundBytes}}</li>
+      <li style="padding: 5px 0;"><strong>流量出:</strong> {{FormatBytes .TrafficStats.App.OutboundBytes}}</li>
     </ul>
   </div>
 </div>
-
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
   <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
     <h3 style="margin-top: 0; color: #495057;">存储信息</h3>
@@ -392,10 +406,14 @@ func FormatNetworkBandwidth(bytes uint64) string {
 }
 
 func prepareStatusData(r *http.Request) StatusData {
+	// 内存统计
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
+
+	// 获取客户端 IP
 	clientIP := GetClientIP(r)
 
+	// 复制 ProxyGroups
 	config.CfgMu.RLock()
 	proxyGroups := make(map[string]*config.ProxyGroupConfig)
 	for name, group := range config.Cfg.ProxyGroups {
@@ -407,7 +425,11 @@ func prepareStatusData(r *http.Request) StatusData {
 		}
 		for i, p := range group.Proxies {
 			groupCopy.Proxies[i] = &config.ProxyConfig{
-				Name: p.Name, Type: p.Type, Server: p.Server, Port: 0, UDP: p.UDP,
+				Name:   p.Name,
+				Type:   p.Type,
+				Server: p.Server,
+				Port:   0,
+				UDP:    p.UDP,
 			}
 			if group.Stats != nil && group.Stats.ProxyStats != nil {
 				if stats, ok := group.Stats.ProxyStats[p.Name]; ok {
@@ -423,6 +445,9 @@ func prepareStatusData(r *http.Request) StatusData {
 	}
 	config.CfgMu.RUnlock()
 
+	// 获取系统与应用流量统计（深拷贝）
+	trafficStats := GlobalTrafficStats.GetTrafficStats()
+
 	return StatusData{
 		Timestamp:     time.Now(),
 		Uptime:        time.Since(config.StartTime),
@@ -430,7 +455,7 @@ func prepareStatusData(r *http.Request) StatusData {
 		Goroutines:    runtime.NumGoroutine(),
 		MemoryStats:   memStats,
 		ProxyGroups:   proxyGroups,
-		TrafficStats:  GlobalTrafficStats.GetTrafficStats(),
+		TrafficStats:  trafficStats, // 包含系统统计 + 应用统计
 		ClientIP:      clientIP,
 		ActiveClients: ActiveClients.GetAll(),
 	}

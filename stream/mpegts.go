@@ -10,6 +10,7 @@ import (
 	"github.com/pion/rtp"
 
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
 )
 
 func HandleMpegtsStream(
@@ -101,6 +102,8 @@ func HandleMpegtsStream(
 				if updateActive != nil {
 					updateActive()
 				}
+				// ⚡ 统计入流量
+				monitor.AddAppInboundBytes(uint64(len(pkt.Payload)))
 			})
 
 			_, err := client.Play(nil)
@@ -138,6 +141,8 @@ func HandleMpegtsStream(
 				logger.LogPrintf("Write error: %v", err)
 				return err
 			}
+			// ⚡ 统计出流量
+			monitor.AddAppOutboundBytes(uint64(len(pkt)))
 			if flusher != nil {
 				flusher.Flush()
 			}

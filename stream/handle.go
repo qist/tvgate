@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/utils/buffer"
 	"io"
 	"net/http"
@@ -223,6 +224,8 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []by
 		default:
 			n, readErr := src.Read(buf)
 			if n > 0 {
+				// 更新全局 App 流量统计（线程安全）
+				monitor.AddAppInboundBytes(uint64(n))
 				written := 0
 				for written < n {
 					wn, writeErr := dst.Write(buf[written:n])
@@ -231,7 +234,7 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []by
 					}
 					written += wn
 				}
-
+				monitor.AddAppOutboundBytes(uint64(n))
 				// 强制刷新（流式传输时推荐）
 				if f, ok := dst.(http.Flusher); ok {
 					f.Flush()

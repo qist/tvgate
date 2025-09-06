@@ -16,6 +16,7 @@ import (
 	"github.com/pion/rtp"
 
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/utils/buffer"
 )
 
@@ -231,6 +232,7 @@ func HandleH264AacStream(
 			)
 			naluWaitCount := 0
 			client.OnPacketRTP(videoMedia, videoFormat, func(pkt *rtp.Packet) {
+				monitor.AddAppInboundBytes(uint64(len(pkt.Payload)))
 				nalus, err := vDecoder.Decode(pkt)
 				if err != nil || len(nalus) == 0 {
 					naluWaitCount++
@@ -294,6 +296,8 @@ func HandleH264AacStream(
 				aDecoder, _ := audioFormat.CreateDecoder()
 				var audioDropCount int64 // 添加音频丢包计数器
 				client.OnPacketRTP(audioMedia, audioFormat, func(pkt *rtp.Packet) {
+					// ⚡ 入流量统计
+					monitor.AddAppInboundBytes(uint64(len(pkt.Payload)))
 					aus, err := aDecoder.Decode(pkt)
 					if err != nil || len(aus) == 0 {
 						audioDropCount++
@@ -359,6 +363,8 @@ func HandleH264AacStream(
 			// 向所有客户端广播数据
 			for pkt := range tsChan {
 				hub.Broadcast(pkt)
+				// ⚡ 出流量统计
+				monitor.AddAppOutboundBytes(uint64(len(pkt)))
 				// 更新活跃时间
 				if updateActive != nil {
 					updateActive()
@@ -427,6 +433,8 @@ func HandleH264AacStream(
 					logger.LogPrintf("Write error: %v", err)
 					return err
 				}
+				// ⚡ 出流量统计
+				monitor.AddAppOutboundBytes(uint64(n))
 				if flusher != nil {
 					flusher.Flush()
 				}
