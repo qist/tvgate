@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -20,10 +21,12 @@
             background-color: #1e1e1e;
             color: #d4d4d4;
         }
+
         .container {
             max-width: 1200px;
             margin: 0 auto;
         }
+
         .header {
             display: flex;
             justify-content: space-between;
@@ -32,19 +35,23 @@
             padding-bottom: 10px;
             border-bottom: 1px solid #3c3c3c;
         }
+
         .title {
             color: #ffffff;
             margin: 0;
         }
+
         .nav-links {
             display: flex;
             gap: 10px;
         }
+
         .toolbar {
             display: flex;
             gap: 10px;
             margin-bottom: 15px;
         }
+
         .btn {
             padding: 8px 16px;
             background-color: #007acc;
@@ -55,53 +62,66 @@
             font-size: 14px;
             transition: background-color 0.3s;
         }
+
         .btn:hover {
             background-color: #005a9e;
         }
+
         .btn.validate {
             background-color: #4caf50;
         }
+
         .btn.validate:hover {
             background-color: #388e3c;
         }
+
         .btn.format {
             background-color: #ff9800;
         }
+
         .btn.format:hover {
             background-color: #f57c00;
         }
+
         .btn.group {
             background-color: #9c27b0;
         }
+
         .btn.group:hover {
             background-color: #7b1fa2;
         }
+
         .status {
             padding: 10px;
             margin-bottom: 15px;
             border-radius: 4px;
             display: none;
         }
+
         .status.info {
             background-color: #1e3a5f;
             color: #4fc3f7;
             border: 1px solid #4fc3f7;
         }
+
         .status.success {
             background-color: #2e7d32;
             color: #a5d6a7;
             border: 1px solid #a5d6a7;
         }
+
         .status.error {
             background-color: #c62828;
             color: #ffcdd2;
             border: 1px solid #ffcdd2;
         }
+
         .editor-container {
             border: 1px solid #3c3c3c;
             border-radius: 4px;
             overflow: hidden;
         }
+
         .help-text {
             margin-top: 20px;
             padding: 15px;
@@ -109,16 +129,21 @@
             border-radius: 4px;
             border: 1px solid #3c3c3c;
         }
+
         .help-text h3 {
             margin-top: 0;
+            margin-bottom: 10px;
             color: #ffffff;
         }
+
         .help-text ul {
             padding-left: 20px;
         }
+
         .help-text li {
             margin-bottom: 8px;
         }
+
         .help-text kbd {
             background-color: #3c3c3c;
             padding: 2px 6px;
@@ -126,25 +151,30 @@
             border: 1px solid #555;
             font-family: monospace;
         }
+
         .help-text p {
             margin-top: 15px;
             color: #ffa500;
             font-weight: bold;
         }
+
         .footer-links {
             margin-top: 20px;
             text-align: center;
             padding-top: 15px;
             border-top: 1px solid #3c3c3c;
         }
+
         .footer-links a {
             color: #4fc3f7;
             text-decoration: none;
             margin: 0 10px;
         }
+
         .footer-links a:hover {
             text-decoration: underline;
         }
+
         .node-selector {
             background-color: #2d2d30;
             padding: 15px;
@@ -152,16 +182,19 @@
             margin-bottom: 15px;
             border: 1px solid #3c3c3c;
         }
+
         .node-selector h3 {
             margin-top: 0;
             margin-bottom: 10px;
             color: #ffffff;
         }
+
         .node-list {
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
         }
+
         .node-item {
             padding: 8px 16px;
             background-color: #3c3c3c;
@@ -171,16 +204,19 @@
             cursor: pointer;
             transition: all 0.2s ease;
         }
+
         .node-item:hover {
             background-color: #007acc;
             color: white;
             border-color: #007acc;
         }
+
         .node-item.active {
             background-color: #007acc;
             color: white;
             border-color: #007acc;
         }
+
         .group-selector {
             background-color: #2d2d30;
             padding: 15px;
@@ -189,16 +225,19 @@
             border: 1px solid #3c3c3c;
             display: none;
         }
+
         .group-selector h3 {
             margin-top: 0;
             margin-bottom: 10px;
             color: #ffffff;
         }
+
         .group-list {
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
         }
+
         .group-item {
             padding: 8px 16px;
             background-color: #3c3c3c;
@@ -208,16 +247,19 @@
             cursor: pointer;
             transition: all 0.2s ease;
         }
+
         .group-item:hover {
             background-color: #9c27b0;
             color: white;
             border-color: #9c27b0;
         }
+
         .group-item.active {
             background-color: #9c27b0;
             color: white;
             border-color: #9c27b0;
         }
+
         .validation-error {
             position: fixed;
             top: 50%;
@@ -233,6 +275,7 @@
             max-height: 80%;
             overflow: auto;
         }
+
         .validation-error-header {
             display: flex;
             justify-content: space-between;
@@ -241,11 +284,13 @@
             padding-bottom: 10px;
             border-bottom: 1px solid #3c3c3c;
         }
+
         .validation-error-header span {
             font-weight: bold;
             color: #c62828;
             font-size: 18px;
         }
+
         .close-error {
             background: none;
             border: none;
@@ -253,17 +298,295 @@
             font-size: 24px;
             cursor: pointer;
         }
+
         .close-error:hover {
             color: #c62828;
         }
+
         .error-content {
             color: #d4d4d4;
             white-space: pre-wrap;
             font-family: monospace;
             font-size: 14px;
         }
+
+        /* 弹窗样式 */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1001;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+        }
+
+        .modal-content {
+            background-color: #2d2d30;
+            margin: 2% auto;
+            padding: 20px;
+            border: 1px solid #3c3c3c;
+            border-radius: 5px;
+            width: 90%;
+            max-width: 800px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #3c3c3c;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            color: #ffffff;
+        }
+
+        .close-modal {
+            color: #aaa;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close-modal:hover {
+            color: #fff;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #ffffff;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 8px;
+            background-color: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            color: #d4d4d4;
+            box-sizing: border-box;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+        }
+
+        .btn-primary {
+            background-color: #007acc;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .btn-primary:hover {
+            background-color: #005a9e;
+        }
+
+        .btn-danger {
+            background-color: #c62828;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .btn-danger:hover {
+            background-color: #a01e1e;
+        }
+
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .btn-secondary:hover {
+            background-color: #5a6268;
+        }
+
+        .header-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .header-item .form-control {
+            flex: 1;
+            margin-right: 10px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 5px;
+        }
+
+        .header-actions button {
+            padding: 5px 10px;
+            background-color: #007acc;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .header-actions button.remove {
+            background-color: #c62828;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .proxy-item {
+            background-color: #3c3c3c;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            border: 1px solid #555;
+        }
+
+        .proxy-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #555;
+        }
+
+        .proxy-header h4 {
+            margin: 0;
+            color: #ffffff;
+        }
+
+        .proxy-actions {
+            display: flex;
+            gap: 5px;
+        }
+
+        .proxy-actions button {
+            padding: 5px 10px;
+            background-color: #007acc;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .proxy-actions button.remove {
+            background-color: #c62828;
+        }
+
+        .section-title {
+            color: #ffffff;
+            border-bottom: 1px solid #3c3c3c;
+            padding-bottom: 5px;
+            margin: 20px 0 15px 0;
+        }
+
+        .domain-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .domain-item .form-control {
+            flex: 1;
+            margin-right: 10px;
+        }
+
+        .domain-actions {
+            display: flex;
+            gap: 5px;
+        }
+
+        .domain-actions button {
+            padding: 5px 10px;
+            background-color: #007acc;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .domain-actions button.remove {
+            background-color: #c62828;
+        }
+
+        .form-group-inline {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .form-group-inline label {
+            color: #ffffff;
+            min-width: 120px;
+        }
+
+        .form-group-inline .form-control {
+            flex: 1;
+        }
+
+        .form-group-inline select {
+            flex: 1;
+            padding: 8px;
+            background-color: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            color: #d4d4d4;
+        }
+
+        .form-group-inline input[type="checkbox"] {
+            width: auto;
+        }
+
+        /* 编辑代理节点弹窗 */
+        .edit-proxy-modal .modal-content {
+            max-width: 600px;
+        }
     </style>
 </head>
+
 <body>
     <div class="container">
         <div class="header">
@@ -282,7 +605,11 @@
         </div>
 
         <div class="group-selector" id="group-selector">
-            <h3>选择组</h3>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin: 0;">选择组</h3>
+                <button class="btn group" id="add-group-btn" style="display: none; margin-left: 10px;"
+                    onclick="openAddGroupModal()">添加代理组</button>
+            </div>
             <div class="group-list" id="group-list">
                 <!-- 组列表将通过JavaScript动态生成 -->
             </div>
@@ -293,6 +620,8 @@
             <button class="btn" onclick="loadConfig()">重新加载 (Ctrl+R)</button>
             <button class="btn validate" onclick="validateYaml()">验证格式 (Ctrl+Shift+V)</button>
             <button class="btn format" onclick="formatYaml()">格式化 (Ctrl+Shift+F)</button>
+            <button class="btn group" id="add-proxy-btn" style="display: none;"
+                onclick="openAddProxyModal()">添加代理节点</button>
         </div>
 
         <div id="status" class="status"></div>
@@ -319,6 +648,234 @@
         </div>
     </div>
 
+    <!-- 添加代理组的弹窗 -->
+    <div id="addGroupModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>添加代理组</h2>
+                <span class="close-modal" onclick="closeAddGroupModal()">&times;</span>
+            </div>
+            <form id="addGroupForm">
+                <div class="form-group">
+                    <label for="groupName">组名称 *</label>
+                    <input type="text" id="groupName" class="form-control" placeholder="例如: 蜀小果" required>
+                </div>
+
+                <h3 class="section-title">代理节点</h3>
+                <div id="proxiesContainer">
+                    <!-- 代理节点将通过JavaScript动态添加 -->
+                </div>
+                <button type="button" class="btn" onclick="addProxyField()">+ 添加代理节点</button>
+
+                <h3 class="section-title">域名规则</h3>
+                <div id="domainsContainer">
+                    <!-- 域名规则将通过JavaScript动态添加 -->
+                </div>
+                <button type="button" class="btn" onclick="addDomainField()">+ 添加域名规则</button>
+
+                <h3 class="section-title">其他配置</h3>
+                <div class="form-group-inline">
+                    <label for="interval">检查间隔</label>
+                    <input type="text" id="interval" class="form-control" value="180s" placeholder="例如: 180s">
+                </div>
+
+                <div class="form-group-inline">
+                    <label for="ipv6">IPv6支持</label>
+                    <select id="ipv6" class="form-control">
+                        <option value="false">关闭</option>
+                        <option value="true">开启</option>
+                    </select>
+                </div>
+
+                <div class="form-group-inline">
+                    <label for="loadbalance">负载均衡</label>
+                    <select id="loadbalance" class="form-control">
+                        <option value="round-robin">轮询 (round-robin)</option>
+                        <option value="fastest">最快优先 (fastest)</option>
+                    </select>
+                </div>
+
+                <div class="form-group-inline">
+                    <label for="maxRetries">最大重试次数</label>
+                    <select id="maxRetries" class="form-control">
+                        <option value="1">1次</option>
+                        <option value="2">2次</option>
+                        <option value="3" selected>3次</option>
+                        <option value="4">4次</option>
+                        <option value="5">5次</option>
+                    </select>
+                </div>
+
+                <div class="form-group-inline">
+                    <label for="retryDelay">重试延迟</label>
+                    <input type="text" id="retryDelay" class="form-control" value="1s" placeholder="例如: 1s">
+                </div>
+
+                <div class="form-group-inline">
+                    <label for="maxRt">最大响应时间</label>
+                    <input type="text" id="maxRt" class="form-control" value="100ms" placeholder="例如: 100ms">
+                </div>
+
+                <div class="form-group">
+                    <button type="button" class="btn-primary" onclick="addProxyGroup()">添加组</button>
+                    <button type="button" class="btn-danger" onclick="closeAddGroupModal()">取消</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 添加代理节点的弹窗 -->
+    <div id="addProxyModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>添加代理节点</h2>
+                <span class="close-modal" onclick="closeAddProxyModal()">&times;</span>
+            </div>
+            <form id="addGroupForm">
+                <div class="form-group">
+                    <label for="groupName">组名称 *</label>
+                    <input type="text" id="groupName" class="form-control" placeholder="例如: 蜀小果"
+                        oninput="updateProxyNames()" required>
+                </div>
+            </form>
+            <form id="addProxyForm">
+                <div class="form-group">
+                    <label for="proxyName">节点名称 *</label>
+                    <input type="text" id="proxyName" class="form-control" placeholder="例如: 服务器1" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="proxyType">代理类型 *</label>
+                    <select id="proxyType" class="form-control" onchange="toggleProxyFields()">
+                        <option value="socks5">socks5</option>
+                        <option value="socks4">socks4</option>
+                        <option value="socks4a">socks4a</option>
+                        <option value="http">http</option>
+                        <option value="https">https</option>
+                    </select>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="proxyServer">服务器地址 *</label>
+                        <input type="text" id="proxyServer" class="form-control" placeholder="IP地址或域名" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="proxyPort">端口 *</label>
+                        <input type="number" id="proxyPort" class="form-control" placeholder="端口号" min="1" max="65535"
+                            required>
+                    </div>
+                </div>
+
+                <div class="form-group" id="udpField">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="proxyUdp">
+                        <label for="proxyUdp">启用UDP支持 (仅socks5)</label>
+                    </div>
+                </div>
+
+                <div class="form-group hidden" id="authFields">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="proxyUsername">用户名 (可选)</label>
+                            <input type="text" id="proxyUsername" class="form-control" placeholder="账号">
+                        </div>
+                        <div class="form-group">
+                            <label for="proxyPassword">密码 (可选)</label>
+                            <input type="password" id="proxyPassword" class="form-control" placeholder="密码">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group hidden" id="headersFields">
+                    <label>自定义Headers (可选)</label>
+                    <div id="headersContainer">
+                        <!-- Headers项将通过JavaScript动态添加 -->
+                    </div>
+                    <button type="button" class="btn" onclick="addHeaderField()">+ 添加Header</button>
+                </div>
+
+                <div class="form-group">
+                    <button type="button" class="btn-primary" onclick="addProxyNode()">添加节点</button>
+                    <button type="button" class="btn-danger" onclick="closeAddProxyModal()">取消</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 编辑代理节点的弹窗 -->
+    <div id="editProxyModal" class="modal edit-proxy-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>编辑代理节点</h2>
+                <span class="close-modal" onclick="closeEditProxyModal()">&times;</span>
+            </div>
+            <form id="editProxyForm">
+                <input type="hidden" id="editProxyIndex">
+                <div class="form-group">
+                    <label for="editProxyName">节点名称 *</label>
+                    <input type="text" id="editProxyName" class="form-control" placeholder="例如: 服务器1" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="editProxyType">代理类型 *</label>
+                    <select id="editProxyType" class="form-control" onchange="toggleEditProxyFields()">
+                        <option value="socks5">socks5</option>
+                        <option value="socks4">socks4</option>
+                        <option value="socks4a">socks4a</option>
+                        <option value="http">http</option>
+                        <option value="https">https</option>
+                    </select>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="editProxyServer">服务器地址 *</label>
+                        <input type="text" id="editProxyServer" class="form-control" placeholder="IP地址或域名" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editProxyPort">端口 *</label>
+                        <input type="number" id="editProxyPort" class="form-control" placeholder="端口号" min="1"
+                            max="65535" required>
+                    </div>
+                </div>
+
+                <div class="form-group" id="editUdpField">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="editProxyUdp">
+                        <label for="editProxyUdp">启用UDP支持 (仅socks5)</label>
+                    </div>
+                </div>
+
+                <div class="form-group hidden" id="editAuthFields">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="editProxyUsername">用户名 (可选)</label>
+                            <input type="text" id="editProxyUsername" class="form-control" placeholder="账号">
+                        </div>
+                        <div class="form-group">
+                            <label for="editProxyPassword">密码 (可选)</label>
+                            <input type="password" id="editProxyPassword" class="form-control" placeholder="密码">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group hidden" id="editHeadersFields">
+                    <label>自定义Headers (可选)</label>
+                    <div id="editHeadersContainer">
+                        <!-- Headers项将通过JavaScript动态添加 -->
+                    </div>
+                    <button type="button" class="btn" onclick="addEditHeaderField()">+ 添加Header</button>
+                </div>
+
+                <div class="form-group">
+                    <button type="button" class="btn-primary" onclick="updateProxyNode()">更新节点</button>
+                    <button type="button" class="btn-danger" onclick="closeEditProxyModal()">取消</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <div class="validation-error" id="validationError">
         <div class="validation-error-header">
             <span>YAML 验证错误</span>
@@ -335,7 +892,7 @@
         let groupType = "";
         let fullConfig = null;
         let rawConfigData = "";
-        
+
         // 初始化CodeMirror编辑器
         const editor = CodeMirror.fromTextArea(document.getElementById("editor"), {
             mode: "text/yaml",
@@ -350,31 +907,31 @@
             indentWithTabs: false,
             lineWrapping: true
         });
-        
+
         // 添加快捷键支持
         editor.setOption("extraKeys", {
-            "Ctrl-S": function(cm) {
+            "Ctrl-S": function (cm) {
                 saveConfig();
             },
-            "Ctrl-R": function(cm) {
+            "Ctrl-R": function (cm) {
                 loadConfig();
             },
-            "Ctrl-Q": function(cm) {
+            "Ctrl-Q": function (cm) {
                 toggleComment();
             },
-            "Ctrl-Shift-V": function(cm) {
+            "Ctrl-Shift-V": function (cm) {
                 validateYaml();
             },
-            "Ctrl-Shift-F": function(cm) {
+            "Ctrl-Shift-F": function (cm) {
                 formatYaml();
             }
         });
-        
+
         // 页面加载完成后初始化
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', function () {
             // 加载配置（这将动态更新节点选择器）
             loadConfig();
-            
+
             // 如果currentNode为默认值"server"，确保加载其配置
             if (currentNode === "server") {
                 setTimeout(() => {
@@ -382,7 +939,7 @@
                 }, 100);
             }
         });
-        
+
         // YAML linting function for CodeMirror
         function yamlLint(text) {
             const found = [];
@@ -400,14 +957,14 @@
             }
             return found;
         }
-        
+
         // 显示状态信息
         function showStatus(message, type) {
             const statusEl = document.getElementById('status');
             statusEl.textContent = message;
             statusEl.className = 'status ' + type;
             statusEl.style.display = 'block';
-            
+
             // 3秒后自动隐藏成功和信息提示
             if (type === 'success' || type === 'info') {
                 setTimeout(() => {
@@ -415,46 +972,46 @@
                 }, 3000);
             }
         }
-        
+
         // 隐藏状态信息
         function hideStatus() {
             document.getElementById('status').style.display = 'none';
         }
-        
+
         // 显示验证错误
         function showValidationError(message) {
             const errorElement = document.getElementById('validationError');
             const errorContentElement = document.getElementById('errorContent');
-            
+
             errorContentElement.textContent = message;
             errorElement.style.display = 'block';
         }
-        
+
         // 关闭验证错误提示
         function closeValidationError() {
             document.getElementById('validationError').style.display = 'none';
         }
-        
+
         // 切换注释
         function toggleComment() {
             editor.toggleComment();
         }
-        
+
         // 格式化YAML（简化版本，避免使用js-yaml导致注释丢失）
         function formatYaml() {
             const configContent = editor.getValue();
-            
+
             if (!configContent.trim()) {
                 showStatus('配置内容不能为空', 'error');
                 return;
             }
-            
+
             try {
                 // 使用正则表达式进行简单的格式化，保留注释
                 let formattedContent = configContent;
-                
+
                 // 确保缩进一致（2个空格）
-                formattedContent = formattedContent.replace(/^(\s+)/gm, function(match) {
+                formattedContent = formattedContent.replace(/^(\s+)/gm, function (match) {
                     // 将制表符转换为空格
                     match = match.replace(/\t/g, '  ');
                     // 确保缩进是2的倍数
@@ -462,12 +1019,12 @@
                     const newSpaces = Math.ceil(spaces / 2) * 2;
                     return ' '.repeat(newSpaces);
                 });
-                
+
                 // 在列表项后添加空行（简单处理）
-                formattedContent = formattedContent.replace(/^(\s*)(- .*)$/gm, function(match, indent, item) {
+                formattedContent = formattedContent.replace(/^(\s*)(- .*)$/gm, function (match, indent, item) {
                     return match;
                 });
-                
+
                 editor.setValue(formattedContent);
                 showStatus('YAML格式化完成（简化版，保留注释）', 'success');
             } catch (e) {
@@ -475,81 +1032,81 @@
                 showStatus('YAML格式化失败: ' + e.message, 'error');
             }
         }
-        
+
         // 加载配置文件内容
         function loadConfig() {
             showStatus('正在加载配置...', 'info');
-            
+
             fetch(webPath + 'config', {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'text/plain; charset=utf-8'
                 }
             })
-            .then(response => {
-                if (!response.ok) {
-                    if (response.status === 401) {
-                        // 未授权，重定向到登录页面
-                        window.location.href = webPath + 'login';
-                        return;
+                .then(response => {
+                    if (!response.ok) {
+                        if (response.status === 401) {
+                            // 未授权，重定向到登录页面
+                            window.location.href = webPath + 'login';
+                            return;
+                        }
+                        throw new Error('网络响应异常 ' + response.status);
                     }
-                    throw new Error('网络响应异常 ' + response.status);
-                }
-                return response.text();
-            })
-            .then(data => {
-                if (!data) {
-                    throw new Error('配置数据为空');
-                }
-                
-                // 保存原始配置内容
-                rawConfigData = data;
-                
-                try {
-                    // 解析完整的配置
-                    fullConfig = jsyaml.load(data);
-                } catch (parseError) {
-                    console.error('解析配置失败:', parseError);
-                    throw new Error('配置解析失败: ' + parseError.message);
-                }
-                
-                // 更新节点选择器
-                updateNodeSelector();
-                
-                // 加载当前节点的配置
-                if (currentNode) {
-                    // 延迟加载以确保节点选择器已更新
-                    setTimeout(() => {
-                        loadNodeConfig();
-                    }, 50);
-                } else if (fullConfig) {
-                    // 如果没有当前节点但有配置数据，尝试加载第一个可用节点
-                    const firstNode = Object.keys(fullConfig)[0];
-                    if (firstNode) {
-                        currentNode = firstNode;
+                    return response.text();
+                })
+                .then(data => {
+                    if (!data) {
+                        throw new Error('配置数据为空');
+                    }
+
+                    // 保存原始配置内容
+                    rawConfigData = data;
+
+                    try {
+                        // 解析完整的配置
+                        fullConfig = jsyaml.load(data);
+                    } catch (parseError) {
+                        console.error('解析配置失败:', parseError);
+                        throw new Error('配置解析失败: ' + parseError.message);
+                    }
+
+                    // 更新节点选择器
+                    updateNodeSelector();
+
+                    // 加载当前节点的配置
+                    if (currentNode) {
+                        // 延迟加载以确保节点选择器已更新
                         setTimeout(() => {
                             loadNodeConfig();
                         }, 50);
+                    } else if (fullConfig) {
+                        // 如果没有当前节点但有配置数据，尝试加载第一个可用节点
+                        const firstNode = Object.keys(fullConfig)[0];
+                        if (firstNode) {
+                            currentNode = firstNode;
+                            setTimeout(() => {
+                                loadNodeConfig();
+                            }, 50);
+                        }
                     }
-                }
-                
-                showStatus('配置加载成功', 'success');
-                
-                // 如果有当前组，延迟加载组配置（确保组选择器已初始化）
-                if (currentGroup && (currentNode === 'jx' || currentNode === 'proxygroups')) {
-                    setTimeout(() => {
-                        loadGroupConfig(currentGroup);
-                        // 更新组选择器的选中状态
-                        updateGroupSelector();
-                    }, 100);
-                }
-            })
-            .catch(error => {
-                console.error('加载配置失败:', error);
-                showStatus('加载配置失败: ' + error.message, 'error');
-            });
+
+                    showStatus('配置加载成功', 'success');
+
+                    // 如果有当前组，延迟加载组配置（确保组选择器已初始化）
+                    if (currentGroup && (currentNode === 'jx' || currentNode === 'proxygroups')) {
+                        setTimeout(() => {
+                            loadGroupConfig(currentGroup);
+                            // 更新组选择器的选中状态
+                            updateGroupSelector();
+                        }, 100);
+                    }
+                })
+                .catch(error => {
+                    console.error('加载配置失败:', error);
+                    showStatus('加载配置失败: ' + error.message, 'error');
+                });
         }
-        
+
         // 更新节点选择器
         function updateNodeSelector() {
             const nodeList = document.getElementById('node-list');
@@ -557,10 +1114,10 @@
                 console.error('无法找到节点列表元素');
                 return;
             }
-            
+
             // 清空节点列表
             nodeList.innerHTML = '';
-            
+
             // 从配置中提取节点列表
             const nodes = [];
             if (fullConfig) {
@@ -570,24 +1127,24 @@
                     }
                 }
             }
-            
+
             // 如果没有从配置中提取到节点，则使用默认节点列表
             if (nodes.length === 0) {
                 nodes.push('server', 'log', 'http', 'monitor', 'web', 'jx', 'proxygroups');
             }
-            
+
             // 添加节点选项
             nodes.forEach(nodeName => {
                 const nodeItem = document.createElement('div');
                 nodeItem.className = 'node-item' + (currentNode === nodeName ? ' active' : '');
                 nodeItem.textContent = nodeName;
                 nodeItem.setAttribute('data-node', nodeName);
-                nodeItem.onclick = function() {
+                nodeItem.onclick = function () {
                     selectNode(nodeName);
                 };
                 nodeList.appendChild(nodeItem);
             });
-            
+
             // 如果有当前节点，设置选中状态
             if (currentNode) {
                 const selectedItem = document.querySelector(`.node-item[data-node="${currentNode}"]`);
@@ -604,44 +1161,46 @@
                 selectNode(nodes[0]);
             }
         }
-        
+
         // 节点选择处理
         function selectNode(nodeName) {
             // 更新当前节点
             currentNode = nodeName;
-            
+
             // 取消所有节点项的active类
             document.querySelectorAll('.node-item').forEach(item => {
                 item.classList.remove('active');
             });
-            
+
             // 为当前节点项添加active类
             const selectedItem = document.querySelector(`.node-item[data-node="${nodeName}"]`);
             if (selectedItem) {
                 selectedItem.classList.add('active');
             }
-            
+
             // 重置当前组
             currentGroup = null;
             groupType = "";
-            
+
             // 加载节点配置
             loadNodeConfig();
         }
-        
+
         // 显示组选择器
         function showGroupSelector() {
             const groupSelector = document.getElementById('group-selector');
             const groupList = document.getElementById('group-list');
-            
+            const addProxyBtn = document.getElementById('add-proxy-btn');
+            const addGroupBtn = document.getElementById('add-group-btn');
+
             if (!groupSelector || !groupList) {
                 console.error('无法找到组选择器元素');
                 return;
             }
-            
+
             // 清空组列表
             groupList.innerHTML = '';
-            
+
             // 根据节点类型加载组
             let groups = {};
             if (currentNode === 'jx' && fullConfig && fullConfig.jx && fullConfig.jx.api_groups) {
@@ -651,12 +1210,12 @@
                 groups = fullConfig.proxygroups;
                 groupType = 'proxygroups';
             }
-            
+
             // 添加"完整节点"选项
             const fullNodeItem = document.createElement('div');
             fullNodeItem.className = 'group-item' + (currentGroup === null ? ' active' : '');
             fullNodeItem.textContent = '完整节点';
-            fullNodeItem.onclick = function() {
+            fullNodeItem.onclick = function () {
                 // 取消所有项的active类
                 document.querySelectorAll('.group-item').forEach(i => i.classList.remove('active'));
                 // 为当前项添加active类
@@ -666,9 +1225,17 @@
                 groupType = "";
                 // 加载完整节点配置
                 loadFullNodeConfig();
+                // 隐藏添加代理节点按钮
+                if (addProxyBtn) {
+                    addProxyBtn.style.display = 'none';
+                }
+                // 显示添加组按钮（因为我们现在在完整节点）
+                if (addGroupBtn) {
+                    addGroupBtn.style.display = 'inline-block';
+                }
             };
             groupList.appendChild(fullNodeItem);
-            
+
             // 检查是否有组
             let groupCount = 0;
             for (const groupName in groups) {
@@ -678,8 +1245,8 @@
                     // 根据currentGroup设置初始选中状态
                     groupItem.className = 'group-item' + (currentGroup === groupName ? ' active' : '');
                     groupItem.textContent = groupName;
-                    groupItem.onclick = (function(name) {
-                        return function() {
+                    groupItem.onclick = (function (name) {
+                        return function () {
                             // 取消所有项的active类
                             document.querySelectorAll('.group-item').forEach(i => i.classList.remove('active'));
                             // 为当前项添加active类
@@ -688,28 +1255,61 @@
                             currentGroup = name;
                             // 加载组配置
                             loadGroupConfig(name);
+                            // 显示添加代理节点按钮
+                            if (addProxyBtn) {
+                                addProxyBtn.style.display = 'inline-block';
+                            }
+                            // 隐藏添加组按钮（因为我们现在在具体组中）
+                            if (addGroupBtn) {
+                                addGroupBtn.style.display = 'none';
+                            }
                         };
                     })(groupName);
                     groupList.appendChild(groupItem);
                 }
             }
-            
+
             // 只有当有组时才显示组选择器
             if (groupCount > 0) {
                 groupSelector.style.display = 'block';
             } else {
                 groupSelector.style.display = 'none';
             }
+
+            // 默认隐藏添加代理节点按钮
+            if (addProxyBtn) {
+                addProxyBtn.style.display = 'none';
+            }
+            
+            // 根据当前选择显示/隐藏添加组按钮
+            if (addGroupBtn) {
+                if (currentGroup === null) {
+                    // 在完整节点时显示添加组按钮
+                    addGroupBtn.style.display = 'inline-block';
+                } else {
+                    // 在具体组时隐藏添加组按钮
+                    addGroupBtn.style.display = 'none';
+                }
+            }
         }
-        
+
         // 隐藏组选择器
         function hideGroupSelector() {
             const groupSelector = document.getElementById('group-selector');
+            const addProxyBtn = document.getElementById('add-proxy-btn');
+            const addGroupBtn = document.getElementById('add-group-btn');
             if (groupSelector) {
                 groupSelector.style.display = 'none';
             }
+            // 隐藏添加代理按钮和添加组按钮
+            if (addProxyBtn) {
+                addProxyBtn.style.display = 'none';
+            }
+            if (addGroupBtn) {
+                addGroupBtn.style.display = 'none';
+            }
         }
-        
+
         // 更新组选择器
         function updateGroupSelector() {
             if (!currentGroup) {
@@ -723,7 +1323,7 @@
                 }
                 return;
             }
-            
+
             // 根据currentGroup设置选中状态
             const selectedItem = document.querySelector(`.group-item:nth-child(n+2)`); // 跳过"完整节点"项
             if (selectedItem && selectedItem.textContent === currentGroup) {
@@ -733,7 +1333,7 @@
                 selectedItem.classList.add('active');
             }
         }
-        
+
         // 加载当前节点的配置
         function loadNodeConfig() {
             try {
@@ -752,14 +1352,14 @@
                 showStatus('加载节点配置时出错: ' + error.message, 'error');
             }
         }
-        
+
         // 加载完整节点配置
         function loadFullNodeConfig() {
             if (!currentNode) {
                 console.error('未选择节点');
                 return;
             }
-            
+
             // 从后端获取节点配置（保留注释）
             fetch(webPath + 'config/node?node=' + encodeURIComponent(currentNode))
                 .then(response => {
@@ -784,14 +1384,14 @@
                     showStatus('加载节点配置失败: ' + error.message, 'error');
                 });
         }
-        
+
         // 加载组配置
         function loadGroupConfig(groupName) {
             if (!currentNode || !groupName) {
                 console.error('未指定节点或组名');
                 return;
             }
-            
+
             // 从后端获取组配置（保留注释）
             fetch(webPath + 'config/group?config=' + encodeURIComponent(currentNode) + '&group=' + encodeURIComponent(groupName))
                 .then(response => {
@@ -816,18 +1416,18 @@
                     showStatus('加载组配置失败: ' + error.message, 'error');
                 });
         }
-        
+
         // 保存配置文件
         function saveConfig() {
             const configContent = editor.getValue();
-            
+
             if (!configContent.trim()) {
                 showStatus('配置内容不能为空', 'error');
                 return;
             }
-            
+
             showStatus('正在保存配置...', 'info');
-            
+
             let saveUrl, saveParams;
             if (currentGroup) {
                 // 保存组配置
@@ -838,11 +1438,11 @@
                 saveUrl = webPath + 'config/save-node';
                 saveParams = `node=${encodeURIComponent(currentNode)}`;
             }
-            
+
             // 添加超时控制 (10秒)
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 10000);
-            
+
             fetch(saveUrl + '?' + saveParams, {
                 method: 'POST',
                 headers: {
@@ -851,58 +1451,58 @@
                 body: configContent,
                 signal: controller.signal // 添加超时信号
             })
-            .then(response => {
-                clearTimeout(timeoutId); // 清除超时
-                
-                if (!response.ok) {
-                    if (response.status === 403) {
-                        throw new Error('无保存权限 (403 Forbidden)');
-                    } else if (response.status === 401) {
-                        // 未授权，重定向到登录页面
-                        window.location.href = webPath + 'login';
-                        return;
-                    } else if (response.status === 413) {
-                        throw new Error('配置内容过大 (413 Content Too Large)');
-                    } else {
-                        return response.text().then(text => {
-                            throw new Error(text || '保存失败，HTTP状态码: ' + response.status);
-                        });
+                .then(response => {
+                    clearTimeout(timeoutId); // 清除超时
+
+                    if (!response.ok) {
+                        if (response.status === 403) {
+                            throw new Error('无保存权限 (403 Forbidden)');
+                        } else if (response.status === 401) {
+                            // 未授权，重定向到登录页面
+                            window.location.href = webPath + 'login';
+                            return;
+                        } else if (response.status === 413) {
+                            throw new Error('配置内容过大 (413 Content Too Large)');
+                        } else {
+                            return response.text().then(text => {
+                                throw new Error(text || '保存失败，HTTP状态码: ' + response.status);
+                            });
+                        }
                     }
-                }
-                
-                // 保存成功
-                showStatus('配置保存成功', 'success');
-            })
-            .catch(error => {
-                clearTimeout(timeoutId); // 清除超时
-                
-                if (error.name === 'AbortError') {
-                    // 处理超时中断
-                    console.error('保存配置超时:', error);
-                    showStatus('保存配置超时（10秒内未响应）', 'error');
-                } else if (error.name === 'TypeError' && error.message.includes('network error')) {
-                    // 处理网络错误
-                    console.error('网络错误:', error);
-                    showStatus('网络错误：无法连接到服务器', 'error');
-                } else {
-                    // 处理其他错误
-                    console.error('保存配置失败:', error);
-                    showStatus('保存配置失败: ' + error.message, 'error');
-                }
-            });
+
+                    // 保存成功
+                    showStatus('配置保存成功', 'success');
+                })
+                .catch(error => {
+                    clearTimeout(timeoutId); // 清除超时
+
+                    if (error.name === 'AbortError') {
+                        // 处理超时中断
+                        console.error('保存配置超时:', error);
+                        showStatus('保存配置超时（10秒内未响应）', 'error');
+                    } else if (error.name === 'TypeError' && error.message.includes('network error')) {
+                        // 处理网络错误
+                        console.error('网络错误:', error);
+                        showStatus('网络错误：无法连接到服务器', 'error');
+                    } else {
+                        // 处理其他错误
+                        console.error('保存配置失败:', error);
+                        showStatus('保存配置失败: ' + error.message, 'error');
+                    }
+                });
         }
-        
+
         // 验证YAML格式
         function validateYaml() {
             const configContent = editor.getValue();
-            
+
             if (!configContent.trim()) {
                 showStatus('配置内容不能为空', 'error');
                 return;
             }
-            
+
             showStatus('正在验证YAML格式...', 'info');
-            
+
             // 使用服务端验证
             fetch(webPath + 'config/validate', {
                 method: 'POST',
@@ -911,45 +1511,776 @@
                 },
                 body: configContent
             })
-            .then(response => {
-                return response.text().then(text => {
-                    return { ok: response.ok, status: response.status, text: text };
+                .then(response => {
+                    return response.text().then(text => {
+                        return { ok: response.ok, status: response.status, text: text };
+                    });
+                })
+                .then(result => {
+                    if (result.ok) {
+                        try {
+                            const data = JSON.parse(result.text);
+                            showStatus(data.message || 'YAML格式验证通过', 'success');
+                        } catch (e) {
+                            showStatus('YAML格式验证通过', 'success');
+                        }
+                    } else {
+                        try {
+                            const data = JSON.parse(result.text);
+                            showValidationError(data.message || 'YAML格式验证失败');
+                            showStatus(data.message || 'YAML格式验证失败', 'error');
+                        } catch (e) {
+                            showValidationError(result.text || 'YAML格式验证失败');
+                            showStatus('YAML格式验证失败', 'error');
+                        }
+                    }
+                })
+                .catch(error => {
+                    showValidationError('验证过程中发生网络错误: ' + error.message);
+                    showStatus('YAML格式验证失败', 'error');
                 });
-            })
-            .then(result => {
-                if (result.ok) {
-                    try {
-                        const data = JSON.parse(result.text);
-                        showStatus(data.message || 'YAML格式验证通过', 'success');
-                    } catch (e) {
-                        showStatus('YAML格式验证通过', 'success');
-                    }
-                } else {
-                    try {
-                        const data = JSON.parse(result.text);
-                        showValidationError(data.message || 'YAML格式验证失败');
-                        showStatus(data.message || 'YAML格式验证失败', 'error');
-                    } catch (e) {
-                        showValidationError(result.text || 'YAML格式验证失败');
-                        showStatus('YAML格式验证失败', 'error');
-                    }
-                }
-            })
-            .catch(error => {
-                showValidationError('验证过程中发生网络错误: ' + error.message);
-                showStatus('YAML格式验证失败', 'error');
-            });
         }
-        
+
         // 点击空白处关闭错误提示
-        document.addEventListener('click', function(e) {
+        document.addEventListener('click', function (e) {
             const errorElement = document.getElementById('validationError');
-            if (errorElement && errorElement.style.display === 'block' && 
-                !errorElement.contains(e.target) && 
+            if (errorElement && errorElement.style.display === 'block' &&
+                !errorElement.contains(e.target) &&
                 e.target !== errorElement) {
                 errorElement.style.display = 'none';
             }
         });
+
+        // 点击模态框外部关闭模态框
+        window.onclick = function (event) {
+            const modal = document.getElementById('addProxyModal');
+            const groupModal = document.getElementById('addGroupModal');
+            const editModal = document.getElementById('editProxyModal');
+            if (event.target == modal) {
+                closeAddProxyModal();
+            }
+            if (event.target == groupModal) {
+                closeAddGroupModal();
+            }
+            if (event.target == editModal) {
+                closeEditProxyModal();
+            }
+        }
+
+        // 打开添加代理组弹窗
+        function openAddGroupModal() {
+            if (currentNode !== 'proxygroups') {
+                showStatus('只能在proxygroups节点中添加代理组', 'error');
+                return;
+            }
+
+            // 清空表单
+            document.getElementById('addGroupForm').reset();
+            document.getElementById('proxiesContainer').innerHTML = '';
+            document.getElementById('domainsContainer').innerHTML = '';
+
+            // 不再默认添加代理节点
+
+            // 显示弹窗
+            document.getElementById('addGroupModal').style.display = 'block';
+        }
+
+        // 关闭添加代理组弹窗
+        function closeAddGroupModal() {
+            document.getElementById('addGroupModal').style.display = 'none';
+        }
+
+        // 打开编辑代理节点弹窗
+        function openEditProxyModal(proxyData, index) {
+            // 填充表单数据
+            document.getElementById('editProxyIndex').value = index;
+            document.getElementById('editProxyName').value = proxyData.name || '';
+            document.getElementById('editProxyType').value = proxyData.type || 'socks5';
+            document.getElementById('editProxyServer').value = proxyData.server || '';
+            document.getElementById('editProxyPort').value = proxyData.port || '';
+            document.getElementById('editProxyUdp').checked = proxyData.udp || false;
+            document.getElementById('editProxyUsername').value = proxyData.username || '';
+            document.getElementById('editProxyPassword').value = proxyData.password || '';
+
+            // 清空headers容器
+            const headersContainer = document.getElementById('editHeadersContainer');
+            headersContainer.innerHTML = '';
+
+            // 添加headers
+            if (proxyData.headers) {
+                for (const [key, value] of Object.entries(proxyData.headers)) {
+                    const headerItem = document.createElement('div');
+                    headerItem.className = 'header-item';
+                    headerItem.innerHTML = `
+                        <input type="text" class="form-control" placeholder="Header名称" value="${key}">
+                        <input type="text" class="form-control" placeholder="Header值" value="${value}">
+                        <div class="header-actions">
+                            <button type="button" onclick="removeHeaderField(this)">-</button>
+                        </div>
+                    `;
+                    headersContainer.appendChild(headerItem);
+                }
+            }
+
+            // 根据代理类型显示相应字段
+            toggleEditProxyFields();
+
+            // 显示弹窗
+            document.getElementById('editProxyModal').style.display = 'block';
+        }
+
+        // 关闭编辑代理节点弹窗
+        function closeEditProxyModal() {
+            document.getElementById('editProxyModal').style.display = 'none';
+        }
+
+        // 切换编辑代理节点字段显示
+        function toggleEditProxyFields() {
+            const proxyType = document.getElementById('editProxyType').value;
+            const udpField = document.getElementById('editUdpField');
+            const authFields = document.getElementById('editAuthFields');
+            const headersFields = document.getElementById('editHeadersFields');
+
+            // socks5 显示UDP选项
+            if (proxyType === 'socks5') {
+                udpField.classList.remove('hidden');
+            } else {
+                udpField.classList.add('hidden');
+            }
+
+            // http/https 显示headers选项
+            if (proxyType === 'http' || proxyType === 'https') {
+                headersFields.classList.remove('hidden');
+            } else {
+                headersFields.classList.add('hidden');
+            }
+
+            // 所有类型都显示认证字段
+            authFields.classList.remove('hidden');
+        }
+
+        // 添加编辑Header字段
+        function addEditHeaderField() {
+            const container = document.getElementById('editHeadersContainer');
+            const headerItem = document.createElement('div');
+            headerItem.className = 'header-item';
+            headerItem.innerHTML = `
+                <input type="text" class="form-control" placeholder="Header名称">
+                <input type="text" class="form-control" placeholder="Header值">
+                <div class="header-actions">
+                    <button type="button" onclick="removeHeaderField(this)">-</button>
+                </div>
+            `;
+            container.appendChild(headerItem);
+        }
+
+        // 更新代理节点
+        function updateProxyNode() {
+            const index = document.getElementById('editProxyIndex').value;
+            const proxyName = document.getElementById('editProxyName').value.trim();
+            const proxyType = document.getElementById('editProxyType').value;
+            const proxyServer = document.getElementById('editProxyServer').value.trim();
+            const proxyPort = document.getElementById('editProxyPort').value;
+            const proxyUdp = document.getElementById('editProxyUdp').checked;
+            const proxyUsername = document.getElementById('editProxyUsername').value.trim();
+            const proxyPassword = document.getElementById('editProxyPassword').value.trim();
+
+            // 验证必填字段
+            if (!proxyName) {
+                showStatus('请输入节点名称', 'error');
+                return;
+            }
+
+            if (!proxyServer) {
+                showStatus('请输入服务器地址', 'error');
+                return;
+            }
+
+            if (!proxyPort || proxyPort < 1 || proxyPort > 65535) {
+                showStatus('请输入有效的端口号(1-65535)', 'error');
+                return;
+            }
+
+            // 构建代理节点对象
+            const proxyNode = {
+                name: proxyName,
+                type: proxyType,
+                server: proxyServer,
+                port: parseInt(proxyPort)
+            };
+
+            // 根据类型添加额外字段
+            if (proxyType === 'socks5' && proxyUdp) {
+                proxyNode.udp = true;
+            }
+
+            if (proxyUsername) {
+                proxyNode.username = proxyUsername;
+            }
+
+            if (proxyPassword) {
+                proxyNode.password = proxyPassword;
+            }
+
+            // 添加headers（仅http/https）
+            if ((proxyType === 'http' || proxyType === 'https') &&
+                document.querySelectorAll('#editHeadersContainer .header-item').length > 0) {
+                proxyNode.headers = {};
+                const headerItems = document.querySelectorAll('#editHeadersContainer .header-item');
+                headerItems.forEach(item => {
+                    const inputs = item.querySelectorAll('input');
+                    const key = inputs[0].value.trim();
+                    const value = inputs[1].value.trim();
+                    if (key && value) {
+                        proxyNode.headers[key] = value;
+                    }
+                });
+
+                // 如果有headers则添加到对象中
+                if (Object.keys(proxyNode.headers).length === 0) {
+                    delete proxyNode.headers;
+                }
+            }
+
+            // 获取当前编辑器内容
+            const currentContent = editor.getValue();
+
+            try {
+                // 解析当前YAML内容
+                const yamlDoc = jsyaml.load(currentContent) || {};
+
+                // 更新指定索引的代理节点
+                if (yamlDoc.proxies && yamlDoc.proxies.length > index) {
+                    yamlDoc.proxies[index] = proxyNode;
+                } else {
+                    showStatus('找不到要更新的代理节点', 'error');
+                    return;
+                }
+
+                // 序列化更新后的配置
+                const updatedYaml = jsyaml.dump(yamlDoc, {
+                    indent: 2,
+                    lineWidth: -1,
+                    noRefs: true
+                });
+
+                // 更新编辑器内容
+                editor.setValue(updatedYaml);
+
+                // 关闭弹窗
+                closeEditProxyModal();
+
+                showStatus('代理节点更新成功', 'success');
+            } catch (e) {
+                showStatus('更新代理节点时出错: ' + e.message, 'error');
+            }
+        }
+
+        // 添加代理节点字段
+        function addProxyField() {
+            const groupName = document.getElementById('groupName').value.trim() || '节点名称';
+            const container = document.getElementById('proxiesContainer');
+            const proxyCount = container.querySelectorAll('.proxy-item').length + 1;
+            const proxyItem = document.createElement('div');
+            proxyItem.className = 'proxy-item';
+            proxyItem.innerHTML = `
+                <div class="proxy-header">
+                    <h4>代理节点 ${proxyCount}</h4>
+                    <div class="proxy-actions">
+                        <button type="button" class="remove" onclick="removeProxyField(this)">-</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>节点名称 *</label>
+                    <input type="text" class="form-control proxy-name" placeholder="${groupName}-${proxyCount}" value="${groupName}-${proxyCount}" required>
+                </div>
+                <div class="form-group">
+                    <label>代理类型 *</label>
+                    <select class="form-control proxy-type" onchange="toggleGroupProxyFields(this)">
+                        <option value="socks5">socks5</option>
+                        <option value="socks4">socks4</option>
+                        <option value="socks4a">socks4a</option>
+                        <option value="http">http</option>
+                        <option value="https">https</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>服务器地址 *</label>
+                        <input type="text" class="form-control proxy-server" placeholder="IP地址或域名" required>
+                    </div>
+                    <div class="form-group">
+                        <label>端口 *</label>
+                        <input type="number" class="form-control proxy-port" placeholder="端口号" min="1" max="65535" required>
+                    </div>
+                </div>
+                <div class="form-group proxy-udp-field">
+                    <div class="checkbox-group">
+                        <input type="checkbox" class="proxy-udp">
+                        <label>启用UDP支持 (仅socks5)</label>
+                    </div>
+                </div>
+                <div class="form-group proxy-auth-fields hidden">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>用户名 (可选)</label>
+                            <input type="text" class="form-control proxy-username" placeholder="账号">
+                        </div>
+                        <div class="form-group">
+                            <label>密码 (可选)</label>
+                            <input type="password" class="form-control proxy-password" placeholder="密码">
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group proxy-headers-fields hidden">
+                    <label>自定义Headers (可选)</label>
+                    <div class="proxy-headers-container">
+                        <!-- Headers项将通过JavaScript动态添加 -->
+                    </div>
+                    <button type="button" class="btn" onclick="addGroupHeaderField(this)">+ 添加Header</button>
+                </div>
+            `;
+            container.appendChild(proxyItem);
+
+            // 初始化第一个代理节点的字段显示
+            if (proxyCount === 1) {
+                toggleGroupProxyFields(proxyItem.querySelector('.proxy-type'));
+            }
+        }
+
+        // 删除代理节点字段
+        function removeProxyField(button) {
+            const proxyItem = button.closest('.proxy-item');
+            if (proxyItem) {
+                proxyItem.remove();
+                // 重新编号剩余的代理节点
+                renumberProxyFields();
+            }
+        }
+
+        // 重新编号代理节点字段
+        function renumberProxyFields() {
+            const groupName = document.getElementById('groupName').value.trim() || '节点名称';
+            const proxyItems = document.querySelectorAll('#proxiesContainer .proxy-item');
+            proxyItems.forEach((item, index) => {
+                const header = item.querySelector('.proxy-header h4');
+                header.textContent = `代理节点 ${index + 1}`;
+
+                const nameInput = item.querySelector('.proxy-name');
+                if (nameInput) {
+                    nameInput.placeholder = `${groupName}-${index + 1}`;
+                    // 如果当前值是默认值，则更新它
+                    if (!nameInput.value || nameInput.value.startsWith('节点名称') || nameInput.value.match(/节点名称-\d+/) || nameInput.value.match(/节点名称 \d+/)) {
+                        nameInput.value = `${groupName}-${index + 1}`;
+                    }
+                }
+            });
+        }
+
+        // 切换组内代理字段显示
+        function toggleGroupProxyFields(selectElement) {
+            const proxyItem = selectElement.closest('.proxy-item');
+            const proxyType = selectElement.value;
+            const udpField = proxyItem.querySelector('.proxy-udp-field');
+            const authFields = proxyItem.querySelector('.proxy-auth-fields');
+            const headersFields = proxyItem.querySelector('.proxy-headers-fields');
+
+            // socks5 显示UDP选项
+            if (proxyType === 'socks5') {
+                udpField.classList.remove('hidden');
+            } else {
+                udpField.classList.add('hidden');
+            }
+
+            // http/https 显示headers选项
+            if (proxyType === 'http' || proxyType === 'https') {
+                headersFields.classList.remove('hidden');
+            } else {
+                headersFields.classList.add('hidden');
+            }
+
+            // 所有类型都显示认证字段
+            authFields.classList.remove('hidden');
+        }
+
+        // 添加组内Header字段
+        function addGroupHeaderField(button) {
+            const proxyItem = button.closest('.proxy-item');
+            const container = proxyItem.querySelector('.proxy-headers-container');
+            const headerItem = document.createElement('div');
+            headerItem.className = 'header-item';
+            headerItem.innerHTML = `
+                <input type="text" class="form-control" placeholder="Header名称">
+                <input type="text" class="form-control" placeholder="Header值">
+                <div class="header-actions">
+                    <button type="button" onclick="removeHeaderField(this)">-</button>
+                </div>
+            `;
+            container.appendChild(headerItem);
+        }
+
+        // 添加域名规则字段
+        function addDomainField() {
+            const container = document.getElementById('domainsContainer');
+            const domainItem = document.createElement('div');
+            domainItem.className = 'domain-item';
+            domainItem.innerHTML = `
+                <input type="text" class="form-control" placeholder="例如: *.example.com 或 192.168.1.0/24">
+                <div class="domain-actions">
+                    <button type="button" onclick="removeDomainField(this)">-</button>
+                </div>
+            `;
+            container.appendChild(domainItem);
+        }
+
+        // 删除域名规则字段
+        function removeDomainField(button) {
+            const domainItem = button.closest('.domain-item');
+            if (domainItem) {
+                domainItem.remove();
+            }
+        }
+
+        // 添加代理组
+        function addProxyGroup() {
+            const groupName = document.getElementById('groupName').value.trim();
+
+            // 验证必填字段
+            if (!groupName) {
+                showStatus('请输入组名称', 'error');
+                return;
+            }
+
+            // 获取代理节点数据
+            const proxies = [];
+            const proxyItems = document.querySelectorAll('#proxiesContainer .proxy-item');
+
+            for (let i = 0; i < proxyItems.length; i++) {
+                const item = proxyItems[i];
+                const name = item.querySelector('.proxy-name').value.trim();
+                const type = item.querySelector('.proxy-type').value;
+                const server = item.querySelector('.proxy-server').value.trim();
+                const port = item.querySelector('.proxy-port').value;
+                const udp = item.querySelector('.proxy-udp').checked;
+                const username = item.querySelector('.proxy-username').value.trim();
+                const password = item.querySelector('.proxy-password').value.trim();
+
+                // 验证必填字段
+                if (!name) {
+                    showStatus(`第${i + 1}个代理节点的名称不能为空`, 'error');
+                    return;
+                }
+
+                if (!server) {
+                    showStatus(`第${i + 1}个代理节点的服务器地址不能为空`, 'error');
+                    return;
+                }
+
+                if (!port || port < 1 || port > 65535) {
+                    showStatus(`第${i + 1}个代理节点的端口号无效(1-65535)`, 'error');
+                    return;
+                }
+
+                // 构建代理节点对象
+                const proxyNode = {
+                    name: name,
+                    type: type,
+                    server: server,
+                    port: parseInt(port)
+                };
+
+                // 根据类型添加额外字段
+                if (type === 'socks5' && udp) {
+                    proxyNode.udp = true;
+                }
+
+                if (username) {
+                    proxyNode.username = username;
+                }
+
+                if (password) {
+                    proxyNode.password = password;
+                }
+
+                // 添加headers（仅http/https）
+                if ((type === 'http' || type === 'https')) {
+                    const headersContainer = item.querySelector('.proxy-headers-container');
+                    const headerItems = headersContainer.querySelectorAll('.header-item');
+                    if (headerItems.length > 0) {
+                        proxyNode.headers = {};
+                        headerItems.forEach(headerItem => {
+                            const inputs = headerItem.querySelectorAll('input');
+                            const key = inputs[0].value.trim();
+                            const value = inputs[1].value.trim();
+                            if (key && value) {
+                                proxyNode.headers[key] = value;
+                            }
+                        });
+
+                        // 如果有headers则添加到对象中
+                        if (Object.keys(proxyNode.headers).length === 0) {
+                            delete proxyNode.headers;
+                        }
+                    }
+                }
+
+                proxies.push(proxyNode);
+            }
+
+            // 获取域名规则数据
+            const domains = [];
+            const domainItems = document.querySelectorAll('#domainsContainer .domain-item input');
+            domainItems.forEach(item => {
+                const domain = item.value.trim();
+                if (domain) {
+                    domains.push(domain);
+                }
+            });
+
+            // 获取其他配置数据
+            const interval = document.getElementById('interval').value || "180s";
+            const ipv6 = document.getElementById('ipv6').value === "true";
+            const loadbalance = document.getElementById('loadbalance').value || "round-robin";
+            const maxRetries = parseInt(document.getElementById('maxRetries').value) || 3;
+            const retryDelay = document.getElementById('retryDelay').value || "1s";
+            const maxRt = document.getElementById('maxRt').value || "100ms";
+
+            // 构建组配置对象
+            const groupConfig = {
+                proxies: proxies,
+                domains: domains,
+                interval: interval,
+                ipv6: ipv6,
+                loadbalance: loadbalance,
+                max_retries: maxRetries,
+                retry_delay: retryDelay,
+                max_rt: maxRt
+            };
+
+            // 获取当前编辑器内容
+            const currentContent = editor.getValue();
+
+            try {
+                // 解析当前YAML内容
+                let config = jsyaml.load(currentContent) || {};
+
+                // 如果当前是完整节点配置（不是某个组的配置）
+                if (currentGroup === null) {
+                    // 检查是否已存在同名组
+                    if (config[groupName]) {
+                        showStatus('组名称已存在', 'error');
+                        return;
+                    }
+
+                    // 添加新组
+                    config[groupName] = groupConfig;
+
+                    // 序列化更新后的配置
+                    const updatedYaml = jsyaml.dump(config, {
+                        indent: 2,
+                        lineWidth: -1,
+                        noRefs: true
+                    });
+
+                    // 更新编辑器内容
+                    editor.setValue(updatedYaml);
+                } else {
+                    showStatus('请在完整节点配置中添加组', 'error');
+                    return;
+                }
+
+                // 关闭弹窗
+                closeAddGroupModal();
+
+                showStatus('代理组添加成功并已保存', 'success');
+            } catch (e) {
+                showStatus('添加代理组时出错: ' + e.message, 'error');
+            }
+        }
+
+        // 打开添加代理节点弹窗
+        function openAddProxyModal() {
+            if (currentNode !== 'proxygroups') {
+                showStatus('只能在proxygroups节点中添加代理节点', 'error');
+                return;
+            }
+
+            if (!currentGroup) {
+                showStatus('请先选择一个代理组', 'error');
+                return;
+            }
+
+            // 清空表单
+            document.getElementById('addProxyForm').reset();
+            document.getElementById('headersContainer').innerHTML = '';
+
+            // 显示弹窗
+            document.getElementById('addProxyModal').style.display = 'block';
+
+            // 根据默认类型显示相应字段
+            toggleProxyFields();
+        }
+
+        // 关闭添加代理节点弹窗
+        function closeAddProxyModal() {
+            document.getElementById('addProxyModal').style.display = 'none';
+        }
+
+        // 切换代理字段显示
+        function toggleProxyFields() {
+            const proxyType = document.getElementById('proxyType').value;
+            const udpField = document.getElementById('udpField');
+            const authFields = document.getElementById('authFields');
+            const headersFields = document.getElementById('headersFields');
+
+            // socks5 显示UDP选项
+            if (proxyType === 'socks5') {
+                udpField.classList.remove('hidden');
+            } else {
+                udpField.classList.add('hidden');
+            }
+
+            // http/https 显示headers选项
+            if (proxyType === 'http' || proxyType === 'https') {
+                headersFields.classList.remove('hidden');
+            } else {
+                headersFields.classList.add('hidden');
+            }
+
+            // 所有类型都显示认证字段
+            authFields.classList.remove('hidden');
+        }
+
+        // 添加Header字段
+        function addHeaderField() {
+            const container = document.getElementById('headersContainer');
+            const headerItem = document.createElement('div');
+            headerItem.className = 'header-item';
+            headerItem.innerHTML = `
+                <input type="text" class="form-control" placeholder="Header名称">
+                <input type="text" class="form-control" placeholder="Header值">
+                <div class="header-actions">
+                    <button type="button" onclick="removeHeaderField(this)">-</button>
+                </div>
+            `;
+            container.appendChild(headerItem);
+        }
+
+        // 删除Header字段
+        function removeHeaderField(button) {
+            const headerItem = button.closest('.header-item');
+            if (headerItem) {
+                headerItem.remove();
+            }
+        }
+
+        // 添加代理节点
+        function addProxyNode() {
+            const proxyName = document.getElementById('proxyName').value.trim();
+            const proxyType = document.getElementById('proxyType').value;
+            const proxyServer = document.getElementById('proxyServer').value.trim();
+            const proxyPort = document.getElementById('proxyPort').value;
+            const proxyUdp = document.getElementById('proxyUdp').checked;
+            const proxyUsername = document.getElementById('proxyUsername').value.trim();
+            const proxyPassword = document.getElementById('proxyPassword').value.trim();
+
+            // 验证必填字段
+            if (!proxyName) {
+                showStatus('请输入节点名称', 'error');
+                return;
+            }
+
+            if (!proxyServer) {
+                showStatus('请输入服务器地址', 'error');
+                return;
+            }
+
+            if (!proxyPort || proxyPort < 1 || proxyPort > 65535) {
+                showStatus('请输入有效的端口号(1-65535)', 'error');
+                return;
+            }
+
+            // 构建代理节点对象
+            const proxyNode = {
+                name: proxyName,
+                type: proxyType,
+                server: proxyServer,
+                port: parseInt(proxyPort)
+            };
+
+            // 根据类型添加额外字段
+            if (proxyType === 'socks5' && proxyUdp) {
+                proxyNode.udp = true;
+            }
+
+            if (proxyUsername) {
+                proxyNode.username = proxyUsername;
+            }
+
+            if (proxyPassword) {
+                proxyNode.password = proxyPassword;
+            }
+
+            // 添加headers（仅http/https）
+            if ((proxyType === 'http' || proxyType === 'https') &&
+                document.querySelectorAll('#headersContainer .header-item').length > 0) {
+                proxyNode.headers = {};
+                const headerItems = document.querySelectorAll('#headersContainer .header-item');
+                headerItems.forEach(item => {
+                    const inputs = item.querySelectorAll('input');
+                    const key = inputs[0].value.trim();
+                    const value = inputs[1].value.trim();
+                    if (key && value) {
+                        proxyNode.headers[key] = value;
+                    }
+                });
+
+                // 如果有headers则添加到对象中
+                if (Object.keys(proxyNode.headers).length === 0) {
+                    delete proxyNode.headers;
+                }
+            }
+
+            // 获取当前编辑器内容
+            const currentContent = editor.getValue();
+
+            try {
+                // 解析当前YAML内容
+                const yamlDoc = jsyaml.load(currentContent) || {};
+
+                // 如果当前是完整节点配置，找到proxies数组
+                if (currentGroup === null && yamlDoc.proxies) {
+                    // 添加新代理节点到proxies数组
+                    yamlDoc.proxies.push(proxyNode);
+                }
+                // 如果当前是组配置，直接添加到proxies数组
+                else if (yamlDoc.proxies) {
+                    yamlDoc.proxies.push(proxyNode);
+                }
+                // 如果没有proxies数组，创建一个
+                else {
+                    yamlDoc.proxies = [proxyNode];
+                }
+
+                // 序列化更新后的配置
+                const updatedYaml = jsyaml.dump(yamlDoc, {
+                    indent: 2,
+                    lineWidth: -1,
+                    noRefs: true
+                });
+
+                // 更新编辑器内容
+                editor.setValue(updatedYaml);
+
+                // 关闭弹窗
+                closeAddProxyModal();
+
+                showStatus('代理节点添加成功', 'success');
+            } catch (e) {
+                showStatus('添加代理节点时出错: ' + e.message, 'error');
+            }
+        }
     </script>
 </body>
+
 </html>

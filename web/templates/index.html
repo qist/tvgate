@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,40 +10,51 @@
             font-family: Arial, sans-serif;
             margin: 0;
             padding: 20px;
-            background-color: #f5f5f5;
+            background-color: #121212;
+            /* 暗黑背景 */
+            color: #e0e0e0;
         }
+
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            background-color: white;
+            background-color: #1e1e1e;
+            /* 容器深色 */
             padding: 20px;
             border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+            position: relative;
         }
+
         h1 {
-            color: #333;
+            color: #ffffff;
             text-align: center;
         }
+
         .auth-section {
             text-align: right;
             margin-bottom: 20px;
         }
+
         .auth-section a {
             display: inline-block;
             padding: 8px 16px;
             background-color: #28a745;
-            color: white;
+            color: #ffffff;
             text-decoration: none;
             border-radius: 4px;
             transition: background-color 0.3s;
             margin-left: 10px;
         }
+
         .auth-section a.logout {
             background-color: #dc3545;
         }
+
         .auth-section a:hover {
             opacity: 0.8;
         }
+
         .menu {
             display: flex;
             justify-content: center;
@@ -50,57 +62,73 @@
             margin: 30px 0;
             flex-wrap: wrap;
         }
+
         .menu a {
             display: inline-block;
             padding: 12px 24px;
             background-color: #007bff;
-            color: white;
+            color: #ffffff;
             text-decoration: none;
             border-radius: 4px;
             transition: background-color 0.3s;
         }
+
         .menu a:hover {
             background-color: #0056b3;
         }
+
         .section {
             margin: 20px 0;
             padding: 15px;
-            background-color: #e9ecef;
+            background-color: #2c2c2c;
+            /* 暗色卡片 */
             border-radius: 4px;
         }
+
         .section h2 {
             margin-top: 0;
+            color: #ffffff;
         }
+
         .info ul {
             padding-left: 20px;
         }
+
         .info li {
             margin-bottom: 10px;
         }
+
         .monitor-section {
             margin: 30px 0;
         }
+
         .monitor-section h2 {
-            color: #333;
+            color: #ffffff;
             border-bottom: 2px solid #007bff;
             padding-bottom: 10px;
         }
+
         .proxy-group {
             margin-bottom: 30px;
-            border: 1px solid #ddd;
+            border: 1px solid #333;
             border-radius: 4px;
             padding: 15px;
+            background-color: #2c2c2c;
         }
+
         .proxy-group-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 15px;
         }
+
         .proxy-group-title {
             font-weight: bold;
             font-size: 18px;
+            color: #ffffff;
         }
+
         .edit-btn {
             display: inline-block;
             padding: 6px 12px;
@@ -110,51 +138,61 @@
             border-radius: 4px;
             font-size: 14px;
         }
+
         .edit-btn:hover {
             background-color: #e0a800;
         }
+
         .proxy-table {
             width: 100%;
             border-collapse: collapse;
         }
+
         .proxy-table th,
         .proxy-table td {
             padding: 8px;
             text-align: left;
-            border-bottom: 1px solid #ddd;
+            border-bottom: 1px solid #444;
         }
+
         .proxy-table th {
-            background-color: #f8f9fa;
+            background-color: #3a3a3a;
             font-weight: bold;
+            color: #ffffff;
         }
+
         .status-alive {
-            color: green;
+            color: #00ff00;
             font-weight: bold;
         }
+
         .status-dead {
-            color: red;
+            color: #ff4d4d;
             font-weight: bold;
         }
+
         .status-cooldown {
-            color: orange;
+            color: #ffa500;
             font-weight: bold;
         }
+
         .status-unknown {
-            color: gray;
+            color: #aaaaaa;
             font-weight: bold;
         }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
 </head>
+
 <body>
     <div class="container">
         <div class="auth-section">
             <a href="{{.webPath}}login" id="login-link" style="display:none;">登录</a>
             <a href="{{.webPath}}logout" id="logout-link" class="logout" style="display:none;">退出</a>
         </div>
-        
+
         <h1>{{.title}}</h1>
-        
+
         <div class="menu">
             <a href="{{.webPath}}editor">总体配置编辑器</a>
             <a href="{{.webPath}}node-editor">节点配置编辑器</a>
@@ -167,7 +205,7 @@
                 <p>正在加载监控数据...</p>
             </div>
         </div>
-        
+
         <div class="info">
             <h2>使用说明</h2>
             <ul>
@@ -180,7 +218,7 @@
                 <li>请确保配置文件格式正确，否则无法保存</li>
             </ul>
         </div>
-        
+
         <div class="info">
             <h2>安全提醒</h2>
             <ul>
@@ -190,19 +228,17 @@
             </ul>
         </div>
     </div>
-    
+
     <script>
-        // 获取Web路径前缀
         const webPath = "{{.webPath}}";
-        
-        // 检查用户认证状态
+
         function checkAuthStatus() {
             fetch(webPath + 'auth-status')
                 .then(response => response.json())
                 .then(data => {
                     const loginLink = document.getElementById('login-link');
                     const logoutLink = document.getElementById('logout-link');
-                    
+
                     if (data.authenticated) {
                         loginLink.style.display = 'none';
                         logoutLink.style.display = 'inline-block';
@@ -212,43 +248,34 @@
                         logoutLink.style.display = 'none';
                     }
                 })
-                .catch(error => {
-                    console.error('检查认证状态失败:', error);
-                });
+                .catch(error => console.error('检查认证状态失败:', error));
         }
-        
-        // 页面加载完成后检查认证状态
-        window.addEventListener('load', function() {
+
+        window.addEventListener('load', function () {
             checkAuthStatus();
-            
-            // 获取配置并动态生成组链接
+
             Promise.all([
                 fetch(webPath + 'config'),
                 fetch('{{.monitorPath}}?format=json')
             ])
-            .then(responses => Promise.all(responses.map(r => r.text())))
-            .then(([configData, monitorData]) => {
-                const config = jsyaml.load(configData);
-                const monitor = JSON.parse(monitorData);
-                
-                // 显示监控信息
-                displayMonitorInfo(monitor);
-            })
-            .catch(error => {
-                console.error('加载数据失败:', error);
-                document.getElementById('monitor-content').innerHTML = '<p style="color: red;">加载监控数据失败: ' + error.message + '</p>';
-            });
+                .then(responses => Promise.all(responses.map(r => r.text())))
+                .then(([configData, monitorData]) => {
+                    const config = jsyaml.load(configData);
+                    const monitor = JSON.parse(monitorData);
+                    displayMonitorInfo(monitor);
+                })
+                .catch(error => {
+                    console.error('加载数据失败:', error);
+                    document.getElementById('monitor-content').innerHTML = '<p style="color: red;">加载监控数据失败: ' + error.message + '</p>';
+                });
         });
-        
-        // 显示监控信息
+
         function displayMonitorInfo(monitor) {
             const monitorContent = document.getElementById('monitor-content');
-            
             if (!monitor.ProxyGroups) {
                 monitorContent.innerHTML = '<p>暂无代理组监控数据</p>';
                 return;
             }
-            
             let html = '';
             for (const [groupName, group] of Object.entries(monitor.ProxyGroups)) {
                 html += `
@@ -268,28 +295,20 @@
                         </thead>
                         <tbody>
                 `;
-                
                 for (const proxy of group.Proxies) {
                     const stats = group.Stats && group.Stats.ProxyStats ? group.Stats.ProxyStats[proxy.Name] : null;
                     let statusText = '<span class="status-unknown">⚪ 未初始化</span>';
-                    let statusClass = 'status-unknown';
-                    
                     if (stats) {
                         if (stats.Alive && (stats.ResponseTime > 0 || stats.FailCount > 0)) {
                             statusText = '<span class="status-alive">✅ 活跃</span>';
-                            statusClass = 'status-alive';
                         } else if (stats.CooldownUntil && new Date(stats.CooldownUntil) > new Date()) {
                             statusText = '<span class="status-cooldown">🚫 冷却</span>';
-                            statusClass = 'status-cooldown';
                         } else if (!stats.Alive && (stats.ResponseTime > 0 || stats.FailCount > 0)) {
                             statusText = '<span class="status-dead">❌ 死亡</span>';
-                            statusClass = 'status-dead';
                         } else {
                             statusText = '<span class="status-unknown">⚪ 未测试</span>';
-                            statusClass = 'status-unknown';
                         }
                     }
-                    
                     html += `
                         <tr>
                             <td>${proxy.Name}</td>
@@ -299,7 +318,6 @@
                         </tr>
                     `;
                 }
-                
                 html += `
                         </tbody>
                     </table>
@@ -309,9 +327,9 @@
                 </div>
                 `;
             }
-            
             monitorContent.innerHTML = html;
         }
     </script>
 </body>
+
 </html>
