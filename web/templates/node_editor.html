@@ -2897,7 +2897,7 @@
             document.getElementById('modifyInterval').value = groupConfig.interval || '180s';
             document.getElementById('modifyIpv6').value = groupConfig.ipv6 !== undefined ? groupConfig.ipv6.toString() : 'false';
             document.getElementById('modifyLoadbalance').value = groupConfig.loadbalance || 'round-robin';
-            document.getElementById('modifyMaxRetries').value = groupConfig.max_retries ? groupConfig.max_retries.toString() : '3';
+            document.getElementById('modifyMaxRetries').value = groupConfig.max_retries ? groupConfig.max_retries.toString() : '1';
             document.getElementById('modifyRetryDelay').value = groupConfig.retry_delay || '1s';
             document.getElementById('modifyMaxRt').value = groupConfig.max_rt || '200ms';
         }
@@ -3091,7 +3091,7 @@
             const interval = document.getElementById('modifyInterval').value || "180s";
             const ipv6 = document.getElementById('modifyIpv6').value === "true";
             const loadbalance = document.getElementById('modifyLoadbalance').value || "round-robin";
-            const maxRetries = parseInt(document.getElementById('modifyMaxRetries').value) || 3;
+            const maxRetries = parseInt(document.getElementById('modifyMaxRetries').value) || 1;
             const retryDelay = document.getElementById('modifyRetryDelay').value || "1s";
             const maxRt = document.getElementById('modifyMaxRt').value || "200ms";
 
