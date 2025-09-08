@@ -62,7 +62,7 @@ func main() {
 		}
 	}
 
-	go monitor.ActiveClients.StartCleaner(10*time.Second, 5*time.Second)
+	go monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second)
 
 	go monitor.StartSystemStatsUpdater(10 * time.Second)
 
