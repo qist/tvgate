@@ -724,17 +724,17 @@
                 <div class="form-group-inline">
                     <label for="loadbalance">负载均衡</label>
                     <select id="loadbalance" class="form-control">
-                        <option value="round-robin">轮询 (round-robin)</option>
                         <option value="fastest">最快优先 (fastest)</option>
+                        <option value="round-robin">轮询 (round-robin)</option>
                     </select>
                 </div>
 
                 <div class="form-group-inline">
                     <label for="maxRetries">最大重试次数</label>
                     <select id="maxRetries" class="form-control">
-                        <option value="1">1次</option>
+                        <option value="1" selected>1次</option>
                         <option value="2">2次</option>
-                        <option value="3" selected>3次</option>
+                        <option value="3">3次</option>
                         <option value="4">4次</option>
                         <option value="5">5次</option>
                     </select>
@@ -747,7 +747,7 @@
 
                 <div class="form-group-inline">
                     <label for="maxRt">最大响应时间</label>
-                    <input type="text" id="maxRt" class="form-control" value="100ms" placeholder="例如: 100ms">
+                    <input type="text" id="maxRt" class="form-control" value="200ms" placeholder="例如: 200ms">
                 </div>
                 <div class="form-group">
                     <button type="button" class="btn-primary" onclick="addProxyGroup()">添加组</button>
@@ -951,17 +951,17 @@
                 <div class="form-group-inline">
                     <label for="modifyLoadbalance">负载均衡</label>
                     <select id="modifyLoadbalance" class="form-control">
-                        <option value="round-robin">轮询 (round-robin)</option>
                         <option value="fastest">最快优先 (fastest)</option>
+                        <option value="round-robin">轮询 (round-robin)</option>
                     </select>
                 </div>
 
                 <div class="form-group-inline">
                     <label for="modifyMaxRetries">最大重试次数</label>
                     <select id="modifyMaxRetries" class="form-control">
-                        <option value="1">1次</option>
+                        <option value="1" selected>1次</option>
                         <option value="2">2次</option>
-                        <option value="3" selected>3次</option>
+                        <option value="3">3次</option>
                         <option value="4">4次</option>
                         <option value="5">5次</option>
                     </select>
@@ -974,7 +974,7 @@
 
                 <div class="form-group-inline">
                     <label for="modifyMaxRt">最大响应时间</label>
-                    <input type="text" id="modifyMaxRt" class="form-control" placeholder="例如: 100ms">
+                    <input type="text" id="modifyMaxRt" class="form-control" placeholder="例如: 200ms">
                 </div>
 
                 <div class="form-group">
@@ -2450,7 +2450,7 @@
             const loadbalance = document.getElementById('loadbalance').value || "round-robin";
             const maxRetries = parseInt(document.getElementById('maxRetries').value) || 3;
             const retryDelay = document.getElementById('retryDelay').value || "1s";
-            const maxRt = document.getElementById('maxRt').value || "100ms";
+            const maxRt = document.getElementById('maxRt').value || "200ms";
 
             // 构建组配置对象
             const groupConfig = {
@@ -2899,7 +2899,7 @@
             document.getElementById('modifyLoadbalance').value = groupConfig.loadbalance || 'round-robin';
             document.getElementById('modifyMaxRetries').value = groupConfig.max_retries ? groupConfig.max_retries.toString() : '3';
             document.getElementById('modifyRetryDelay').value = groupConfig.retry_delay || '1s';
-            document.getElementById('modifyMaxRt').value = groupConfig.max_rt || '100ms';
+            document.getElementById('modifyMaxRt').value = groupConfig.max_rt || '200ms';
         }
 
         // 新增：修改代理组相关的其他函数
@@ -3093,7 +3093,7 @@
             const loadbalance = document.getElementById('modifyLoadbalance').value || "round-robin";
             const maxRetries = parseInt(document.getElementById('modifyMaxRetries').value) || 3;
             const retryDelay = document.getElementById('modifyRetryDelay').value || "1s";
-            const maxRt = document.getElementById('modifyMaxRt').value || "100ms";
+            const maxRt = document.getElementById('modifyMaxRt').value || "200ms";
 
             // 构建组配置对象 - 直接使用顶级配置结构
             const groupConfig = {
