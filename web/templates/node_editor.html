@@ -6,7 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.title}}</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-darker.min.css">
+
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-darker.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/lint/lint.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/yaml/yaml.min.js"></script>
@@ -62,6 +64,33 @@
             font-size: 14px;
             transition: background-color 0.3s;
         }
+
+        /* 自定义高亮说明文字样式 */
+        .highlight-note {
+            background-color: #fff3cd;
+            /* 浅黄色背景，亮色模式 */
+            color: #856404;
+            /* 深棕色文字 */
+            padding: 10px;
+            border-left: 4px solid #ffc107;
+            /* 左边黄色边框 */
+            margin-bottom: 15px;
+            font-weight: bold;
+            border-radius: 4px;
+            display: block;
+        }
+
+        /* 黑暗模式下自适应高亮样式 */
+        @media (prefers-color-scheme: dark) {
+            .highlight-note {
+                background-color: #4b3e00;
+                /* 深黄色背景，黑暗模式 */
+                color: #fff3cd;
+                /* 浅黄色文字 */
+                border-left: 4px solid #ffc107;
+            }
+        }
+
 
         .btn:hover {
             background-color: #005a9e;
@@ -258,6 +287,11 @@
             background-color: #9c27b0;
             color: white;
             border-color: #9c27b0;
+        }
+
+        /* 添加到CSS样式部分，如果还没有的话 */
+        .hidden {
+            display: none;
         }
 
         .validation-error {
@@ -621,7 +655,7 @@
             <button class="btn validate" onclick="validateYaml()">验证格式 (Ctrl+Shift+V)</button>
             <button class="btn format" onclick="formatYaml()">格式化 (Ctrl+Shift+F)</button>
             <button class="btn group" id="add-proxy-btn" style="display: none;"
-                onclick="openAddProxyModal()">添加代理节点</button>
+                onclick="openModifyGroupModal()">修改代理组</button>
         </div>
 
         <div id="status" class="status"></div>
@@ -715,10 +749,10 @@
                     <label for="maxRt">最大响应时间</label>
                     <input type="text" id="maxRt" class="form-control" value="100ms" placeholder="例如: 100ms">
                 </div>
-
                 <div class="form-group">
                     <button type="button" class="btn-primary" onclick="addProxyGroup()">添加组</button>
                     <button type="button" class="btn-danger" onclick="closeAddGroupModal()">取消</button>
+                    <p class="highlight-note">注意：修改后的内容将显示在编辑器中，请在主页点击保存按钮以提交到后端。</p>
                 </div>
             </form>
         </div>
@@ -871,6 +905,82 @@
                 <div class="form-group">
                     <button type="button" class="btn-primary" onclick="updateProxyNode()">更新节点</button>
                     <button type="button" class="btn-danger" onclick="closeEditProxyModal()">取消</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="modifyGroupModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>修改代理组: <span id="modifyGroupName"></span></h2>
+                <span class="close-modal" onclick="closeModifyGroupModal()">&times;</span>
+            </div>
+            <form id="modifyGroupForm">
+                <div class="form-group">
+                    <label for="modifyGroupNameInput">组名称 *</label>
+                    <input type="text" id="modifyGroupNameInput" class="form-control" placeholder="组名称" required>
+                </div>
+
+                <h3 class="section-title">代理节点</h3>
+                <div id="modifyProxiesContainer">
+                    <!-- 代理节点将通过JavaScript动态添加 -->
+                </div>
+                <button type="button" class="btn" onclick="addModifyProxyField()">+ 添加代理节点</button>
+
+                <h3 class="section-title">域名规则</h3>
+                <div id="modifyDomainsContainer">
+                    <!-- 域名规则将通过JavaScript动态添加 -->
+                </div>
+                <button type="button" class="btn" onclick="addModifyDomainField()">+ 添加域名规则</button>
+
+                <h3 class="section-title">其他配置</h3>
+                <div class="form-group-inline">
+                    <label for="modifyInterval">检查间隔</label>
+                    <input type="text" id="modifyInterval" class="form-control" placeholder="例如: 180s">
+                </div>
+
+                <div class="form-group-inline">
+                    <label for="modifyIpv6">IPv6支持</label>
+                    <select id="modifyIpv6" class="form-control">
+                        <option value="false">关闭</option>
+                        <option value="true">开启</option>
+                    </select>
+                </div>
+
+                <div class="form-group-inline">
+                    <label for="modifyLoadbalance">负载均衡</label>
+                    <select id="modifyLoadbalance" class="form-control">
+                        <option value="round-robin">轮询 (round-robin)</option>
+                        <option value="fastest">最快优先 (fastest)</option>
+                    </select>
+                </div>
+
+                <div class="form-group-inline">
+                    <label for="modifyMaxRetries">最大重试次数</label>
+                    <select id="modifyMaxRetries" class="form-control">
+                        <option value="1">1次</option>
+                        <option value="2">2次</option>
+                        <option value="3" selected>3次</option>
+                        <option value="4">4次</option>
+                        <option value="5">5次</option>
+                    </select>
+                </div>
+
+                <div class="form-group-inline">
+                    <label for="modifyRetryDelay">重试延迟</label>
+                    <input type="text" id="modifyRetryDelay" class="form-control" placeholder="例如: 1s">
+                </div>
+
+                <div class="form-group-inline">
+                    <label for="modifyMaxRt">最大响应时间</label>
+                    <input type="text" id="modifyMaxRt" class="form-control" placeholder="例如: 100ms">
+                </div>
+
+                <div class="form-group">
+                    <button type="button" class="btn-primary" onclick="saveModifiedGroup()">保存修改</button>
+                    <button type="button" class="btn-danger" onclick="closeModifyGroupModal()">取消</button>
+                    <p class="highlight-note">注意：修改后的内容将显示在编辑器中，请在主页点击保存按钮以提交到后端。</p>
                 </div>
             </form>
         </div>
@@ -1280,7 +1390,7 @@
             if (addProxyBtn) {
                 addProxyBtn.style.display = 'none';
             }
-            
+
             // 根据当前选择显示/隐藏添加组按钮
             if (addGroupBtn) {
                 if (currentGroup === null) {
@@ -1564,6 +1674,7 @@
             }
             if (event.target == editModal) {
                 closeEditProxyModal();
+
             }
         }
 
@@ -1632,7 +1743,302 @@
         // 关闭编辑代理节点弹窗
         function closeEditProxyModal() {
             document.getElementById('editProxyModal').style.display = 'none';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         // 切换编辑代理节点字段显示
         function toggleEditProxyFields() {
@@ -2018,6 +2424,7 @@
                         });
 
                         // 如果有headers则添加到对象中
+
                         if (Object.keys(proxyNode.headers).length === 0) {
                             delete proxyNode.headers;
                         }
@@ -2278,6 +2685,475 @@
                 showStatus('代理节点添加成功', 'success');
             } catch (e) {
                 showStatus('添加代理节点时出错: ' + e.message, 'error');
+            }
+        }
+        function openModifyGroupModal() {
+            if (currentNode !== 'proxygroups' && currentNode !== 'jx') {
+                showStatus('只能在proxygroups或jx节点中修改代理组', 'error');
+                return;
+            }
+
+            if (!currentGroup) {
+                showStatus('请先选择一个代理组', 'error');
+                return;
+            }
+
+            // 加载当前组的配置到修改弹窗
+            loadGroupConfigForModify(currentGroup);
+
+            // 显示修改弹窗
+            document.getElementById('modifyGroupModal').style.display = 'block';
+        }
+        // 新增：修改代理组功能的核心JavaScript代码
+        function loadGroupConfigForModify(groupName) {
+            if (!currentNode || !groupName) {
+                console.error('未指定节点或组名');
+                return;
+            }
+
+            // 从后端获取组配置
+            fetch(webPath + 'config/group?config=' + encodeURIComponent(currentNode) + '&group=' + encodeURIComponent(groupName))
+                .then(response => {
+                    if (!response.ok) {
+                        if (response.status === 401) {
+                            // 未授权，重定向到登录页面
+                            window.location.href = webPath + 'login';
+                            return;
+                        }
+                        throw new Error('网络响应异常 ' + response.status);
+                    }
+                    return response.text();
+                })
+                .then(data => {
+                    if (data) {
+                        // 解析YAML数据
+                        try {
+                            const groupConfig = jsyaml.load(data);
+
+                            // 填充组名称
+                            document.getElementById('modifyGroupNameInput').value = groupName;
+
+                            // 直接使用组配置数据（不再从 groupConfig.proxies 获取）
+                            // 顶级配置结构：proxies, domains, interval等直接是对象的属性
+                            populateModifyProxies(groupConfig.proxies || []);
+                            populateModifyDomains(groupConfig.domains || []);
+                            populateModifyOtherConfig(groupConfig);
+
+                            // 显示修改弹窗
+                            document.getElementById('modifyGroupModal').style.display = 'block';
+                            document.getElementById('modifyGroupName').textContent = groupName;
+
+                        } catch (e) {
+                            showStatus('解析组配置失败: ' + e.message, 'error');
+                        }
+                    } else {
+                        showStatus('组配置为空', 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('加载组配置失败:', error);
+                    showStatus('加载组配置失败: ' + error.message, 'error');
+                });
+        }
+
+        function populateModifyProxies(proxies) {
+            const container = document.getElementById('modifyProxiesContainer');
+            container.innerHTML = '';
+
+            proxies.forEach((proxy, index) => {
+                const proxyItem = createModifyProxyItem(proxy, index);
+                container.appendChild(proxyItem);
+            });
+
+            if (proxies.length === 0) {
+                const proxyItem = createModifyProxyItem({}, 0);
+                container.appendChild(proxyItem);
+            }
+        }
+
+        // 创建代理节点项目 - 确保包含 .modify-proxy-headers-container
+        function createModifyProxyItem(proxy, index) {
+            const proxyItem = document.createElement('div');
+            proxyItem.className = 'proxy-item';
+
+            const proxyCount = index + 1;
+            const proxyName = proxy.name || `代理节点 ${proxyCount}`;
+            const proxyType = proxy.type || 'socks5';
+            const proxyServer = proxy.server || '';
+            const proxyPort = proxy.port || '';
+            const proxyUdp = proxy.udp || false;
+            const proxyUsername = proxy.username || '';
+            const proxyPassword = proxy.password || '';
+            const proxyHeaders = proxy.headers || {};
+
+            proxyItem.innerHTML = `
+        <div class="proxy-header">
+            <h4>代理节点 ${proxyCount}</h4>
+            <div class="proxy-actions">
+                <button type="button" class="remove" onclick="removeModifyProxyField(this)">删除此节点</button>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>节点名称 *</label>
+            <input type="text" class="form-control modify-proxy-name" placeholder="节点名称" value="${proxyName}" required>
+        </div>
+        <div class="form-group">
+            <label>代理类型 *</label>
+            <select class="form-control modify-proxy-type" onchange="toggleModifyGroupProxyFields(this)">
+                <option value="socks5" ${proxyType === 'socks5' ? 'selected' : ''}>socks5</option>
+                <option value="socks4" ${proxyType === 'socks4' ? 'selected' : ''}>socks4</option>
+                <option value="socks4a" ${proxyType === 'socks4a' ? 'selected' : ''}>socks4a</option>
+                <option value="http" ${proxyType === 'http' ? 'selected' : ''}>http</option>
+                <option value="https" ${proxyType === 'https' ? 'selected' : ''}>https</option>
+            </select>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>服务器地址 *</label>
+                <input type="text" class="form-control modify-proxy-server" placeholder="IP地址或域名" value="${proxyServer}" required>
+            </div>
+            <div class="form-group">
+                <label>端口 *</label>
+                <input type="number" class="form-control modify-proxy-port" placeholder="端口号" min="1" max="65535" value="${proxyPort}" required>
+            </div>
+        </div>
+        <div class="form-group modify-proxy-udp-field ${proxyType === 'socks5' ? '' : 'hidden'}">
+            <div class="checkbox-group">
+                <input type="checkbox" class="modify-proxy-udp" ${proxyUdp ? 'checked' : ''}>
+                <label>启用UDP支持 (仅socks5)</label>
+            </div>
+        </div>
+        <div class="form-group modify-proxy-auth-fields">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>用户名 (可选)</label>
+                    <input type="text" class="form-control modify-proxy-username" placeholder="账号" value="${proxyUsername}">
+                </div>
+                <div class="form-group">
+                    <label>密码 (可选)</label>
+                    <input type="password" class="form-control modify-proxy-password" placeholder="密码" value="${proxyPassword}">
+                </div>
+            </div>
+        </div>
+        <div class="form-group modify-proxy-headers-fields ${proxyType === 'http' || proxyType === 'https' ? '' : 'hidden'}">
+            <label>自定义Headers (可选)</label>
+            <div class="modify-proxy-headers-container">
+                ${generateModifyHeadersHtml(proxyHeaders)}
+            </div>
+            <button type="button" class="btn" onclick="addModifyHeaderField(this)">+ 添加Header</button>
+        </div>
+    `;
+            return proxyItem;
+        }
+
+        // 生成Headers HTML
+        function generateModifyHeadersHtml(headers) {
+            let html = '';
+            if (headers) {
+                for (const [key, value] of Object.entries(headers)) {
+                    html += `
+                <div class="header-item">
+                    <input type="text" class="form-control" placeholder="Header名称" value="${key}">
+                    <input type="text" class="form-control" placeholder="Header值" value="${value}">
+                    <div class="header-actions">
+                        <button type="button" class="remove" onclick="removeModifyHeaderField(this)">-</button>
+                    </div>
+                </div>
+            `;
+                }
+            }
+            return html;
+        }
+        function populateModifyDomains(domains) {
+            const container = document.getElementById('modifyDomainsContainer');
+            container.innerHTML = '';
+
+            domains.forEach((domain, index) => {
+                const domainItem = document.createElement('div');
+                domainItem.className = 'domain-item';
+                domainItem.innerHTML = `
+                <input type="text" class="form-control modify-domain" placeholder="例如: *.example.com 或 192.168.1.0/24" value="${domain}">
+                <div class="domain-actions">
+                    <button type="button" class="remove" onclick="removeModifyDomainField(this)">删除</button>
+                </div>
+            `;
+                container.appendChild(domainItem);
+            });
+
+            if (domains.length === 0) {
+                const domainItem = document.createElement('div');
+                domainItem.className = 'domain-item';
+                domainItem.innerHTML = `
+                <input type="text" class="form-control modify-domain" placeholder="例如: *.example.com 或 192.168.1.0/24">
+                <div class="domain-actions">
+                    <button type="button" class="remove" onclick="removeModifyDomainField(this)">删除</button>
+                </div>
+            `;
+                container.appendChild(domainItem);
+            }
+        }
+
+        function populateModifyOtherConfig(groupConfig) {
+            document.getElementById('modifyInterval').value = groupConfig.interval || '180s';
+            document.getElementById('modifyIpv6').value = groupConfig.ipv6 !== undefined ? groupConfig.ipv6.toString() : 'false';
+            document.getElementById('modifyLoadbalance').value = groupConfig.loadbalance || 'round-robin';
+            document.getElementById('modifyMaxRetries').value = groupConfig.max_retries ? groupConfig.max_retries.toString() : '3';
+            document.getElementById('modifyRetryDelay').value = groupConfig.retry_delay || '1s';
+            document.getElementById('modifyMaxRt').value = groupConfig.max_rt || '100ms';
+        }
+
+        // 新增：修改代理组相关的其他函数
+        function addModifyProxyField() {
+            const container = document.getElementById('modifyProxiesContainer');
+            const proxyCount = container.querySelectorAll('.proxy-item').length + 1;
+            const proxyItem = createModifyProxyItem({}, proxyCount - 1);
+            container.appendChild(proxyItem);
+        }
+
+        function removeModifyProxyField(button) {
+            const proxyItem = button.closest('.proxy-item');
+            if (proxyItem) {
+                proxyItem.remove();
+            }
+        }
+
+        function toggleModifyGroupProxyFields(selectElement) {
+            const proxyItem = selectElement.closest('.proxy-item');
+            const proxyType = selectElement.value;
+            const udpField = proxyItem.querySelector('.modify-proxy-udp-field');
+            const authFields = proxyItem.querySelector('.modify-proxy-auth-fields');
+            const headersFields = proxyItem.querySelector('.modify-proxy-headers-fields');
+
+            // socks5 显示UDP选项
+            if (udpField) {
+                if (proxyType === 'socks5') {
+                    udpField.classList.remove('hidden');
+                } else {
+                    udpField.classList.add('hidden');
+                }
+            }
+
+            // http/https 显示headers选项
+            if (headersFields) {
+                if (proxyType === 'http' || proxyType === 'https') {
+                    headersFields.classList.remove('hidden');
+                } else {
+                    headersFields.classList.add('hidden');
+                }
+            }
+
+            // 所有类型都显示认证字段
+            if (authFields) {
+                authFields.classList.remove('hidden');
+            }
+        }
+
+        // 添加Header字段
+        function addModifyHeaderField(button) {
+            // 找到最近的代理节点项目 (.proxy-item)
+            const proxyItem = button.closest('.proxy-item');
+            if (!proxyItem) {
+                console.error('无法找到代理节点项目');
+                return;
+            }
+
+            // 在代理节点项目内找到 Headers 容器 (.modify-proxy-headers-container)
+            const headersContainer = proxyItem.querySelector('.modify-proxy-headers-container');
+            if (!headersContainer) {
+                console.error('无法找到 Headers 容器');
+                return;
+            }
+
+            // 创建新的 Header 项
+            const headerItem = document.createElement('div');
+            headerItem.className = 'header-item';
+            headerItem.innerHTML = `
+        <input type="text" class="form-control" placeholder="Header名称">
+        <input type="text" class="form-control" placeholder="Header값">
+        <div class="header-actions">
+            <button type="button" class="remove" onclick="removeModifyHeaderField(this)">-</button>
+        </div>
+    `;
+            headersContainer.appendChild(headerItem);
+        }
+
+        function addModifyDomainField() {
+            const container = document.getElementById('modifyDomainsContainer');
+            const domainItem = document.createElement('div');
+            domainItem.className = 'domain-item';
+            domainItem.innerHTML = `
+            <input type="text" class="form-control modify-domain" placeholder="例如: *.example.com 或 192.168.1.0/24">
+            <div class="domain-actions">
+                <button type="button" class="remove" onclick="removeModifyDomainField(this)">删除</button>
+            </div>
+        `;
+            container.appendChild(domainItem);
+        }
+
+        function removeModifyDomainField(button) {
+            const domainItem = button.closest('.domain-item');
+            if (domainItem) {
+                domainItem.remove();
+            }
+        }
+
+        // saveModifiedGroup 函数
+        function saveModifiedGroup() {
+            const groupName = document.getElementById('modifyGroupNameInput').value.trim();
+
+            if (!groupName) {
+                showStatus('请输入组名称', 'error');
+                return;
+            }
+
+            // 获取代理节点数据
+            const proxies = [];
+            const proxyItems = document.querySelectorAll('#modifyProxiesContainer .proxy-item');
+
+            for (let i = 0; i < proxyItems.length; i++) {
+                const item = proxyItems[i];
+                const name = item.querySelector('.modify-proxy-name').value.trim();
+                const type = item.querySelector('.modify-proxy-type').value;
+                const server = item.querySelector('.modify-proxy-server').value.trim();
+                const port = item.querySelector('.modify-proxy-port').value;
+                const udp = item.querySelector('.modify-proxy-udp').checked;
+                const username = item.querySelector('.modify-proxy-username').value.trim();
+                const password = item.querySelector('.modify-proxy-password').value.trim();
+
+                // 验证必填字段
+                if (!name) {
+                    showStatus(`第${i + 1}个代理节点的名称不能为空`, 'error');
+                    return;
+                }
+
+                if (!server) {
+                    showStatus(`第${i + 1}个代理节点的服务器地址不能为空`, 'error');
+                    return;
+                }
+
+                if (!port || port < 1 || port > 65535) {
+                    showStatus(`第${i + 1}个代理节点的端口号无效(1-65535)`, 'error');
+                    return;
+                }
+
+                // 构建代理节点对象
+                const proxyNode = {
+                    name: name,
+                    type: type,
+                    server: server,
+                    port: parseInt(port)
+                };
+
+                // 根据类型添加额外字段
+                if (type === 'socks5' && udp) {
+                    proxyNode.udp = true;
+                }
+
+                if (username) {
+                    proxyNode.username = username;
+                }
+
+                if (password) {
+                    proxyNode.password = password;
+                }
+
+                // 添加headers（仅http/https）
+                if ((type === 'http' || type === 'https')) {
+                    const headersContainer = item.querySelector('.modify-proxy-headers-container');
+                    const headerItems = headersContainer.querySelectorAll('.header-item');
+                    if (headerItems.length > 0) {
+                        proxyNode.headers = {};
+                        headerItems.forEach(headerItem => {
+                            const inputs = headerItem.querySelectorAll('input');
+                            const key = inputs[0].value.trim();
+                            const value = inputs[1].value.trim();
+                            if (key && value) {
+                                proxyNode.headers[key] = value;
+                            }
+                        });
+                    }
+                }
+
+                proxies.push(proxyNode);
+            }
+
+            // 获取域名规则数据
+            const domains = [];
+            const domainItems = document.querySelectorAll('#modifyDomainsContainer .modify-domain');
+            domainItems.forEach(item => {
+                const domain = item.value.trim();
+                if (domain) {
+                    domains.push(domain);
+                }
+            });
+
+            // 获取其他配置数据
+            const interval = document.getElementById('modifyInterval').value || "180s";
+            const ipv6 = document.getElementById('modifyIpv6').value === "true";
+            const loadbalance = document.getElementById('modifyLoadbalance').value || "round-robin";
+            const maxRetries = parseInt(document.getElementById('modifyMaxRetries').value) || 3;
+            const retryDelay = document.getElementById('modifyRetryDelay').value || "1s";
+            const maxRt = document.getElementById('modifyMaxRt').value || "100ms";
+
+            // 构建组配置对象 - 直接使用顶级配置结构
+            const groupConfig = {
+                proxies: proxies,
+                domains: domains,
+                interval: interval,
+                ipv6: ipv6,
+                loadbalance: loadbalance,
+                max_retries: maxRetries,
+                retry_delay: retryDelay,
+                max_rt: maxRt
+            };
+
+            // 获取当前编辑器内容
+            let currentContent = editor.getValue();
+
+            try {
+                // 解析当前YAML内容
+                let config = jsyaml.load(currentContent) || {};
+
+                // 直接更新顶级配置属性
+                // 不再使用组名作为键，而是直接设置顶级属性
+                config.proxies = groupConfig.proxies;
+                config.domains = groupConfig.domains;
+                config.interval = groupConfig.interval;
+                config.ipv6 = groupConfig.ipv6;
+                config.loadbalance = groupConfig.loadbalance;
+                config.max_retries = groupConfig.max_retries;
+                config.retry_delay = groupConfig.retry_delay;
+                config.max_rt = groupConfig.max_rt;
+
+                // 序列化更新后的配置
+                const updatedYaml = jsyaml.dump(config, {
+                    indent: 2,
+                    lineWidth: -1,
+                    noRefs: true
+                });
+
+                // 更新编辑器内容
+                editor.setValue(updatedYaml);
+
+                showStatus('代理组修改已应用到编辑器，点击保存按钮提交到后端', 'success');
+
+                // 关闭弹窗
+                closeModifyGroupModal();
+
+            } catch (e) {
+                console.error('解析或生成YAML时出错:', e);
+                showStatus('修改代理组时出错: ' + (e.message || 'YAML格式错误'), 'error');
+            }
+        }
+
+        function closeModifyGroupModal() {
+            document.getElementById('modifyGroupModal').style.display = 'none';
+        }
+        // // 删除代理节点的Header字段
+        function removeModifyHeaderField(button) {
+            const headerItem = button.closest('.header-item');
+            if (headerItem) {
+                headerItem.remove();
             }
         }
     </script>

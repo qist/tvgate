@@ -53,14 +53,43 @@ func handleHTMLRequest(w http.ResponseWriter, r *http.Request) {
 <meta charset="UTF-8">
 <title>TVGate 状态监控</title>
 <style>
-body { font-family: 'Segoe UI', sans-serif; max-width:1200px;margin:20px auto;background:#f5f5f5; color:#333;}
-.header {background:#667eea; color:white; padding:20px; border-radius:10px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.15);}
+body { 
+    font-family: 'Segoe UI', sans-serif; 
+    max-width:1200px;
+    margin:20px auto;
+    background:#121212; 
+    color:#e0e0e0;
+}
+.header {
+    background:#1f1f1f; 
+    color:white; 
+    padding:20px; 
+    border-radius:10px;
+    margin-bottom:20px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.5);
+}
 .header h1 {margin:0;}
-.table {width:100%; border-collapse: collapse; margin-bottom:20px; table-layout:fixed; word-wrap:break-word;}
-.table th, .table td {border:1px solid #ddd; padding:8px; text-align:left; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-.table th {background:#f9f9f9;}
-.table tr:nth-child(even) {background:#fafafa;}
-.table tr:hover {background:#f1f1f1;}
+.table {
+    width:100%; 
+    border-collapse: collapse; 
+    margin-bottom:20px; 
+    table-layout:fixed; 
+    word-wrap:break-word;
+}
+.table th, .table td {
+    border:1px solid #333; 
+    padding:8px; 
+    text-align:left; 
+    max-width:200px; 
+    white-space:nowrap; 
+    overflow:hidden; 
+    text-overflow:ellipsis;
+}
+.table th {
+    background:#1f1f1f;
+}
+.table tr:nth-child(even) {background:#181818;}
+.table tr:hover {background:#2a2a2a;}
 .table td.url-cell {max-width:700px;}
 .table td.ua-cell {max-width:200px;}
 .status-alive {color:#4CAF50;font-weight:bold;}
@@ -72,6 +101,14 @@ body { font-family: 'Segoe UI', sans-serif; max-width:1200px;margin:20px auto;ba
 .refresh-on {background:#4CAF50; color:white;}
 .refresh-off {background:#f44336; color:white;}
 .toggle-column {cursor:pointer; user-select:none;}
+.card {
+    background: #1f1f1f;
+    padding: 15px; 
+    border-radius: 8px; 
+    box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+.card h3 { margin-top:0; color:#e0e0e0; }
+.card ul li { padding:5px 0; }
 </style>
 </head>
 <body>
@@ -95,14 +132,14 @@ body { font-family: 'Segoe UI', sans-serif; max-width:1200px;margin:20px auto;ba
 
 <h2>系统信息</h2>
 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px;">
-  <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-    <h3 style="margin-top: 0; color: #495057;">基础信息</h3>
+  <div class="card">
+    <h3>基础信息</h3>
     <ul style="list-style: none; padding: 0;">
-      <li style="padding: 5px 0;"><strong>操作系统:</strong> {{.TrafficStats.HostInfo.Platform}}</li>
-      <li style="padding: 5px 0;"><strong>内核版本:</strong> {{.TrafficStats.HostInfo.KernelVersion}}</li>
-      <li style="padding: 5px 0;"><strong>CPU架构:</strong> {{.TrafficStats.HostInfo.KernelArch}}</li>
-      <li style="padding: 5px 0;"><strong>版本:</strong> {{.Version}}</li>
-      <li style="padding: 5px 0;"><strong>运行时间:</strong> 
+      <li><strong>操作系统:</strong> {{.TrafficStats.HostInfo.Platform}}</li>
+      <li><strong>内核版本:</strong> {{.TrafficStats.HostInfo.KernelVersion}}</li>
+      <li><strong>CPU架构:</strong> {{.TrafficStats.HostInfo.KernelArch}}</li>
+      <li><strong>版本:</strong> {{.Version}}</li>
+      <li><strong>运行时间:</strong> 
         {{$totalSeconds := .Uptime.Seconds}}
         {{$days := float64ToInt64 (divFloat64 $totalSeconds 86400)}}
         {{$hours := float64ToInt64 (divFloat64 (modFloat64 $totalSeconds 86400) 3600)}}
@@ -110,69 +147,67 @@ body { font-family: 'Segoe UI', sans-serif; max-width:1200px;margin:20px auto;ba
         {{$seconds := float64ToInt64 (modFloat64 $totalSeconds 60)}}
         {{if gt $days 0}}{{$days}}天{{end}}{{if gt $hours 0}}{{$hours}}小时{{end}}{{if gt $minutes 0}}{{$minutes}}分{{end}}{{$seconds}}秒
       </li>
-      <li style="padding: 5px 0;"><strong>Goroutines:</strong> {{.Goroutines}}</li>
-      <li style="padding: 5px 0;"><strong>客户端IP:</strong> {{.ClientIP}}</li>
+      <li><strong>Goroutines:</strong> {{.Goroutines}}</li>
+      <li><strong>客户端IP:</strong> {{.ClientIP}}</li>
     </ul>
   </div>
   
-  <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-    <h3 style="margin-top: 0; color: #495057;">网络流量</h3>
+  <div class="card">
+    <h3>网络流量</h3>
     <ul style="list-style: none; padding: 0;">
-      <li style="padding: 5px 0;"><strong>总流量:</strong> {{FormatBytes .TrafficStats.TotalBytes}}</li>
-      <li style="padding: 5px 0;"><strong>入口流量:</strong> {{FormatBytes .TrafficStats.InboundBytes}}</li>
-      <li style="padding: 5px 0;"><strong>出口流量:</strong> {{FormatBytes .TrafficStats.OutboundBytes}}</li>
-      <li style="padding: 5px 0;"><strong>实时总带宽(入):</strong> {{FormatNetworkBandwidth .TrafficStats.InboundBandwidth}}</li>
-      <li style="padding: 5px 0;"><strong>实时总带宽(出):</strong> {{FormatNetworkBandwidth .TrafficStats.OutboundBandwidth}}</li>
+      <li><strong>总流量:</strong> {{FormatBytes .TrafficStats.TotalBytes}}</li>
+      <li><strong>入口流量:</strong> {{FormatBytes .TrafficStats.InboundBytes}}</li>
+      <li><strong>出口流量:</strong> {{FormatBytes .TrafficStats.OutboundBytes}}</li>
+      <li><strong>实时总带宽(入):</strong> {{FormatNetworkBandwidth .TrafficStats.InboundBandwidth}}</li>
+      <li><strong>实时总带宽(出):</strong> {{FormatNetworkBandwidth .TrafficStats.OutboundBandwidth}}</li>
     </ul>
   </div>
   
-  <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-    <h3 style="margin-top: 0; color: #495057;">CPU与内存</h3>
+  <div class="card">
+    <h3>CPU与内存</h3>
     <ul style="list-style: none; padding: 0;">
-      <li style="padding: 5px 0;"><strong>系统负载:</strong> {{printf "%.2f" .TrafficStats.LoadAverage.Load1}} / {{printf "%.2f" .TrafficStats.LoadAverage.Load5}} / {{printf "%.2f" .TrafficStats.LoadAverage.Load15}}</li>
-      <li style="padding: 5px 0;"><strong>CPU核心数:</strong> {{.TrafficStats.CPUCount}}</li> 
-	  <li style="padding: 5px 0;"><strong>CPU 使用率:</strong> {{printf "%.2f%%" .TrafficStats.CPUUsage}}</li>
-	  <li style="padding: 5px 0;"><strong>总内存:</strong> {{FormatBytes .TrafficStats.MemoryTotal}}</li>
-      <li style="padding: 5px 0;"><strong>内存使用:</strong> {{FormatBytes .TrafficStats.MemoryUsage}}</li>
+      <li><strong>系统负载:</strong> {{printf "%.2f" .TrafficStats.LoadAverage.Load1}} / {{printf "%.2f" .TrafficStats.LoadAverage.Load5}} / {{printf "%.2f" .TrafficStats.LoadAverage.Load15}}</li>
+      <li><strong>CPU核心数:</strong> {{.TrafficStats.CPUCount}}</li> 
+	  <li><strong>CPU 使用率:</strong> {{printf "%.2f%%" .TrafficStats.CPUUsage}}</li>
+	  <li><strong>总内存:</strong> {{FormatBytes .TrafficStats.MemoryTotal}}</li>
+      <li><strong>内存使用:</strong> {{FormatBytes .TrafficStats.MemoryUsage}}</li>
     </ul>
   </div>
   
-  <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-    <h3 style="margin-top: 0; color: #495057;">TVGate监控</h3>
+  <div class="card">
+    <h3>TVGate监控</h3>
     <ul style="list-style: none; padding: 0;">
-      <li style="padding: 5px 0;">
-    <strong>CPU:</strong> {{printf "%.2f%%" .TrafficStats.App.CPUPercent}}
-    <small style="color: #888; font-size: 10px;">（多核 CPU 时可能超过 100%）</small>
-       </li>
-      <li style="padding: 5px 0;"><strong>内存:</strong> {{FormatBytes .TrafficStats.App.MemoryUsage}}</li>
-	  <li style="padding: 5px 0;"><strong>总流量:</strong> {{FormatBytes .TrafficStats.App.TotalBytes}}</li>
-      <li style="padding: 5px 0;"><strong>流量入:</strong> {{FormatBytes .TrafficStats.App.InboundBytes}}</li>
-      <li style="padding: 5px 0;"><strong>流量出:</strong> {{FormatBytes .TrafficStats.App.OutboundBytes}}</li>
+      <li><strong>CPU:</strong> {{printf "%.2f%%" .TrafficStats.App.CPUPercent}} <small style="color:#aaa; font-size:10px;">（多核 CPU 时可能超过 100%）</small></li>
+      <li><strong>内存:</strong> {{FormatBytes .TrafficStats.App.MemoryUsage}}</li>
+	  <li><strong>总流量:</strong> {{FormatBytes .TrafficStats.App.TotalBytes}}</li>
+      <li><strong>流量入:</strong> {{FormatBytes .TrafficStats.App.InboundBytes}}</li>
+      <li><strong>流量出:</strong> {{FormatBytes .TrafficStats.App.OutboundBytes}}</li>
     </ul>
   </div>
 </div>
+
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
-  <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-    <h3 style="margin-top: 0; color: #495057;">存储信息</h3>
+  <div class="card">
+    <h3>存储信息</h3>
     {{if .TrafficStats.DiskPartitions}}
-    <table style="width: 100%; border-collapse: collapse;">
+    <table class="table">
       <thead>
-        <tr style="background-color: #e9ecef;">
-          <th style="text-align: left; padding: 8px; border: 1px solid #dee2e6; width: 20%;">挂载点</th>
-          <th style="text-align: left; padding: 8px; border: 1px solid #dee2e6; width: 15%;">文件系统</th>
-          <th style="text-align: left; padding: 8px; border: 1px solid #dee2e6; width: 35%;">已用/总量</th>
-          <th style="text-align: left; padding: 8px; border: 1px solid #dee2e6; width: 30%;">使用率</th>
+        <tr>
+          <th>挂载点</th>
+          <th>文件系统</th>
+          <th>已用/总量</th>
+          <th>使用率</th>
         </tr>
       </thead>
       <tbody>
         {{range .TrafficStats.DiskPartitions}}
         <tr>
-          <td style="padding: 8px; border: 1px solid #dee2e6;">{{.MountPoint}}</td>
-          <td style="padding: 8px; border: 1px solid #dee2e6;">{{.FsType}}</td>
-          <td style="padding: 8px; border: 1px solid #dee2e6;">{{FormatBytes .Used}} / {{FormatBytes .Total}}</td>
-          <td style="padding: 8px; border: 1px solid #dee2e6;">
+          <td>{{.MountPoint}}</td>
+          <td>{{.FsType}}</td>
+          <td>{{FormatBytes .Used}} / {{FormatBytes .Total}}</td>
+          <td>
             <div style="display: flex; align-items: center;">
-              <div style="width: 100%; background-color: #e9ecef; border-radius: 4px; height: 16px; margin-right: 8px;">
+              <div style="width: 100%; background-color: #333; border-radius: 4px; height: 16px; margin-right: 8px;">
                 <div style="width: {{if gt .UsedPercent 100.0}}100{{else if lt .UsedPercent 0.0}}0{{else}}{{printf "%.0f" .UsedPercent}}{{end}}%; height: 16px; background-color: {{if gt .UsedPercent 90.0}}#dc3545{{else if gt .UsedPercent 75.0}}#ffc107{{else}}#28a745{{end}}; border-radius: 4px;"></div>
               </div>
               <span>{{printf "%.2f%%" .UsedPercent}}</span>
@@ -185,27 +220,27 @@ body { font-family: 'Segoe UI', sans-serif; max-width:1200px;margin:20px auto;ba
     {{end}}
   </div>
   
-  <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-    <h3 style="margin-top: 0; color: #495057;">各网卡流量详情</h3>
+  <div class="card">
+    <h3>各网卡流量详情</h3>
     {{if .TrafficStats.NetworkInterfaces}}
-    <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+    <table class="table" style="font-size:0.9em;">
       <thead>
-        <tr style="background-color: #e9ecef;">
-          <th style="text-align: left; padding: 6px; border: 1px solid #dee2e6;">网卡</th>
-          <th style="text-align: left; padding: 6px; border: 1px solid #dee2e6;">接收</th>
-          <th style="text-align: left; padding: 6px; border: 1px solid #dee2e6;">发送</th>
-          <th style="text-align: left; padding: 6px; border: 1px solid #dee2e6;">接收带宽</th>
-          <th style="text-align: left; padding: 6px; border: 1px solid #dee2e6;">发送带宽</th>
+        <tr>
+          <th>网卡</th>
+          <th>接收</th>
+          <th>发送</th>
+          <th>接收带宽</th>
+          <th>发送带宽</th>
         </tr>
       </thead>
       <tbody>
         {{range .TrafficStats.NetworkInterfaces}}
         <tr>
-          <td style="padding: 6px; border: 1px solid #dee2e6;">{{.Name}}</td>
-          <td style="padding: 6px; border: 1px solid #dee2e6;">{{FormatBytes .BytesRecv}}</td>
-          <td style="padding: 6px; border: 1px solid #dee2e6;">{{FormatBytes .BytesSent}}</td>
-          <td style="padding: 6px; border: 1px solid #dee2e6;">{{FormatNetworkBandwidth .RecvBandwidth}}</td>
-          <td style="padding: 6px; border: 1px solid #dee2e6;">{{FormatNetworkBandwidth .SendBandwidth}}</td>
+          <td>{{.Name}}</td>
+          <td>{{FormatBytes .BytesRecv}}</td>
+          <td>{{FormatBytes .BytesSent}}</td>
+          <td>{{FormatNetworkBandwidth .RecvBandwidth}}</td>
+          <td>{{FormatNetworkBandwidth .SendBandwidth}}</td>
         </tr>
         {{end}}
       </tbody>
@@ -217,12 +252,12 @@ body { font-family: 'Segoe UI', sans-serif; max-width:1200px;margin:20px auto;ba
 <h2>活跃客户端连接</h2>
 <table class="table">
 <tr>
-<th style="width:250px;">IP</th>
-<th style="width:570px;">URL</th>
-<th style="width:50px;">类型</th>
-<th style="width:100px;">UA</th>
-<th style="width:100px; text-align:center;">连接时间</th>
-<th style="width:100px; text-align:center;">最后活跃</th>
+<th>IP</th>
+<th>URL</th>
+<th>类型</th>
+<th>UA</th>
+<th style="text-align:center;">连接时间</th>
+<th style="text-align:center;">最后活跃</th>
 </tr>
 {{range .ActiveClients}}
 <tr>
@@ -293,40 +328,21 @@ function persist(){ localStorage.setItem('autoRefresh', auto); localStorage.setI
 if(auto) startTimer();
 applyButtonUI();
 
-// 每个组独立列显示/隐藏
 document.querySelectorAll('.toggle-column').forEach(el => {
     el.addEventListener('click', function() {
         const colIndex = this.getAttribute('data-column');
         const group = this.getAttribute('data-group');
         const tds = document.querySelectorAll('td[data-column="'+colIndex+'"][data-group="'+group+'"]');
         tds.forEach(td => {
-            const colIndex = td.getAttribute('data-column');
-            const realValue = td.getAttribute('data-value'); // 真实值可能为空
-            if(td.textContent === "*"){ // 当前是隐藏状态
-                 td.textContent = realValue || ""; // 显示真实值，如果空保持空
-            } else {
-                 td.textContent = "*"; // 隐藏时用 * 替代
-            }
+            const realValue = td.getAttribute('data-value');
+            if(td.textContent === "*"){ td.textContent = realValue || ""; } 
+            else { td.textContent = "*"; }
         });
     });
 });
 
 toggleBtn.onclick=()=>{ auto=!auto; if(auto) startTimer(); else stopTimer(); applyButtonUI(); persist(); };
 intervalSelect.onchange=()=>{ refreshMs=parseInt(intervalSelect.value); if(auto) startTimer(); applyButtonUI(); persist(); };
-
-
-
-
-
-
-
-
-
-
-if(auto) startTimer();
-applyButtonUI();
-
-
 </script>
 
 </body>
@@ -335,39 +351,19 @@ applyButtonUI();
 	t, err := template.New("status").Funcs(template.FuncMap{
 		"divInt64": func(a int64, b ...int64) float64 {
 			result := float64(a)
-			for _, v := range b {
-				if v != 0 {
-					result /= float64(v)
-				}
-			}
+			for _, v := range b { if v != 0 { result /= float64(v) } }
 			return result
 		},
-		"modInt64": func(a int64, b int64) int64 {
-			if b != 0 {
-				return a % b
-			}
-			return 0
-		},
+		"modInt64": func(a int64, b int64) int64 { if b!=0 { return a%b }; return 0 },
 		"divFloat64": func(a float64, b ...float64) float64 {
 			result := a
-			for _, v := range b {
-				if v != 0 {
-					result /= v
-				}
-			}
+			for _, v := range b { if v!=0 { result/=v } }
 			return result
 		},
-		"modFloat64": func(a float64, b float64) float64 {
-			if b != 0 {
-				return float64(int64(a) % int64(b))
-			}
-			return 0
-		},
-		"float64ToInt64": func(a float64) int64 {
-			return int64(a)
-		},
-		"FormatBytes":            FormatBytes,
-		"FormatBytesPerSec":      FormatBytesPerSec,
+		"modFloat64": func(a,b float64) float64 { if b!=0 { return float64(int64(a)%int64(b)) }; return 0 },
+		"float64ToInt64": func(a float64) int64 { return int64(a) },
+		"FormatBytes": FormatBytes,
+		"FormatBytesPerSec": FormatBytesPerSec,
 		"FormatNetworkBandwidth": FormatNetworkBandwidth,
 	}).Parse(tmpl)
 
@@ -380,6 +376,7 @@ applyButtonUI();
 		http.Error(w, "模板执行错误: "+err.Error(), http.StatusInternalServerError)
 	}
 }
+
 
 // 字节格式化
 func FormatBytes(b uint64) string {
