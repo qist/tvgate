@@ -69,6 +69,25 @@ http:
 #   disable_keepalives: false         # 必须启用长连接，否则 10 万并发会把源站打爆
 
 # 配置文件重新加载时间(秒)
+
+jx:
+    path: "/jx" # jx 接口路径，可自定义，例如 /jx
+    default_id: "1" # 默认集数，如果请求未传 id，则使用此值
+    # 多个视频 API 组配置，可以配置不同的视频源
+    api_groups:
+        other_api:
+            endpoints:
+                - "http://23.224.101.30" # 主 API 地址
+                - "https://mozhuazy.com" # 备用 API 地址
+            timeout: 10s # 请求超时
+            query_template: "%s/api.php/provide/vod/?ac=detail&wd=%s" # 查询 URL 模板，%s 会被替换为 endpoint 和搜索关键词
+            primary: true # 是否主 API
+            weight: 2 # 权重，用于负载均衡
+            fallback: true # 是否可以作为备用 API
+            max_retries: 3 # 请求失败重试次数
+            filters:
+                exclude: "电影解说,完美世界剧场版" # 排除包含指定关键字的视频
+                
 reload: 5
 
 proxygroups:

@@ -89,7 +89,6 @@ type JXConfig struct {
 // VideoAPIGroupConfig 视频解析接口组配置
 type VideoAPIGroupConfig struct {
 	Endpoints       []string          `yaml:"endpoints"` 	// API接口列表
-	Headers         map[string]string `yaml:"headers"`   // 自定义请求头
 	Timeout         time.Duration     `yaml:"timeout"`  // 请求超时
 	QueryTemplate   string            `yaml:"query_template"` // 查询模板
 	Primary         bool              `yaml:"primary"`  // 主API标记
@@ -97,9 +96,6 @@ type VideoAPIGroupConfig struct {
 	Fallback        bool              `yaml:"fallback"` // 备用API标记
 	MaxRetries      int               `yaml:"max_retries"` // 最大重试次数
 	Filters         map[string]string `yaml:"filters"` // 过滤条件
-	Mapping         map[string]string `yaml:"mapping"` // 映射
-	TVIdRegex       string            `yaml:"tv_id_regex"` // 电视ID正则表达式
-	InfoURLTemplate string            `yaml:"info_url_template"` // 电视信息URL模板
 }
 
 // ProxyGroupConfig 代理组配置
