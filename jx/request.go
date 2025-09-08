@@ -134,7 +134,7 @@ func (h *JXHandler) HandleRequest(w http.ResponseWriter, r *http.Request, name, 
 			"From_id":     id,
 			"From_title":  name,
 			"From_source": req.baseURL,
-			"data":        result,
+			// "data":        result,
 		}
 		if playurlString != "" {
 			finalResp["url"] = playurlString
