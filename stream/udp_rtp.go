@@ -11,19 +11,28 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// StreamHub 管理 UDP/组播流的多客户端转发
+// 高性能 StreamHub
 type StreamHub struct {
-	Mu        sync.Mutex
-	Clients   map[chan []byte]struct{}
-	AddCh     chan chan []byte
-	RemoveCh  chan chan []byte
-	UdpConn   *net.UDPConn
-	Closed    chan struct{}
-	BufPool   *sync.Pool
-	LastFrame []byte // 最近一帧，供秒开和热切换
+	clientsMu sync.RWMutex
+	clients   map[*Client]struct{}
+	addCh     chan *Client
+	removeCh  chan *Client
+	udpConn   *net.UDPConn
+	closed    chan struct{}
+	bufPool   *sync.Pool
+	lastFrame atomic.Pointer[[]byte] // 最近一帧
+}
+
+// 单客户端
+type Client struct {
+	ch       chan []byte
+	ctx      context.Context
+	cancel   context.CancelFunc
+	lastSent time.Time
 }
 
 var (
@@ -31,6 +40,7 @@ var (
 	HubsMu sync.Mutex
 )
 
+// 创建 StreamHub
 func NewStreamHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 	addr, err := net.ResolveUDPAddr("udp", udpAddr)
 	if err != nil {
@@ -39,7 +49,6 @@ func NewStreamHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 
 	var conn *net.UDPConn
 	if len(ifaces) == 0 {
-		// 未指定网卡，优先多播，再降级普通 UDP
 		conn, err = net.ListenMulticastUDP("udp", nil, addr)
 		if err != nil {
 			conn, err = net.ListenUDP("udp", addr)
@@ -49,7 +58,6 @@ func NewStreamHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 		}
 		logger.LogPrintf("🟢 监听 %s (默认接口)", udpAddr)
 	} else {
-		// 尝试每一个指定网卡，取第一个成功的
 		var lastErr error
 		for _, name := range ifaces {
 			iface, ierr := net.InterfaceByName(name)
@@ -67,7 +75,6 @@ func NewStreamHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 			logger.LogPrintf("⚠️ 监听 %s@%s 失败: %v", udpAddr, name, err)
 		}
 		if conn == nil {
-			// 所有网卡失败，尝试普通 UDP
 			conn, err = net.ListenUDP("udp", addr)
 			if err != nil {
 				return nil, fmt.Errorf("所有网卡监听失败且 UDP 监听失败: %v (last=%v)", err, lastErr)
@@ -76,16 +83,15 @@ func NewStreamHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 		}
 	}
 
-	// 放大内核缓冲，尽可能减小丢包
-	_ = conn.SetReadBuffer(4 * 1024 * 1024)
+	_ = conn.SetReadBuffer(8 * 1024 * 1024) // 大缓冲区
 
 	hub := &StreamHub{
-		Clients:  make(map[chan []byte]struct{}),
-		AddCh:    make(chan chan []byte),
-		RemoveCh: make(chan chan []byte),
-		UdpConn:  conn,
-		Closed:   make(chan struct{}),
-		BufPool:  &sync.Pool{New: func() any { return make([]byte, 2048) }},
+		clients:  make(map[*Client]struct{}),
+		addCh:    make(chan *Client),
+		removeCh: make(chan *Client),
+		udpConn:  conn,
+		closed:   make(chan struct{}),
+		bufPool:  &sync.Pool{New: func() any { return make([]byte, 32*1024) }},
 	}
 
 	go hub.run()
@@ -95,209 +101,186 @@ func NewStreamHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 	return hub, nil
 }
 
+// Hub 主循环
 func (h *StreamHub) run() {
 	for {
 		select {
-		case ch := <-h.AddCh:
-			h.Mu.Lock()
-			h.Clients[ch] = struct{}{}
-			// 新客户端秒开：发一帧缓存
-			if h.LastFrame != nil {
+		case client := <-h.addCh:
+			h.clientsMu.Lock()
+			h.clients[client] = struct{}{}
+			if frame := h.lastFrame.Load(); frame != nil {
 				select {
-				case ch <- h.LastFrame:
+				case client.ch <- *frame:
 				default:
 				}
 			}
-			h.Mu.Unlock()
-			logger.LogPrintf("➕ 客户端加入，当前=%d", len(h.Clients))
+			h.clientsMu.Unlock()
+			go h.serveClient(client)
 
-		case ch := <-h.RemoveCh:
-			h.Mu.Lock()
-			if _, ok := h.Clients[ch]; ok {
-				delete(h.Clients, ch)
-				close(ch)
+		case client := <-h.removeCh:
+			h.clientsMu.Lock()
+			if _, ok := h.clients[client]; ok {
+				delete(h.clients, client)
+				close(client.ch)
+				client.cancel()
 			}
-			clientCount := len(h.Clients)
-			h.Mu.Unlock()
-			logger.LogPrintf("➖ 客户端离开，当前=%d", clientCount)
-
-			// 如果没有客户端了，关闭UDP监听
-			if clientCount == 0 {
+			h.clientsMu.Unlock()
+			if len(h.clients) == 0 {
 				h.Close()
 			}
 
-		case <-h.Closed:
-			h.Mu.Lock()
-			for ch := range h.Clients {
-				close(ch)
+		case <-h.closed:
+			h.clientsMu.Lock()
+			for client := range h.clients {
+				close(client.ch)
+				client.cancel()
 			}
-			h.Clients = nil
-			h.Mu.Unlock()
+			h.clients = nil
+			h.clientsMu.Unlock()
 			return
 		}
 	}
 }
 
+// UDP 读取循环
 func (h *StreamHub) readLoop() {
 	for {
 		select {
-		case <-h.Closed:
+		case <-h.closed:
 			return
 		default:
 		}
 
-		buf := h.BufPool.Get().([]byte)
-		n, _, err := h.UdpConn.ReadFromUDP(buf)
+		buf := h.bufPool.Get().([]byte)
+		n, _, err := h.udpConn.ReadFromUDP(buf)
 		if err != nil {
 			select {
-			case <-h.Closed:
+			case <-h.closed:
 				return
 			default:
 			}
 			if !errors.Is(err, net.ErrClosed) {
 				logger.LogPrintf("UDP 读取错误: %v", err)
 			}
-			time.Sleep(time.Second)
+			time.Sleep(time.Millisecond * 100)
 			continue
 		}
-		data := append([]byte(nil), buf[:n]...)
-		h.BufPool.Put(buf)
 
-		// 统计入流量
-		monitor.AddAppInboundBytes(uint64(len(data)))
-
-		h.Mu.Lock()
-		h.LastFrame = data
-		h.Mu.Unlock()
-
+		data := buf[:n]
+		h.lastFrame.Store(&data)
+		monitor.AddAppInboundBytes(uint64(n))
 		h.broadcast(data)
 	}
 }
 
+// 广播数据到所有客户端
 func (h *StreamHub) broadcast(data []byte) {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
-	for ch := range h.Clients {
+	h.clientsMu.RLock()
+	defer h.clientsMu.RUnlock()
+	for client := range h.clients {
 		select {
-		case ch <- data:
+		case client.ch <- data:
 		default:
-			// 丢包避免阻塞
+			// 客户端队列满，丢帧
 		}
 	}
 }
 
+// 客户端处理
+func (h *StreamHub) serveClient(client *Client) {
+	flusher, ok := client.ctx.Value("writerFlusher").(http.Flusher)
+	writer, ok2 := client.ctx.Value("writer").(http.ResponseWriter)
+	if !ok || !ok2 {
+		return
+	}
+
+	for {
+		select {
+		case <-client.ctx.Done():
+			return
+		case data, ok := <-client.ch:
+			if !ok {
+				return
+			}
+			_, err := writer.Write(data)
+			if err != nil {
+				if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
+					logger.LogPrintf("写入客户端错误: %v", err)
+				}
+				return
+			}
+			flusher.Flush()
+			monitor.AddAppOutboundBytes(uint64(len(data)))
+			client.lastSent = time.Now()
+		case <-time.After(60 * time.Second):
+			return
+		}
+	}
+}
+
+// HTTP 流式接口
 func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentType string, updateActive func()) {
-	// 检查hub是否已经关闭
 	select {
-	case <-h.Closed:
+	case <-h.closed:
 		http.Error(w, "Stream hub closed", http.StatusServiceUnavailable)
 		return
 	default:
 	}
 
-	ch := make(chan []byte, 20)
-	h.AddCh <- ch
-	defer func() {
-		h.RemoveCh <- ch
-	}()
-
 	w.Header().Set("Content-Type", contentType)
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
 
-	ctx := r.Context()
-
-	for {
-		select {
-		case data, ok := <-ch:
-			if !ok {
-				return
-			}
-			writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			errCh := make(chan error, 1)
-			go func() {
-				_, err := w.Write(data)
-				errCh <- err
-			}()
-
-			select {
-			case err := <-errCh:
-				cancel()
-				if err != nil {
-					if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
-						logger.LogPrintf("写入客户端错误: %v", err)
-					}
-					return
-				}
-				flusher.Flush()
-				// 统计出流量
-				monitor.AddAppOutboundBytes(uint64(len(data)))
-				// 成功写入后更新活跃时间
-				if updateActive != nil {
-					updateActive()
-				}
-			case <-writeCtx.Done():
-				cancel()
-				logger.LogPrintf("写入超时，关闭连接")
-				return
-			case <-h.Closed:
-				cancel()
-				logger.LogPrintf("Hub关闭，断开客户端连接")
-				return
-			}
-		case <-ctx.Done():
-			logger.LogPrintf("客户端断开连接")
-			return
-		case <-h.Closed:
-			logger.LogPrintf("Hub关闭，断开客户端连接")
-			return
-		case <-time.After(60 * time.Second):
-			logger.LogPrintf("客户端空闲超时，关闭连接")
-			return
-		}
+	ctx, cancel := context.WithCancel(r.Context())
+	client := &Client{
+		ch:       make(chan []byte, 50),
+		ctx:      ctx,
+		cancel:   cancel,
+		lastSent: time.Now(),
 	}
+
+	ctx = context.WithValue(ctx, "writer", w)
+	ctx = context.WithValue(ctx, "writerFlusher", flusher)
+	client.ctx = ctx
+
+	h.addCh <- client
+	defer func() { h.removeCh <- client }()
+
+	<-ctx.Done()
 }
 
+// TransferClientsTo 将客户端迁移到新 hub（秒开热切换）
 func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
-	for ch := range h.Clients {
-		// 先发新 Hub 的缓存帧，实现无缝切换
-		newHub.Mu.Lock()
-		if newHub.LastFrame != nil {
+	h.clientsMu.Lock()
+	defer h.clientsMu.Unlock()
+
+	for client := range h.clients {
+		if frame := newHub.lastFrame.Load(); frame != nil {
 			select {
-			case ch <- newHub.LastFrame:
+			case client.ch <- *frame:
 			default:
 			}
 		}
-		newHub.Mu.Unlock()
-		newHub.AddCh <- ch
-		delete(h.Clients, ch)
+		newHub.addCh <- client
+		delete(h.clients, client)
 	}
 }
 
+// 关闭 hub
 func (h *StreamHub) Close() {
-	h.Mu.Lock()
 	select {
-	case <-h.Closed:
-		h.Mu.Unlock()
+	case <-h.closed:
 		return
 	default:
-		close(h.Closed)
+		close(h.closed)
 	}
-	if h.UdpConn != nil {
-		_ = h.UdpConn.Close()
+	if h.udpConn != nil {
+		_ = h.udpConn.Close()
 	}
-	for ch := range h.Clients {
-		close(ch)
-	}
-	h.Clients = nil
-	h.Mu.Unlock()
 
-	// 从全局Hubs映射中移除
 	HubsMu.Lock()
 	for key, hub := range Hubs {
 		if hub == h {
@@ -310,22 +293,20 @@ func (h *StreamHub) Close() {
 	logger.LogPrintf("UDP监听已关闭")
 }
 
+// Hub Key
 func HubKey(addr string, ifaces []string) string {
 	return addr + "|" + strings.Join(ifaces, ",")
 }
 
+// 获取或创建 hub
 func GetOrCreateHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 	key := HubKey(udpAddr, ifaces)
-
 	HubsMu.Lock()
 	if hub, ok := Hubs[key]; ok {
-		// 检查hub是否已关闭
 		select {
-		case <-hub.Closed:
-			// hub已关闭，从映射中删除
+		case <-hub.closed:
 			delete(Hubs, key)
 		default:
-			// hub仍在运行
 			HubsMu.Unlock()
 			return hub, nil
 		}
