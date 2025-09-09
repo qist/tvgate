@@ -252,7 +252,7 @@ body {
 <h2>活跃客户端连接</h2>
 <table class="table">
 <tr>
-<th>IP</th>
+<th style="width: 250px;">IP</th>
 <th>URL</th>
 <th>类型</th>
 <th>UA</th>
@@ -261,7 +261,7 @@ body {
 </tr>
 {{range .ActiveClients}}
 <tr>
-<td>{{.IP}}</td>
+<td style="word-break: break-all;">{{.IP}}</td>
 <td class="url-cell" title="{{.URL}}">{{.URL}}</td>
 <td>{{.ConnectionType}}</td>
 <td class="ua-cell" title="{{.UserAgent}}">{{.UserAgent}}</td>
