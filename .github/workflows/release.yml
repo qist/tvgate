@@ -5,6 +5,10 @@ on:
     tags:
       - "*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Tag to release'
+        required: false
 
 jobs:
   build:
@@ -24,6 +28,7 @@ jobs:
           - darwin-amd64
           - darwin-arm64
           - android-arm64
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -35,8 +40,7 @@ jobs:
 
       - name: Set environment variables
         run: |
-          VERSION=$(cat config/version 2>/dev/null || echo "latest")
-          export VERSION
+          export VERSION=$(cat config/version 2>/dev/null || echo "latest")
           export CGO_ENABLED=0
           case "${{ matrix.platform }}" in
             linux-amd64)  export GOOS=linux; export GOARCH=amd64 ;;
@@ -66,7 +70,7 @@ jobs:
           mkdir -p package
           cp README.md package/
           cp doc/config.yaml package/
-          if [[ "$GOOS" == "windows" ]]; then
+          if [ "$GOOS" = "windows" ]; then
             cp build/TVGate-windows-${GOARCH}.exe package/
           else
             cp build/TVGate-${GOOS}-${GOARCH} package/
@@ -76,30 +80,33 @@ jobs:
       - name: Package
         run: |
           cd package
-          if [[ "$GOOS" == "windows" ]]; then
+          if [ "$GOOS" = "windows" ]; then
             zip -r "../TVGate-${GOOS}-${GOARCH}.zip" *
           else
             tar -czvf "../TVGate-${GOOS}-${GOARCH}.tar.gz" *
           fi
           cd ..
 
-      # -------------------------------
-      # 上传 Release 资产
-      # -------------------------------
-      - name: Upload tar.gz
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ github.ref_name }}       # ⚠️ 纯 tag 名称
-          file: build/TVGate-*.tar.gz
-          prerelease: true
-          overwrite: true
-
-      - name: Upload zip
+      - name: Upload .tar.gz
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ github.ref_name }}
-          file: build/TVGate-*.zip
+          file: build/TVGate-${{ matrix.platform }}.tar.gz
+          asset_name: TVGate-${{ matrix.platform }}.tar.gz
           prerelease: true
           overwrite: true
+
+      - name: Upload .zip
+        if: startsWith(matrix.platform, 'windows')
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+          file: build/TVGate-${{ matrix.platform }}.zip
+          asset_name: TVGate-${{ matrix.platform }}.zip
+          prerelease: true
+          overwrite: true
+
+      - name: Release Changelog Builder
+        uses: mikepenz/release-changelog-builder-action@v5
