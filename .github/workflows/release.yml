@@ -63,7 +63,7 @@ jobs:
           OUTPUT="build/TVGate-${GOOS}-${GOARCH}"
           [ "$GOOS" = "windows" ] && OUTPUT="$OUTPUT.exe"
           go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'" -o $OUTPUT .
-          ls -lh build/
+          
 
       - name: Prepare packaging
         run: |
@@ -76,7 +76,6 @@ jobs:
             cp build/TVGate-${GOOS}-${GOARCH} package/
             cp doc/TVGate.service package/
           fi
-          ls -lh package/
 
       - name: Package
         run: |
@@ -88,14 +87,27 @@ jobs:
             tar -czvf "../build/TVGate-${GOOS}-${GOARCH}.tar.gz" *
           fi
           cd ..
-          ls -lh build/
 
-      # - name: Upload Release Assets
-      #   uses: svenstaro/upload-release-action@v2
-      #   with:
-      #     repo_token: ${{ secrets.GITHUB_TOKEN }}
-      #     tag: ${{ github.ref_name }}
-      #     file: ${{ github.workspace }}/build/TVGate-${GOOS}-${GOARCH}*
-      #     asset_name: TVGate-${GOOS}-${GOARCH}${{ GOOS == 'windows' && '.zip' || '.tar.gz' }}
-      #     prerelease: true
-      #     overwrite: true
+      - name: Upload Release
+        run: |
+          FILE="build/TVGate-${GOOS}-${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            FILE="$FILE.zip"
+            NAME="TVGate-${GOOS}-${GOARCH}.zip"
+          else
+            FILE="$FILE.tar.gz"
+            NAME="TVGate-${GOOS}-${GOARCH}.tar.gz"
+          fi
+          echo "FILE=$FILE" >> $GITHUB_ENV
+          echo "NAME=$NAME" >> $GITHUB_ENV
+        shell: bash
+      
+      - name: Upload Release Asset
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+          file: ${{ env.FILE }}
+          asset_name: ${{ env.NAME }}
+          prerelease: true
+          overwrite: true
