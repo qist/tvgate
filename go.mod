@@ -8,7 +8,7 @@ require (
 	github.com/bluenviron/mediacommon/v2 v2.4.1
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/libp2p/go-reuseport v0.4.0
-	github.com/pion/rtp v1.8.19
+	github.com/pion/rtp v1.8.22
 	github.com/quic-go/quic-go v0.54.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.41.0
