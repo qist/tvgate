@@ -33,30 +33,19 @@ jobs:
         with:
           go-version: stable
 
-      - name: Install cross-compilers
-        run: |
-          set -e
-          case "${{ matrix.platform }}" in
-            linux-arm64) sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu ;;
-            linux-armv7) sudo apt-get update && sudo apt-get install -y gcc-arm-linux-gnueabihf ;;
-            linux-armv6) sudo apt-get update && sudo apt-get install -y gcc-arm-linux-gnueabihf ;;
-            linux-386)   sudo apt-get update && sudo apt-get install -y gcc-i686-linux-gnu ;;
-            linux-armv5) sudo apt-get update && sudo apt-get install -y gcc-arm-linux-gnueabi ;;
-            linux-s390x) sudo apt-get update && sudo apt-get install -y gcc-s390x-linux-gnu ;;
-          esac
-
       - name: Set environment variables
         run: |
-          export VERSION=$(cat config/version 2>/dev/null || echo "latest")
+          VERSION=$(cat config/version 2>/dev/null || echo "latest")
+          export VERSION
           export CGO_ENABLED=0
           case "${{ matrix.platform }}" in
             linux-amd64)  export GOOS=linux; export GOARCH=amd64 ;;
-            linux-arm64)  export GOOS=linux; export GOARCH=arm64; export CC=aarch64-linux-gnu-gcc; export CGO_ENABLED=1 ;;
-            linux-armv7)  export GOOS=linux; export GOARCH=arm; export GOARM=7; export CC=arm-linux-gnueabihf-gcc; export CGO_ENABLED=1 ;;
-            linux-armv6)  export GOOS=linux; export GOARCH=arm; export GOARM=6; export CC=arm-linux-gnueabihf-gcc; export CGO_ENABLED=1 ;;
-            linux-386)    export GOOS=linux; export GOARCH=386; export CC=i686-linux-gnu-gcc; export CGO_ENABLED=1 ;;
-            linux-armv5)  export GOOS=linux; export GOARCH=arm; export GOARM=5; export CC=arm-linux-gnueabi-gcc; export CGO_ENABLED=1 ;;
-            linux-s390x)  export GOOS=linux; export GOARCH=s390x; export CC=s390x-linux-gnu-gcc; export CGO_ENABLED=1 ;;
+            linux-arm64)  export GOOS=linux; export GOARCH=arm64 ;;
+            linux-armv7)  export GOOS=linux; export GOARCH=arm; export GOARM=7 ;;
+            linux-386)    export GOOS=linux; export GOARCH=386 ;;
+            linux-ppc64)  export GOOS=linux; export GOARCH=ppc64 ;;
+            linux-ppc64le) export GOOS=linux; export GOARCH=ppc64le ;;
+            linux-s390x)  export GOOS=linux; export GOARCH=s390x ;;
             windows-amd64) export GOOS=windows; export GOARCH=amd64 ;;
             windows-386)   export GOOS=windows; export GOARCH=386 ;;
             darwin-amd64)  export GOOS=darwin; export GOARCH=amd64 ;;
@@ -69,7 +58,7 @@ jobs:
           mkdir -p build
           OUTPUT="build/TVGate-${GOOS}-${GOARCH}"
           [ "$GOOS" = "windows" ] && OUTPUT="$OUTPUT.exe"
-          LDFLAGS="-s -w -extldflags '-static' -X 'github.com/qist/tvgate/config.Version=$VERSION'"
+          LDFLAGS="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'"
           go build -ldflags="$LDFLAGS" -o $OUTPUT .
 
       - name: Prepare packaging

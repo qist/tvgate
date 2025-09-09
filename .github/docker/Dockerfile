@@ -3,32 +3,34 @@
 # ========================================================
 FROM --platform=$BUILDPLATFORM golang:alpine AS build
 WORKDIR /app
-ARG TARGETARCH
 
-RUN apk --no-cache add build-base gcc
-
+# 复制源码
 COPY . .
 
-ENV CGO_ENABLED=1
-ENV CGO_CFLAGS="-D_LARGEFILE64_SOURCE"
+# 纯 Go 静态编译
+ENV CGO_ENABLED=0
+ENV GOOS=linux
+ENV GOARCH=${TARGETARCH:-amd64}
 
-# 编译 TVGate
-RUN go build -o build/TVGate main.go
+# 可通过 build-arg 注入版本号
+ARG VERSION=latest
+
+RUN go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=${VERSION}'" -o build/TVGate main.go
 
 # ========================================================
 # Stage: final image
 # ========================================================
-FROM alpine
+FROM alpine:latest
 WORKDIR /app
 ENV TZ=Asia/Shanghai
 
-RUN apk add --no-cache ca-certificates tzdata fail2ban bash
+# 安装必要依赖
+RUN apk add --no-cache ca-certificates tzdata bash fail2ban
 
-# 复制 TVGate 可执行文件
-COPY --from=build /app/build/ /app/
+# 复制可执行文件
+COPY --from=build /app/build/TVGate /app/TVGate
 
-
-# 复制 config.yaml
+# 复制配置文件
 COPY --from=build /app/doc/config.yaml /etc/tvgate/config.yaml
 
 # Configure fail2ban
@@ -39,8 +41,9 @@ RUN rm -f /etc/fail2ban/jail.d/alpine-ssh.conf \
   && sed -i "s/#allowipv6 = auto/allowipv6 = auto/g" /etc/fail2ban/fail2ban.conf
 
 RUN chmod +x /app/TVGate
+
 EXPOSE 8888
 VOLUME [ "/etc/tvgate" ]
 
-# 直接运行 TVGate 并指定配置文件
+# 默认启动 TVGate
 CMD [ "./TVGate", "-config=/etc/tvgate/config.yaml" ]
