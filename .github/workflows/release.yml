@@ -112,22 +112,22 @@ jobs:
           echo "CHECKSUM_NAME=$CHECKSUM_NAME" >> $GITHUB_ENV
         shell: bash
 
-      # - name: Upload Release Asset (binary)
-      #   uses: svenstaro/upload-release-action@v2
-      #   with:
-      #     repo_token: ${{ secrets.GITHUB_TOKEN }}
-      #     tag: ${{ github.ref_name }}
-      #     file: ${{ env.FILE }}
-      #     asset_name: ${{ env.FILE_NAME }}
-      #     prerelease: true
-      #     overwrite: true
+      - name: Upload Release Asset (binary)
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+          file: ${{ env.FILE }}
+          asset_name: ${{ env.FILE_NAME }}
+          prerelease: true
+          overwrite: true
 
-      # - name: Upload Release Asset (checksum)
-      #   uses: svenstaro/upload-release-action@v2
-      #   with:
-      #     repo_token: ${{ secrets.GITHUB_TOKEN }}
-      #     tag: ${{ github.ref_name }}
-      #     file: ${{ env.CHECKSUM }}
-      #     asset_name: ${{ env.CHECKSUM_NAME }}
-      #     prerelease: true
-      #     overwrite: true
+      - name: Upload Release Asset (checksum)
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+          file: ${{ env.CHECKSUM }}
+          asset_name: ${{ env.CHECKSUM_NAME }}
+          prerelease: true
+          overwrite: true
