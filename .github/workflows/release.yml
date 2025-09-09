@@ -6,6 +6,8 @@ on:
       - "*"
   workflow_dispatch:
 
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -63,7 +65,7 @@ jobs:
           OUTPUT="build/TVGate-${GOOS}-${GOARCH}"
           [ "$GOOS" = "windows" ] && OUTPUT="$OUTPUT.exe"
           go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'" -o $OUTPUT .
-          
+
 
       - name: Prepare packaging
         run: |
