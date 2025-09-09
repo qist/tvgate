@@ -1,4 +1,4 @@
-name: Build TVGate Docker Image
+name: Build and Push TVGate Docker Images
 
 on:
   push:
@@ -7,29 +7,46 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: docker.io
+  DOCKER_HUB_REGISTRY: docker.io
+  GHCR_REGISTRY: ghcr.io
 
 jobs:
   build-image:
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       packages: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
           submodules: true
 
-      - name: Docker metadata
-        id: meta
+      - name: Docker metadata for Docker Hub
+        id: meta_dockerhub
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/juestnow/tvgate
+          images: ${{ env.DOCKER_HUB_REGISTRY }}/juestnow/tvgate
           flavor: latest=true
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
+            type=semver,pattern=v{{version}}
+            type=raw,value=latest
+
+      - name: Docker metadata for GHCR
+        id: meta_ghcr
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/tvgate
+          flavor: latest=true
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern=v{{version}}
             type=raw,value=latest
 
       - name: Set up QEMU
@@ -41,18 +58,29 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ${{ env.DOCKER_HUB_REGISTRY }}
           username: ${{ secrets.DOCKER_HUB_USER }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker images to both registries
         uses: docker/build-push-action@v6
         with:
           context: .
           file: .github/docker/Dockerfile
           platforms: linux/amd64,linux/arm64/v8,linux/arm/v7,linux/arm/v6,linux/386
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ steps.meta_dockerhub.outputs.tags }}
+            ${{ steps.meta_ghcr.outputs.tags }}
+          labels: |
+            ${{ steps.meta_dockerhub.outputs.labels }}
+            ${{ steps.meta_ghcr.outputs.labels }}
           build-args: |
             VERSION=${{ github.ref_name }}
