@@ -82,7 +82,9 @@ jobs:
           else
             echo "Warning: $BIN_FILE not found, skipping..."
           fi
+          if [ "$GOOS" != "windows" ]; then
           cp doc/TVGate.service package/ || true
+          fi
 
       - name: Package into zip
         run: |
