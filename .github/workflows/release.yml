@@ -69,13 +69,19 @@ jobs:
           OUTPUT="build/TVGate-${GOOS}-${PACKAGE_ARCH}"
           [ "$GOOS" = "windows" ] && OUTPUT="$OUTPUT.exe"
           go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'" -o $OUTPUT .
+          echo "OUTPUT=$OUTPUT" >> $GITHUB_ENV
 
       - name: Prepare packaging
         run: |
           mkdir -p package
           cp README.md package/
           cp doc/config.yaml package/
-          cp build/TVGate-${GOOS}-${PACKAGE_ARCH} package/
+          BIN_FILE="$OUTPUT"
+          if [ -f "$BIN_FILE" ]; then
+            cp "$BIN_FILE" package/
+          else
+            echo "Warning: $BIN_FILE not found, skipping..."
+          fi
           cp doc/TVGate.service package/ || true
 
       - name: Package into zip
@@ -83,7 +89,6 @@ jobs:
           mkdir -p build
           ZIP_FILE="build/TVGate-${GOOS}-${PACKAGE_ARCH}.zip"
           cd package
-          # 使用 ../ 保证 zip 输出到 workspace/build/
           zip -r "../$ZIP_FILE" *
           cd ..
           echo "FILE=$ZIP_FILE" >> $GITHUB_ENV
