@@ -81,22 +81,21 @@ jobs:
       - name: Package into zip
         run: |
           mkdir -p build
+          ZIP_FILE="build/TVGate-${GOOS}-${PACKAGE_ARCH}.zip"
           cd package
-          ZIP_FILE="../build/TVGate-${GOOS}-${PACKAGE_ARCH}.zip"
           zip -r "$ZIP_FILE" *
           cd ..
           echo "FILE=$ZIP_FILE" >> $GITHUB_ENV
 
       - name: Generate checksum .dgst
         run: |
-          cd build
-          DGST="$FILE.dgst"
+          DGST="${FILE}.dgst"
           echo "MD5= $(md5sum $FILE | awk '{print $1}')"        >  "$DGST"
           echo "SHA1= $(sha1sum $FILE | awk '{print $1}')"     >> "$DGST"
           echo "SHA2-256= $(sha256sum $FILE | awk '{print $1}')" >> "$DGST"
           echo "SHA2-512= $(sha512sum $FILE | awk '{print $1}')" >> "$DGST"
           echo "CHECKSUM=$DGST" >> $GITHUB_ENV
-          cd ..
+          echo "CHECKSUM=$DGST" >> $GITHUB_ENV
 
       - name: Set asset names
         run: |
