@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -40,32 +41,32 @@ jobs:
         run: |
           VERSION=$(cat config/version 2>/dev/null || echo "latest")
           case "${{ matrix.platform }}" in
-            linux-amd64)  GOOS=linux; GOARCH=amd64 ;;
-            linux-arm64)  GOOS=linux; GOARCH=arm64 ;;
-            linux-armv7)  GOOS=linux; GOARCH=arm; GOARM=7 ;;
-            linux-386)    GOOS=linux; GOARCH=386 ;;
-            linux-ppc64)  GOOS=linux; GOARCH=ppc64 ;;
-            linux-ppc64le) GOOS=linux; GOARCH=ppc64le ;;
-            linux-s390x)  GOOS=linux; GOARCH=s390x ;;
-            windows-amd64) GOOS=windows; GOARCH=amd64 ;;
-            windows-386)   GOOS=windows; GOARCH=386 ;;
-            darwin-amd64)  GOOS=darwin; GOARCH=amd64 ;;
-            darwin-arm64)  GOOS=darwin; GOARCH=arm64 ;;
-            android-arm64) GOOS=android; GOARCH=arm64 ;;
+            linux-amd64)   GOOS=linux; GOARCH=amd64;   PACKAGE_ARCH=amd64 ;;
+            linux-arm64)   GOOS=linux; GOARCH=arm64;   PACKAGE_ARCH=arm64 ;;
+            linux-armv7)   GOOS=linux; GOARCH=arm; GOARM=7; PACKAGE_ARCH=armv7 ;;
+            linux-386)     GOOS=linux; GOARCH=386;     PACKAGE_ARCH=386 ;;
+            linux-ppc64)   GOOS=linux; GOARCH=ppc64;   PACKAGE_ARCH=ppc64 ;;
+            linux-ppc64le) GOOS=linux; GOARCH=ppc64le; PACKAGE_ARCH=ppc64le ;;
+            linux-s390x)   GOOS=linux; GOARCH=s390x;   PACKAGE_ARCH=s390x ;;
+            windows-amd64) GOOS=windows; GOARCH=amd64; PACKAGE_ARCH=amd64 ;;
+            windows-386)   GOOS=windows; GOARCH=386;   PACKAGE_ARCH=386 ;;
+            darwin-amd64)  GOOS=darwin; GOARCH=amd64;  PACKAGE_ARCH=amd64 ;;
+            darwin-arm64)  GOOS=darwin; GOARCH=arm64;  PACKAGE_ARCH=arm64 ;;
+            android-arm64) GOOS=android; GOARCH=arm64; PACKAGE_ARCH=arm64 ;;
           esac
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "GOOS=$GOOS" >> $GITHUB_ENV
           echo "GOARCH=$GOARCH" >> $GITHUB_ENV
+          echo "PACKAGE_ARCH=$PACKAGE_ARCH" >> $GITHUB_ENV
           [ -n "$GOARM" ] && echo "GOARM=$GOARM" >> $GITHUB_ENV
           echo "CGO_ENABLED=0" >> $GITHUB_ENV
 
       - name: Build TVGate
         run: |
           mkdir -p build
-          OUTPUT="build/TVGate-${GOOS}-${GOARCH}"
+          OUTPUT="build/TVGate-${GOOS}-${PACKAGE_ARCH}"
           [ "$GOOS" = "windows" ] && OUTPUT="$OUTPUT.exe"
           go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'" -o $OUTPUT .
-
 
       - name: Prepare packaging
         run: |
@@ -73,9 +74,9 @@ jobs:
           cp README.md package/
           cp doc/config.yaml package/
           if [ "$GOOS" = "windows" ]; then
-            cp build/TVGate-windows-${GOARCH}.exe package/
+            cp build/TVGate-windows-${PACKAGE_ARCH}.exe package/
           else
-            cp build/TVGate-${GOOS}-${GOARCH} package/
+            cp build/TVGate-${GOOS}-${PACKAGE_ARCH} package/
             cp doc/TVGate.service package/
           fi
 
@@ -84,32 +85,54 @@ jobs:
           mkdir -p build
           cd package
           if [ "$GOOS" = "windows" ]; then
-            zip -r "../build/TVGate-${GOOS}-${GOARCH}.zip" *
+            zip -r "../build/TVGate-${GOOS}-${PACKAGE_ARCH}.zip" *
           else
-            tar -czvf "../build/TVGate-${GOOS}-${GOARCH}.tar.gz" *
+            tar -czvf "../build/TVGate-${GOOS}-${PACKAGE_ARCH}.tar.gz" *
+          fi
+          cd ..
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd build
+          if [ "$GOOS" = "windows" ]; then
+            sha256sum "TVGate-${GOOS}-${PACKAGE_ARCH}.zip" > "SHA256SUMS-${GOOS}-${PACKAGE_ARCH}.txt"
+          else
+            sha256sum "TVGate-${GOOS}-${PACKAGE_ARCH}.tar.gz" > "SHA256SUMS-${GOOS}-${PACKAGE_ARCH}.txt"
           fi
           cd ..
 
       - name: Upload Release
         run: |
-          FILE="build/TVGate-${GOOS}-${GOARCH}"
+          FILE="build/TVGate-${GOOS}-${PACKAGE_ARCH}"
           if [ "$GOOS" = "windows" ]; then
             FILE="$FILE.zip"
-            NAME="TVGate-${GOOS}-${GOARCH}.zip"
+            NAME="TVGate-${GOOS}-${PACKAGE_ARCH}.zip"
           else
             FILE="$FILE.tar.gz"
-            NAME="TVGate-${GOOS}-${GOARCH}.tar.gz"
+            NAME="TVGate-${GOOS}-${PACKAGE_ARCH}.tar.gz"
           fi
+          CHECKSUM="build/SHA256SUMS-${GOOS}-${PACKAGE_ARCH}.txt"
           echo "FILE=$FILE" >> $GITHUB_ENV
           echo "NAME=$NAME" >> $GITHUB_ENV
+          echo "CHECKSUM=$CHECKSUM" >> $GITHUB_ENV
         shell: bash
-      
-      - name: Upload Release Asset
+
+      - name: Upload Release Asset (binary)
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ github.ref_name }}
           file: ${{ env.FILE }}
           asset_name: ${{ env.NAME }}
+          prerelease: true
+          overwrite: true
+
+      - name: Upload Release Asset (checksum)
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+          file: ${{ env.CHECKSUM }}
+          asset_name: SHA256SUMS-${{ env.GOOS }}-${{ env.PACKAGE_ARCH }}.txt
           prerelease: true
           overwrite: true
