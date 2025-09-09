@@ -5,10 +5,6 @@ on:
     tags:
       - "*"
   workflow_dispatch:
-    inputs:
-      release_tag:
-        description: 'Tag to release'
-        required: false
 
 jobs:
   build:
@@ -79,15 +75,17 @@ jobs:
 
       - name: Package
         run: |
+          mkdir -p build
           cd package
           if [ "$GOOS" = "windows" ]; then
-            zip -r "../TVGate-${GOOS}-${GOARCH}.zip" *
+            zip -r "../build/TVGate-${GOOS}-${GOARCH}.zip" *
           else
-            tar -czvf "../TVGate-${GOOS}-${GOARCH}.tar.gz" *
+            tar -czvf "../build/TVGate-${GOOS}-${GOARCH}.tar.gz" *
           fi
           cd ..
 
       - name: Upload .tar.gz
+        if: matrix.platform != 'windows-amd64' && matrix.platform != 'windows-386'
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -98,7 +96,7 @@ jobs:
           overwrite: true
 
       - name: Upload .zip
-        if: startsWith(matrix.platform, 'windows')
+        if: matrix.platform == 'windows-amd64' || matrix.platform == 'windows-386'
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
