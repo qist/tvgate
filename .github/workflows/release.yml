@@ -90,7 +90,7 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ github.ref_name }}
-          file: package/TVGate-${{ matrix.platform }}.tar.gz
+          file: build/TVGate-${{ matrix.platform }}.tar.gz
           asset_name: TVGate-${{ matrix.platform }}.tar.gz
           prerelease: true
           overwrite: true
@@ -101,7 +101,7 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ github.ref_name }}
-          file: package/TVGate-${{ matrix.platform }}.zip
+          file: build/TVGate-${{ matrix.platform }}.zip
           asset_name: TVGate-${{ matrix.platform }}.zip
           prerelease: true
           overwrite: true
