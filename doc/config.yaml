@@ -30,8 +30,8 @@ web:
 log:
   # 是否输出日志
   enabled: true
-  # 日志输出文件地址
-  file: "./access.log"
+  # 日志输出文件地址 "" 表示标准输出，否则输出到指定文件 ./access.log
+  file: ""
   # 日志大小M单位
   maxsize: 10
   # 压缩文件备份个数
