@@ -83,15 +83,23 @@ jobs:
           fi
           cd ..
 
-      - name: Upload files to GH release
+      # -------------------------------
+      # 上传 Release 资产
+      # -------------------------------
+      - name: Upload tar.gz
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ github.ref }}
-          file: |
-            build/TVGate-*.tar.gz
-            build/TVGate-*.zip
+          tag: ${{ github.ref_name }}       # ⚠️ 纯 tag 名称
+          file: build/TVGate-*.tar.gz
           prerelease: true
           overwrite: true
-      - name: Release Changelog Builder
-        uses: mikepenz/release-changelog-builder-action@v5
+
+      - name: Upload zip
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+          file: build/TVGate-*.zip
+          prerelease: true
+          overwrite: true
