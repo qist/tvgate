@@ -159,7 +159,7 @@ stop_service() {
 ### 代理规则格式
 - 支持 IP（例如 `192.168.1.1`）
 - 支持子网（例如 `192.168.1.0/24`）
-- 支持域名通配符（例如 `*.rrs.169ol.com`、`hki*-edge*.edgeware.tvb.com`）
+- 支持域名通配符（例如 `*.rrs.169ol.com`、`hki*-edge*.edgeware.tvb.com`、`www.tvb.com`）
 - 支持 IPv6（例如 `1234:5678::abcd:ef01/128`）
 
 ---
