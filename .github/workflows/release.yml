@@ -73,7 +73,8 @@ jobs:
             cp doc/TVGate.service package/
           fi
           pwd 
-          ls -ls
+          ls -ls build/
+           ls -ls package/ 
 
       - name: Package
         run: |
