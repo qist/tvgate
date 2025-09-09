@@ -72,6 +72,8 @@ jobs:
             cp build/TVGate-${GOOS}-${GOARCH} package/
             cp doc/TVGate.service package/
           fi
+          pwd 
+          ls -ls
 
       - name: Package
         run: |
@@ -82,29 +84,32 @@ jobs:
           else
             tar -czvf "../build/TVGate-${GOOS}-${GOARCH}.tar.gz" *
           fi
+          pwd
           cd ..
+          ls -la build
+          ls -la 
 
-      - name: Upload .tar.gz
-        if: matrix.platform != 'windows-amd64' && matrix.platform != 'windows-386'
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ github.ref_name }}
-          file: build/TVGate-${{ matrix.platform }}.tar.gz
-          asset_name: TVGate-${{ matrix.platform }}.tar.gz
-          prerelease: true
-          overwrite: true
+      # - name: Upload .tar.gz
+      #   if: matrix.platform != 'windows-amd64' && matrix.platform != 'windows-386'
+      #   uses: svenstaro/upload-release-action@v2
+      #   with:
+      #     repo_token: ${{ secrets.GITHUB_TOKEN }}
+      #     tag: ${{ github.ref_name }}
+      #     file: build/TVGate-${{ matrix.platform }}.tar.gz
+      #     asset_name: TVGate-${{ matrix.platform }}.tar.gz
+      #     prerelease: true
+      #     overwrite: true
 
-      - name: Upload .zip
-        if: matrix.platform == 'windows-amd64' || matrix.platform == 'windows-386'
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ github.ref_name }}
-          file: build/TVGate-${{ matrix.platform }}.zip
-          asset_name: TVGate-${{ matrix.platform }}.zip
-          prerelease: true
-          overwrite: true
+      # - name: Upload .zip
+      #   if: matrix.platform == 'windows-amd64' || matrix.platform == 'windows-386'
+      #   uses: svenstaro/upload-release-action@v2
+      #   with:
+      #     repo_token: ${{ secrets.GITHUB_TOKEN }}
+      #     tag: ${{ github.ref_name }}
+      #     file: build/TVGate-${{ matrix.platform }}.zip
+      #     asset_name: TVGate-${{ matrix.platform }}.zip
+      #     prerelease: true
+      #     overwrite: true
 
-      - name: Release Changelog Builder
-        uses: mikepenz/release-changelog-builder-action@v5
+      # - name: Release Changelog Builder
+      #   uses: mikepenz/release-changelog-builder-action@v5
