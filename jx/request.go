@@ -21,6 +21,9 @@ func (h *JXHandler) HandleRequest(w http.ResponseWriter, r *http.Request, name, 
 		return
 	}
 
+	// URL 参数 full=1 时输出完整数据
+	showData := r.URL.Query().Get("full") == "1"
+
 	type apiRequest struct {
 		api     *config.VideoAPIGroupConfig
 		baseURL string
@@ -97,7 +100,6 @@ func (h *JXHandler) HandleRequest(w http.ResponseWriter, r *http.Request, name, 
 				skip := false
 				for _, kw := range excludeKeywords {
 					if kw != "" && strings.Contains(vodName, kw) {
-						// logger.LogPrintf("过滤掉视频: %s (命中过滤关键字: %s)", vodName, kw)
 						skip = true
 						break
 					}
@@ -115,6 +117,7 @@ func (h *JXHandler) HandleRequest(w http.ResponseWriter, r *http.Request, name, 
 				},
 			})
 
+			// 自动选择匹配播放地址
 			if strings.Contains(vodName, name) && playurlString == "" && len(eps) > 0 {
 				epIndex := 0
 				if id != "" {
@@ -134,10 +137,12 @@ func (h *JXHandler) HandleRequest(w http.ResponseWriter, r *http.Request, name, 
 			"From_id":     id,
 			"From_title":  name,
 			"From_source": req.baseURL,
-			// "data":        result,
 		}
 		if playurlString != "" {
 			finalResp["url"] = playurlString
+		}
+		if showData { // 只有带 full=1 时才输出完整 data
+			finalResp["data"] = result
 		}
 
 		JSONResponse(w, finalResp)

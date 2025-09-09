@@ -10,7 +10,7 @@ OUT_DIR := build
 # 如果没有指定 VERSION，就从 config/version 文件读取
 VERSION ?= $(shell cat config/version 2>/dev/null || echo latest)
 
-LDFLAGS := -s -w  -extldflags "-static" -X '$(MODULE)/config.Version=$(VERSION)'
+LDFLAGS := -s -w  -extldflags '-static' -X '$(MODULE)/config.Version=$(VERSION)'
 GCFLAGS := -trimpath
 ASMFLAGS := -trimpath
 
