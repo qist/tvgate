@@ -44,6 +44,7 @@ jobs:
             linux-amd64)   GOOS=linux; GOARCH=amd64;   PACKAGE_ARCH=amd64 ;;
             linux-arm64)   GOOS=linux; GOARCH=arm64;   PACKAGE_ARCH=arm64 ;;
             linux-armv7)   GOOS=linux; GOARCH=arm; GOARM=7; PACKAGE_ARCH=armv7 ;;
+            linux-armv6)   GOOS=linux; GOARCH=arm; GOARM=6; PACKAGE_ARCH=armv6 ;;
             linux-386)     GOOS=linux; GOARCH=386;     PACKAGE_ARCH=386 ;;
             linux-ppc64)   GOOS=linux; GOARCH=ppc64;   PACKAGE_ARCH=ppc64 ;;
             linux-ppc64le) GOOS=linux; GOARCH=ppc64le; PACKAGE_ARCH=ppc64le ;;
