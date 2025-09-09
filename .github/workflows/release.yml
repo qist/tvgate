@@ -30,36 +30,40 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Go
-        uses: actions/setup-go@v6.0.0
+        uses: actions/setup-go@v6
         with:
           go-version: stable
 
       - name: Set environment variables
         run: |
-          export VERSION=$(cat config/version 2>/dev/null || echo "latest")
-          export CGO_ENABLED=0
+          VERSION=$(cat config/version 2>/dev/null || echo "latest")
           case "${{ matrix.platform }}" in
-            linux-amd64)  export GOOS=linux; export GOARCH=amd64 ;;
-            linux-arm64)  export GOOS=linux; export GOARCH=arm64 ;;
-            linux-armv7)  export GOOS=linux; export GOARCH=arm; export GOARM=7 ;;
-            linux-386)    export GOOS=linux; export GOARCH=386 ;;
-            linux-ppc64)  export GOOS=linux; export GOARCH=ppc64 ;;
-            linux-ppc64le) export GOOS=linux; export GOARCH=ppc64le ;;
-            linux-s390x)  export GOOS=linux; export GOARCH=s390x ;;
-            windows-amd64) export GOOS=windows; export GOARCH=amd64 ;;
-            windows-386)   export GOOS=windows; export GOARCH=386 ;;
-            darwin-amd64)  export GOOS=darwin; export GOARCH=amd64 ;;
-            darwin-arm64)  export GOOS=darwin; export GOARCH=arm64 ;;
-            android-arm64) export GOOS=android; export GOARCH=arm64 ;;
+            linux-amd64)  GOOS=linux; GOARCH=amd64 ;;
+            linux-arm64)  GOOS=linux; GOARCH=arm64 ;;
+            linux-armv7)  GOOS=linux; GOARCH=arm; GOARM=7 ;;
+            linux-386)    GOOS=linux; GOARCH=386 ;;
+            linux-ppc64)  GOOS=linux; GOARCH=ppc64 ;;
+            linux-ppc64le) GOOS=linux; GOARCH=ppc64le ;;
+            linux-s390x)  GOOS=linux; GOARCH=s390x ;;
+            windows-amd64) GOOS=windows; GOARCH=amd64 ;;
+            windows-386)   GOOS=windows; GOARCH=386 ;;
+            darwin-amd64)  GOOS=darwin; GOARCH=amd64 ;;
+            darwin-arm64)  GOOS=darwin; GOARCH=arm64 ;;
+            android-arm64) GOOS=android; GOARCH=arm64 ;;
           esac
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "GOOS=$GOOS" >> $GITHUB_ENV
+          echo "GOARCH=$GOARCH" >> $GITHUB_ENV
+          [ -n "$GOARM" ] && echo "GOARM=$GOARM" >> $GITHUB_ENV
+          echo "CGO_ENABLED=0" >> $GITHUB_ENV
 
       - name: Build TVGate
         run: |
           mkdir -p build
           OUTPUT="build/TVGate-${GOOS}-${GOARCH}"
           [ "$GOOS" = "windows" ] && OUTPUT="$OUTPUT.exe"
-          LDFLAGS="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'"
-          go build -ldflags="$LDFLAGS" -o $OUTPUT .
+          go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'" -o $OUTPUT .
+          ls -lh build/
 
       - name: Prepare packaging
         run: |
@@ -72,9 +76,7 @@ jobs:
             cp build/TVGate-${GOOS}-${GOARCH} package/
             cp doc/TVGate.service package/
           fi
-          pwd 
-          ls -ls build/
-           ls -ls package/ 
+          ls -lh package/
 
       - name: Package
         run: |
@@ -85,32 +87,15 @@ jobs:
           else
             tar -czvf "../build/TVGate-${GOOS}-${GOARCH}.tar.gz" *
           fi
-          pwd
           cd ..
-          ls -la build
-          ls -la 
+          ls -lh build/
 
-      # - name: Upload .tar.gz
-      #   if: matrix.platform != 'windows-amd64' && matrix.platform != 'windows-386'
+      # - name: Upload Release Assets
       #   uses: svenstaro/upload-release-action@v2
       #   with:
       #     repo_token: ${{ secrets.GITHUB_TOKEN }}
       #     tag: ${{ github.ref_name }}
-      #     file: build/TVGate-${{ matrix.platform }}.tar.gz
-      #     asset_name: TVGate-${{ matrix.platform }}.tar.gz
+      #     file: ${{ github.workspace }}/build/TVGate-${GOOS}-${GOARCH}*
+      #     asset_name: TVGate-${GOOS}-${GOARCH}${{ GOOS == 'windows' && '.zip' || '.tar.gz' }}
       #     prerelease: true
       #     overwrite: true
-
-      # - name: Upload .zip
-      #   if: matrix.platform == 'windows-amd64' || matrix.platform == 'windows-386'
-      #   uses: svenstaro/upload-release-action@v2
-      #   with:
-      #     repo_token: ${{ secrets.GITHUB_TOKEN }}
-      #     tag: ${{ github.ref_name }}
-      #     file: build/TVGate-${{ matrix.platform }}.zip
-      #     asset_name: TVGate-${{ matrix.platform }}.zip
-      #     prerelease: true
-      #     overwrite: true
-
-      # - name: Release Changelog Builder
-      #   uses: mikepenz/release-changelog-builder-action@v5
