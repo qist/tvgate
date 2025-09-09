@@ -4,8 +4,8 @@ github.com/asticode/go-astits v1.13.0 h1:XOgkaadfZODnyZRR5Y0/DWkA9vrkLLPLeeOvDwf
 github.com/asticode/go-astits v1.13.0/go.mod h1:QSHmknZ51pf6KJdHKZHJTLlMegIrhega3LPWz3ND/iI=
 github.com/bluenviron/gortsplib/v4 v4.14.1 h1:v99NmXeeJFfbrO+ipPzPxYGibQaR5ZOUESOA9UQZhsI=
 github.com/bluenviron/gortsplib/v4 v4.14.1/go.mod h1:3LaEcg0d47+kfXju5KSlsSxCiZ3IKBI/sqIrBPcsS64=
-github.com/bluenviron/mediacommon/v2 v2.2.0 h1:fGXEX0OEvv5VhGHOv3Q2ABzOtSkIpl9UbwOHrnKWNTk=
-github.com/bluenviron/mediacommon/v2 v2.2.0/go.mod h1:a6MbPmXtYda9mKibKVMZlW20GYLLrX2R7ZkUE+1pwV0=
+github.com/bluenviron/mediacommon/v2 v2.4.1 h1:PsKrO/c7hDjXxiOGRUBsYtMGNb4lKWIFea6zcOchoVs=
+github.com/bluenviron/mediacommon/v2 v2.4.1/go.mod h1:a6MbPmXtYda9mKibKVMZlW20GYLLrX2R7ZkUE+1pwV0=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
