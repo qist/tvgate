@@ -252,19 +252,19 @@ body {
 <h2>活跃客户端连接</h2>
 <table class="table">
 <tr>
-<th style="width: 250px;">IP</th>
-<th>URL</th>
-<th>类型</th>
-<th>UA</th>
-<th style="text-align:center;">连接时间</th>
-<th style="text-align:center;">最后活跃</th>
+<th style="width: 300px;">IP</th>
+<th style="width: 400px;">URL</th>
+<th style="width: 80px;">类型</th>
+<th style="width: 150px;">UA</th>
+<th style="text-align:center; width: 80px;">连接时间</th>
+<th style="text-align:center; width: 80px;">最后活跃</th>
 </tr>
 {{range .ActiveClients}}
 <tr>
 <td style="word-break: break-all;">{{.IP}}</td>
-<td class="url-cell" title="{{.URL}}">{{.URL}}</td>
+<td class="url-cell" style="word-break: break-all;" title="{{.URL}}">{{.URL}}</td>
 <td>{{.ConnectionType}}</td>
-<td class="ua-cell" title="{{.UserAgent}}">{{.UserAgent}}</td>
+<td class="ua-cell" style="word-break: break-word;" title="{{.UserAgent}}">{{.UserAgent}}</td>
 <td style="text-align:center;">{{.ConnectedAt.Format "15:04:05"}}</td>
 <td style="text-align:center;">{{.LastActive.Format "15:04:05"}}</td>
 </tr>
