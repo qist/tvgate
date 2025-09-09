@@ -91,4 +91,7 @@ jobs:
           file: |
             build/TVGate-*.tar.gz
             build/TVGate-*.zip
+          prerelease: true
           overwrite: true
+      - name: Release Changelog Builder
+        uses: mikepenz/release-changelog-builder-action@v5
