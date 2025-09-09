@@ -70,7 +70,7 @@ jobs:
             cp build/TVGate-windows-${GOARCH}.exe package/
           else
             cp build/TVGate-${GOOS}-${GOARCH} package/
-            cp TVGate.service package/
+            cp doc/TVGate.service package/
           fi
 
       - name: Package
