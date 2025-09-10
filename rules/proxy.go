@@ -44,7 +44,7 @@ func GetProxyGroup(targetURL string) *config.ProxyGroupConfig {
 		return cachedGroup
 	} else {
 		// 如果你想缓存未匹配到的情况，可以在这里处理
-		logger.LogPrintf("缓存未命中或值为空，继续匹配: %s", cacheKey)
+		// logger.LogPrintf("缓存未命中或值为空，继续匹配: %s", cacheKey)
 	}
 
 	redirectHosts := GetRedirectChainHosts(targetURL)
@@ -68,7 +68,7 @@ func GetProxyGroup(targetURL string) *config.ProxyGroupConfig {
 		}
 	}
 
-	logger.LogPrintf("没有找到匹配的代理组，目标=%s，重定向链=%v", targetURL, redirectHosts)
+	// logger.LogPrintf("没有找到匹配的代理组，目标=%s，重定向链=%v", targetURL, redirectHosts)
 	// 如果想缓存未匹配结果，避免重复计算，可以解除注释：
 	// cache.StoreAccessCache(cacheKey, nil)
 	return nil

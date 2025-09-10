@@ -29,13 +29,13 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if isSupportedContentType(resp.Header.Get("Content-Type")) {
+	if IsSupportedContentType(resp.Header.Get("Content-Type")) {
 		handleSpecialContent(w, r, resp)
 		return
 	}
 
 	// 复制响应头
-	copyHeader(w.Header(), resp.Header, r.ProtoMajor)
+	CopyHeader(w.Header(), resp.Header, r.ProtoMajor)
 	w.WriteHeader(resp.StatusCode)
 
 	u, _ := url.Parse(targetURL)
@@ -48,8 +48,8 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if err := copyWithContext(ctx, w, resp.Body, buf, updateActive); err != nil {
-			handleCopyError(r, err, resp)
+		if err := CopyWithContext(ctx, w, resp.Body, buf, updateActive); err != nil {
+			HandleCopyError(r, err, resp)
 		}
 	}()
 
@@ -127,7 +127,7 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 	result := strings.Join(lines, "\n")
 
 	// 复制响应头并移除 Content-Length
-	copyHeader(w.Header(), proxyResp.Header, r.ProtoMajor)
+	CopyHeader(w.Header(), proxyResp.Header, r.ProtoMajor)
 	w.Header().Del("Content-Length")
 	w.WriteHeader(proxyResp.StatusCode)
 	w.Write([]byte(result))
@@ -165,7 +165,7 @@ var supportedContentTypes = []string{
 }
 
 // 检查内容类型是否受支持
-func isSupportedContentType(contentType string) bool {
+func IsSupportedContentType(contentType string) bool {
 	contentType = strings.ToLower(contentType)
 	for _, t := range supportedContentTypes {
 		if strings.HasPrefix(contentType, strings.ToLower(t)) {
@@ -216,7 +216,7 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 	return targetURL
 }
 
-func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, updateActive func()) error {
+func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, updateActive func()) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -254,7 +254,7 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []by
 	}
 }
 
-func handleCopyError(r *http.Request, err error, proxyResp *http.Response) {
+func HandleCopyError(r *http.Request, err error, proxyResp *http.Response) {
 	if errors.Is(err, context.Canceled) {
 		logger.LogPrintf("传输被取消: %v, URL: %s", err, proxyResp.Request.URL.String())
 	} else if errors.Is(err, context.DeadlineExceeded) {
@@ -293,7 +293,7 @@ func CopyHeadersExceptSensitive(dst http.Header, src http.Header, protoMajor int
 // - dst: 目标 Header（客户端或后端）
 // - src: 来源 Header（后端响应或客户端请求）
 // - protoMajor: 客户端使用的协议版本，1 = HTTP/1.x, 2 = HTTP/2
-func copyHeader(dst, src http.Header, protoMajor int) {
+func CopyHeader(dst, src http.Header, protoMajor int) {
 	for k, vv := range src {
 		lowerKey := strings.ToLower(k)
 

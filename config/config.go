@@ -75,9 +75,20 @@ type Config struct {
 		Path     string `yaml:"path"`     // Web管理路径，默认为/web/
 	} `yaml:"web"`
 
+	// 域名映射配置
+	DomainMap []*DomainMapConfig `yaml:"domainmap"`
+
 	ProxyGroups map[string]*ProxyGroupConfig `yaml:"proxygroups"` // 代理组配置
 	JX          JXConfig                     `yaml:"jx"` // 视频解析配置
 	Reload      int                          `yaml:"reload"` // 添加 Reload 字段
+}
+
+// DomainMapConfig 域名映射配置结构
+type DomainMapConfig struct {
+	Name     string `yaml:"name"`     // 映射名称
+	Source   string `yaml:"source"`   // 源域名
+	Target   string `yaml:"target"`   // 目标域名
+	Protocol string `yaml:"protocol"` // 协议（可选，http或https，空表示保持原协议）
 }
 
 type JXConfig struct {

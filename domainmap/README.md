@@ -1,0 +1,133 @@
+# Domain Mapping 域名映射模块
+
+该模块用于实现域名映射转发功能，可以将访问一个域名的请求转发到另一个域名。
+
+## 配置格式
+
+在 YAML 配置文件中添加以下配置项：
+
+```yaml
+domainmap:
+  - name: "cc-to-qist"
+    source: "www.cc.com"       # 访问的域名
+    target: "www.qist.cc"      # 映射的目标域名
+    protocol: ""               # 可选，指定目标协议 (http 或 https)，默认保持原协议
+  - name: "example-mapping"
+    source: "example.com"
+    target: "target-example.com"
+```
+
+## 字段说明
+
+- `name`: 映射规则的名称，用于标识和管理
+- `source`: 源域名，用户访问的域名
+- `target`: 目标域名，实际请求会被转发到这个域名
+- `protocol`: 可选字段，指定目标请求使用的协议，可以是 `http` 或 `https`，如果未指定则保持原请求协议不变
+
+## 功能说明
+
+1. 当用户访问 `www.cc.com` 时，请求会被转发到 `www.qist.cc`
+2. 域名映射完全在domainmap模块内部处理，不修改原有逻辑
+3. 请求的完整内容（包括路径、查询参数、头部等）会被转发到目标服务器
+4. 目标服务器的响应会原样返回给客户端
+5. 支持处理HTTP重定向（301 Moved Permanently, 302 Found）
+6. 支持处理流媒体内容（如TS文件）的转发
+7. 支持处理M3U8播放列表中的URL替换
+
+## 集成到主程序
+
+域名映射功能通过实现http.Handler接口完全集成到处理链中：
+
+```go
+// 在 main.go 中
+// 检查是否配置了域名映射
+if len(config.Cfg.DomainMap) > 0 {
+    // 创建域名映射处理器
+    mappings := make(domainmap.DomainMapList, len(config.Cfg.DomainMap))
+    for i, mapping := range config.Cfg.DomainMap {
+        mappings[i] = &domainmap.DomainMapConfig{
+            Name:     mapping.Name,
+            Source:   mapping.Source,
+            Target:   mapping.Target,
+            Protocol: mapping.Protocol,
+        }
+    }
+    
+    domainMapper := domainmap.NewDomainMapper(mappings, client, defaultHandler)
+    mux.Handle("/", domainMapper)
+} else {
+    // 没有域名映射配置，直接使用默认处理器
+    mux.Handle("/", defaultHandler)
+}
+```
+
+这种方式确保了：
+1. 域名映射功能完全封装在domainmap模块中
+2. 不修改任何原有处理逻辑
+3. 只有匹配的域名请求才会被拦截和处理
+4. 未匹配的请求会传递给后续处理器
+
+## 协议处理说明
+
+当需要修改请求协议时，可以使用 `protocol` 字段：
+- 如果设置为 `http`，则将请求协议修改为 HTTP
+- 如果设置为 `https`，则将请求协议修改为 HTTPS
+- 如果不设置或为空，则使用默认的 HTTP 协议
+
+## 重定向处理
+
+域名映射模块能够正确处理HTTP重定向响应：
+1. 当目标服务器返回301或302状态码时，模块会检查Location头部
+2. 如果Location中的域名匹配配置的source，则会应用相应的域名映射规则
+3. 更新Location头部以确保客户端重定向到正确的目标
+
+## 流媒体支持
+
+模块对流媒体内容（如TS文件）提供完整支持：
+1. 透明转发所有请求内容（包括Range请求头）
+2. 保持连接和流式传输特性
+3. 正确处理大文件传输
+4. 支持HTTP Range请求，确保断点续传功能正常
+
+## M3U8播放列表支持
+
+模块能够处理M3U8播放列表中的URL替换：
+1. 自动识别M3U8内容（通过Content-Type头部或文件扩展名）
+2. 解析播放列表中的URL
+3. 对播放列表中的URL应用域名映射规则
+4. 返回处理后的播放列表给客户端
+
+例如，对于以下M3U8内容：
+```
+#EXTM3U
+#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=2084544
+http://127.0.0.1:8888/stream.m3u8...
+```
+
+如果配置了域名映射规则，将自动替换其中的URL为映射后的地址。
+
+## 工作原理
+
+1. 域名映射处理器会检查每个请求的Host是否与配置中的source匹配
+2. 如果匹配，则：
+   - 构造新的目标URL（使用target域名和指定协议）
+   - 创建新的HTTP请求发送到目标服务器
+   - 处理目标服务器的响应，包括重定向
+   - 如果是M3U8内容，则处理其中的URL
+   - 将响应原样返回给客户端
+3. 如果不匹配，则将请求传递给下一个处理器
+
+## 使用方法
+
+域名映射功能已完全集成到主程序中，只需在配置文件中添加domainmap配置即可启用。
+
+## 注意事项
+
+1. 域名映射是精确匹配的，包括子域名
+2. 端口号会被自动忽略，只匹配域名部分
+3. 域名映射功能只有在配置文件中配置了 `domainmap` 项时才会启用
+4. 所有请求内容（路径、查询参数、头部等）都会被转发到目标服务器
+5. 目标服务器的完整响应会原样返回给客户端
+6. 重定向响应中的Location头部会被正确更新
+7. 流媒体内容（如TS文件）能够正常传输
+8. M3U8播放列表中的URL会被正确替换

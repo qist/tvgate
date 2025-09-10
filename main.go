@@ -12,6 +12,7 @@ import (
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/watch"
+	"github.com/qist/tvgate/domainmap"
 	"github.com/qist/tvgate/groupstats"
 	h "github.com/qist/tvgate/handler"
 	"github.com/qist/tvgate/jx"
@@ -118,7 +119,28 @@ func main() {
 		webHandler.ServeMux(mux)
 	}
 
-	mux.Handle("/", server.SecurityHeaders(http.HandlerFunc(h.Handler(client))))
+	// 创建默认处理器
+	defaultHandler := server.SecurityHeaders(http.HandlerFunc(h.Handler(client)))
+
+	// 检查是否配置了域名映射
+	if len(config.Cfg.DomainMap) > 0 {
+		// 创建域名映射处理器
+		mappings := make(domainmap.DomainMapList, len(config.Cfg.DomainMap))
+		for i, mapping := range config.Cfg.DomainMap {
+			mappings[i] = &domainmap.DomainMapConfig{
+				Name:     mapping.Name,
+				Source:   mapping.Source,
+				Target:   mapping.Target,
+				Protocol: mapping.Protocol,
+			}
+		}
+		
+		domainMapper := domainmap.NewDomainMapper(mappings, client, defaultHandler)
+		mux.Handle("/", domainMapper)
+	} else {
+		// 没有域名映射配置，直接使用默认处理器
+		mux.Handle("/", defaultHandler)
+	}
 
 	config.ServerCtx, config.Cancel = context.WithCancel(context.Background())
 
