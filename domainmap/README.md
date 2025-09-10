@@ -34,32 +34,7 @@ domainmap:
 6. 支持处理流媒体内容（如TS文件）的转发
 7. 支持处理M3U8播放列表中的URL替换
 
-## 集成到主程序
-
-域名映射功能通过实现http.Handler接口完全集成到处理链中：
-
-```go
-// 在 main.go 中
-// 检查是否配置了域名映射
-if len(config.Cfg.DomainMap) > 0 {
-    // 创建域名映射处理器
-    mappings := make(domainmap.DomainMapList, len(config.Cfg.DomainMap))
-    for i, mapping := range config.Cfg.DomainMap {
-        mappings[i] = &domainmap.DomainMapConfig{
-            Name:     mapping.Name,
-            Source:   mapping.Source,
-            Target:   mapping.Target,
-            Protocol: mapping.Protocol,
-        }
-    }
-    
-    domainMapper := domainmap.NewDomainMapper(mappings, client, defaultHandler)
-    mux.Handle("/", domainMapper)
-} else {
-    // 没有域名映射配置，直接使用默认处理器
-    mux.Handle("/", defaultHandler)
-}
-```
+## 集成
 
 这种方式确保了：
 1. 域名映射功能完全封装在domainmap模块中
