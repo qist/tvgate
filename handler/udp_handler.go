@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
@@ -12,6 +13,29 @@ import (
 )
 
 func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
+	// 全局token验证
+	if auth.GetGlobalTokenManager() != nil {
+		tokenParamName := "my_token" // 默认参数名
+		token := r.URL.Query().Get(tokenParamName)
+
+		// 获取客户端真实IP
+		clientIP := monitor.GetClientIP(r)
+
+		// 构造连接ID（IP+端口）
+		connID := clientIP + "_" + r.RemoteAddr
+
+		// 验证全局token
+		if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
+			logger.LogPrintf("全局token验证失败: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		// 更新全局token活跃状态
+		auth.GetGlobalTokenManager().KeepAlive(token, connID, clientIP, r.URL.Path)
+		logger.LogPrintf("全局token验证成功: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+	}
+
 	// URL 形如 /rtp/239.0.0.1:5000?iface=eth0,eth1
 	addr := r.URL.Path[len(prefix):]
 	if addr == "" || !strings.Contains(addr, ":") {

@@ -2,7 +2,14 @@ package watch
 
 import (
 	"context"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
 	"github.com/fsnotify/fsnotify"
+
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
@@ -15,11 +22,6 @@ import (
 	"github.com/qist/tvgate/server"
 	httpclient "github.com/qist/tvgate/utils/http"
 	"github.com/qist/tvgate/web"
-	"net/http"
-	"os"
-	"path/filepath"
-	"sync"
-	"time"
 )
 
 func WatchConfigFile(configPath string) {
@@ -157,7 +159,6 @@ func WatchConfigFile(configPath string) {
 				webHandler.ServeMux(newMux)
 			}
 
-			// newMux.Handle("/", server.SecurityHeaders(http.HandlerFunc(h.Handler(client))))
 			// 创建默认处理器
 			defaultHandler := server.SecurityHeaders(http.HandlerFunc(h.Handler(client)))
 
@@ -167,22 +168,18 @@ func WatchConfigFile(configPath string) {
 				mappings := make(auth.DomainMapList, len(config.Cfg.DomainMap))
 				for i, mapping := range config.Cfg.DomainMap {
 					mappings[i] = &auth.DomainMapConfig{
-						Name:           mapping.Name,
-						Source:         mapping.Source,
-						Target:         mapping.Target,
-						Protocol:       mapping.Protocol,
-						TokensEnabled:  mapping.TokensEnabled,
-						TokenParamName: mapping.TokenParamName,
-						Auth:           mapping.Auth,
-						ClientHeaders:  mapping.ClientHeaders,
-						ServerHeaders:  mapping.ServerHeaders,
+						Name:          mapping.Name,
+						Source:        mapping.Source,
+						Target:        mapping.Target,
+						Protocol:      mapping.Protocol,
+						Auth:          mapping.Auth,
+						ClientHeaders: mapping.ClientHeaders,
+						ServerHeaders: mapping.ServerHeaders,
 					}
 				}
-
 				domainMapper := domainmap.NewDomainMapper(mappings, client, defaultHandler)
-				// newMux.Handle("/", domainMapper)
+				// mux.Handle("/", domainMapper)
 				newMux.Handle("/", server.SecurityHeaders(domainMapper))
-
 			} else {
 				// 没有域名映射配置，直接使用默认处理器
 				newMux.Handle("/", defaultHandler)

@@ -1,39 +1,79 @@
 package handler
 
 import (
-	// "bytes"
 	"context"
 	"fmt"
-	"strconv"
-	// "github.com/asticode/go-astits"
 	"github.com/bluenviron/gortsplib/v4"
 	"github.com/bluenviron/gortsplib/v4/pkg/base"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
 	"github.com/bluenviron/gortsplib/v4/pkg/format"
-
-	// "github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
-	// "github.com/pion/rtp"
+	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/lb"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/proxy"
 	"github.com/qist/tvgate/rules"
-
-	// "github.com/qist/tvgate/utils/buffer"
+	"github.com/qist/tvgate/stream"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
-
-	"github.com/qist/tvgate/stream"
-
-	// "sync"
-	// "sync/atomic"
 	"time"
 )
 
 func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
+	// 全局token验证
+	tokenParamName := "my_token" // 默认参数名
+	if auth.GetGlobalTokenManager() != nil {
+		// 如果全局配置中有自定义的token参数名，则使用自定义的
+		if auth.GetGlobalTokenManager().TokenParamName != "" {
+			tokenParamName = auth.GetGlobalTokenManager().TokenParamName
+		}
+
+		// 提取token参数，处理嵌套URL的情况
+		var token string
+		token = r.URL.Query().Get(tokenParamName)
+
+		// 如果在常规查询参数中没有找到token，检查路径中是否包含嵌套URL
+		if token == "" {
+			// 检查路径是否包含嵌套URL格式（如 /http://... 或 /https://...）
+			path := r.URL.Path
+			if strings.HasPrefix(path, "/http://") || strings.HasPrefix(path, "/https://") {
+				// 尝试解析整个路径作为URL
+				fullPath := path
+				if r.URL.RawQuery != "" {
+					fullPath = path + "?" + r.URL.RawQuery
+				}
+
+				// 解析嵌套URL
+				nestedURLStr := strings.TrimLeft(fullPath, "/")
+				nestedURL, err := url.Parse(nestedURLStr)
+				if err == nil {
+					token = nestedURL.Query().Get(tokenParamName)
+				}
+			}
+		}
+
+		// 获取客户端真实IP
+		clientIP := monitor.GetClientIP(r)
+
+		// 构造连接ID（IP+端口）
+		connID := clientIP + "_" + r.RemoteAddr
+
+		// 验证全局token
+		if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
+			logger.LogPrintf("全局token验证失败: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		// 更新全局token活跃状态
+		auth.GetGlobalTokenManager().KeepAlive(token, connID, clientIP, r.URL.Path)
+		logger.LogPrintf("全局token验证成功: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+	}
+
 	path := strings.TrimPrefix(r.URL.Path, "/rtsp/")
 	if path == "" {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
@@ -49,10 +89,30 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	if len(parts) > 1 {
 		streamPath = "/" + parts[1]
 	}
+
+	// 构建RTSP URL
 	rtspURL := fmt.Sprintf("rtsp://%s%s", hostPort, streamPath)
+
 	if r.URL.RawQuery != "" {
-		rtspURL += "?" + r.URL.RawQuery
+		if auth.GetGlobalTokenManager() != nil {
+			// 全局认证启用，保留原始 query，包括 token
+			rtspURL += "?" + r.URL.RawQuery
+		} else {
+			// 全局认证未启用，删除 token 参数，保持原始 query
+			query := r.URL.RawQuery
+			parts := strings.Split(query, "&")
+			newParts := []string{}
+			for _, kv := range parts {
+				if !strings.HasPrefix(kv, tokenParamName+"=") {
+					newParts = append(newParts, kv)
+				}
+			}
+			if len(newParts) > 0 {
+				rtspURL += "?" + strings.Join(newParts, "&") // 保持原始明文
+			}
+		}
 	}
+
 	logger.LogPrintf("RTSP → HTTP request: %s", rtspURL)
 
 	parsedURL, err := url.Parse(rtspURL)
@@ -70,7 +130,7 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		ConnectedAt:    time.Now(),
 		LastActive:     time.Now(),
 	})
-	defer monitor.ActiveClients.Unregister(connID,"RTSP")
+	defer monitor.ActiveClients.Unregister(connID, "RTSP")
 
 	transport := gortsplib.TransportTCP
 	client := &gortsplib.Client{
@@ -250,7 +310,7 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		hub.SetRtspClient(client)
 
 		// 调用 HandleMpegtsStream，传入 hub
-		if err := stream.HandleMpegtsStream(ctx, w, client, videoMedia, mpegtsFormat, r, rtspURL, hub,updateActive); err != nil {
+		if err := stream.HandleMpegtsStream(ctx, w, client, videoMedia, mpegtsFormat, r, rtspURL, hub, updateActive); err != nil {
 			http.Error(w, "Stream error: "+err.Error(), 500)
 		}
 		return
@@ -261,7 +321,7 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		// 设置RTSP客户端
 		hub.SetRtspClient(client)
 
-		if err := stream.HandleH264AacStream(ctx, w, client, videoMedia, videoFormat, audioMedia, audioFormat, r, rtspURL, hub,updateActive); err != nil {
+		if err := stream.HandleH264AacStream(ctx, w, client, videoMedia, videoFormat, audioMedia, audioFormat, r, rtspURL, hub, updateActive); err != nil {
 			http.Error(w, "Stream error: "+err.Error(), 500)
 		}
 		return

@@ -144,8 +144,6 @@ func main() {
 				Source:         mapping.Source,
 				Target:         mapping.Target,
 				Protocol:       mapping.Protocol,
-				TokensEnabled:  mapping.TokensEnabled,
-				TokenParamName: mapping.TokenParamName,
 				Auth:           mapping.Auth,
 				ClientHeaders:  mapping.ClientHeaders,
 				ServerHeaders:  mapping.ServerHeaders,

@@ -174,6 +174,7 @@ func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendSche
 	originalHost := parsedURL.Host
 	innerPath := parsedURL.Path
 
+	// 去掉嵌套的 host 前缀
 	if strings.HasPrefix(innerPath, "/"+originalHost) {
 		innerPath = strings.TrimPrefix(innerPath, "/"+originalHost)
 		if !strings.HasPrefix(innerPath, "/") {
@@ -181,46 +182,54 @@ func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendSche
 		}
 	}
 
+	// 构造新 URL（不改变查询参数）
 	newURL := &url.URL{
 		Scheme:   frontendScheme,
 		Host:     frontendHost,
 		Path:     innerPath,
-		RawQuery: parsedURL.RawQuery,
+		RawQuery: parsedURL.RawQuery, // 保留原始 query，不 encode
 		Fragment: parsedURL.Fragment,
 	}
 
 	var newToken string
-	// 给 URL 添加 token
+
+	// 添加 token
 	if tm != nil && tm.Enabled {
-		var tok string
-		var err error
+		tokenParam := tm.TokenParamName
+		if tokenParam == "" {
+			tokenParam = "token"
+		}
 
 		// 动态 token
 		if tm.DynamicConfig != nil {
-			tok, err = tm.GenerateDynamicToken(innerPath)
-			if err == nil {
+			if tok, err := tm.GenerateDynamicToken(innerPath); err == nil {
 				newToken = tok
-				q := newURL.Query()
-				q.Set(tm.TokenParamName, tok)
-				newURL.RawQuery = q.Encode()
 			}
 		}
 
-		// 静态 token（只有在动态未生成或失败时才尝试）
+		// 静态 token（仅在动态 token 为空时使用）
 		if newToken == "" && len(tm.StaticTokens) > 0 {
 			for st := range tm.StaticTokens {
 				newToken = st
-				q := newURL.Query()
-				q.Set(tm.TokenParamName, st)
-				newURL.RawQuery = q.Encode()
 				break
 			}
 		}
+
+		// 如果生成了 token，则手动拼接到原始 query
+		if newToken != "" {
+			if newURL.RawQuery == "" {
+				newURL.RawQuery = tokenParam + "=" + newToken
+			} else {
+				// 保持原始 query，不 encode
+				newURL.RawQuery += "&" + tokenParam + "=" + newToken
+			}
+		}
 	}
-	if newURL.String() == parsedURL.String() {
-		return parsedURL.String(), false, newToken
-	}
-	return newURL.String(), true, newToken
+
+	// 判断是否替换了 host
+	replaced := newURL.Scheme != parsedURL.Scheme || newURL.Host != parsedURL.Host || newURL.Path != parsedURL.Path
+
+	return newURL.String(), replaced, newToken
 }
 
 // ---------------------------
@@ -234,12 +243,12 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 	tokenParam string,
 	seen map[string]struct{},
 ) []byte {
-	trimmed := strings.TrimSpace(line) // TrimSpace 去掉首尾空格和空行
+	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 		if trimmed == "" {
-			return nil // 空行直接忽略
+			return nil
 		}
-		return []byte(trimmed + "\n") // 注释行保留换行
+		return []byte(trimmed + "\n")
 	}
 
 	newLine := trimmed
@@ -260,8 +269,8 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 		}
 	}
 
-	// 替换 host（只针对完整 http/https URL）
 	if strings.HasPrefix(newLine, "http://") || strings.HasPrefix(newLine, "https://") {
+		// 完整 URL，替换 host 并加 token
 		u, err := url.Parse(newLine)
 		if err == nil {
 			// 清理重复 host
@@ -275,36 +284,44 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 				cleanedParts = append(cleanedParts, p)
 				last = p
 			}
-			u.Path = strings.Join(cleanedParts[1:], "/") // 第一个是 host
+			u.Path = strings.Join(cleanedParts[1:], "/")
 			u.Scheme = frontendScheme
 			u.Host = frontendHost
-			newLine = u.String()
-		}
-	}
 
-	// 添加 token 参数（只在开启授权时）
-	if token != "" {
-		if tokenParam == "" {
-			tokenParam = "token"
+			// 添加 token（不 encode）
+			if token != "" {
+				q := u.Query()
+				q.Set(tokenParam, token)
+				rawQueryParts := []string{}
+				for k, vals := range q {
+					for _, v := range vals {
+						rawQueryParts = append(rawQueryParts, k+"="+v)
+					}
+				}
+				if len(rawQueryParts) > 0 {
+					u.RawQuery = strings.Join(rawQueryParts, "&")
+				} else {
+					u.RawQuery = ""
+				}
+			}
+
+			newLine = u.Scheme + "://" + u.Host + u.Path
+			if u.RawQuery != "" {
+				newLine += "?" + u.RawQuery
+			}
 		}
-		u, err := url.Parse(newLine)
-		if err == nil {
-			q := u.Query()
-			q.Set(tokenParam, token)
-			u.RawQuery = q.Encode()
-			newLine = u.String()
-		} else {
-			// 普通路径 ts，直接加 ?token=...
+	} else {
+		// 相对路径，只加 token
+		if token != "" {
 			if strings.Contains(newLine, "?") {
-				newLine = newLine + "&" + tokenParam + "=" + token
+				newLine += "&" + tokenParam + "=" + token
 			} else {
-				newLine = newLine + "?" + tokenParam + "=" + token
+				newLine += "?" + tokenParam + "=" + token
 			}
 		}
 	}
 
 	seen[newLine] = struct{}{}
-	// 保证每行都有换行符
 	return []byte(newLine + "\n")
 }
 
@@ -351,16 +368,16 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// token 校验
-	tokenParam := cfg.TokenParamName
+	tokenParam := cfg.Auth.TokenParamName
 	if tokenParam == "" {
 		tokenParam = "token"
 	}
 	// 使用Query().Get()已经会自动URL解码，但为了确保Base64字符不被破坏，我们直接从RawQuery解析
 	token := r.URL.Query().Get(tokenParam)
 	var tm *auth.TokenManager
-	
+
 	// 获取或创建对应域名映射的TokenManager实例
-	if cfg.TokensEnabled {
+	if cfg.Auth.TokensEnabled {
 		if cfg.Auth.DynamicTokens.EnableDynamic || cfg.Auth.StaticTokens.EnableStatic {
 			// 检查是否启用了静态token但没有提供token参数
 			if cfg.Auth.StaticTokens.EnableStatic && !cfg.Auth.DynamicTokens.EnableDynamic && token == "" {
@@ -368,7 +385,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "未提供有效的 token 参数", http.StatusUnauthorized)
 				return
 			}
-			
+
 			// 使用host作为key来获取TokenManager
 			host := r.Host
 			if existingTm, ok := dm.tokenManagers[host]; ok {
@@ -377,7 +394,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				tm = auth.NewTokenManagerFromConfig(cfg)
 				dm.tokenManagers[host] = tm
 			}
-			
+
 			logger.LogPrintf("token: %v", cfg)
 			if !tm.ValidateToken(token, r.URL.Path, connID) {
 				http.Error(w, "未授权或 token 过期", http.StatusUnauthorized)
@@ -398,10 +415,22 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		monitor.ActiveClients.UpdateLastActive(connID, time.Now())
 	}
 	targetReqURL := *targetURL
-	if cfg.TokensEnabled {
+	if cfg.Auth.TokensEnabled {
 		q := targetReqURL.Query()
 		q.Del(tokenParam)
-		targetReqURL.RawQuery = q.Encode()
+
+		// 直接构建 RawQuery，不使用 Encode()，保持原始格式
+		rawQueryParts := []string{}
+		for k, vals := range q {
+			for _, v := range vals {
+				rawQueryParts = append(rawQueryParts, k+"="+v)
+			}
+		}
+		if len(rawQueryParts) > 0 {
+			targetReqURL.RawQuery = strings.Join(rawQueryParts, "&")
+		} else {
+			targetReqURL.RawQuery = ""
+		}
 	}
 
 	// -------- 使用动态 HTTP 配置创建 Transport 和 Client ----------

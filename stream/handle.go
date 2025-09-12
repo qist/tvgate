@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
+	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/utils/buffer"
 	"io"
 	"net/http"
@@ -84,75 +85,6 @@ func getRequestScheme(r *http.Request) string {
 	}
 
 	return "http"
-}
-
-// handleSpecialContent 处理特殊内容类型的响应（如 m3u8）
-func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *http.Response) {
-	defer proxyResp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(proxyResp.Body)
-	if err != nil {
-		http.Error(w, "读取响应内容失败", http.StatusInternalServerError)
-		return
-	}
-
-	// 获取代理基础 URL
-	scheme := getRequestScheme(r)
-	baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
-
-	lines := strings.Split(string(bodyBytes), "\n")
-	for i, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue // 注释或标签不处理
-		}
-
-		// 只处理原始 HTTP/HTTPS URL
-		if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
-			u, err := url.Parse(line)
-			if err != nil {
-				continue
-			}
-
-			// 已经是代理 URL，跳过
-			if u.Host == r.Host {
-				continue
-			}
-
-			// 添加代理前缀
-			lines[i] = fmt.Sprintf("%s/%s", baseURL, line)
-		}
-	}
-
-	result := strings.Join(lines, "\n")
-
-	// 复制响应头并移除 Content-Length
-	CopyHeader(w.Header(), proxyResp.Header, r.ProtoMajor)
-	w.Header().Del("Content-Length")
-	w.WriteHeader(proxyResp.StatusCode)
-	w.Write([]byte(result))
-}
-
-// 修改 handleRedirect 函数
-func handleRedirect(w http.ResponseWriter, r *http.Request, proxyResp *http.Response) {
-	location := proxyResp.Header.Get("Location")
-	if location == "" {
-		w.WriteHeader(proxyResp.StatusCode)
-		return
-	}
-
-	logger.LogPrintf("处理重定向: %s", location)
-
-	// 构建新的重定向URL
-	scheme := getRequestScheme(r)
-	newLocation := fmt.Sprintf("%s://%s/%s",
-		scheme,
-		r.Host,
-		strings.TrimLeft(location, "/"))
-
-	logger.LogPrintf("重定向到: %s", newLocation)
-	w.Header().Set("Location", newLocation)
-	w.WriteHeader(proxyResp.StatusCode)
 }
 
 // 支持的内容类型列表
@@ -317,4 +249,147 @@ func CopyHeader(dst, src http.Header, protoMajor int) {
 			dst.Add(k, v)
 		}
 	}
+}
+
+// handleRedirect 处理 HTTP 301/302 重定向
+// handleRedirect 处理 HTTP 301/302 重定向
+func handleRedirect(w http.ResponseWriter, r *http.Request, proxyResp *http.Response) {
+	location := proxyResp.Header.Get("Location")
+	if location == "" {
+		w.WriteHeader(proxyResp.StatusCode)
+		return
+	}
+
+	logger.LogPrintf("处理重定向: %s", location)
+
+	scheme := getRequestScheme(r)
+	tm := auth.GetGlobalTokenManager()
+	tokenParam := "token"
+	if tm != nil && tm.TokenParamName != "" {
+		tokenParam = tm.TokenParamName
+	}
+
+	newLocation := location
+
+	if strings.HasPrefix(location, "http://") || strings.HasPrefix(location, "https://") {
+		baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
+		newLocation = joinBaseWithFullURL(baseURL, location)
+	} else {
+		// 相对路径
+		newLocation = fmt.Sprintf("%s://%s/%s", scheme, r.Host, strings.TrimLeft(location, "/"))
+	}
+
+	// 添加 token 明文
+	if tm != nil && tm.Enabled {
+		if !strings.Contains(newLocation, tokenParam+"=") {
+			token := generateToken(tm, location)
+			if token != "" {
+				if strings.Contains(newLocation, "?") {
+					newLocation += "&" + tokenParam + "=" + token
+				} else {
+					newLocation += "?" + tokenParam + "=" + token
+				}
+			}
+		}
+	}
+
+	logger.LogPrintf("重定向到: %s", newLocation)
+	w.Header().Set("Location", newLocation)
+	w.WriteHeader(proxyResp.StatusCode)
+}
+
+// handleSpecialContent 处理 m3u8 文件内容
+func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *http.Response) {
+	defer proxyResp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(proxyResp.Body)
+	if err != nil {
+		http.Error(w, "读取响应内容失败", http.StatusInternalServerError)
+		return
+	}
+
+	scheme := getRequestScheme(r)
+	baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
+
+	tm := auth.GetGlobalTokenManager()
+	tokenParam := "token"
+	if tm != nil && tm.TokenParamName != "" {
+		tokenParam = tm.TokenParamName
+	}
+
+	lines := strings.Split(string(bodyBytes), "\n")
+	seen := make(map[string]struct{})
+	var resultLines []string
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			resultLines = append(resultLines, line)
+			continue
+		}
+
+		newLine := line
+		token := ""
+		if tm != nil && tm.Enabled {
+			token = generateToken(tm, line)
+		}
+
+		// 添加 token 明文
+		if token != "" {
+			if strings.Contains(newLine, "?") {
+				newLine += "&" + tokenParam + "=" + token
+			} else {
+				newLine += "?" + tokenParam + "=" + token
+			}
+		}
+
+		// 去重
+		if _, exists := seen[newLine]; exists {
+			continue
+		}
+		seen[newLine] = struct{}{}
+
+		// 完整 URL 加代理前缀
+		if strings.HasPrefix(newLine, "http://") || strings.HasPrefix(newLine, "https://") {
+			newLine = joinBaseWithFullURL(baseURL, newLine)
+		}
+
+		resultLines = append(resultLines, newLine)
+	}
+
+	result := strings.Join(resultLines, "\n") + "\n"
+
+	// 复制响应头并移除 Content-Length
+	CopyHeader(w.Header(), proxyResp.Header, r.ProtoMajor)
+	w.Header().Del("Content-Length")
+	w.WriteHeader(proxyResp.StatusCode)
+	w.Write([]byte(result))
+}
+
+// joinBaseWithFullURL 拼接 baseURL 和完整 URL，不做任何 encode
+func joinBaseWithFullURL(baseURL, fullURL string) string {
+	baseURL = strings.TrimRight(baseURL, "/")
+	fullURL = strings.TrimLeft(fullURL, "/")
+	return baseURL + "/" + fullURL
+}
+
+// generateToken 明文生成 token（动态或静态）
+func generateToken(tm *auth.TokenManager, path string) string {
+	if tm == nil || !tm.Enabled {
+		return ""
+	}
+	if tm.DynamicTokens != nil {
+		if tok, err := tm.GenerateDynamicToken(path); err == nil && tok != "" {
+			return tok
+		}
+	}
+	if len(tm.StaticTokens) > 0 {
+		for st := range tm.StaticTokens {
+			return st
+		}
+	}
+	return ""
 }

@@ -14,9 +14,27 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 )
+
+// 全局Token管理器
+var GlobalTokenManager *TokenManager
+
+// GetGlobalTokenManager 获取全局Token管理器
+func GetGlobalTokenManager() *TokenManager {
+	return GlobalTokenManager
+}
+
+// NewGlobalTokenManagerFromConfig 从全局配置创建Token管理器
+func NewGlobalTokenManagerFromConfig(globalAuth *config.AuthConfig) *TokenManager {
+	domainConfig := &DomainMapConfig{
+		Auth: *globalAuth,
+	}
+	
+	return NewTokenManagerFromConfig(domainConfig)
+}
 
 // ---------------------------
 // TokenManager 管理 token 与在线状态
@@ -59,8 +77,8 @@ type DynamicTokenConfig struct {
 // ---------------------------
 func NewTokenManagerFromConfig(cfg *DomainMapConfig) *TokenManager {
 	tm := &TokenManager{
-		Enabled:        cfg.TokensEnabled,
-		TokenParamName: cfg.TokenParamName,
+		Enabled:        cfg.Auth.TokensEnabled,
+		TokenParamName: cfg.Auth.TokenParamName,
 		StaticTokens:   make(map[string]*SessionInfo),
 		DynamicTokens:  make(map[string]*SessionInfo),
 		tokenTypes:     make(map[string]string),

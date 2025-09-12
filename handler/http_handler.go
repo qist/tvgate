@@ -9,10 +9,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	// "strconv"
 	"strings"
 	"time"
 
+	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/lb"
 	"github.com/qist/tvgate/logger"
@@ -77,7 +77,62 @@ func Handler(client *http.Client) http.HandlerFunc {
 			RtspToHTTPHandler(w, r)
 			return
 		}
+		// 全局token验证
+		if auth.GetGlobalTokenManager() != nil {
+			tokenParamName := "my_token" // 默认参数名
+			// 如果全局配置中有自定义的token参数名，则使用自定义的
+			if auth.GetGlobalTokenManager().TokenParamName != "" {
+				tokenParamName = auth.GetGlobalTokenManager().TokenParamName
+			}
 
+			// 提取token参数，处理嵌套URL的情况
+			var token string
+			token = r.URL.Query().Get(tokenParamName)
+
+			// 如果在常规查询参数中没有找到token，检查路径中是否包含嵌套URL
+			if token == "" {
+				// 检查路径是否包含嵌套URL格式（如 /http://... 或 /https://...）
+				path := r.URL.Path
+				if strings.HasPrefix(path, "/http://") || strings.HasPrefix(path, "/https://") {
+					// 尝试解析整个路径作为URL
+					fullPath := path
+					if r.URL.RawQuery != "" {
+						fullPath = path + "?" + r.URL.RawQuery
+					}
+
+					// 解析嵌套URL
+					nestedURLStr := strings.TrimLeft(fullPath, "/")
+					nestedURL, err := url.Parse(nestedURLStr)
+					if err == nil {
+						token = nestedURL.Query().Get(tokenParamName)
+					}
+				}
+			}
+
+			// 获取客户端真实IP
+			clientIP := monitor.GetClientIP(r)
+
+			// 构造连接ID（IP+端口）
+			connID := clientIP + "_" + r.RemoteAddr
+
+			// 验证全局token
+			if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
+				logger.LogPrintf("全局token验证失败: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+
+			// 更新全局token活跃状态
+			auth.GetGlobalTokenManager().KeepAlive(token, connID, clientIP, r.URL.Path)
+			logger.LogPrintf("全局token验证成功: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+
+			// // 删除URL中的token参数
+			// if config.Cfg.GlobalAuth.TokensEnabled {
+			// 	q := r.URL.Query()
+			// 	q.Del(tokenParamName)
+			// 	r.URL.RawQuery = q.Encode()
+			// }
+		}
 		ctx, cancel := context.WithCancel(context.Background()) // 可加超时限制
 		defer cancel()
 
@@ -96,6 +151,34 @@ func Handler(client *http.Client) http.HandlerFunc {
 		// 计算目标地址
 		targetPath := stream.GetTargetPath(r)
 		targetURL := stream.GetTargetURL(r, targetPath)
+
+		// 如果启用了全局认证，在向后端发送请求前删除token参数
+		// 如果启用了全局认证，在向后端发送请求前删除 token 参数（保持原始 URL）
+		if auth.GetGlobalTokenManager() != nil {
+			tokenParamName := "my_token" // 默认参数名
+			if auth.GetGlobalTokenManager().TokenParamName != "" {
+				tokenParamName = auth.GetGlobalTokenManager().TokenParamName
+			}
+
+			parts := strings.SplitN(targetURL, "?", 2)
+			if len(parts) == 2 {
+				base := parts[0]
+				query := parts[1]
+
+				newQueryParts := []string{}
+				for _, kv := range strings.Split(query, "&") {
+					if !strings.HasPrefix(kv, tokenParamName+"=") {
+						newQueryParts = append(newQueryParts, kv)
+					}
+				}
+
+				if len(newQueryParts) > 0 {
+					targetURL = base + "?" + strings.Join(newQueryParts, "&")
+				} else {
+					targetURL = base
+				}
+			}
+		}
 
 		parsedURL, err := url.Parse(targetURL)
 		if err != nil {
@@ -244,6 +327,36 @@ func Handler(client *http.Client) http.HandlerFunc {
 				updateActive := func() {
 					monitor.ActiveClients.UpdateLastActive(connID, time.Now())
 				}
+
+				// 如果启用了全局认证，在处理响应前删除目标URL中的token参数
+				// finalTargetURL := targetURL
+				// 如果启用了全局认证，在向后端发送请求前删除 token 参数（保持原始 URL）
+				if auth.GetGlobalTokenManager() != nil {
+					tokenParamName := "my_token" // 默认参数名
+					if auth.GetGlobalTokenManager().TokenParamName != "" {
+						tokenParamName = auth.GetGlobalTokenManager().TokenParamName
+					}
+
+					parts := strings.SplitN(targetURL, "?", 2)
+					if len(parts) == 2 {
+						base := parts[0]
+						query := parts[1]
+
+						newQueryParts := []string{}
+						for _, kv := range strings.Split(query, "&") {
+							if !strings.HasPrefix(kv, tokenParamName+"=") {
+								newQueryParts = append(newQueryParts, kv)
+							}
+						}
+
+						if len(newQueryParts) > 0 {
+							targetURL = base + "?" + strings.Join(newQueryParts, "&")
+						} else {
+							targetURL = base
+						}
+					}
+				}
+
 				stream.HandleProxyResponse(ctx, w, r, targetURL, proxyResp, updateActive)
 				return
 			}
@@ -267,6 +380,35 @@ func Handler(client *http.Client) http.HandlerFunc {
 		updateActive := func() {
 			monitor.ActiveClients.UpdateLastActive(connID, time.Now())
 		}
+
+		// 如果启用了全局认证，在处理响应前删除目标URL中的token参数
+		// 如果启用了全局认证，在向后端发送请求前删除 token 参数（保持原始 URL）
+		if auth.GetGlobalTokenManager() != nil {
+			tokenParamName := "my_token" // 默认参数名
+			if auth.GetGlobalTokenManager().TokenParamName != "" {
+				tokenParamName = auth.GetGlobalTokenManager().TokenParamName
+			}
+
+			parts := strings.SplitN(targetURL, "?", 2)
+			if len(parts) == 2 {
+				base := parts[0]
+				query := parts[1]
+
+				newQueryParts := []string{}
+				for _, kv := range strings.Split(query, "&") {
+					if !strings.HasPrefix(kv, tokenParamName+"=") {
+						newQueryParts = append(newQueryParts, kv)
+					}
+				}
+
+				if len(newQueryParts) > 0 {
+					targetURL = base + "?" + strings.Join(newQueryParts, "&")
+				} else {
+					targetURL = base
+				}
+			}
+		}
+
 		stream.HandleProxyResponse(ctx, w, r, targetURL, clientResp, updateActive)
 	}
 }
