@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"github.com/fsnotify/fsnotify"
+	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/update"
@@ -163,18 +164,25 @@ func WatchConfigFile(configPath string) {
 			// 检查是否配置了域名映射
 			if len(config.Cfg.DomainMap) > 0 {
 				// 创建域名映射处理器
-				mappings := make(domainmap.DomainMapList, len(config.Cfg.DomainMap))
+				mappings := make(auth.DomainMapList, len(config.Cfg.DomainMap))
 				for i, mapping := range config.Cfg.DomainMap {
-					mappings[i] = &domainmap.DomainMapConfig{
-						Name:     mapping.Name,
-						Source:   mapping.Source,
-						Target:   mapping.Target,
-						Protocol: mapping.Protocol,
+					mappings[i] = &auth.DomainMapConfig{
+						Name:           mapping.Name,
+						Source:         mapping.Source,
+						Target:         mapping.Target,
+						Protocol:       mapping.Protocol,
+						TokensEnabled:  mapping.TokensEnabled,
+						TokenParamName: mapping.TokenParamName,
+						Auth:           mapping.Auth,
+						ClientHeaders:  mapping.ClientHeaders,
+						ServerHeaders:  mapping.ServerHeaders,
 					}
 				}
 
 				domainMapper := domainmap.NewDomainMapper(mappings, client, defaultHandler)
-				newMux.Handle("/", domainMapper)
+				// newMux.Handle("/", domainMapper)
+				newMux.Handle("/", server.SecurityHeaders(domainMapper))
+
 			} else {
 				// 没有域名映射配置，直接使用默认处理器
 				newMux.Handle("/", defaultHandler)

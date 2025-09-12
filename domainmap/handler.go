@@ -4,19 +4,19 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/md5"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
-	// "context"
 	"fmt"
 	"io"
-	// "net"
-	"crypto/tls"
+	"net"
 	"net/http"
 	"net/url"
-	// "regexp"
 	"strings"
 	"time"
 
+	"github.com/qist/tvgate/auth"
+	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/lb"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
@@ -61,10 +61,11 @@ func chooseScheme(protocol string, r *http.Request) string {
 // ---------------------------
 
 type DomainMapper struct {
-	mappings        DomainMapList
+	mappings        auth.DomainMapList
 	client          *http.Client
 	next            http.Handler
 	redirectHandler *RedirectHandler
+	tokenManagers   map[string]*auth.TokenManager
 }
 
 type RedirectHandler struct {
@@ -76,7 +77,7 @@ type RedirectHandler struct {
 // 初始化
 // ---------------------------
 
-func NewDomainMapper(mappings DomainMapList, client *http.Client, next http.Handler) *DomainMapper {
+func NewDomainMapper(mappings auth.DomainMapList, client *http.Client, next http.Handler) *DomainMapper {
 	if client == nil {
 		client = &http.Client{
 			Timeout: 30 * time.Second,
@@ -84,9 +85,10 @@ func NewDomainMapper(mappings DomainMapList, client *http.Client, next http.Hand
 	}
 
 	dm := &DomainMapper{
-		mappings: mappings,
-		client:   client,
-		next:     next,
+		mappings:      mappings,
+		client:        client,
+		next:          next,
+		tokenManagers: make(map[string]*auth.TokenManager),
 	}
 
 	dm.redirectHandler = &RedirectHandler{
@@ -103,20 +105,29 @@ func NewDomainMapper(mappings DomainMapList, client *http.Client, next http.Hand
 // ---------------------------
 
 func (dm *DomainMapper) MapDomain(host string) (string, string, bool) {
+	hostWithoutPort := host
+	if idx := strings.Index(host, ":"); idx != -1 {
+		hostWithoutPort = host[:idx]
+	}
 	for _, mapping := range dm.mappings {
-		if mapping.Source == host {
+		if mapping.Source == hostWithoutPort {
 			return mapping.Target, mapping.Protocol, true
 		}
 	}
+	return "", "", false
+}
+
+func (dm *DomainMapper) GetDomainConfig(host string) *auth.DomainMapConfig {
+	hostWithoutPort := host
 	if idx := strings.Index(host, ":"); idx != -1 {
-		hostWithoutPort := host[:idx]
-		for _, mapping := range dm.mappings {
-			if mapping.Source == hostWithoutPort {
-				return mapping.Target, mapping.Protocol, true
-			}
+		hostWithoutPort = host[:idx]
+	}
+	for _, mapping := range dm.mappings {
+		if mapping.Source == hostWithoutPort {
+			return mapping
 		}
 	}
-	return "", "", false
+	return nil
 }
 
 // ---------------------------
@@ -155,11 +166,14 @@ func (rh *RedirectHandler) redirectPolicy(req *http.Request, via []*http.Request
 	return nil
 }
 
-func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendScheme, frontendHost string) (string, bool) {
+// ---------------------------
+// URL 替换 + Token
+// ---------------------------
+
+func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendScheme, frontendHost string, tm *auth.TokenManager) (string, bool, string) {
 	originalHost := parsedURL.Host
 	innerPath := parsedURL.Path
 
-	// 去掉重复 Host 
 	if strings.HasPrefix(innerPath, "/"+originalHost) {
 		innerPath = strings.TrimPrefix(innerPath, "/"+originalHost)
 		if !strings.HasPrefix(innerPath, "/") {
@@ -167,7 +181,6 @@ func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendSche
 		}
 	}
 
-	// 构建新的 URL
 	newURL := &url.URL{
 		Scheme:   frontendScheme,
 		Host:     frontendHost,
@@ -176,15 +189,127 @@ func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendSche
 		Fragment: parsedURL.Fragment,
 	}
 
-	// 如果替换后 URL 与原始相同，说明没有修改
-	if newURL.String() == parsedURL.String() {
-		return parsedURL.String(), false
+	var newToken string
+	// 给 URL 添加 token
+	if tm != nil && tm.Enabled {
+		var tok string
+		var err error
+
+		// 动态 token
+		if tm.DynamicConfig != nil {
+			tok, err = tm.GenerateDynamicToken(innerPath)
+			if err == nil {
+				newToken = tok
+				q := newURL.Query()
+				q.Set(tm.TokenParamName, tok)
+				newURL.RawQuery = q.Encode()
+			}
+		}
+
+		// 静态 token（只有在动态未生成或失败时才尝试）
+		if newToken == "" && len(tm.StaticTokens) > 0 {
+			for st := range tm.StaticTokens {
+				newToken = st
+				q := newURL.Query()
+				q.Set(tm.TokenParamName, st)
+				newURL.RawQuery = q.Encode()
+				break
+			}
+		}
 	}
-	return newURL.String(), true
+	if newURL.String() == parsedURL.String() {
+		return parsedURL.String(), false, newToken
+	}
+	return newURL.String(), true, newToken
 }
 
 // ---------------------------
-// HTTP 转发（完全流式）
+// M3U8 处理辅助函数
+// ---------------------------
+
+func (dm *DomainMapper) replaceSpecialNestedURLClean(
+	line string,
+	frontendScheme, frontendHost string,
+	tm *auth.TokenManager,
+	tokenParam string,
+	seen map[string]struct{},
+) []byte {
+	trimmed := strings.TrimSpace(line) // TrimSpace 去掉首尾空格和空行
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		if trimmed == "" {
+			return nil // 空行直接忽略
+		}
+		return []byte(trimmed + "\n") // 注释行保留换行
+	}
+
+	newLine := trimmed
+
+	// token
+	token := ""
+	if tm != nil && tm.Enabled {
+		if tm.DynamicConfig != nil {
+			if tok, err := tm.GenerateDynamicToken(trimmed); err == nil {
+				token = tok
+			}
+		}
+		if token == "" && len(tm.StaticTokens) > 0 {
+			for st := range tm.StaticTokens {
+				token = st
+				break
+			}
+		}
+	}
+
+	// 替换 host（只针对完整 http/https URL）
+	if strings.HasPrefix(newLine, "http://") || strings.HasPrefix(newLine, "https://") {
+		u, err := url.Parse(newLine)
+		if err == nil {
+			// 清理重复 host
+			parts := strings.Split(u.Host+u.Path, "/")
+			cleanedParts := []string{}
+			last := ""
+			for _, p := range parts {
+				if p == last && strings.Contains(p, ".") {
+					continue
+				}
+				cleanedParts = append(cleanedParts, p)
+				last = p
+			}
+			u.Path = strings.Join(cleanedParts[1:], "/") // 第一个是 host
+			u.Scheme = frontendScheme
+			u.Host = frontendHost
+			newLine = u.String()
+		}
+	}
+
+	// 添加 token 参数（只在开启授权时）
+	if token != "" {
+		if tokenParam == "" {
+			tokenParam = "token"
+		}
+		u, err := url.Parse(newLine)
+		if err == nil {
+			q := u.Query()
+			q.Set(tokenParam, token)
+			u.RawQuery = q.Encode()
+			newLine = u.String()
+		} else {
+			// 普通路径 ts，直接加 ?token=...
+			if strings.Contains(newLine, "?") {
+				newLine = newLine + "&" + tokenParam + "=" + token
+			} else {
+				newLine = newLine + "?" + tokenParam + "=" + token
+			}
+		}
+	}
+
+	seen[newLine] = struct{}{}
+	// 保证每行都有换行符
+	return []byte(newLine + "\n")
+}
+
+// ---------------------------
+// HTTP 转发
 // ---------------------------
 
 func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -194,7 +319,12 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// logger.LogPrintf("DEBUG", "域名映射: %s -> %s (%s)", r.Host, targetHost, protocol)
+	cfg := dm.GetDomainConfig(r.Host)
+	if cfg == nil {
+		dm.next.ServeHTTP(w, r)
+		return
+	}
+
 	frontendScheme := getRequestScheme(r)
 	targetURL := &url.URL{
 		Scheme:   chooseScheme(protocol, r),
@@ -207,11 +337,54 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body.Close()
 
 	clientIP := monitor.GetClientIP(r)
-	raw := fmt.Sprintf("%s://%s", targetURL.Scheme, targetURL.Host)
-	h := md5.Sum([]byte(raw))
-	hashStr := hex.EncodeToString(h[:])
-	connID := clientIP + "_" + hashStr
+	hash := md5.Sum([]byte(fmt.Sprintf("%s://%s", targetURL.Scheme, targetURL.Host)))
+	connID := clientIP + "_" + hex.EncodeToString(hash[:])
 
+	// 校验 client headers
+	if len(cfg.ClientHeaders) > 0 {
+		for k, v := range cfg.ClientHeaders {
+			if r.Header.Get(k) != v {
+				http.Error(w, "未授权的客户端 header", http.StatusUnauthorized)
+				return
+			}
+		}
+	}
+
+	// token 校验
+	tokenParam := cfg.TokenParamName
+	if tokenParam == "" {
+		tokenParam = "token"
+	}
+	// 使用Query().Get()已经会自动URL解码，但为了确保Base64字符不被破坏，我们直接从RawQuery解析
+	token := r.URL.Query().Get(tokenParam)
+	var tm *auth.TokenManager
+	
+	// 获取或创建对应域名映射的TokenManager实例
+	if cfg.TokensEnabled {
+		if cfg.Auth.DynamicTokens.EnableDynamic || cfg.Auth.StaticTokens.EnableStatic {
+			// 检查是否启用了静态token但没有提供token参数
+			if cfg.Auth.StaticTokens.EnableStatic && !cfg.Auth.DynamicTokens.EnableDynamic && token == "" {
+				// 如果只启用了静态token但没有提供token参数，则拒绝访问
+				http.Error(w, "未提供有效的 token 参数", http.StatusUnauthorized)
+				return
+			}
+			
+			// 使用host作为key来获取TokenManager
+			host := r.Host
+			if existingTm, ok := dm.tokenManagers[host]; ok {
+				tm = existingTm
+			} else {
+				tm = auth.NewTokenManagerFromConfig(cfg)
+				dm.tokenManagers[host] = tm
+			}
+			
+			logger.LogPrintf("token: %v", cfg)
+			if !tm.ValidateToken(token, r.URL.Path, connID) {
+				http.Error(w, "未授权或 token 过期", http.StatusUnauthorized)
+				return
+			}
+		}
+	}
 	monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
 		IP:             clientIP,
 		URL:            targetURL.String(),
@@ -221,17 +394,47 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		LastActive:     time.Now(),
 	})
 	defer monitor.ActiveClients.Unregister(connID, strings.ToUpper(targetURL.Scheme))
-
 	updateActive := func() {
 		monitor.ActiveClients.UpdateLastActive(connID, time.Now())
 	}
+	targetReqURL := *targetURL
+	if cfg.TokensEnabled {
+		q := targetReqURL.Query()
+		q.Del(tokenParam)
+		targetReqURL.RawQuery = q.Encode()
+	}
 
+	// -------- 使用动态 HTTP 配置创建 Transport 和 Client ----------
+	httpCfg := config.Cfg.HTTP
+	config.Cfg.SetDefaults()
+
+	dialer := &net.Dialer{
+		Timeout:   httpCfg.ConnectTimeout,
+		KeepAlive: httpCfg.KeepAlive,
+	}
+
+	baseTransport := &http.Transport{
+		DialContext:           dialer.DialContext,
+		TLSHandshakeTimeout:   httpCfg.TLSHandshakeTimeout,
+		ResponseHeaderTimeout: httpCfg.ResponseHeaderTimeout,
+		ExpectContinueTimeout: httpCfg.ExpectContinueTimeout,
+		IdleConnTimeout:       httpCfg.IdleConnTimeout,
+		MaxIdleConns:          httpCfg.MaxIdleConns,
+		MaxIdleConnsPerHost:   httpCfg.MaxIdleConnsPerHost,
+		MaxConnsPerHost:       httpCfg.MaxConnsPerHost,
+		DisableKeepAlives:     httpCfg.DisableKeepAlives,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+	}
+
+	client := &http.Client{
+		Transport: baseTransport,
+		Timeout:   httpCfg.Timeout,
+	}
+
+	// ---------- 处理代理或直连 ----------
+	pg := rules.ChooseProxyGroup(targetURL.Hostname(), targetHost)
 	var resp *http.Response
 	var err error
-
-	// 选择代理组
-	hostname := targetURL.Hostname()
-	pg := rules.ChooseProxyGroup(hostname, targetHost)
 
 	if pg != nil {
 		maxRetries := pg.MaxRetries
@@ -242,40 +445,32 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			forceTest := attempt > 0
-			selectedProxy := lb.SelectProxy(pg, targetURL.String(), forceTest)
+			selectedProxy := lb.SelectProxy(pg, targetReqURL.String(), forceTest)
 
-			var clientToUse *http.Client
+			clientToUse := client
 			if selectedProxy != nil {
-				dialer, dErr := proxy.CreateProxyDialer(*selectedProxy)
-				if dErr == nil {
-					transport := &http.Transport{
-						DialContext:           dialer.DialContext,
-						TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
-						ResponseHeaderTimeout: 10 * time.Second,
-						IdleConnTimeout:       5 * time.Second,
-						TLSHandshakeTimeout:   10 * time.Second,
-						ExpectContinueTimeout: 1 * time.Second,
-						MaxIdleConns:          100,
-						MaxIdleConnsPerHost:   4,
-						MaxConnsPerHost:       8,
-					}
+				if proxyDialer, dErr := proxy.CreateProxyDialer(*selectedProxy); dErr == nil {
+					baseTransport.DialContext = proxyDialer.DialContext
 					clientToUse = &http.Client{
-						Timeout:   30 * time.Second,
-						Transport: transport,
+						Transport: baseTransport,
+						Timeout:   httpCfg.Timeout,
 					}
 				}
 			}
-			if clientToUse == nil {
-				clientToUse = dm.client
-			}
 
-			targetReq, _ := http.NewRequest(r.Method, targetURL.String(), bytes.NewReader(reqBodyBytes))
+			targetReq, _ := http.NewRequest(r.Method, targetReqURL.String(), bytes.NewReader(reqBodyBytes))
 			for name, values := range r.Header {
 				if strings.ToLower(name) == "host" {
 					continue
 				}
 				for _, v := range values {
 					targetReq.Header.Add(name, v)
+				}
+			}
+
+			for k, v := range cfg.ServerHeaders {
+				if v != "" {
+					targetReq.Header.Set(k, v)
 				}
 			}
 			targetReq.Header.Set("Host", targetHost)
@@ -291,7 +486,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(retryDelay)
 		}
 	} else {
-		targetReq, _ := http.NewRequest(r.Method, targetURL.String(), bytes.NewReader(reqBodyBytes))
+		targetReq, _ := http.NewRequest(r.Method, targetReqURL.String(), bytes.NewReader(reqBodyBytes))
 		for name, values := range r.Header {
 			if strings.ToLower(name) == "host" {
 				continue
@@ -300,9 +495,14 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				targetReq.Header.Add(name, v)
 			}
 		}
+		for k, v := range cfg.ServerHeaders {
+			if v != "" {
+				targetReq.Header.Set(k, v)
+			}
+		}
 		targetReq.Header.Set("Host", targetHost)
 
-		resp, err = dm.doWithRedirect(dm.client, targetReq, 10, frontendScheme, r.Host)
+		resp, err = dm.doWithRedirect(client, targetReq, 10, frontendScheme, r.Host)
 		if err != nil {
 			http.Error(w, "无法连接目标服务器: "+err.Error(), http.StatusBadGateway)
 			return
@@ -310,7 +510,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// 复制响应头
+	// ---------- 返回响应 ----------
 	for k, vv := range resp.Header {
 		for _, v := range vv {
 			w.Header().Add(k, v)
@@ -318,29 +518,20 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Del("Content-Length")
 	w.WriteHeader(resp.StatusCode)
+
 	contentType := resp.Header.Get("Content-Type")
-	bufSize := buffer.GetOptimalBufferSize(contentType, targetURL.Path)
-	isM3U8 := strings.Contains(resp.Header.Get("Content-Type"), "mpegurl")
+	bufSize := buffer.GetOptimalBufferSize(contentType, targetReqURL.Path)
+	isM3U8 := strings.Contains(contentType, "mpegurl")
+
 	if isM3U8 {
 		reader := bufio.NewReader(resp.Body)
-		seen := make(map[string]struct{}) // 去重
+		seen := make(map[string]struct{})
 		for {
 			line, err := reader.ReadBytes('\n')
 			if len(line) > 0 {
-				trimmed := strings.TrimSpace(string(line))
-				if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
-					parsedURL, parseErr := url.Parse(trimmed)
-					if parseErr == nil {
-						newLine := dm.replaceSpecialNestedURLClean(parsedURL, frontendScheme, r.Host, seen)
-						if len(newLine) > 0 {
-							line = append(newLine, '\n')
-						} else {
-							continue
-						}
-					}
-				}
-				if _, wErr := w.Write(line); wErr != nil {
-					return
+				newLine := dm.replaceSpecialNestedURLClean(string(line), frontendScheme, r.Host, tm, tokenParam, seen)
+				if newLine != nil {
+					w.Write(newLine)
 				}
 				updateActive()
 				if f, ok := w.(http.Flusher); ok {
@@ -358,52 +549,16 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		buf := buffer.GetBuffer(bufSize)
 		defer buffer.PutBuffer(bufSize, buf)
-		stream.CopyWithContext(r.Context(), w, resp.Body, buf, updateActive) // 出站流量统计
+		stream.CopyWithContext(r.Context(), w, resp.Body, buf, updateActive)
 	}
 
-	logger.LogRequestAndResponse(r, targetURL.String(), resp)
+	logger.LogRequestAndResponse(r, targetReqURL.String(), resp)
 }
 
-// 新增辅助函数：清理重复 Host，并去重
-func (dm *DomainMapper) replaceSpecialNestedURLClean(parsedURL *url.URL, frontendScheme, frontendHost string, seen map[string]struct{}) []byte {
-	newStr, replaced := dm.replaceSpecialNestedURL(parsedURL, frontendScheme, frontendHost)
-	if !replaced {
-		hostMapped, protocolMapped, found := dm.MapDomain(parsedURL.Host)
-		if found {
-			u := &url.URL{
-				Scheme:   chooseScheme(protocolMapped, nil),
-				Host:     hostMapped,
-				Path:     parsedURL.Path,
-				RawQuery: parsedURL.RawQuery,
-				Fragment: parsedURL.Fragment,
-			}
-			newStr = u.String()
-		} else {
-			newStr = parsedURL.String()
-		}
-	}
+// ---------------------------
+// 处理 301/302 重定向
+// ---------------------------
 
-	// 清理重复 host
-	parts := strings.Split(newStr, "/")
-	cleanedParts := []string{}
-	last := ""
-	for _, p := range parts {
-		if p == last && strings.Contains(p, ".") {
-			continue
-		}
-		cleanedParts = append(cleanedParts, p)
-		last = p
-	}
-	newStr = strings.Join(cleanedParts, "/")
-
-	if _, exists := seen[newStr]; exists {
-		return nil
-	}
-	seen[newStr] = struct{}{}
-	return []byte(newStr)
-}
-
-// doWithRedirect 处理 301/302 重定向，最多 maxRedirect 次
 func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, maxRedirect int, frontendScheme, frontendHost string) (*http.Response, error) {
 	reqBodyBytes, _ := io.ReadAll(req.Body)
 	req.Body.Close()
@@ -427,8 +582,7 @@ func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, m
 				return resp, nil
 			}
 
-			// 统一替换 URL
-			newLoc, replaced := dm.replaceSpecialNestedURL(parsedURL, frontendScheme, frontendHost)
+			newLoc, replaced, _ := dm.replaceSpecialNestedURL(parsedURL, frontendScheme, frontendHost, nil)
 			if !replaced {
 				hostMapped, protocolMapped, found := dm.MapDomain(parsedURL.Host)
 				if found {
@@ -445,7 +599,6 @@ func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, m
 				}
 			}
 
-			// logger.LogPrintf("DEBUG", "Redirect replace: %s -> %s", loc, newLoc)
 			req, err = http.NewRequest(req.Method, newLoc, bytes.NewReader(reqBodyBytes))
 			if err != nil {
 				return nil, err

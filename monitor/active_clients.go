@@ -125,3 +125,13 @@ func (m *ActiveConnectionsManager) StartCleaner(interval time.Duration, timeout 
 		}
 	}()
 }
+
+// GetConnectionByID 根据 ConnID 获取单个客户端连接
+func (m *ActiveConnectionsManager) GetConnectionByID(connID string) *ClientConnection {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if c, ok := m.conns[connID]; ok {
+		return c
+	}
+	return nil
+}

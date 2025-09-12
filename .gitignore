@@ -3,3 +3,5 @@ access.log
 build/
 Makefile
 build.zip
+tools/
+cmd/
