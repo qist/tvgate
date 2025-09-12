@@ -7,15 +7,24 @@ WORKDIR /app
 # 复制源码
 COPY . .
 
-# 纯 Go 静态编译
-ENV CGO_ENABLED=0
-ENV GOOS=linux
-ENV GOARCH=${TARGETARCH:-amd64}
-
-# 可通过 build-arg 注入版本号
+# 接收 buildx 注入的参数
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
 ARG VERSION=latest
 
-RUN go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=${VERSION}'" -o build/TVGate main.go
+# 禁用 CGO，纯 Go 静态编译
+ENV CGO_ENABLED=0
+
+# 针对 ARM 处理 GOARM
+RUN if [ "$TARGETARCH" = "arm" ]; then \
+        GOARM="${TARGETVARIANT#v}" ; \
+        echo "Building for $TARGETOS/$TARGETARCH with GOARM=$GOARM" ; \
+        GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=$GOARM go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=${VERSION}'" -o build/TVGate main.go ; \
+    else \
+        echo "Building for $TARGETOS/$TARGETARCH" ; \
+        GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=${VERSION}'" -o build/TVGate main.go ; \
+    fi
 
 # ========================================================
 # Stage: final image
@@ -33,7 +42,7 @@ COPY --from=build /app/build/TVGate /app/TVGate
 # 复制配置文件
 COPY --from=build /app/doc/config.yaml /etc/tvgate/config.yaml
 
-# Configure fail2ban
+# 配置 fail2ban
 RUN rm -f /etc/fail2ban/jail.d/alpine-ssh.conf \
   && cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local \
   && sed -i "s/^\[ssh\]$/&\nenabled = false/" /etc/fail2ban/jail.local \
@@ -42,8 +51,4 @@ RUN rm -f /etc/fail2ban/jail.d/alpine-ssh.conf \
 
 RUN chmod +x /app/TVGate
 
-EXPOSE 8888
-VOLUME [ "/etc/tvgate" ]
-
-# 默认启动 TVGate
 CMD [ "./TVGate", "-config=/etc/tvgate/config.yaml" ]
