@@ -135,6 +135,10 @@ func WatchConfigFile(configPath string) {
 				// 如果关闭了全局认证，将GlobalTokenManager设为nil
 				auth.GlobalTokenManager = nil
 			}
+			
+			// 清理全局token管理器中的过期会话
+			auth.CleanupGlobalTokenManager()
+
 			jxHandler := jx.NewJXHandler(&config.Cfg.JX)
 			newMux := http.NewServeMux()
 			monitorPath := config.Cfg.Monitor.Path
@@ -168,6 +172,9 @@ func WatchConfigFile(configPath string) {
 
 			// 创建默认处理器
 			defaultHandler := server.SecurityHeaders(http.HandlerFunc(h.Handler(client)))
+
+			// 清理旧的 domainmap tokenManagers
+			// domainmap.CleanTokenManagers()
 
 			// 检查是否配置了域名映射
 			if len(config.Cfg.DomainMap) > 0 {

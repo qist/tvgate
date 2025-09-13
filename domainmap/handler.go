@@ -93,6 +93,9 @@ func NewDomainMapper(mappings auth.DomainMapList, client *http.Client, next http
 		tokenManagers: make(map[string]*auth.TokenManager),
 	}
 
+	// 初始化时清理tokenManagers
+	dm.CleanTokenManagers()
+
 	dm.redirectHandler = &RedirectHandler{
 		domainMapper: dm,
 		maxRedirects: 10,
@@ -268,6 +271,33 @@ func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendSche
 }
 
 // ---------------------------
+// Token 管理器清理
+// ---------------------------
+
+// CleanTokenManagers 清理domainmap中不再使用的token管理器
+// 当配置重新加载后，某些域名映射可能已被移除，需要清理对应的token管理器
+func (dm *DomainMapper) CleanTokenManagers() {
+	if dm.tokenManagers == nil {
+		return
+	}
+	
+	// 遍历 tokenManagers，清理不再需要的条目
+	for host, tm := range dm.tokenManagers {
+		if tm == nil {
+			continue
+		}
+		
+		// 检查该 host 是否还在当前的域名映射配置中
+		if cfg := dm.GetDomainConfig(host); cfg == nil {
+			// 如果不在配置中，清理这个 tokenManager
+			// 调用CleanupExpiredSessions方法清理过期会话
+			tm.CleanupExpiredSessions()
+			delete(dm.tokenManagers, host)
+		}
+	}
+}
+
+// ---------------------------
 // M3U8 处理辅助函数
 // ---------------------------
 
@@ -438,6 +468,7 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 // ---------------------------
 
 func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer dm.CleanTokenManagers()
 	targetHost, protocol, found := dm.MapDomain(r.Host)
 	// logger.LogPrintf("映射域名: %s -> %s", r.Host, targetHost)
 	if !found {
@@ -456,16 +487,17 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if tokenParam == "" {
 			tokenParam = "token"
 		}
-
+		
 		token := r.URL.Query().Get(tokenParam)
 		clientIP := monitor.GetClientIP(r)
 		connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+		
 		// 检查domainmap是否开启了授权
 		if cfg.Auth.TokensEnabled {
 			// 如果domainmap配置了授权且启用了tokens，则进行验证
 			if cfg.Auth.DynamicTokens.EnableDynamic || cfg.Auth.StaticTokens.EnableStatic {
 				var tm *auth.TokenManager
-
+				
 				// 使用host作为key来获取TokenManager
 				host := r.Host
 				if existingTm, ok := dm.tokenManagers[host]; ok {
@@ -474,13 +506,13 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					tm = auth.NewTokenManagerFromConfig(cfg)
 					dm.tokenManagers[host] = tm
 				}
-
-				// 验证token
+				
+				// 验证token时使用原始路径而不是RTSP路径
 				if !tm.ValidateToken(token, r.URL.Path, connID) {
 					http.Error(w, "Forbidden", http.StatusUnauthorized)
 					return
 				}
-
+				
 				// 更新token活跃状态
 				tm.KeepAlive(token, connID, clientIP, r.URL.Path)
 			}
@@ -489,23 +521,24 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled {
 				// 如果全局认证启用且配置了动态或静态token，则进行验证
 				if globalTm.DynamicConfig != nil || len(globalTm.StaticTokens) > 0 {
+					// 验证token时使用原始路径而不是RTSP路径
 					if !globalTm.ValidateToken(token, r.URL.Path, connID) {
 						http.Error(w, "Forbidden", http.StatusUnauthorized)
 						return
 					}
-
+					
 					// 更新token活跃状态
 					globalTm.KeepAlive(token, connID, clientIP, r.URL.Path)
 				}
 			}
 			// 3. 如果都没有配置授权，则不进行认证
 		}
-
+		
 		// 创建新的请求
 		newReq := r.Clone(r.Context())
 		newReq.URL.Path = newPath
 		newReq.URL.RawQuery = r.URL.RawQuery
-
+		
 		// 转发给下一个处理器（即RTSP处理器）
 		RtspToHTTPHandler(w, newReq)
 		return
@@ -779,6 +812,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // ---------------------------
 
 func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, maxRedirect int, frontendScheme, frontendHost string) (*http.Response, error) {
+	defer dm.CleanTokenManagers()
 	reqBodyBytes, _ := io.ReadAll(req.Body)
 	req.Body.Close()
 

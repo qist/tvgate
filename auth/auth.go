@@ -36,6 +36,17 @@ func NewGlobalTokenManagerFromConfig(globalAuth *config.AuthConfig) *TokenManage
 	return NewTokenManagerFromConfig(domainConfig)
 }
 
+// CleanupGlobalTokenManager 清理全局token管理器中的过期会话
+func CleanupGlobalTokenManager() {
+	if GlobalTokenManager != nil {
+		GlobalTokenManager.CleanupExpiredSessions()
+	}
+}
+
+// 用于存储静态token的全局状态，避免配置重载后丢失token状态
+var staticTokenStates = make(map[string]*SessionInfo)
+var staticTokenStatesMutex sync.RWMutex
+
 // ---------------------------
 // TokenManager 管理 token 与在线状态
 // ---------------------------
@@ -87,10 +98,22 @@ func NewTokenManagerFromConfig(cfg *DomainMapConfig) *TokenManager {
 	// 处理静态 token
 	st := cfg.Auth.StaticTokens
 	if st.EnableStatic && st.Token != "" {
-		tm.StaticTokens[st.Token] = &SessionInfo{
-			Token:          st.Token,
-			ExpireDuration: st.ExpireHours,
+		staticTokenStatesMutex.Lock()
+		// 检查是否已经存在该token的状态
+		if existingSession, exists := staticTokenStates[st.Token]; exists {
+			// 复用已存在的会话信息
+			tm.StaticTokens[st.Token] = existingSession
+		} else {
+			// 创建新的会话信息
+			newSession := &SessionInfo{
+				Token:          st.Token,
+				ExpireDuration: st.ExpireHours,
+			}
+			tm.StaticTokens[st.Token] = newSession
+			staticTokenStates[st.Token] = newSession
 		}
+		staticTokenStatesMutex.Unlock()
+		
 		tm.tokenTypes[st.Token] = "static"
 	}
 
@@ -482,6 +505,10 @@ func (tm *TokenManager) CleanupExpiredSessions() {
 	for token, sess := range tm.StaticTokens {
 		if isSessionExpired(sess) {
 			delete(tm.StaticTokens, token)
+			// 从全局状态中也删除
+			staticTokenStatesMutex.Lock()
+			delete(staticTokenStates, token)
+			staticTokenStatesMutex.Unlock()
 		}
 	}
 	
