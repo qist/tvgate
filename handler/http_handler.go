@@ -125,13 +125,6 @@ func Handler(client *http.Client) http.HandlerFunc {
 			// 更新全局token活跃状态
 			auth.GetGlobalTokenManager().KeepAlive(token, connID, clientIP, r.URL.Path)
 			logger.LogPrintf("全局token验证成功: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
-
-			// // 删除URL中的token参数
-			// if config.Cfg.GlobalAuth.TokensEnabled {
-			// 	q := r.URL.Query()
-			// 	q.Del(tokenParamName)
-			// 	r.URL.RawQuery = q.Encode()
-			// }
 		}
 		ctx, cancel := context.WithCancel(context.Background()) // 可加超时限制
 		defer cancel()

@@ -128,9 +128,12 @@ func WatchConfigFile(configPath string) {
 			}
 			// 2️⃣ 设置默认值
 			config.Cfg.SetDefaults()
-			// 初始化全局token管理器
+			// 初始化/更新全局token管理器
 			if config.Cfg.GlobalAuth.TokensEnabled {
 				auth.GlobalTokenManager = auth.NewGlobalTokenManagerFromConfig(&config.Cfg.GlobalAuth)
+			} else {
+				// 如果关闭了全局认证，将GlobalTokenManager设为nil
+				auth.GlobalTokenManager = nil
 			}
 			jxHandler := jx.NewJXHandler(&config.Cfg.JX)
 			newMux := http.NewServeMux()

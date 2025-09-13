@@ -63,9 +63,12 @@ func main() {
 			ProxyStats: make(map[string]*config.ProxyStats),
 		}
 	}
+	
 	// 初始化全局token管理器
 	if config.Cfg.GlobalAuth.TokensEnabled {
 		auth.GlobalTokenManager = auth.NewGlobalTokenManagerFromConfig(&config.Cfg.GlobalAuth)
+	} else {
+		auth.GlobalTokenManager = nil
 	}
 	tm := &auth.TokenManager{
 		Enabled:       true,
