@@ -28,41 +28,16 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	clientIP := monitor.GetClientIP(r)
 	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	tokenParamName := "my_token" // 默认参数名
+	// 全局token验证
 	if auth.GetGlobalTokenManager() != nil {
-		// 如果全局配置中有自定义的token参数名，则使用自定义的
-		if auth.GetGlobalTokenManager().TokenParamName != "" {
-			tokenParamName = auth.GetGlobalTokenManager().TokenParamName
-		}
+		tokenParamName := "my_token" // 默认参数名
+		token := r.URL.Query().Get(tokenParamName)
 
-		// 提取token参数，处理嵌套URL的情况
-		var token string
-		token = r.URL.Query().Get(tokenParamName)
+		// 获取客户端真实IP
+		clientIP := monitor.GetClientIP(r)
 
-		// 如果在常规查询参数中没有找到token，检查路径中是否包含嵌套URL
-		if token == "" {
-			// 检查路径是否包含嵌套URL格式（如 /http://... 或 /https://...）
-			path := r.URL.Path
-			if strings.HasPrefix(path, "/http://") || strings.HasPrefix(path, "/https://") {
-				// 尝试解析整个路径作为URL
-				fullPath := path
-				if r.URL.RawQuery != "" {
-					fullPath = path + "?" + r.URL.RawQuery
-				}
-
-				// 解析嵌套URL
-				nestedURLStr := strings.TrimLeft(fullPath, "/")
-				nestedURL, err := url.Parse(nestedURLStr)
-				if err == nil {
-					token = nestedURL.Query().Get(tokenParamName)
-				}
-			}
-		}
-
-		// // 获取客户端真实IP
-		// clientIP := monitor.GetClientIP(r)
-
-		// // 构造连接ID（IP+端口）
-		// connID := clientIP + "_" + r.RemoteAddr
+		// 构造连接ID（IP+端口）
+		connID := clientIP + "_" + r.RemoteAddr
 
 		// 验证全局token
 		if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {

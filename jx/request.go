@@ -21,7 +21,6 @@ func (h *JXHandler) HandleRequest(w http.ResponseWriter, r *http.Request, name, 
 		return
 	}
 
-	// URL 参数 full=1 时输出完整数据
 	showData := r.URL.Query().Get("full") == "1"
 
 	type apiRequest struct {
@@ -30,7 +29,6 @@ func (h *JXHandler) HandleRequest(w http.ResponseWriter, r *http.Request, name, 
 		fullURL string
 	}
 
-	// 构造 API 请求列表
 	var requests []apiRequest
 	for _, api := range h.Config.APIGroups {
 		for _, baseURL := range api.Endpoints {
@@ -39,7 +37,6 @@ func (h *JXHandler) HandleRequest(w http.ResponseWriter, r *http.Request, name, 
 		}
 	}
 
-	// 遍历 API 组请求
 	for _, req := range requests {
 		client := &http.Client{Timeout: req.api.Timeout}
 
@@ -76,7 +73,7 @@ func (h *JXHandler) HandleRequest(w http.ResponseWriter, r *http.Request, name, 
 			continue
 		}
 
-		// 提取 exclude 过滤关键字（逗号分隔）
+		// 提取 exclude 过滤关键字
 		var excludeKeywords []string
 		if ex, ok := req.api.Filters["exclude"]; ok && ex != "" {
 			excludeKeywords = strings.Split(ex, ",")
@@ -85,53 +82,7 @@ func (h *JXHandler) HandleRequest(w http.ResponseWriter, r *http.Request, name, 
 			}
 		}
 
-		var result []map[string]interface{}
-		var playurlString string
-		for _, item := range listData {
-			itemMap, ok := item.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			vodName, _ := itemMap["vod_name"].(string)
-			vodPlayUrl, _ := itemMap["vod_play_url"].(string)
-
-			// 过滤逻辑
-			if len(excludeKeywords) > 0 {
-				skip := false
-				for _, kw := range excludeKeywords {
-					if kw != "" && strings.Contains(vodName, kw) {
-						skip = true
-						break
-					}
-				}
-				if skip {
-					continue
-				}
-			}
-
-			eps := parseEpisodes(vodPlayUrl)
-			result = append(result, map[string]interface{}{
-				"name": vodName,
-				"source": map[string]interface{}{
-					"eps": eps,
-				},
-			})
-
-			// 自动选择匹配播放地址
-			if strings.Contains(vodName, name) && playurlString == "" && len(eps) > 0 {
-				epIndex := 0
-				if id != "" {
-					if idx, err := strconv.Atoi(id); err == nil {
-						epIndex = idx - 1
-					}
-				}
-				if epIndex >= 0 && epIndex < len(eps) {
-					playurlString = eps[epIndex]["url"]
-				} else {
-					playurlString = eps[0]["url"]
-				}
-			}
-		}
+		result, playurlString := processVideoList(listData, name, id, excludeKeywords)
 
 		finalResp := map[string]interface{}{
 			"From_id":     id,
@@ -141,7 +92,7 @@ func (h *JXHandler) HandleRequest(w http.ResponseWriter, r *http.Request, name, 
 		if playurlString != "" {
 			finalResp["url"] = playurlString
 		}
-		if showData { // 只有带 full=1 时才输出完整 data
+		if showData {
 			finalResp["data"] = result
 		}
 
@@ -150,6 +101,78 @@ func (h *JXHandler) HandleRequest(w http.ResponseWriter, r *http.Request, name, 
 		return
 	}
 
-	// 所有 API 都失败或返回空
 	JSONResponse(w, map[string]interface{}{"error": "未获取到有效数据"})
+}
+
+// -------------------- 辅助函数 --------------------
+
+// processVideoList 处理视频列表，返回完整结果和播放地址
+func processVideoList(listData []interface{}, name, id string, excludeKeywords []string) ([]map[string]interface{}, string) {
+	var result []map[string]interface{}
+	var playurlString, partialMatchPlayurlString string
+
+	getEpisodeIndex := func(id string, max int) int {
+		idx := 0
+		if id != "" {
+			if parsed, err := strconv.Atoi(id); err == nil {
+				idx = parsed - 1
+			}
+		}
+		if idx < 0 || idx >= max {
+			idx = 0
+		}
+		return idx
+	}
+
+	for _, item := range listData {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		vodName, _ := itemMap["vod_name"].(string)
+		vodPlayUrl, _ := itemMap["vod_play_url"].(string)
+
+		// 过滤逻辑
+		if len(excludeKeywords) > 0 {
+			skip := false
+			for _, kw := range excludeKeywords {
+				if kw != "" && strings.Contains(vodName, kw) {
+					skip = true
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+		}
+
+		eps := parseEpisodes(vodPlayUrl)
+		if len(eps) == 0 {
+			continue
+		}
+
+		result = append(result, map[string]interface{}{
+			"name": vodName,
+			"source": map[string]interface{}{
+				"eps": eps,
+			},
+		})
+
+		// 完全匹配优先
+		if vodName == name && playurlString == "" {
+			epIndex := getEpisodeIndex(id, len(eps))
+			playurlString = eps[epIndex]["url"]
+		} else if strings.Contains(vodName, name) && partialMatchPlayurlString == "" {
+			// 部分匹配备用
+			epIndex := getEpisodeIndex(id, len(eps))
+			partialMatchPlayurlString = eps[epIndex]["url"]
+		}
+	}
+
+	// 如果没有完全匹配但有部分匹配，使用部分匹配结果
+	if playurlString == "" && partialMatchPlayurlString != "" {
+		playurlString = partialMatchPlayurlString
+	}
+
+	return result, playurlString
 }

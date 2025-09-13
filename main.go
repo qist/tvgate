@@ -156,7 +156,7 @@ func main() {
 				ServerHeaders: mapping.ServerHeaders,
 			}
 		}
-		localClient := &http.Client{Timeout: 30 * time.Second}
+		localClient := &http.Client{Timeout: config.Cfg.HTTP.Timeout}
 		domainMapper := domainmap.NewDomainMapper(mappings, localClient, defaultHandler)
 		// mux.Handle("/", domainMapper)
 		mux.Handle("/", server.SecurityHeaders(domainMapper))
