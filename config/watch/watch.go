@@ -128,6 +128,10 @@ func WatchConfigFile(configPath string) {
 			}
 			// 2️⃣ 设置默认值
 			config.Cfg.SetDefaults()
+			// 初始化全局token管理器
+			if config.Cfg.GlobalAuth.TokensEnabled {
+				auth.GlobalTokenManager = auth.NewGlobalTokenManagerFromConfig(&config.Cfg.GlobalAuth)
+			}
 			jxHandler := jx.NewJXHandler(&config.Cfg.JX)
 			newMux := http.NewServeMux()
 			monitorPath := config.Cfg.Monitor.Path
@@ -177,7 +181,8 @@ func WatchConfigFile(configPath string) {
 						ServerHeaders: mapping.ServerHeaders,
 					}
 				}
-				domainMapper := domainmap.NewDomainMapper(mappings, client, defaultHandler)
+				localClient := &http.Client{Timeout: 30 * time.Second}
+				domainMapper := domainmap.NewDomainMapper(mappings, localClient, defaultHandler)
 				// mux.Handle("/", domainMapper)
 				newMux.Handle("/", server.SecurityHeaders(domainMapper))
 			} else {

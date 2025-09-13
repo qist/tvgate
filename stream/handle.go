@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
-	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/utils/buffer"
 	"io"
 	"net/http"
@@ -326,18 +327,41 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 		if line == "" {
 			continue
 		}
+
 		if strings.HasPrefix(line, "#") {
+			// 处理带 URI= 的标签 (比如 EXT-X-MEDIA)
+			if strings.Contains(line, "URI=\"") {
+				re := regexp.MustCompile(`URI="([^"]+)"`)
+				line = re.ReplaceAllStringFunc(line, func(match string) string {
+					uri := re.FindStringSubmatch(match)[1]
+					newURI := uri
+
+					token := ""
+					if tm != nil && tm.Enabled {
+						token = generateToken(tm, uri)
+					}
+					if token != "" {
+						if strings.Contains(newURI, "?") {
+							newURI += "&" + tokenParam + "=" + token
+						} else {
+							newURI += "?" + tokenParam + "=" + token
+						}
+					}
+					return fmt.Sprintf(`URI="%s"`, newURI)
+				})
+			}
+
 			resultLines = append(resultLines, line)
 			continue
 		}
 
+		// 非 # 行 (分片 ts / 子 m3u8)
 		newLine := line
 		token := ""
 		if tm != nil && tm.Enabled {
 			token = generateToken(tm, line)
 		}
 
-		// 添加 token 明文
 		if token != "" {
 			if strings.Contains(newLine, "?") {
 				newLine += "&" + tokenParam + "=" + token
@@ -346,13 +370,11 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 			}
 		}
 
-		// 去重
 		if _, exists := seen[newLine]; exists {
 			continue
 		}
 		seen[newLine] = struct{}{}
 
-		// 完整 URL 加代理前缀
 		if strings.HasPrefix(newLine, "http://") || strings.HasPrefix(newLine, "https://") {
 			newLine = joinBaseWithFullURL(baseURL, newLine)
 		}
@@ -362,12 +384,12 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 
 	result := strings.Join(resultLines, "\n") + "\n"
 
-	// 复制响应头并移除 Content-Length
 	CopyHeader(w.Header(), proxyResp.Header, r.ProtoMajor)
 	w.Header().Del("Content-Length")
 	w.WriteHeader(proxyResp.StatusCode)
 	w.Write([]byte(result))
 }
+
 
 // joinBaseWithFullURL 拼接 baseURL 和完整 URL，不做任何 encode
 func joinBaseWithFullURL(baseURL, fullURL string) string {

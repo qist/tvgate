@@ -5,7 +5,10 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
 )
 
 type VideoSourceHandler func(w http.ResponseWriter, r *http.Request, link, id string)
@@ -27,6 +30,39 @@ func NewJXHandler(cfg *config.JXConfig) *JXHandler {
 
 // Handle JX 请求入口
 func (h *JXHandler) Handle(w http.ResponseWriter, r *http.Request) {
+	// 全局token验证
+	if auth.GetGlobalTokenManager() != nil {
+		tokenParamName := "my_token" // 默认参数名
+		token := r.URL.Query().Get(tokenParamName)
+
+		// 获取客户端真实IP
+		clientIP := monitor.GetClientIP(r)
+
+		// 构造连接ID（IP+端口）
+		connID := clientIP + "_" + r.RemoteAddr
+
+		// 验证全局token
+		if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
+			logger.LogPrintf("全局token验证失败: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		// 更新全局token活跃状态
+		auth.GetGlobalTokenManager().KeepAlive(token, connID, clientIP, r.URL.Path)
+		logger.LogPrintf("全局token验证成功: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+	}
+	// 如果启用了全局认证，在向后端发送请求前删除 token 参数（保持原始 URL）
+	if auth.GetGlobalTokenManager() != nil {
+		tokenParamName := "my_token"
+		if auth.GetGlobalTokenManager().TokenParamName != "" {
+			tokenParamName = auth.GetGlobalTokenManager().TokenParamName
+		}
+
+		cleanURL := removeQueryParamRaw(r.URL.String(), tokenParamName)
+		logger.LogPrintf("清理后的URL: %s", cleanURL)
+	}
+
 	jxParam := r.URL.Query().Get("jx")
 	idParam := r.URL.Query().Get("id")
 	if idParam == "" {
@@ -66,4 +102,28 @@ func matchSourceHandler(rawURL string) VideoSourceHandler {
 		}
 	}
 	return nil
+}
+
+// removeQueryParamRaw 保持原始 query 格式，只删除指定参数
+func removeQueryParamRaw(rawURL, key string) string {
+	parts := strings.SplitN(rawURL, "?", 2)
+	if len(parts) != 2 {
+		// 没有 query，直接返回原始 URL
+		return rawURL
+	}
+	base := parts[0]
+	query := parts[1]
+
+	newParts := []string{}
+	for _, kv := range strings.Split(query, "&") {
+		if kv == "" || strings.HasPrefix(kv, key+"=") {
+			continue
+		}
+		newParts = append(newParts, kv)
+	}
+
+	if len(newParts) > 0 {
+		return base + "?" + strings.Join(newParts, "&")
+	}
+	return base
 }

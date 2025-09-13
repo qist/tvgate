@@ -63,6 +63,10 @@ func main() {
 			ProxyStats: make(map[string]*config.ProxyStats),
 		}
 	}
+	// 初始化全局token管理器
+	if config.Cfg.GlobalAuth.TokensEnabled {
+		auth.GlobalTokenManager = auth.NewGlobalTokenManagerFromConfig(&config.Cfg.GlobalAuth)
+	}
 	tm := &auth.TokenManager{
 		Enabled:       true,
 		StaticTokens:  make(map[string]*auth.SessionInfo),
@@ -140,16 +144,17 @@ func main() {
 		mappings := make(auth.DomainMapList, len(config.Cfg.DomainMap))
 		for i, mapping := range config.Cfg.DomainMap {
 			mappings[i] = &auth.DomainMapConfig{
-				Name:           mapping.Name,
-				Source:         mapping.Source,
-				Target:         mapping.Target,
-				Protocol:       mapping.Protocol,
-				Auth:           mapping.Auth,
-				ClientHeaders:  mapping.ClientHeaders,
-				ServerHeaders:  mapping.ServerHeaders,
+				Name:          mapping.Name,
+				Source:        mapping.Source,
+				Target:        mapping.Target,
+				Protocol:      mapping.Protocol,
+				Auth:          mapping.Auth,
+				ClientHeaders: mapping.ClientHeaders,
+				ServerHeaders: mapping.ServerHeaders,
 			}
 		}
-		domainMapper := domainmap.NewDomainMapper(mappings, client, defaultHandler)
+		localClient := &http.Client{Timeout: 30 * time.Second}
+		domainMapper := domainmap.NewDomainMapper(mappings, localClient, defaultHandler)
 		// mux.Handle("/", domainMapper)
 		mux.Handle("/", server.SecurityHeaders(domainMapper))
 	} else {

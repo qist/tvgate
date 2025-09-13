@@ -91,14 +91,12 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 构建RTSP URL
+	// 构建RTSP URL
 	rtspURL := fmt.Sprintf("rtsp://%s%s", hostPort, streamPath)
 
 	if r.URL.RawQuery != "" {
 		if auth.GetGlobalTokenManager() != nil {
-			// 全局认证启用，保留原始 query，包括 token
-			rtspURL += "?" + r.URL.RawQuery
-		} else {
-			// 全局认证未启用，删除 token 参数，保持原始 query
+			// ✅ 全局认证启用，删除 token 参数
 			query := r.URL.RawQuery
 			parts := strings.Split(query, "&")
 			newParts := []string{}
@@ -108,8 +106,11 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if len(newParts) > 0 {
-				rtspURL += "?" + strings.Join(newParts, "&") // 保持原始明文
+				rtspURL += "?" + strings.Join(newParts, "&")
 			}
+		} else {
+			// ✅ 全局认证未启用，保留原始 query
+			rtspURL += "?" + r.URL.RawQuery
 		}
 	}
 

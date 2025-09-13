@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"crypto/tls"
+	"regexp"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -244,13 +245,50 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 	seen map[string]struct{},
 ) []byte {
 	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-		if trimmed == "" {
-			return nil
+	if trimmed == "" {
+		return nil
+	}
+
+	// ---------- 处理 # 开头的标签 ----------
+	if strings.HasPrefix(trimmed, "#") {
+		// 检查是否包含 URI=
+		if strings.Contains(trimmed, "URI=\"") {
+			re := regexp.MustCompile(`URI="([^"]+)"`)
+			trimmed = re.ReplaceAllStringFunc(trimmed, func(match string) string {
+				uri := re.FindStringSubmatch(match)[1]
+				newURI := uri
+
+				// 生成 token
+				token := ""
+				if tm != nil && tm.Enabled {
+					if tm.DynamicConfig != nil {
+						if tok, err := tm.GenerateDynamicToken(uri); err == nil {
+							token = tok
+						}
+					}
+					if token == "" && len(tm.StaticTokens) > 0 {
+						for st := range tm.StaticTokens {
+							token = st
+							break
+						}
+					}
+				}
+
+				// 添加 token
+				if token != "" {
+					if strings.Contains(newURI, "?") {
+						newURI += "&" + tokenParam + "=" + token
+					} else {
+						newURI += "?" + tokenParam + "=" + token
+					}
+				}
+				return fmt.Sprintf(`URI="%s"`, newURI)
+			})
 		}
 		return []byte(trimmed + "\n")
 	}
 
+	// ---------- 普通分片/子 m3u8 ----------
 	newLine := trimmed
 
 	// token
@@ -331,6 +369,7 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 
 func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	targetHost, protocol, found := dm.MapDomain(r.Host)
+	logger.LogPrintf("映射域名: %s -> %s", r.Host, targetHost)
 	if !found {
 		dm.next.ServeHTTP(w, r)
 		return
