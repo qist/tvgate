@@ -25,6 +25,8 @@ import (
 
 func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	// 全局token验证
+	clientIP := monitor.GetClientIP(r)
+	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	tokenParamName := "my_token" // 默认参数名
 	if auth.GetGlobalTokenManager() != nil {
 		// 如果全局配置中有自定义的token参数名，则使用自定义的
@@ -56,11 +58,11 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// 获取客户端真实IP
-		clientIP := monitor.GetClientIP(r)
+		// // 获取客户端真实IP
+		// clientIP := monitor.GetClientIP(r)
 
-		// 构造连接ID（IP+端口）
-		connID := clientIP + "_" + r.RemoteAddr
+		// // 构造连接ID（IP+端口）
+		// connID := clientIP + "_" + r.RemoteAddr
 
 		// 验证全局token
 		if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
@@ -121,8 +123,6 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "URL parse error: "+err.Error(), 500)
 		return
 	}
-	clientIP := monitor.GetClientIP(r)
-	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
 		IP:             clientIP,
 		URL:            rtspURL,

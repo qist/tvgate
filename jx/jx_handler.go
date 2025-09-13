@@ -1,14 +1,18 @@
 package jx
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"net/http"
 	"net/url"
 	"strings"
 
+	"fmt"
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
+	"time"
 )
 
 type VideoSourceHandler func(w http.ResponseWriter, r *http.Request, link, id string)
@@ -30,16 +34,22 @@ func NewJXHandler(cfg *config.JXConfig) *JXHandler {
 
 // Handle JX 请求入口
 func (h *JXHandler) Handle(w http.ResponseWriter, r *http.Request) {
+	// 注册活跃客户端
+	clientIP := monitor.GetClientIP(r)
+	raw := fmt.Sprintf("%s/%s", r.URL.Path, r.URL.RawQuery)
+	hi := md5.Sum([]byte(raw))
+	hashStr := hex.EncodeToString(hi[:])
+	connID := clientIP + "_" + hashStr
 	// 全局token验证
 	if auth.GetGlobalTokenManager() != nil {
 		tokenParamName := "my_token" // 默认参数名
 		token := r.URL.Query().Get(tokenParamName)
 
-		// 获取客户端真实IP
-		clientIP := monitor.GetClientIP(r)
+		// // 获取客户端真实IP
+		// clientIP := monitor.GetClientIP(r)
 
-		// 构造连接ID（IP+端口）
-		connID := clientIP + "_" + r.RemoteAddr
+		// // 构造连接ID（IP+端口）
+		// connID := clientIP + "_" + r.RemoteAddr
 
 		// 验证全局token
 		if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
@@ -62,6 +72,15 @@ func (h *JXHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		cleanURL := removeQueryParamRaw(r.URL.String(), tokenParamName)
 		logger.LogPrintf("清理后的URL: %s", cleanURL)
 	}
+	monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
+		IP:             clientIP,
+		URL:            r.URL.Path,
+		UserAgent:      r.UserAgent(),
+		ConnectionType: strings.ToUpper(r.URL.Scheme),
+		ConnectedAt:    time.Now(),
+		LastActive:     time.Now(),
+	})
+	defer monitor.ActiveClients.Unregister(connID, strings.ToUpper(r.URL.Scheme))
 
 	jxParam := r.URL.Query().Get("jx")
 	idParam := r.URL.Query().Get("id")

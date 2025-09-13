@@ -400,7 +400,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(cfg.ClientHeaders) > 0 {
 		for k, v := range cfg.ClientHeaders {
 			if r.Header.Get(k) != v {
-				http.Error(w, "未授权的客户端 header", http.StatusUnauthorized)
+				http.Error(w, "Forbidden", http.StatusUnauthorized)
 				return
 			}
 		}
@@ -421,7 +421,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// 检查是否启用了静态token但没有提供token参数
 			if cfg.Auth.StaticTokens.EnableStatic && !cfg.Auth.DynamicTokens.EnableDynamic && token == "" {
 				// 如果只启用了静态token但没有提供token参数，则拒绝访问
-				http.Error(w, "未提供有效的 token 参数", http.StatusUnauthorized)
+				http.Error(w, "Forbidden", http.StatusUnauthorized)
 				return
 			}
 
@@ -436,7 +436,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			logger.LogPrintf("token: %v", cfg)
 			if !tm.ValidateToken(token, r.URL.Path, connID) {
-				http.Error(w, "未授权或 token 过期", http.StatusUnauthorized)
+				http.Error(w, "Forbidden", http.StatusUnauthorized)
 				return
 			}
 		}

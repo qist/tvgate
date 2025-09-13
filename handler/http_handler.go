@@ -77,6 +77,19 @@ func Handler(client *http.Client) http.HandlerFunc {
 			RtspToHTTPHandler(w, r)
 			return
 		}
+		targetPath := stream.GetTargetPath(r)
+		targetURL := stream.GetTargetURL(r, targetPath)
+		parsedURL, err := url.Parse(targetURL)
+		if err != nil {
+			http.Error(w, "无效的目标 URL", http.StatusBadRequest)
+			return
+		}
+		// 注册活跃客户端
+		clientIP := monitor.GetClientIP(r)
+		raw := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+		h := md5.Sum([]byte(raw))
+		hashStr := hex.EncodeToString(h[:])
+		connID := clientIP + "_" + hashStr
 		// 全局token验证
 		if auth.GetGlobalTokenManager() != nil {
 			tokenParamName := "my_token" // 默认参数名
@@ -109,11 +122,11 @@ func Handler(client *http.Client) http.HandlerFunc {
 				}
 			}
 
-			// 获取客户端真实IP
-			clientIP := monitor.GetClientIP(r)
+			// // 获取客户端真实IP
+			// clientIP := monitor.GetClientIP(r)
 
-			// 构造连接ID（IP+端口）
-			connID := clientIP + "_" + r.RemoteAddr
+			// // 构造连接ID（IP+端口）
+			// connID := clientIP + "_" + r.RemoteAddr
 
 			// 验证全局token
 			if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
@@ -140,13 +153,7 @@ func Handler(client *http.Client) http.HandlerFunc {
 			}
 		}
 		r.Body.Close()
-
-		// 计算目标地址
-		targetPath := stream.GetTargetPath(r)
-		targetURL := stream.GetTargetURL(r, targetPath)
-
 		// 如果启用了全局认证，在向后端发送请求前删除token参数
-		// 如果启用了全局认证，在向后端发送请求前删除 token 参数（保持原始 URL）
 		if auth.GetGlobalTokenManager() != nil {
 			tokenParamName := "my_token" // 默认参数名
 			if auth.GetGlobalTokenManager().TokenParamName != "" {
@@ -173,17 +180,6 @@ func Handler(client *http.Client) http.HandlerFunc {
 			}
 		}
 
-		parsedURL, err := url.Parse(targetURL)
-		if err != nil {
-			http.Error(w, "无效的目标 URL", http.StatusBadRequest)
-			return
-		}
-		// 注册活跃客户端
-		clientIP := monitor.GetClientIP(r)
-		raw := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
-		h := md5.Sum([]byte(raw))
-		hashStr := hex.EncodeToString(h[:])
-		connID := clientIP + "_" + hashStr
 		monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
 			IP:             clientIP,
 			URL:            targetURL,

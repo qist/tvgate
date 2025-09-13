@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"errors"
+	"bufio"
 	"fmt"
 	"regexp"
 	"github.com/qist/tvgate/auth"
@@ -149,15 +150,16 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 	return targetURL
 }
 
+// CopyWithContext 改用 bufio.Reader
 func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, updateActive func()) error {
+	reader := bufio.NewReader(src) // 使用 bufio.Reader
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			n, readErr := src.Read(buf)
+			n, readErr := reader.Read(buf)
 			if n > 0 {
-				// 更新全局 App 流量统计（线程安全）
 				monitor.AddAppInboundBytes(uint64(n))
 				written := 0
 				for written < n {
@@ -168,11 +170,9 @@ func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []by
 					written += wn
 				}
 				monitor.AddAppOutboundBytes(uint64(n))
-				// 强制刷新（流式传输时推荐）
 				if f, ok := dst.(http.Flusher); ok {
 					f.Flush()
 				}
-				// 成功写入后更新活跃时间
 				if updateActive != nil {
 					updateActive()
 				}
@@ -303,11 +303,7 @@ func handleRedirect(w http.ResponseWriter, r *http.Request, proxyResp *http.Resp
 func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *http.Response) {
 	defer proxyResp.Body.Close()
 
-	bodyBytes, err := io.ReadAll(proxyResp.Body)
-	if err != nil {
-		http.Error(w, "读取响应内容失败", http.StatusInternalServerError)
-		return
-	}
+	reader := bufio.NewReader(proxyResp.Body)
 
 	scheme := getRequestScheme(r)
 	baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
@@ -318,24 +314,30 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 		tokenParam = tm.TokenParamName
 	}
 
-	lines := strings.Split(string(bodyBytes), "\n")
 	seen := make(map[string]struct{})
 	var resultLines []string
 
-	for _, line := range lines {
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			http.Error(w, "读取响应内容失败", http.StatusInternalServerError)
+			return
+		}
+
 		line = strings.TrimSpace(line)
 		if line == "" {
+			if errors.Is(err, io.EOF) {
+				break
+			}
 			continue
 		}
 
 		if strings.HasPrefix(line, "#") {
-			// 处理带 URI= 的标签 (比如 EXT-X-MEDIA)
 			if strings.Contains(line, "URI=\"") {
 				re := regexp.MustCompile(`URI="([^"]+)"`)
 				line = re.ReplaceAllStringFunc(line, func(match string) string {
 					uri := re.FindStringSubmatch(match)[1]
 					newURI := uri
-
 					token := ""
 					if tm != nil && tm.Enabled {
 						token = generateToken(tm, uri)
@@ -350,18 +352,18 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 					return fmt.Sprintf(`URI="%s"`, newURI)
 				})
 			}
-
 			resultLines = append(resultLines, line)
+			if errors.Is(err, io.EOF) {
+				break
+			}
 			continue
 		}
 
-		// 非 # 行 (分片 ts / 子 m3u8)
 		newLine := line
 		token := ""
 		if tm != nil && tm.Enabled {
 			token = generateToken(tm, line)
 		}
-
 		if token != "" {
 			if strings.Contains(newLine, "?") {
 				newLine += "&" + tokenParam + "=" + token
@@ -371,6 +373,9 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 		}
 
 		if _, exists := seen[newLine]; exists {
+			if errors.Is(err, io.EOF) {
+				break
+			}
 			continue
 		}
 		seen[newLine] = struct{}{}
@@ -380,6 +385,10 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 		}
 
 		resultLines = append(resultLines, newLine)
+
+		if errors.Is(err, io.EOF) {
+			break
+		}
 	}
 
 	result := strings.Join(resultLines, "\n") + "\n"

@@ -13,6 +13,9 @@ import (
 )
 
 func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
+	// 注册活跃客户端
+	clientIP := monitor.GetClientIP(r)
+	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	// 全局token验证
 	if auth.GetGlobalTokenManager() != nil {
 		tokenParamName := "my_token" // 默认参数名
@@ -69,9 +72,6 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 	if strings.HasPrefix(prefix, "/rtp/") {
 		connectionType = "RTP"
 	}
-	// 注册活跃客户端
-	clientIP := monitor.GetClientIP(r)
-	connID := clientIP + "_" + addr + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
 		IP:             clientIP,
 		URL:            addr,
@@ -80,7 +80,7 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 		ConnectedAt:    time.Now(),
 		LastActive:     time.Now(),
 	})
-	defer monitor.ActiveClients.Unregister(connID,connectionType)
+	defer monitor.ActiveClients.Unregister(connID, connectionType)
 
 	// 定义更新活跃时间的回调
 	updateActive := func() {

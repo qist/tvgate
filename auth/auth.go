@@ -213,21 +213,9 @@ func (tm *TokenManager) ValidateToken(token, urlPath, connID string) bool {
 					if idx := strings.Index(connID, "_"); idx != -1 {
 						sess.IP = connID[:idx] // 提取IP部分
 					}
-				} else {
-					// 检查是否是同一IP访问
-					clientIP := connID
-					if idx := strings.Index(connID, "_"); idx != -1 {
-						clientIP = connID[:idx]
-					}
-					
-					if sess.IP != clientIP {
-						// 不同IP访问，拒绝
-						tm.mu.Unlock()
-						tm.mu.RLock()
-						logger.LogPrintf("静态token访问被拒绝: 不同IP尝试访问, 原始IP=%s, 当前IP=%s, URL=%s", sess.IP, clientIP, urlPath)
-						return false
-					}
 				}
+				// 对于静态token，我们不进行IP检查，允许任何IP访问
+				// 静态token设计为可共享的，不需要绑定到特定IP
 				sess.ConnID = connID
 				tm.mu.Unlock()
 				tm.mu.RLock()
@@ -316,11 +304,19 @@ func (tm *TokenManager) ValidateToken(token, urlPath, connID string) bool {
 											clientIP = connID[:idx]
 										}
 										
+										// 恢复对非全局token的IP检查
 										if sess.IP != clientIP {
-											// 不同IP访问，拒绝
-											tm.mu.Unlock()
-											logger.LogPrintf("动态token访问被拒绝: 不同IP尝试访问, 原始IP=%s, 当前IP=%s, URL=%s", sess.IP, clientIP, urlPath)
-											return false
+											// 对于非全局token管理器，严格检查IP
+											if tm != GlobalTokenManager {
+												// 不同IP访问，拒绝
+												tm.mu.Unlock()
+												logger.LogPrintf("动态token访问被拒绝: 不同IP尝试访问, 原始IP=%s, 当前IP=%s, URL=%s", sess.IP, clientIP, urlPath)
+												return false
+											} else {
+												// 全局token，更新IP信息
+												sess.IP = clientIP
+												logger.LogPrintf("全局动态token: IP从%s更新为%s", sess.IP, clientIP)
+											}
 										}
 										
 										// 检查URL是否匹配或为相关资源
