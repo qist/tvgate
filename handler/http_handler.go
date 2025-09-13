@@ -130,14 +130,14 @@ func Handler(client *http.Client) http.HandlerFunc {
 
 			// 验证全局token
 			if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
-				logger.LogPrintf("全局token验证失败: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+				// logger.LogPrintf("全局token验证失败: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
 				http.Error(w, "Forbidden", http.StatusForbidden)
 				return
 			}
 
 			// 更新全局token活跃状态
 			auth.GetGlobalTokenManager().KeepAlive(token, connID, clientIP, r.URL.Path)
-			logger.LogPrintf("全局token验证成功: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+			// logger.LogPrintf("全局token验证成功: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
 		}
 		ctx, cancel := context.WithCancel(context.Background()) // 可加超时限制
 		defer cancel()

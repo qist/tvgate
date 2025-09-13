@@ -29,14 +29,14 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 
 		// 验证全局token
 		if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
-			logger.LogPrintf("全局token验证失败: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+			// logger.LogPrintf("全局token验证失败: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 
 		// 更新全局token活跃状态
 		auth.GetGlobalTokenManager().KeepAlive(token, connID, clientIP, r.URL.Path)
-		logger.LogPrintf("全局token验证成功: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+		// logger.LogPrintf("全局token验证成功: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
 	}
 
 	// URL 形如 /rtp/239.0.0.1:5000?iface=eth0,eth1

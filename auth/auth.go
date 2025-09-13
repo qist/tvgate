@@ -255,7 +255,7 @@ func (tm *TokenManager) ValidateToken(token, urlPath, connID string) bool {
 		fixedToken := token
 		if strings.Contains(token, " ") {
 			fixedToken = strings.ReplaceAll(token, " ", "+")
-			logger.LogPrintf("修复URL解码问题: 原token包含空格，已替换为+")
+			// logger.LogPrintf("修复URL解码问题: 原token包含空格，已替换为+")
 		}
 		
 		// 尝试解密

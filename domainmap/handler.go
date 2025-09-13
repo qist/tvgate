@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"crypto/md5"
 	"crypto/tls"
-	"regexp"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -13,6 +12,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -225,6 +226,39 @@ func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendSche
 				newURL.RawQuery += "&" + tokenParam + "=" + newToken
 			}
 		}
+	} else {
+		// 如果没有特定的token管理器，检查全局授权
+		if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled {
+			tokenParam := globalTm.TokenParamName
+			if tokenParam == "" {
+				tokenParam = "token"
+			}
+
+			// 优先尝试生成动态token
+			if globalTm.DynamicConfig != nil {
+				if tok, err := globalTm.GenerateDynamicToken(innerPath); err == nil {
+					newToken = tok
+				}
+			}
+
+			// 如果动态token生成失败，尝试使用静态token
+			if newToken == "" && len(globalTm.StaticTokens) > 0 {
+				for st := range globalTm.StaticTokens {
+					newToken = st
+					break
+				}
+			}
+
+			// 如果生成了 token，则手动拼接到原始 query
+			if newToken != "" {
+				if newURL.RawQuery == "" {
+					newURL.RawQuery = tokenParam + "=" + newToken
+				} else {
+					// 保持原始 query，不 encode
+					newURL.RawQuery += "&" + tokenParam + "=" + newToken
+				}
+			}
+		}
 	}
 
 	// 判断是否替换了 host
@@ -272,6 +306,24 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 							break
 						}
 					}
+				} else {
+					// 如果没有特定的token管理器，检查全局授权
+					if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled {
+						// 优先尝试生成动态token
+						if globalTm.DynamicConfig != nil {
+							if tok, err := globalTm.GenerateDynamicToken(uri); err == nil {
+								token = tok
+							}
+						}
+						
+						// 如果动态token生成失败，尝试使用静态token
+						if token == "" && len(globalTm.StaticTokens) > 0 {
+							for st := range globalTm.StaticTokens {
+								token = st
+								break
+							}
+						}
+					}
 				}
 
 				// 添加 token
@@ -303,6 +355,24 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 			for st := range tm.StaticTokens {
 				token = st
 				break
+			}
+		}
+	} else {
+		// 如果没有特定的token管理器，检查全局授权
+		if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled {
+			// 优先尝试生成动态token
+			if globalTm.DynamicConfig != nil {
+				if tok, err := globalTm.GenerateDynamicToken(trimmed); err == nil {
+					token = tok
+				}
+			}
+			
+			// 如果动态token生成失败，尝试使用静态token
+			if token == "" && len(globalTm.StaticTokens) > 0 {
+				for st := range globalTm.StaticTokens {
+					token = st
+					break
+				}
 			}
 		}
 	}
@@ -369,9 +439,75 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 
 func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	targetHost, protocol, found := dm.MapDomain(r.Host)
-	logger.LogPrintf("映射域名: %s -> %s", r.Host, targetHost)
+	// logger.LogPrintf("映射域名: %s -> %s", r.Host, targetHost)
 	if !found {
 		dm.next.ServeHTTP(w, r)
+		return
+	}
+
+	// 如果协议是RTSP，则转发给RTSP处理器
+	if protocol == "rtsp" {
+		// 构造新的URL路径，格式为 /rtsp/{targetHost}{原始路径}
+		newPath := "/rtsp/" + targetHost + r.URL.Path
+		cfg := dm.GetDomainConfig(r.Host)
+		// RTSP授权验证
+		// 1. 首先检查domainmap配置中的授权信息
+		tokenParam := cfg.Auth.TokenParamName
+		if tokenParam == "" {
+			tokenParam = "token"
+		}
+
+		token := r.URL.Query().Get(tokenParam)
+		clientIP := monitor.GetClientIP(r)
+		connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+		// 检查domainmap是否开启了授权
+		if cfg.Auth.TokensEnabled {
+			// 如果domainmap配置了授权且启用了tokens，则进行验证
+			if cfg.Auth.DynamicTokens.EnableDynamic || cfg.Auth.StaticTokens.EnableStatic {
+				var tm *auth.TokenManager
+
+				// 使用host作为key来获取TokenManager
+				host := r.Host
+				if existingTm, ok := dm.tokenManagers[host]; ok {
+					tm = existingTm
+				} else {
+					tm = auth.NewTokenManagerFromConfig(cfg)
+					dm.tokenManagers[host] = tm
+				}
+
+				// 验证token
+				if !tm.ValidateToken(token, r.URL.Path, connID) {
+					http.Error(w, "Forbidden", http.StatusUnauthorized)
+					return
+				}
+
+				// 更新token活跃状态
+				tm.KeepAlive(token, connID, clientIP, r.URL.Path)
+			}
+		} else {
+			// 2. 只有当domainmap没有开启授权时，才检查全局认证
+			if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled {
+				// 如果全局认证启用且配置了动态或静态token，则进行验证
+				if globalTm.DynamicConfig != nil || len(globalTm.StaticTokens) > 0 {
+					if !globalTm.ValidateToken(token, r.URL.Path, connID) {
+						http.Error(w, "Forbidden", http.StatusUnauthorized)
+						return
+					}
+
+					// 更新token活跃状态
+					globalTm.KeepAlive(token, connID, clientIP, r.URL.Path)
+				}
+			}
+			// 3. 如果都没有配置授权，则不进行认证
+		}
+
+		// 创建新的请求
+		newReq := r.Clone(r.Context())
+		newReq.URL.Path = newPath
+		newReq.URL.RawQuery = r.URL.RawQuery
+
+		// 转发给下一个处理器（即RTSP处理器）
+		RtspToHTTPHandler(w, newReq)
 		return
 	}
 
@@ -434,12 +570,27 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				dm.tokenManagers[host] = tm
 			}
 
-			logger.LogPrintf("token: %v", cfg)
+			// logger.LogPrintf("token: %v", cfg)
 			if !tm.ValidateToken(token, r.URL.Path, connID) {
 				http.Error(w, "Forbidden", http.StatusUnauthorized)
 				return
 			}
 		}
+	} else {
+		// 2. 只有当domainmap没有开启授权时，才检查全局认证
+		if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled {
+			// 如果全局认证启用且配置了动态或静态token，则进行验证
+			if globalTm.DynamicConfig != nil || len(globalTm.StaticTokens) > 0 {
+				if !globalTm.ValidateToken(token, r.URL.Path, connID) {
+					http.Error(w, "Forbidden", http.StatusUnauthorized)
+					return
+				}
+
+				// 更新token活跃状态
+				globalTm.KeepAlive(token, connID, clientIP, r.URL.Path)
+			}
+		}
+		// 3. 如果都没有配置授权，则不进行认证
 	}
 	monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
 		IP:             clientIP,

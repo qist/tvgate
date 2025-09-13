@@ -1,11 +1,10 @@
 package stream
 
 import (
+	"bufio"
 	"context"
 	"errors"
-	"bufio"
 	"fmt"
-	"regexp"
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
@@ -13,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -150,9 +150,11 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 	return targetURL
 }
 
-// CopyWithContext 改用 bufio.Reader
+// CopyWithContext 流式复制 src -> dst，使用 buffer 池，bufio 内部缓存可控
 func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, updateActive func()) error {
-	reader := bufio.NewReader(src) // 使用 bufio.Reader
+	bufSize := len(buf)
+	reader := bufio.NewReaderSize(src, bufSize)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -161,6 +163,7 @@ func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []by
 			n, readErr := reader.Read(buf)
 			if n > 0 {
 				monitor.AddAppInboundBytes(uint64(n))
+
 				written := 0
 				for written < n {
 					wn, writeErr := dst.Write(buf[written:n])
@@ -169,14 +172,19 @@ func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []by
 					}
 					written += wn
 				}
+
 				monitor.AddAppOutboundBytes(uint64(n))
+
+				// 改成 http.Flusher
 				if f, ok := dst.(http.Flusher); ok {
 					f.Flush()
 				}
+
 				if updateActive != nil {
 					updateActive()
 				}
 			}
+
 			if readErr != nil {
 				if errors.Is(readErr, io.EOF) {
 					return nil
@@ -398,7 +406,6 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 	w.WriteHeader(proxyResp.StatusCode)
 	w.Write([]byte(result))
 }
-
 
 // joinBaseWithFullURL 拼接 baseURL 和完整 URL，不做任何 encode
 func joinBaseWithFullURL(baseURL, fullURL string) string {
