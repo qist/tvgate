@@ -17,6 +17,7 @@
   - [📦 使用 Docker 启动](#-使用-docker-启动)
     - [方式一：使用 ghcr.io 镜像](#方式一使用-ghcrio-镜像)
     - [方式二：使用 Docker Hub 镜像](#方式二使用-docker-hub-镜像)
+    - [udp转发：](#udp转发)
     - [docker-compose 示例](#docker-compose-示例)
   - [服务管理 / 启动脚本](#服务管理--启动脚本)
     - [systemd (Linux)](#systemd-linux)
@@ -73,12 +74,17 @@ nohup /usr/local/TVGate/TVGate-linux-amd64 -config=/usr/local/TVGate/config.yaml
 
 ### 方式一：使用 ghcr.io 镜像
 ```bash
-docker run -d   --name=tvgate   -p 8888:8888   -v /usr/local/TVGate/config.yaml:/etc/tvgate/config.yaml   ghcr.io/qist/tvgate:latest
+docker run -d   --name=tvgate   -p 8888:8888  --restart=unless-stopped  -v /usr/local/TVGate/config.yaml:/etc/tvgate/config.yaml   ghcr.io/qist/tvgate:latest
 ```
 
 ### 方式二：使用 Docker Hub 镜像
 ```bash
-docker run -d   --name=tvgate   -p 8888:8888   -v /usr/local/TVGate/config.yaml:/etc/tvgate/config.yaml   juestnow/tvgate:latest
+docker run -d   --name=tvgate   -p 8888:8888 --restart=unless-stopped  -v /usr/local/TVGate/config.yaml:/etc/tvgate/config.yaml   juestnow/tvgate:latest
+```
+
+### udp转发：
+```bash
+docker run -d  --net=host  --name=tvgate --restart=unless-stopped -v /usr/local/TVGate/config.yaml:/etc/tvgate/config.yaml   ghcr.io/qist/tvgate:latest
 ```
 
 ### docker-compose 示例
