@@ -86,7 +86,7 @@ docker run -d   --name=tvgate   -p 8888:8888   -v /usr/local/TVGate/config.yaml:
 version: "3"
 services:
   tvgate:
-    image: ghcr.io/qist/tvgate:latest   # 或 juestnow/tvgate:latest
+    image: ghcr.io/qist/tvgate:latest   # 或 juestnow/tvgate:latest  #不能下载 可以换成 67686372.boown.com/qist/tvgate:latest
     container_name: tvgate
     restart: always
     ports:
