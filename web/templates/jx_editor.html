@@ -579,8 +579,172 @@
                                 placeholder="格式: key=value&#10;每行一个过滤条件">${getOtherFiltersText(groupData.filters)}</textarea>
                         </div>
                     </div>
-```
+                
+            `;
+            
+            // 添加完container后，渲染endpoint列表
+            setTimeout(() => {
+                renderAPIEndpoints('current', groupData.endpoints || []);
+            }, 0);
+        }
 
-```
+        // 获取exclude过滤器的值
+        function getExcludeFilterValue(filters) {
+            if (!filters) return '';
+            return (filters.exclude || []).join(',');
+        }
 
-```
+        // 更新exclude过滤器的值
+        function updateExcludeFilter(value) {
+            const exclude = value.split(',').map(item => item.trim()).filter(item => item);
+            updateCurrentAPIGroupField('filters', {
+                ...jxConfig.api_groups[currentEditGroupName].filters,
+                exclude: exclude
+            });
+        }
+
+        // 获取其他过滤器的文本
+        function getOtherFiltersText(filters) {
+            if (!filters) return '';
+            return Object.keys(filters)
+                .filter(key => key !== 'exclude')
+                .map(key => `${key}=${filters[key]}`)
+                .join('\n');
+        }
+
+        // 更新其他过滤器的值
+        function updateOtherFilters(value) {
+            const lines = value.split('\n').map(line => line.trim()).filter(line => line);
+            const newFilters = {};
+            lines.forEach(line => {
+                const [key, val] = line.split('=');
+                newFilters[key.trim()] = val.trim();
+            });
+            updateCurrentAPIGroupField('filters', {
+                ...jxConfig.api_groups[currentEditGroupName].filters,
+                ...newFilters
+            });
+        }
+
+        // 更新当前组名
+        function updateCurrentGroupName(newName) {
+            if (newName === currentEditGroupName) return;
+            if (jxConfig.api_groups[newName]) {
+                showAlert('组名已存在', 'danger');
+                return;
+            }
+            jxConfig.api_groups[newName] = jxConfig.api_groups[currentEditGroupName];
+            delete jxConfig.api_groups[currentEditGroupName];
+            currentEditGroupName = newName;
+            renderDetailView();
+        }
+
+        // 更新当前API组的字段
+        function updateCurrentAPIGroupField(fieldName, value) {
+            jxConfig.api_groups[currentEditGroupName][fieldName] = value;
+        }
+
+        // 更新API组的过滤器键
+        function updateAPIGroupFilterKey(groupName, oldKey, newKey) {
+            const group = jxConfig.api_groups[groupName];
+            if (newKey === oldKey) return;
+            if (group.filters[newKey]) {
+                showAlert('过滤器键已存在', 'danger');
+                return;
+            }
+            group.filters[newKey] = group.filters[oldKey];
+            delete group.filters[oldKey];
+            renderDetailView();
+        }
+
+        // 更新API组的过滤器值
+        function updateAPIGroupFilterValue(groupName, key, value) {
+            jxConfig.api_groups[groupName].filters[key] = value;
+        }
+
+        // 删除API组的过滤器
+        function removeAPIGroupFilter(groupName, key) {
+            delete jxConfig.api_groups[groupName].filters[key];
+            renderDetailView();
+        }
+
+        // 添加API组
+        function addAPIGroup() {
+            const newGroupName = prompt('请输入新的组名称:');
+            if (!newGroupName) return;
+            if (jxConfig.api_groups[newGroupName]) {
+                showAlert('组名已存在', 'danger');
+                return;
+            }
+            jxConfig.api_groups[newGroupName] = {
+                endpoints: [],
+                timeout: "",
+                query_template: "",
+                primary: false,
+                weight: 0,
+                fallback: false,
+                max_retries: 0,
+                filters: {}
+            };
+            renderAPIGroupList();
+        }
+
+        // 删除API组
+        function removeAPIGroup(groupName) {
+            if (confirm(`确定要删除API组 "${groupName}" 吗？`)) {
+                delete jxConfig.api_groups[groupName];
+                renderAPIGroupList();
+            }
+        }
+
+        // 保存当前API组
+        function saveCurrentAPIGroup() {
+            fetch(webPath + 'config/jx', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(jxConfig)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('保存配置失败');
+                }
+                originalJXConfig = JSON.parse(JSON.stringify(jxConfig)); // 更新原始配置副本
+                showAlert('配置已保存', 'success');
+            })
+            .catch(error => {
+                console.error('保存配置失败:', error);
+                showAlert('保存配置失败: ' + error.message, 'danger');
+            });
+        }
+
+        // 重新加载配置
+        function reloadConfig() {
+            if (JSON.stringify(jxConfig) === JSON.stringify(originalJXConfig)) {
+                loadConfig();
+            } else {
+                if (confirm('当前配置已修改，确定要重新加载吗？')) {
+                    loadConfig();
+                }
+            }
+        }
+
+        // 退出登录
+        function logout() {
+            fetch(webPath + 'logout')
+                .then(response => {
+                    if (response.ok) {
+                        window.location.href = webPath;
+                    } else {
+                        throw new Error('退出登录失败');
+                    }
+                })
+                .catch(error => {
+                    console.error('退出登录失败:', error);
+                    showAlert('退出登录失败: ' + error.message, 'danger');
+                });
+        }
+    </script>
+</body>
+</html>
