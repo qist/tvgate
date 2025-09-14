@@ -18,9 +18,27 @@ import (
 func (h *ConfigHandler) handleDomainMapEditor(w http.ResponseWriter, r *http.Request) {
 	webPath := h.getWebPath()
 
+	// 检查是否有任何domainmap配置了auth
+	config.CfgMu.RLock()
+	hasAuthConfig := false
+	for _, dm := range config.Cfg.DomainMap {
+		if dm.Auth.TokensEnabled ||
+			dm.Auth.TokenParamName != "" ||
+			dm.Auth.DynamicTokens.EnableDynamic ||
+			dm.Auth.DynamicTokens.Secret != "" ||
+			dm.Auth.DynamicTokens.Salt != "" ||
+			dm.Auth.StaticTokens.EnableStatic ||
+			dm.Auth.StaticTokens.Token != "" {
+			hasAuthConfig = true
+			break
+		}
+	}
+	config.CfgMu.RUnlock()
+
 	data := map[string]interface{}{
-		"title":   "TVGate 域名映射编辑器",
-		"webPath": webPath,
+		"title":        "TVGate 域名映射编辑器",
+		"webPath":      webPath,
+		"hasAuthConfig": hasAuthConfig,
 	}
 
 	if err := h.renderTemplate(w, r, "domainmap_editor", "templates/domainmap_editor.html", data); err != nil {

@@ -488,6 +488,7 @@
                             <option value="rtsp" ${domainMap.protocol === 'rtsp' ? 'selected' : ''}>RTSP</option>
                         </select>
                     </div>
+                    {{if .hasAuthConfig}}
                     <div class="form-group">
                         <div class="checkbox-group">
                             <input type="checkbox" id="show-auth" ${hasAuth ? 'checked' : ''} onchange="toggleAuthSection(this.checked)">
@@ -558,6 +559,7 @@
                             </div>
                         </div>
                     </div>
+                    {{end}}
                 </div>
             `;
         }
@@ -741,6 +743,7 @@
             if (confirm('确定要删除这个域名映射吗？')) {
                 domainMaps.splice(index, 1);
                 backToListView();
+                saveConfig(); // 删除后自动保存配置
             }
         }
 

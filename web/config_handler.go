@@ -171,6 +171,21 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 		// 检查是否有domainmap和global_auth配置
 		hasDomainMap := len(config.Cfg.DomainMap) > 0
 
+		// 检查domainmap中是否有任何组配置了auth
+		hasDomainMapAuth := false
+		for _, dm := range config.Cfg.DomainMap {
+			if dm.Auth.TokensEnabled ||
+				dm.Auth.TokenParamName != "" ||
+				dm.Auth.DynamicTokens.EnableDynamic ||
+				dm.Auth.DynamicTokens.Secret != "" ||
+				dm.Auth.DynamicTokens.Salt != "" ||
+				dm.Auth.StaticTokens.EnableStatic ||
+				dm.Auth.StaticTokens.Token != "" {
+				hasDomainMapAuth = true
+				break
+			}
+		}
+
 		// 检查global_auth是否配置了有效内容
 		globalAuth := config.Cfg.GlobalAuth
 		hasGlobalAuth := globalAuth.TokensEnabled ||
@@ -185,12 +200,13 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 		hasProxyGroups := len(config.Cfg.ProxyGroups) > 0
 
 		data := map[string]interface{}{
-			"title":         "TVGate Web管理",
-			"webPath":       webPath,
-			"monitorPath":   monitorPath,
-			"hasDomainMap":  hasDomainMap,
-			"hasGlobalAuth": hasGlobalAuth,
-			"hasProxyGroups": hasProxyGroups,
+			"title":           "TVGate Web管理",
+			"webPath":         webPath,
+			"monitorPath":     monitorPath,
+			"hasDomainMap":    hasDomainMap,
+			"hasDomainMapAuth": hasDomainMapAuth,
+			"hasGlobalAuth":   hasGlobalAuth,
+			"hasProxyGroups":  hasProxyGroups,
 		}
 
 		// 从嵌入的文件系统读取模板
@@ -783,7 +799,7 @@ func (h *ConfigHandler) handleConfigSave(w http.ResponseWriter, r *http.Request)
 		configPath := *config.ConfigFilePath
 
 		// 备份当前配置文件
-		backupPath := configPath + ".backup"
+		backupPath := configPath  + ".backup." + time.Now().Format("20060102150405")
 		if err := copyFile(configPath, backupPath); err != nil {
 			http.Error(w, "Failed to create backup: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -809,7 +825,7 @@ func (h *ConfigHandler) handleConfigSave(w http.ResponseWriter, r *http.Request)
 
 	http.NotFound(w, r)
 }
-
+ 
 // handleConfigValidate 处理配置验证请求
 func (h *ConfigHandler) handleConfigValidate(w http.ResponseWriter, r *http.Request) {
 	// 获取配置的Web路径，默认为/web/
@@ -1101,7 +1117,7 @@ func (h *ConfigHandler) handleConfigSaveNode(w http.ResponseWriter, r *http.Requ
 		}
 
 		// 备份当前配置文件
-		backupPath := configPath + ".backup"
+		backupPath := configPath  + ".backup." + time.Now().Format("20060102150405")
 		if err := copyFile(configPath, backupPath); err != nil {
 			http.Error(w, "Failed to create backup: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -1478,7 +1494,7 @@ func (h *ConfigHandler) handleConfigSaveGroup(w http.ResponseWriter, r *http.Req
 		}
 
 		// 备份当前配置文件
-		backupPath := configPath + ".backup"
+		backupPath := configPath  + ".backup." + time.Now().Format("20060102150405")
 		if err := copyFile(configPath, backupPath); err != nil {
 			http.Error(w, "Failed to create backup: "+err.Error(), http.StatusInternalServerError)
 			return
