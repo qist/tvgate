@@ -113,17 +113,20 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"node-editor", h.cookieAuth(h.handleNodeEditor))
 	mux.HandleFunc(webPath+"group-editor", h.cookieAuth(h.handleGroupEditor))
 	mux.HandleFunc(webPath+"domainmap-editor", h.cookieAuth(h.handleDomainMapEditor))
+	mux.HandleFunc(webPath+"proxygroups-editor", h.cookieAuth(h.handleProxyGroupsEditor))
 	mux.HandleFunc(webPath+"global-auth-editor", h.cookieAuth(h.handleGlobalAuthEditor))
 	mux.HandleFunc(webPath+"config", h.cookieAuth(h.handleConfig))
 	mux.HandleFunc(webPath+"config/save", h.cookieAuth(h.handleConfigSave))
 	mux.HandleFunc(webPath+"config/save-node", h.cookieAuth(h.handleConfigSaveNode))
 	mux.HandleFunc(webPath+"config/save-group", h.cookieAuth(h.handleConfigSaveGroup))
 	mux.HandleFunc(webPath+"config/save-domainmap", h.cookieAuth(h.handleDomainMapConfigSave))
+	mux.HandleFunc(webPath+"config/save-proxygroups", h.cookieAuth(h.handleProxyGroupsConfigSave))
 	mux.HandleFunc(webPath+"config/save-global-auth", h.cookieAuth(h.handleGlobalAuthConfigSave))
 	mux.HandleFunc(webPath+"config/validate", h.cookieAuth(h.handleConfigValidate))
 	mux.HandleFunc(webPath+"config/node", h.cookieAuth(h.handleNodeConfig))
 	mux.HandleFunc(webPath+"config/group", h.cookieAuth(h.handleGroupConfig))
 	mux.HandleFunc(webPath+"config/domainmap", h.cookieAuth(h.handleDomainMapConfig))
+	mux.HandleFunc(webPath+"config/proxygroups", h.cookieAuth(h.handleProxyGroupsConfig))
 	mux.HandleFunc(webPath+"config/global-auth", h.cookieAuth(h.handleGlobalAuthConfig))
 }
 
@@ -178,12 +181,16 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			globalAuth.StaticTokens.EnableStatic ||
 			globalAuth.StaticTokens.Token != ""
 
+		// 检查proxygroups是否配置了有效内容
+		hasProxyGroups := len(config.Cfg.ProxyGroups) > 0
+
 		data := map[string]interface{}{
 			"title":         "TVGate Web管理",
 			"webPath":       webPath,
 			"monitorPath":   monitorPath,
 			"hasDomainMap":  hasDomainMap,
 			"hasGlobalAuth": hasGlobalAuth,
+			"hasProxyGroups": hasProxyGroups,
 		}
 
 		// 从嵌入的文件系统读取模板

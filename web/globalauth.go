@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
+	// "strings"
 	"time"
 
 	"github.com/qist/tvgate/config"
@@ -61,29 +61,6 @@ func (h *ConfigHandler) handleGlobalAuthConfig(w http.ResponseWriter, r *http.Re
 	}
 }
 
-// formatDurationString 格式化时间字符串，去除末尾的0部分
-func formatDurationString(durationStr string) string {
-	if durationStr == "" {
-		return ""
-	}
-
-	// 移除末尾的0部分
-	result := durationStr
-	// 移除末尾的0s
-	result = strings.TrimSuffix(result, "0s")
-	// 移除末尾的0m
-	result = strings.TrimSuffix(result, "0m")
-	// 移除末尾的0h
-	result = strings.TrimSuffix(result, "0h")
-	// 处理特殊情况，如1m0s变成1m
-	result = strings.ReplaceAll(result, "m0s", "m")
-	// 处理特殊情况，如1h0m变成1h
-	result = strings.ReplaceAll(result, "h0m", "h")
-	// 处理特殊情况，如1h0s变成1h
-	result = strings.ReplaceAll(result, "h0s", "h")
-
-	return result
-}
 
 // handleGlobalAuthConfigSave 处理全局认证配置保存请求
 func (h *ConfigHandler) handleGlobalAuthConfigSave(w http.ResponseWriter, r *http.Request) {
@@ -273,12 +250,4 @@ func (h *ConfigHandler) handleGlobalAuthConfigSave(w http.ResponseWriter, r *htt
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("配置保存成功"))
-}
-
-// formatDuration 格式化时间持续时间，如果为0则返回空字符串
-func formatDuration(d time.Duration) string {
-	if d <= 0 {
-		return ""
-	}
-	return d.String()
 }
