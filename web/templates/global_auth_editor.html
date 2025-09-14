@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全局认证编辑器 - TVGate Web管理</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #121212;
+            color: #e0e0e0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #1e1e1e;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+        }
+
+        h1 {
+            color: #ffffff;
+            text-align: center;
+        }
+
+        .auth-section {
+            text-align: right;
+            margin-bottom: 20px;
+        }
+
+        .auth-section a {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #28a745;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+
+        .auth-section a.logout {
+            background-color: #dc3545;
+        }
+
+        .auth-section a:hover {
+            opacity: 0.8;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #ffffff;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 10px;
+            background-color: #2c2c2c;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #e0e0e0;
+            box-sizing: border-box;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            margin-right: 10px;
+            transform: scale(1.5);
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        .btn:hover {
+            background-color: #0056b3;
+        }
+
+        .btn-success {
+            background-color: #28a745;
+        }
+
+        .btn-success:hover {
+            background-color: #1e7e34;
+        }
+
+        .btn-danger {
+            background-color: #dc3545;
+        }
+
+        .btn-danger:hover {
+            background-color: #bd2130;
+        }
+
+        .btn-warning {
+            background-color: #ffc107;
+            color: #212529;
+        }
+
+        .btn-warning:hover {
+            background-color: #e0a800;
+        }
+
+        .form-buttons {
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .section {
+            background-color: #2c2c2c;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+
+        .section-title {
+            color: #ffffff;
+            margin-top: 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #444;
+        }
+
+        .subsection {
+            margin-bottom: 20px;
+        }
+
+        .subsection-title {
+            color: #cccccc;
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="auth-section">
+            <a href="{{.webPath}}logout" class="logout">退出</a>
+        </div>
+
+        <h1>全局认证编辑器</h1>
+
+        <div id="alert-container" class="hidden"></div>
+
+        <div class="form-buttons">
+            <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+            <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+            <a href="{{.webPath}}" class="btn">返回首页</a>
+        </div>
+
+        <form id="global-auth-form">
+            <div class="section">
+                <h2 class="section-title">全局认证配置</h2>
+                
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="tokens_enabled" onchange="updateGlobalAuth('tokens_enabled', this.checked)">
+                        <label for="tokens_enabled">启用 Token 认证</label>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="token_param_name">Token 参数名:</label>
+                    <input type="text" id="token_param_name" class="form-control" onchange="updateGlobalAuth('token_param_name', this.value)">
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">动态 Token 配置</h2>
+                
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="dynamic_tokens_enable_dynamic" onchange="updateDynamicTokens('enable_dynamic', this.checked)">
+                        <label for="dynamic_tokens_enable_dynamic">启用动态 Token</label>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="dynamic_tokens_dynamic_ttl">动态 Token 有效期:</label>
+                    <input type="text" id="dynamic_tokens_dynamic_ttl" class="form-control" placeholder="例如: 1h" onchange="updateDynamicTokens('dynamic_ttl', this.value)">
+                </div>
+                
+                <div class="form-group">
+                    <label for="dynamic_tokens_secret">AES 密钥:</label>
+                    <input type="text" id="dynamic_tokens_secret" class="form-control" onchange="updateDynamicTokens('secret', this.value)">
+                </div>
+                
+                <div class="form-group">
+                    <label for="dynamic_tokens_salt">Salt:</label>
+                    <input type="text" id="dynamic_tokens_salt" class="form-control" onchange="updateDynamicTokens('salt', this.value)">
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">静态 Token 配置</h2>
+                
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="static_tokens_enable_static" onchange="updateStaticTokens('enable_static', this.checked)">
+                        <label for="static_tokens_enable_static">启用静态 Token</label>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="static_tokens_token">Token 值:</label>
+                    <input type="text" id="static_tokens_token" class="form-control" onchange="updateStaticTokens('token', this.value)">
+                </div>
+                
+                <div class="form-group">
+                    <label for="static_tokens_expire_hours">过期时间:</label>
+                    <input type="text" id="static_tokens_expire_hours" class="form-control" placeholder="例如: 24h" onchange="updateStaticTokens('expire_hours', this.value)">
+                </div>
+            </div>
+        </form>
+
+        <div class="form-buttons">
+            <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+            <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+            <a href="{{.webPath}}" class="btn">返回首页</a>
+        </div>
+    </div>
+
+    <script>
+        const webPath = "{{.webPath}}";
+        let globalAuth = {};
+        let originalGlobalAuth = {}; // 用于跟踪原始配置
+
+        // 页面加载完成后获取配置
+        window.addEventListener('load', function() {
+            loadConfig();
+        });
+
+        // 格式化时间显示，去除多余的0部分
+        function formatDuration(durationStr) {
+            if (!durationStr) return '';
+            
+            // 移除末尾的0部分
+            return durationStr.replace(/0[s|m|h]$/g, '').replace(/m0s$/g, 'm').replace(/h0m$/g, 'h').replace(/h0s$/g, 'h');
+        }
+
+        // 解析时间显示，用于表单显示
+        function parseDuration(durationStr) {
+            if (!durationStr) return '';
+            // 使用formatDuration来格式化时间显示
+            return formatDuration(durationStr);
+        }
+
+        // 显示提示信息
+        function showAlert(message, type) {
+            const alertContainer = document.getElementById('alert-container');
+            alertContainer.className = `alert alert-${type}`;
+            alertContainer.innerHTML = message;
+            alertContainer.classList.remove('hidden');
+            
+            // 5秒后自动隐藏（给用户更多时间看到成功消息）
+            setTimeout(() => {
+                alertContainer.classList.add('hidden');
+            }, 5000);
+        }
+
+        // 加载配置
+        function loadConfig() {
+            fetch(webPath + 'config/global-auth')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('加载配置失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    globalAuth = data || {};
+                    originalGlobalAuth = JSON.parse(JSON.stringify(globalAuth)); // 保存原始配置副本
+                    populateForm();
+                })
+                .catch(error => {
+                    console.error('加载配置失败:', error);
+                    showAlert('加载配置失败: ' + error.message, 'danger');
+                });
+        }
+
+        // 填充表单
+        function populateForm() {
+            // 全局认证配置
+            document.getElementById('tokens_enabled').checked = globalAuth.tokens_enabled || false;
+            document.getElementById('token_param_name').value = globalAuth.token_param_name || '';
+
+            // 动态 Token 配置
+            const dynamicTokens = globalAuth.dynamic_tokens || {};
+            document.getElementById('dynamic_tokens_enable_dynamic').checked = dynamicTokens.enable_dynamic || false;
+            document.getElementById('dynamic_tokens_dynamic_ttl').value = parseDuration(dynamicTokens.dynamic_ttl) || '';
+            document.getElementById('dynamic_tokens_secret').value = dynamicTokens.secret || '';
+            document.getElementById('dynamic_tokens_salt').value = dynamicTokens.salt || '';
+
+            // 静态 Token 配置
+            const staticTokens = globalAuth.static_tokens || {};
+            document.getElementById('static_tokens_enable_static').checked = staticTokens.enable_static || false;
+            document.getElementById('static_tokens_token').value = staticTokens.token || '';
+            document.getElementById('static_tokens_expire_hours').value = parseDuration(staticTokens.expire_hours) || '';
+        }
+
+        // 检查表单是否有未保存的更改
+        function hasUnsavedChanges() {
+            return JSON.stringify(globalAuth) !== JSON.stringify(originalGlobalAuth);
+        }
+
+        // 更新全局认证配置
+        function updateGlobalAuth(field, value) {
+            globalAuth[field] = value;
+        }
+
+        // 更新动态 Token 配置
+        function updateDynamicTokens(field, value) {
+            if (!globalAuth.dynamic_tokens) {
+                globalAuth.dynamic_tokens = {};
+            }
+            globalAuth.dynamic_tokens[field] = value;
+        }
+
+        // 更新静态 Token 配置
+        function updateStaticTokens(field, value) {
+            if (!globalAuth.static_tokens) {
+                globalAuth.static_tokens = {};
+            }
+            globalAuth.static_tokens[field] = value;
+        }
+
+        // 保存配置
+        function saveConfig() {
+            fetch(webPath + 'config/save-global-auth', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(globalAuth)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        throw new Error(text || '保存失败');
+                    });
+                }
+                return response.text();
+            })
+            .then(data => {
+                originalGlobalAuth = JSON.parse(JSON.stringify(globalAuth)); // 更新原始配置副本
+                showAlert('配置保存成功', 'success');
+            })
+            .catch(error => {
+                console.error('保存配置失败:', error);
+                showAlert('保存配置失败: ' + error.message, 'danger');
+            });
+        }
+
+        // 重新加载配置
+        function reloadConfig() {
+            if (hasUnsavedChanges()) {
+                if (confirm('确定要重新加载配置吗？未保存的更改将会丢失。')) {
+                    loadConfig();
+                    showAlert('配置已重新加载', 'success');
+                }
+            } else {
+                loadConfig();
+                showAlert('配置已重新加载', 'success');
+            }
+        }
+
+        // 退出登录
+        function logout() {
+            if (hasUnsavedChanges()) {
+                if (!confirm('有未保存的更改，确定要退出登录吗？')) {
+                    return;
+                }
+            }
+            
+            fetch(webPath + 'logout', {
+                method: 'POST'
+            })
+            .then(() => {
+                window.location.href = webPath + 'login';
+            })
+            .catch(error => {
+                console.error('退出登录失败:', error);
+                window.location.href = webPath + 'login';
+            });
+        }
+
+        // 页面卸载前检查是否有未保存的更改
+        window.addEventListener('beforeunload', function(e) {
+            if (hasUnsavedChanges()) {
+                e.preventDefault();
+                e.returnValue = '';
+                return '';
+            }
+        });
+    </script>
+</body>
+</html>
