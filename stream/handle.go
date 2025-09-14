@@ -25,7 +25,12 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}()
 
 	logger.LogRequestAndResponse(r, targetURL, resp) // 日志记录
+	u, _ := url.Parse(targetURL)
+	contentType := resp.Header.Get("Content-Type")
+	bufSize := buffer.GetOptimalBufferSize(contentType, u.Path)
 
+	buf := buffer.GetBuffer(bufSize)
+	defer buffer.PutBuffer(bufSize, buf)
 	switch resp.StatusCode {
 	case http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect:
 		handleRedirect(w, r, resp)
@@ -33,20 +38,13 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 
 	if IsSupportedContentType(resp.Header.Get("Content-Type")) {
-		handleSpecialContent(w, r, resp)
+		handleSpecialContent(w, r, resp, buf)
 		return
 	}
 
 	// 复制响应头
 	CopyHeader(w.Header(), resp.Header, r.ProtoMajor)
 	w.WriteHeader(resp.StatusCode)
-
-	u, _ := url.Parse(targetURL)
-	contentType := resp.Header.Get("Content-Type")
-	bufSize := buffer.GetOptimalBufferSize(contentType, u.Path)
-
-	buf := buffer.GetBuffer(bufSize)
-	defer buffer.PutBuffer(bufSize, buf)
 
 	done := make(chan struct{})
 	go func() {
@@ -152,18 +150,15 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 
 // CopyWithContext 流式复制 src -> dst，使用 buffer 池，bufio 内部缓存可控
 func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, updateActive func()) error {
-	bufSize := len(buf)
-	reader := bufio.NewReaderSize(src, bufSize)
-
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			n, readErr := reader.Read(buf)
+			n, readErr := src.Read(buf)
 			if n > 0 {
+				// 更新全局 App 流量统计（线程安全）
 				monitor.AddAppInboundBytes(uint64(n))
-
 				written := 0
 				for written < n {
 					wn, writeErr := dst.Write(buf[written:n])
@@ -172,19 +167,16 @@ func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []by
 					}
 					written += wn
 				}
-
 				monitor.AddAppOutboundBytes(uint64(n))
-
-				// 改成 http.Flusher
+				// 强制刷新（流式传输时推荐）
 				if f, ok := dst.(http.Flusher); ok {
 					f.Flush()
 				}
-
+				// 成功写入后更新活跃时间
 				if updateActive != nil {
 					updateActive()
 				}
 			}
-
 			if readErr != nil {
 				if errors.Is(readErr, io.EOF) {
 					return nil
@@ -261,7 +253,6 @@ func CopyHeader(dst, src http.Header, protoMajor int) {
 }
 
 // handleRedirect 处理 HTTP 301/302 重定向
-// handleRedirect 处理 HTTP 301/302 重定向
 func handleRedirect(w http.ResponseWriter, r *http.Request, proxyResp *http.Response) {
 	location := proxyResp.Header.Get("Location")
 	if location == "" {
@@ -308,10 +299,11 @@ func handleRedirect(w http.ResponseWriter, r *http.Request, proxyResp *http.Resp
 }
 
 // handleSpecialContent 处理 m3u8 文件内容
-func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *http.Response) {
+func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *http.Response, buf []byte) {
 	defer proxyResp.Body.Close()
 
-	reader := bufio.NewReader(proxyResp.Body)
+	bufSize := len(buf)
+	reader := bufio.NewReaderSize(proxyResp.Body, bufSize)
 
 	scheme := getRequestScheme(r)
 	baseURL := fmt.Sprintf("%s://%s", scheme, r.Host)
@@ -334,12 +326,13 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 
 		line = strings.TrimSpace(line)
 		if line == "" {
-			if errors.Is(err, io.EOF) {
+			if err == io.EOF {
 				break
 			}
 			continue
 		}
 
+		// --- 处理 EXT 标签 ---
 		if strings.HasPrefix(line, "#") {
 			if strings.Contains(line, "URI=\"") {
 				re := regexp.MustCompile(`URI="([^"]+)"`)
@@ -361,12 +354,13 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 				})
 			}
 			resultLines = append(resultLines, line)
-			if errors.Is(err, io.EOF) {
+			if err == io.EOF {
 				break
 			}
 			continue
 		}
 
+		// --- 普通行 (TS/URL) ---
 		newLine := line
 		token := ""
 		if tm != nil && tm.Enabled {
@@ -380,31 +374,34 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 			}
 		}
 
+		// 去重
 		if _, exists := seen[newLine]; exists {
-			if errors.Is(err, io.EOF) {
+			if err == io.EOF {
 				break
 			}
 			continue
 		}
 		seen[newLine] = struct{}{}
 
+		// ✅ 只有 http/https 时才拼接 baseURL
 		if strings.HasPrefix(newLine, "http://") || strings.HasPrefix(newLine, "https://") {
 			newLine = joinBaseWithFullURL(baseURL, newLine)
 		}
 
 		resultLines = append(resultLines, newLine)
 
-		if errors.Is(err, io.EOF) {
+		if err == io.EOF {
 			break
 		}
 	}
 
+	// 拼接结果
 	result := strings.Join(resultLines, "\n") + "\n"
 
 	CopyHeader(w.Header(), proxyResp.Header, r.ProtoMajor)
 	w.Header().Del("Content-Length")
 	w.WriteHeader(proxyResp.StatusCode)
-	w.Write([]byte(result))
+	_, _ = w.Write([]byte(result))
 }
 
 // joinBaseWithFullURL 拼接 baseURL 和完整 URL，不做任何 encode
