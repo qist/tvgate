@@ -115,6 +115,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"domainmap-editor", h.cookieAuth(h.handleDomainMapEditor))
 	mux.HandleFunc(webPath+"proxygroups-editor", h.cookieAuth(h.handleProxyGroupsEditor))
 	mux.HandleFunc(webPath+"global-auth-editor", h.cookieAuth(h.handleGlobalAuthEditor))
+	mux.HandleFunc(webPath+"jx-editor", h.cookieAuth(h.handleJXEditor))
 	mux.HandleFunc(webPath+"config", h.cookieAuth(h.handleConfig))
 	mux.HandleFunc(webPath+"config/save", h.cookieAuth(h.handleConfigSave))
 	mux.HandleFunc(webPath+"config/save-node", h.cookieAuth(h.handleConfigSaveNode))
@@ -122,12 +123,14 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/save-domainmap", h.cookieAuth(h.handleDomainMapConfigSave))
 	mux.HandleFunc(webPath+"config/save-proxygroups", h.cookieAuth(h.handleProxyGroupsConfigSave))
 	mux.HandleFunc(webPath+"config/save-global-auth", h.cookieAuth(h.handleGlobalAuthConfigSave))
+	mux.HandleFunc(webPath+"config/save-jx", h.cookieAuth(h.handleJXConfigSave))
 	mux.HandleFunc(webPath+"config/validate", h.cookieAuth(h.handleConfigValidate))
 	mux.HandleFunc(webPath+"config/node", h.cookieAuth(h.handleNodeConfig))
 	mux.HandleFunc(webPath+"config/group", h.cookieAuth(h.handleGroupConfig))
 	mux.HandleFunc(webPath+"config/domainmap", h.cookieAuth(h.handleDomainMapConfig))
 	mux.HandleFunc(webPath+"config/proxygroups", h.cookieAuth(h.handleProxyGroupsConfig))
 	mux.HandleFunc(webPath+"config/global-auth", h.cookieAuth(h.handleGlobalAuthConfig))
+	mux.HandleFunc(webPath+"config/jx", h.cookieAuth(h.handleJXConfig))
 }
 
 // handleWeb 处理web管理界面首页
@@ -199,6 +202,9 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 		// 检查proxygroups是否配置了有效内容
 		hasProxyGroups := len(config.Cfg.ProxyGroups) > 0
 
+		// 检查是否有JX配置
+		hasJXConfig := hasJXConfiguration(&config.Cfg.JX)
+
 		data := map[string]interface{}{
 			"title":           "TVGate Web管理",
 			"webPath":         webPath,
@@ -207,6 +213,7 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			"hasDomainMapAuth": hasDomainMapAuth,
 			"hasGlobalAuth":   hasGlobalAuth,
 			"hasProxyGroups":  hasProxyGroups,
+			"hasJXConfig":     hasJXConfig,
 		}
 
 		// 从嵌入的文件系统读取模板
@@ -421,6 +428,17 @@ func (h *ConfigHandler) isAuthenticated(r *http.Request) bool {
 	result := h.validateAuthCookie(cookie.Value)
 	// log.Printf("Cookie验证结果: %t", result)
 	return result
+}
+
+// hasJXConfiguration 检查JX配置是否包含有效内容
+func hasJXConfiguration(jx *config.JXConfig) bool {
+	if jx == nil {
+		return false
+	}
+
+	return jx.Path != "" ||
+		jx.DefaultID != "" ||
+		len(jx.APIGroups) > 0
 }
 
 // getWebPath 获取Web路径
@@ -1521,8 +1539,55 @@ func (h *ConfigHandler) handleConfigSaveGroup(w http.ResponseWriter, r *http.Req
 	http.NotFound(w, r)
 }
 
+func (h *ConfigHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
+	webPath := h.getWebPath()
 
+	// 检查是否有任何domainmap配置了auth
+	config.CfgMu.RLock()
+	hasAuthConfig := false
+	for _, dm := range config.Cfg.DomainMap {
+		if dm.Auth.TokensEnabled ||
+			dm.Auth.TokenParamName != "" ||
+			dm.Auth.DynamicTokens.EnableDynamic ||
+			dm.Auth.DynamicTokens.Secret != "" ||
+			dm.Auth.DynamicTokens.Salt != "" ||
+			dm.Auth.StaticTokens.EnableStatic ||
+			dm.Auth.StaticTokens.Token != "" {
+			hasAuthConfig = true
+			break
+		}
+	}
 
+	// 检查是否有ProxyGroups配置
+	hasProxyGroups := len(config.Cfg.ProxyGroups) > 0
+
+	// 检查是否有全局认证配置
+	hasGlobalAuth := config.Cfg.GlobalAuth.TokensEnabled ||
+		config.Cfg.GlobalAuth.TokenParamName != "" ||
+		config.Cfg.GlobalAuth.DynamicTokens.EnableDynamic ||
+		config.Cfg.GlobalAuth.DynamicTokens.Secret != "" ||
+		config.Cfg.GlobalAuth.DynamicTokens.Salt != "" ||
+		config.Cfg.GlobalAuth.StaticTokens.EnableStatic ||
+		config.Cfg.GlobalAuth.StaticTokens.Token != ""
+
+	// 检查是否有JX配置
+	hasJXConfig := hasJXConfiguration(&config.Cfg.JX)
+	config.CfgMu.RUnlock() // 确保在检查后解锁
+
+	data := map[string]interface{}{
+		"title":          "TVGate Web管理",
+		"webPath":        webPath,
+		"hasAuthConfig":  hasAuthConfig,
+		"hasProxyGroups": hasProxyGroups,
+		"hasGlobalAuth":  hasGlobalAuth,
+		"hasJXConfig":    hasJXConfig,
+	}
+
+	if err := h.renderTemplate(w, r, "index", "templates/index.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
 
 // copyFile 复制文件的辅助函数
 func copyFile(src, dst string) error {

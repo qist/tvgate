@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JX编辑器 - TVGate Web管理</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #121212;
+            color: #e0e0e0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #1e1e1e;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+        }
+
+        h1 {
+            color: #ffffff;
+            text-align: center;
+        }
+
+        .auth-section {
+            text-align: right;
+            margin-bottom: 20px;
+        }
+
+        .auth-section a {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #28a745;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+
+        .auth-section a.logout {
+            background-color: #dc3545;
+        }
+
+        .auth-section a:hover {
+            opacity: 0.8;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #ffffff;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 10px;
+            background-color: #2c2c2c;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #e0e0e0;
+            box-sizing: border-box;
+        }
+
+        textarea.form-control {
+            min-height: 100px;
+            font-family: 'Courier New', monospace;
+            resize: vertical;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        .btn:hover {
+            background-color: #0056b3;
+        }
+
+        .btn-success {
+            background-color: #28a745;
+        }
+
+        .btn-success:hover {
+            background-color: #1e7e34;
+        }
+
+        .btn-danger {
+            background-color: #dc3545;
+        }
+
+        .btn-danger:hover {
+            background-color: #bd2130;
+        }
+
+        .btn-warning {
+            background-color: #ffc107;
+            color: #212529;
+        }
+
+        .btn-warning:hover {
+            background-color: #e0a800;
+        }
+
+        .btn-sm {
+            padding: 5px 10px;
+            font-size: 14px;
+        }
+
+        .form-buttons {
+            text-align: center;
+            margin-top: 20px;
+            margin-bottom: 20px;
+        }
+
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .subsection {
+            background-color: #3a3a3a;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        }
+
+        .subsection-title {
+            color: #ffffff;
+            margin-top: 0;
+            margin-bottom: 15px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid #555;
+        }
+
+        .api-group-item {
+            background-color: #2c2c2c;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+
+        .api-group-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #444;
+        }
+
+        .api-group-item-title {
+            font-weight: bold;
+            color: #ffffff;
+        }
+
+        .add-btn {
+            display: block;
+            width: 100%;
+            padding: 15px;
+            background-color: #28a745;
+            color: #ffffff;
+            text-align: center;
+            text-decoration: none;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            box-sizing: border-box;
+        }
+
+        .add-btn:hover {
+            background-color: #1e7e34;
+        }
+
+        .detail-view {
+            display: none;
+        }
+
+        .filters-container {
+            margin-top: 10px;
+        }
+
+        .filter-item {
+            display: flex;
+            margin-bottom: 10px;
+        }
+
+        .filter-item input {
+            margin-right: 10px;
+            flex: 1;
+        }
+
+        .remove-filter {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 5px 10px;
+        }
+
+        .add-filter {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 5px 10px;
+            margin-bottom: 10px;
+        }
+        
+        .endpoint-item {
+            display: flex;
+            margin-bottom: 10px;
+            gap: 10px;
+        }
+        
+        .endpoint-item input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background-color: #333;
+            color: #e0e0e0;
+        }
+        
+        .remove-endpoint {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 8px 12px;
+        }
+        
+        .add-endpoint {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 8px 12px;
+            margin-bottom: 10px;
+        }
+        
+        /* 新增样式：用于列表视图 */
+        .api-group-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .api-group-card {
+            background-color: #2c2c2c;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 15px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .api-group-card:hover {
+            background-color: #3a3a3a;
+        }
+        
+        .api-group-card h3 {
+            margin: 0 0 10px 0;
+            color: #ffffff;
+        }
+        
+        .api-group-card p {
+            margin: 5px 0;
+            color: #b0b0b0;
+        }
+        
+        .list-view {
+            display: block;
+        }
+        
+        .detail-view {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="auth-section">
+            <a href="#" class="logout" onclick="logout()">退出登录</a>
+        </div>
+
+        <h1>JX编辑器</h1>
+
+        <div id="alert-container" class="hidden"></div>
+
+        <!-- 列表视图 -->
+        <div id="list-view" class="list-view">
+            <div class="form-buttons">
+                <button class="btn btn-success" onclick="switchToDetailView('')">添加API组</button>
+                <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+                <a href="{{.webPath}}" class="btn">返回首页</a>
+            </div>
+            
+            <div id="api-group-list" class="api-group-list">
+                <!-- API组卡片将在这里动态添加 -->
+            </div>
+            
+            <div class="form-buttons">
+                <button class="btn btn-success" onclick="switchToDetailView('')">添加API组</button>
+                <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+                <a href="{{.webPath}}" class="btn">返回首页</a>
+            </div>
+        </div>
+
+        <!-- 详细视图 -->
+        <div id="detail-view" class="detail-view">
+            <div class="form-buttons">
+                <button class="btn btn-warning" onclick="backToListView()">返回列表</button>
+                <button class="btn btn-success" onclick="saveCurrentAPIGroup()">保存</button>
+                <a href="{{.webPath}}" class="btn">返回首页</a>
+            </div>
+            
+            <div id="detail-form">
+                <!-- 详细表单将在这里动态生成 -->
+            </div>
+            
+            <div class="form-buttons">
+                <button class="btn btn-warning" onclick="backToListView()">返回列表</button>
+                <button class="btn btn-success" onclick="saveCurrentAPIGroup()">保存</button>
+                <a href="{{.webPath}}" class="btn">返回首页</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const webPath = "{{.webPath}}";
+        let jxConfig = {
+            path: "",
+            default_id: "",
+            api_groups: {}
+        };
+        let originalJXConfig = {}; // 用于跟踪原始配置
+        let currentEditGroupName = ""; // 当前编辑的组名，空字符串表示新增
+
+        // 页面加载完成后获取配置
+        window.addEventListener('load', function() {
+            loadConfig();
+        });
+
+        // 格式化时间显示，去除多余的0部分
+        function formatDuration(durationStr) {
+            if (!durationStr) return '';
+            return durationStr.replace(/0[s|m|h]$/g, '').replace(/m0s$/g, 'm').replace(/h0m$/g, 'h').replace(/h0s$/g, 'h');
+        }
+
+        // 解析时间显示，用于表单显示
+        function parseDuration(durationStr) {
+            if (!durationStr) return '';
+            return formatDuration(durationStr);
+        }
+
+        // 显示提示信息
+        function showAlert(message, type) {
+            const alertContainer = document.getElementById('alert-container');
+            alertContainer.className = `alert alert-${type}`;
+            alertContainer.innerHTML = message;
+            alertContainer.classList.remove('hidden');
+            
+            // 5秒后自动隐藏
+            setTimeout(() => {
+                alertContainer.classList.add('hidden');
+            }, 5000);
+        }
+
+        // 加载配置
+        function loadConfig() {
+            fetch(webPath + 'config/jx')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('加载配置失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    jxConfig = data || {};
+                    originalJXConfig = JSON.parse(JSON.stringify(jxConfig)); // 保存原始配置副本
+                    renderAPIGroupList();
+                })
+                .catch(error => {
+                    console.error('加载配置失败:', error);
+                    showAlert('加载配置失败: ' + error.message, 'danger');
+                });
+        }
+
+        // 渲染API组列表
+        function renderAPIGroupList() {
+            const container = document.getElementById('api-group-list');
+            container.innerHTML = '';
+            
+            // 渲染每个API组为卡片
+            if (jxConfig.api_groups) {
+                Object.keys(jxConfig.api_groups).forEach(groupName => {
+                    const groupElement = createAPIGroupCard(groupName, jxConfig.api_groups[groupName]);
+                    container.appendChild(groupElement);
+                });
+            }
+            
+            // 显示列表视图，隐藏详细视图
+            document.getElementById('list-view').style.display = 'block';
+            document.getElementById('detail-view').style.display = 'none';
+        }
+
+        // 创建API组卡片元素
+        function createAPIGroupCard(groupName, groupData) {
+            const cardDiv = document.createElement('div');
+            cardDiv.className = 'api-group-card';
+            cardDiv.innerHTML = `
+                <h3>${groupName}</h3>
+                <p><strong>接口数量:</strong> ${(groupData.endpoints || []).length}</p>
+                <p><strong>主API:</strong> ${groupData.primary ? '是' : '否'}</p>
+                <p><strong>备用API:</strong> ${groupData.fallback ? '是' : '否'}</p>
+            `;
+            cardDiv.onclick = function() {
+                switchToDetailView(groupName);
+            };
+            return cardDiv;
+        }
+
+        // 切换到详细视图
+        function switchToDetailView(groupName) {
+            currentEditGroupName = groupName;
+            // 记录正在编辑的原始组名（空字符串表示新增）
+            window.isNewGroup = groupName === "";
+            renderDetailView();
+            
+            // 隐藏列表视图，显示详细视图
+            document.getElementById('list-view').style.display = 'none';
+            document.getElementById('detail-view').style.display = 'block';
+        }
+
+        // 返回列表视图
+        function backToListView() {
+            renderAPIGroupList();
+        }
+
+        // 渲染详细视图
+        function renderDetailView() {
+            const container = document.getElementById('detail-form');
+            let groupData;
+            let isNew = currentEditGroupName === "";
+            
+            if (isNew) {
+                // 新增模式
+                groupData = {
+                    endpoints: [],
+                    timeout: "",
+                    query_template: "",
+                    primary: false,
+                    weight: 0,
+                    fallback: false,
+                    max_retries: 0,
+                    filters: {}
+                };
+            } else {
+                // 编辑模式
+                groupData = jxConfig.api_groups[currentEditGroupName];
+            }
+            
+            // 创建过滤器HTML
+            let filtersHTML = '';
+            if (groupData.filters) {
+                Object.keys(groupData.filters).forEach(key => {
+                    // 转义特殊字符，特别是处理空键的情况
+                    const escapedKey = key.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                    const escapedValue = groupData.filters[key].replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                    filtersHTML += `
+                        <div class="filter-item">
+                            <input type="text" class="form-control" value="${key}" placeholder="键" onchange="updateAPIGroupFilterKey('${currentEditGroupName}', '${escapedKey}', this.value)">
+                            <input type="text" class="form-control" value="${groupData.filters[key]}" placeholder="值" onchange="updateAPIGroupFilterValue('${currentEditGroupName}', '${escapedKey}', this.value)">
+                            <button class="remove-filter" onclick="removeAPIGroupFilter('${currentEditGroupName}', '${escapedKey}')">删除</button>
+                        </div>
+                    `;
+                });
+            }
+            
+            container.innerHTML = `
+                <div class="api-group-item">
+                    <div class="api-group-item-header">
+                        <span class="api-group-item-title">${isNew ? '添加API组' : '编辑API组'}</span>
+                        ${!isNew ? `<button class="btn btn-danger btn-sm" onclick="removeAPIGroup('${currentEditGroupName}')">删除</button>` : ''}
+                    </div>
+                    <div class="form-group">
+                        <label>组名称:</label>
+                        <input type="text" class="form-control" value="${isNew ? '' : currentEditGroupName}" ${!isNew ? 'disabled' : ''} onchange="updateCurrentGroupName(this.value)">
+                    </div>
+                    <div class="form-group">
+                        <label>API接口列表:</label>
+                        <div class="endpoint-list-container" id="endpoints-container-current">
+                            <!-- 接口列表将在这里动态添加 -->
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="addAPIEndpoint('current')">添加接口</button>
+                    </div>
+                    <div class="form-group">
+                        <label>请求超时:</label>
+                        <input type="text" class="form-control" placeholder="例如: 30s" value="${groupData.timeout ? parseDuration(groupData.timeout) : ''}" onchange="updateCurrentAPIGroupField('timeout', this.value)">
+                    </div>
+                    <div class="form-group">
+                        <label>查询模板:</label>
+                        <input type="text" class="form-control" value="${groupData.query_template || ''}" onchange="updateCurrentAPIGroupField('query_template', this.value)">
+                    </div>
+                    <div class="form-group">
+                        <div style="display: flex; gap: 20px;">
+                            <div>
+                                <input type="checkbox" id="primary-current" ${groupData.primary ? 'checked' : ''} onchange="updateCurrentAPIGroupField('primary', this.checked)">
+                                <label for="primary-current">主API</label>
+                            </div>
+                            <div>
+                                <input type="checkbox" id="fallback-current" ${groupData.fallback ? 'checked' : ''} onchange="updateCurrentAPIGroupField('fallback', this.checked)">
+                                <label for="fallback-current">备用API</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>权重:</label>
+                        <input type="number" class="form-control" value="${groupData.weight || 0}" onchange="updateCurrentAPIGroupField('weight', parseInt(this.value) || 0)">
+                    </div>
+                    <div class="form-group">
+                        <label>最大重试次数:</label>
+                        <input type="number" class="form-control" value="${groupData.max_retries || 0}" onchange="updateCurrentAPIGroupField('max_retries', parseInt(this.value) || 0)">
+                    </div>
+                    <div class="subsection">
+                        <h4 class="subsection-title">过滤条件</h4>
+                        <div class="form-group">
+                            <label for="exclude-filter">排除关键词 (逗号分隔):</label>
+                            <input type="text" id="exclude-filter" class="form-control" 
+                                value="${getExcludeFilterValue(groupData.filters)}" 
+                                onchange="updateExcludeFilter(this.value)"
+                                placeholder="例如: 电影解说,纪录片,动漫">
+                        </div>
+                        <div class="form-group">
+                            <label for="other-filters">其他过滤条件:</label>
+                            <textarea id="other-filters" class="form-control" rows="3" 
+                                onchange="updateOtherFilters(this.value)"
+                                placeholder="格式: key=value&#10;每行一个过滤条件">${getOtherFiltersText(groupData.filters)}</textarea>
+                        </div>
+                    </div>
+```
+
+```
+
+```
