@@ -116,6 +116,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"proxygroups-editor", h.cookieAuth(h.handleProxyGroupsEditor))
 	mux.HandleFunc(webPath+"global-auth-editor", h.cookieAuth(h.handleGlobalAuthEditor))
 	mux.HandleFunc(webPath+"jx-editor", h.cookieAuth(h.handleJXEditor))
+	mux.HandleFunc(webPath+"server-monitor-editor", h.cookieAuth(h.handleServerMonitorEditor))
 	mux.HandleFunc(webPath+"config", h.cookieAuth(h.handleConfig))
 	mux.HandleFunc(webPath+"config/save", h.cookieAuth(h.handleConfigSave))
 	mux.HandleFunc(webPath+"config/save-node", h.cookieAuth(h.handleConfigSaveNode))
@@ -124,6 +125,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/save-proxygroups", h.cookieAuth(h.handleProxyGroupsConfigSave))
 	mux.HandleFunc(webPath+"config/save-global-auth", h.cookieAuth(h.handleGlobalAuthConfigSave))
 	mux.HandleFunc(webPath+"config/save-jx", h.cookieAuth(h.handleJXConfigSave))
+	mux.HandleFunc(webPath+"config/save-server-monitor", h.cookieAuth(h.handleServerMonitorConfigSave))
 	mux.HandleFunc(webPath+"config/validate", h.cookieAuth(h.handleConfigValidate))
 	mux.HandleFunc(webPath+"config/node", h.cookieAuth(h.handleNodeConfig))
 	mux.HandleFunc(webPath+"config/group", h.cookieAuth(h.handleGroupConfig))
@@ -131,6 +133,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/proxygroups", h.cookieAuth(h.handleProxyGroupsConfig))
 	mux.HandleFunc(webPath+"config/global-auth", h.cookieAuth(h.handleGlobalAuthConfig))
 	mux.HandleFunc(webPath+"config/jx", h.cookieAuth(h.handleJXConfig))
+	mux.HandleFunc(webPath+"config/server-monitor", h.cookieAuth(h.handleServerMonitorConfig))
 }
 
 // handleWeb 处理web管理界面首页
@@ -205,15 +208,19 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 		// 检查是否有JX配置
 		hasJXConfig := hasJXConfiguration(&config.Cfg.JX)
 
+		// 检查是否有服务器监控配置
+		hasServerMonitorConfig := config.Cfg.Monitor.Path != ""
+
 		data := map[string]interface{}{
-			"title":           "TVGate Web管理",
-			"webPath":         webPath,
-			"monitorPath":     monitorPath,
-			"hasDomainMap":    hasDomainMap,
-			"hasDomainMapAuth": hasDomainMapAuth,
-			"hasGlobalAuth":   hasGlobalAuth,
-			"hasProxyGroups":  hasProxyGroups,
-			"hasJXConfig":     hasJXConfig,
+			"title":               "TVGate Web管理",
+			"webPath":             webPath,
+			"monitorPath":         monitorPath,
+			"hasDomainMap":        hasDomainMap,
+			"hasDomainMapAuth":    hasDomainMapAuth,
+			"hasGlobalAuth":       hasGlobalAuth,
+			"hasProxyGroups":      hasProxyGroups,
+			"hasJXConfig":         hasJXConfig,
+			"hasServerMonitorConfig": hasServerMonitorConfig,
 		}
 
 		// 从嵌入的文件系统读取模板

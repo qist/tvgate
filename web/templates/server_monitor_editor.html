@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>服务器监控编辑器 - TVGate Web管理</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #121212;
+            color: #e0e0e0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #1e1e1e;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+        }
+
+        h1 {
+            color: #ffffff;
+            text-align: center;
+        }
+
+        .auth-section {
+            text-align: right;
+            margin-bottom: 20px;
+        }
+
+        .auth-section a {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #28a745;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+
+        .auth-section a.logout {
+            background-color: #dc3545;
+        }
+
+        .auth-section a:hover {
+            opacity: 0.8;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #ffffff;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 10px;
+            background-color: #2c2c2c;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #e0e0e0;
+            box-sizing: border-box;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            margin-right: 10px;
+            transform: scale(1.5);
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        .btn:hover {
+            background-color: #0056b3;
+        }
+
+        .btn-success {
+            background-color: #28a745;
+        }
+
+        .btn-success:hover {
+            background-color: #1e7e34;
+        }
+
+        .btn-danger {
+            background-color: #dc3545;
+        }
+
+        .btn-danger:hover {
+            background-color: #bd2130;
+        }
+
+        .btn-warning {
+            background-color: #ffc107;
+            color: #212529;
+        }
+
+        .btn-warning:hover {
+            background-color: #e0a800;
+        }
+
+        .form-buttons {
+            text-align: center;
+            margin-top: 20px;
+            margin-bottom: 20px;
+        }
+
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .section {
+            background-color: #2c2c2c;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+
+        .section-title {
+            color: #ffffff;
+            margin-top: 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #444;
+        }
+
+        .subsection {
+            margin-bottom: 20px;
+        }
+
+        .subsection-title {
+            color: #cccccc;
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="auth-section">
+            <a href="{{.monitorPath}}" class="btn btn-secondary" target="_blank">系统监控</a>
+            <a href="{{.webPath}}logout" class="logout">退出</a>
+        </div>
+
+        <h1>服务器监控编辑器</h1>
+
+        <div id="alert-container" class="hidden"></div>
+
+        <div class="form-buttons">
+            <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+            <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+            <a href="{{.webPath}}" class="btn">返回首页</a>
+        </div>
+
+        <form id="server-monitor-form">
+            <div class="section">
+                <h2 class="section-title">监控配置</h2>
+                
+                <div class="form-group">
+                    <label for="monitor_path">监控路径:</label>
+                    <input type="text" id="monitor_path" class="form-control" placeholder="/status" onchange="updateConfig('monitor_path', this.value)">
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        const webPath = "{{.webPath}}";
+        let serverConfig = {};
+        let originalConfig = {}; // 用于跟踪原始配置
+
+        // 页面加载完成后获取配置
+        window.addEventListener('load', function() {
+            loadConfig();
+        });
+
+        // 显示提示信息
+        function showAlert(message, type) {
+            const alertContainer = document.getElementById('alert-container');
+            alertContainer.className = `alert alert-${type}`;
+            alertContainer.innerHTML = message;
+            alertContainer.classList.remove('hidden');
+            
+            // 5秒后自动隐藏（给用户更多时间看到成功消息）
+            setTimeout(() => {
+                alertContainer.classList.add('hidden');
+            }, 5000);
+        }
+
+        // 加载配置
+        function loadConfig() {
+            fetch(webPath + 'config/server-monitor')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('加载配置失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    serverConfig = data || {};
+                    originalConfig = JSON.parse(JSON.stringify(serverConfig)); // 保存原始配置副本
+                    populateForm();
+                })
+                .catch(error => {
+                    console.error('加载配置失败:', error);
+                    showAlert('加载配置失败: ' + error.message, 'danger');
+                });
+        }
+
+        // 填充表单
+        function populateForm() {
+            document.getElementById('monitor_path').value = serverConfig.monitor_path || '/status';
+        }
+
+        // 检查表单是否有未保存的更改
+        function hasUnsavedChanges() {
+            return JSON.stringify(serverConfig) !== JSON.stringify(originalConfig);
+        }
+
+        // 更新配置
+        function updateConfig(field, value) {
+            serverConfig[field] = value;
+        }
+
+        // 保存配置
+        function saveConfig() {
+            fetch(webPath + 'config/save-server-monitor', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(serverConfig)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        throw new Error(text || '保存失败');
+                    });
+                }
+                return response.text();
+            })
+            .then(data => {
+                originalConfig = JSON.parse(JSON.stringify(serverConfig)); // 更新原始配置副本
+                showAlert('配置保存成功,点击重新加载', 'success');
+            })
+            .catch(error => {
+                console.error('保存配置失败:', error);
+                showAlert('保存配置失败: ' + error.message, 'danger');
+            });
+        }
+
+        // 重新加载配置
+        function reloadConfig() {
+            if (hasUnsavedChanges()) {
+                if (confirm('确定要重新加载配置吗？未保存的更改将会丢失。')) {
+                    loadConfig();
+                    showAlert('配置已重新加载', 'success');
+                }
+            } else {
+                loadConfig();
+                showAlert('配置已重新加载', 'success');
+            }
+        }
+
+        // 退出登录
+        function logout() {
+            if (hasUnsavedChanges()) {
+                if (!confirm('有未保存的更改，确定要退出登录吗？')) {
+                    return;
+                }
+            }
+            
+            fetch(webPath + 'logout', {
+                method: 'POST'
+            })
+            .then(() => {
+                window.location.href = webPath + 'login';
+            })
+            .catch(error => {
+                console.error('退出登录失败:', error);
+                window.location.href = webPath + 'login';
+            });
+        }
+
+        // 页面卸载前检查是否有未保存的更改
+        window.addEventListener('beforeunload', function(e) {
+            if (hasUnsavedChanges()) {
+                e.preventDefault();
+                e.returnValue = '';
+                return '';
+            }
+        });
+    </script>
+</body>
+</html>
