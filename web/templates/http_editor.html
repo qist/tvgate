@@ -1,62 +1,422 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<title>TVGate HTTP配置编辑器</title>
-<style>
-body{font-family:Arial;margin:20px;}
-h1{font-size:24px;}
-label{display:inline-block;width:200px;font-weight:bold;}
-input[type=text], input[type=checkbox]{padding:5px;margin-bottom:10px;}
-button{padding:5px 15px; cursor:pointer;margin-top:10px;}
-.message{margin-top:10px;font-weight:bold;}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTTP配置编辑器 - TVGate Web管理</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #121212;
+            color: #e0e0e0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #1e1e1e;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+        }
+
+        h1 {
+            color: #ffffff;
+            text-align: center;
+        }
+
+        .auth-section {
+            text-align: right;
+            margin-bottom: 20px;
+        }
+
+        .auth-section a {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #28a745;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+
+        .auth-section a.logout {
+            background-color: #dc3545;
+        }
+
+        .auth-section a:hover {
+            opacity: 0.8;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #ffffff;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 10px;
+            background-color: #2c2c2c;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #e0e0e0;
+            box-sizing: border-box;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            margin-right: 10px;
+            transform: scale(1.5);
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        .btn:hover {
+            background-color: #0056b3;
+        }
+
+        .btn-success {
+            background-color: #28a745;
+        }
+
+        .btn-success:hover {
+            background-color: #1e7e34;
+        }
+
+        .btn-danger {
+            background-color: #dc3545;
+        }
+
+        .btn-danger:hover {
+            background-color: #bd2130;
+        }
+
+        .btn-warning {
+            background-color: #ffc107;
+            color: #212529;
+        }
+
+        .btn-warning:hover {
+            background-color: #e0a800;
+        }
+
+        .form-buttons {
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .alert-warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .section {
+            background-color: #2c2c2c;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+
+        .section-title {
+            color: #ffffff;
+            margin-top: 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #444;
+        }
+
+        .message {
+            margin-top: 10px;
+            font-weight: bold;
+            text-align: center;
+        }
+        
+        .path-warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+            text-align: center;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
 </head>
 <body>
-<h1>HTTP配置编辑器</h1>
-<form id="httpForm">
-<div><label>整体请求超时(s):</label><input type="text" id="timeout"></div>
-<div><label>连接超时(s):</label><input type="text" id="connect_timeout"></div>
-<div><label>TCP保活(s):</label><input type="text" id="keepalive"></div>
-<div><label>响应头超时(s):</label><input type="text" id="response_header_timeout"></div>
-<div><label>空闲连接超时(s):</label><input type="text" id="idle_conn_timeout"></div>
-<div><label>TLS握手超时(s):</label><input type="text" id="tls_handshake_timeout"></div>
-<div><label>禁用KeepAlive:</label><input type="checkbox" id="disable_keepalives"></div>
-<button type="submit">保存</button>
-</form>
-<div class="message" id="msg"></div>
+    <div class="container">
+        <div class="auth-section">
+            <a href="{{.webPath}}logout" class="logout">退出</a>
+        </div>
 
-<script>
-async function loadConfig(){
-  const resp = await fetch('/admin/config/http');
-  const cfg = await resp.json();
-  document.getElementById('timeout').value = cfg.timeout_sec;
-  document.getElementById('connect_timeout').value = cfg.connect_timeout_sec;
-  document.getElementById('keepalive').value = cfg.keepalive_sec;
-  document.getElementById('response_header_timeout').value = cfg.response_header_timeout_sec;
-  document.getElementById('idle_conn_timeout').value = cfg.idle_conn_timeout_sec;
-  document.getElementById('tls_handshake_timeout').value = cfg.tls_handshake_timeout_sec;
-  document.getElementById('disable_keepalives').checked = cfg.disable_keepalives;
-}
+        <h1>HTTP配置编辑器</h1>
 
-document.getElementById('httpForm').addEventListener('submit', async e=>{
-  e.preventDefault();
-  const payload = {
-    timeout_sec: parseInt(document.getElementById('timeout').value),
-    connect_timeout_sec: parseInt(document.getElementById('connect_timeout').value),
-    keepalive_sec: parseInt(document.getElementById('keepalive').value),
-    response_header_timeout_sec: parseInt(document.getElementById('response_header_timeout').value),
-    idle_conn_timeout_sec: parseInt(document.getElementById('idle_conn_timeout').value),
-    tls_handshake_timeout_sec: parseInt(document.getElementById('tls_handshake_timeout').value),
-    disable_keepalives: document.getElementById('disable_keepalives').checked
-  };
-  const resp = await fetch('/admin/config/save-http',{
-    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)
-  });
-  document.getElementById('msg').textContent = resp.ok?'保存成功':'保存失败';
-});
+        <div id="alert-container" class="hidden"></div>
 
-loadConfig();
-</script>
+        <div class="form-buttons">
+            <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+            <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+            <a href="{{.webPath}}" class="btn">返回首页</a>
+        </div>
+
+        <form id="httpForm">
+            <div class="section">
+                <h2 class="section-title">HTTP客户端配置</h2>
+                
+                <div class="form-group">
+                    <label for="timeout">整体请求超时:</label>
+                    <input type="text" id="timeout" class="form-control" placeholder="例如: 30s">
+                </div>
+                
+                <div class="form-group">
+                    <label for="connect_timeout">连接超时:</label>
+                    <input type="text" id="connect_timeout" class="form-control" placeholder="例如: 10s">
+                </div>
+                
+                <div class="form-group">
+                    <label for="keepalive">TCP保活:</label>
+                    <input type="text" id="keepalive" class="form-control" placeholder="例如: 30s">
+                </div>
+                
+                <div class="form-group">
+                    <label for="response_header_timeout">响应头超时:</label>
+                    <input type="text" id="response_header_timeout" class="form-control" placeholder="例如: 10s">
+                </div>
+                
+                <div class="form-group">
+                    <label for="idle_conn_timeout">空闲连接超时:</label>
+                    <input type="text" id="idle_conn_timeout" class="form-control" placeholder="例如: 90s">
+                </div>
+                
+                <div class="form-group">
+                    <label for="tls_handshake_timeout">TLS握手超时:</label>
+                    <input type="text" id="tls_handshake_timeout" class="form-control" placeholder="例如: 10s">
+                </div>
+                
+                <div class="form-group">
+                    <label for="expect_continue_timeout">Expect Continue超时:</label>
+                    <input type="text" id="expect_continue_timeout" class="form-control" placeholder="例如: 1s">
+                </div>
+                
+                <div class="form-group">
+                    <label for="max_idle_conns">最大空闲连接数:</label>
+                    <input type="number" id="max_idle_conns" class="form-control" placeholder="例如: 100">
+                </div>
+                
+                <div class="form-group">
+                    <label for="max_idle_conns_per_host">每主机最大空闲连接数:</label>
+                    <input type="number" id="max_idle_conns_per_host" class="form-control" placeholder="例如: 5">
+                </div>
+                
+                <div class="form-group">
+                    <label for="max_conns_per_host">每主机最大连接数:</label>
+                    <input type="number" id="max_conns_per_host" class="form-control" placeholder="例如: 0 (无限制)">
+                </div>
+                
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="disable_keepalives">
+                        <label for="disable_keepalives">禁用KeepAlive</label>
+                    </div>
+                </div>
+            </div>
+        </form>
+
+        <div class="form-buttons">
+            <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+            <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+            <a href="{{.webPath}}" class="btn">返回首页</a>
+        </div>
+
+        <script>
+            // 全局变量
+            let httpConfig = {};
+            let originalHttpConfig = {};
+            const webPath = '{{.webPath}}';
+
+            // 显示提示消息
+            function showAlert(message, type) {
+                const alertContainer = document.getElementById('alert-container');
+                alertContainer.className = 'alert alert-' + type;
+                alertContainer.textContent = message;
+                alertContainer.classList.remove('hidden');
+                
+                // 5秒后自动隐藏（给用户更多时间看到成功消息）
+                setTimeout(() => {
+                    alertContainer.classList.add('hidden');
+                }, 5000);
+            }
+
+            // 显示路径变更警告
+            function showPathWarning(newPath) {
+                const pathWarning = document.getElementById('path-warning');
+                const newPathSpan = document.getElementById('new-path');
+                newPathSpan.textContent = newPath;
+                pathWarning.classList.remove('hidden');
+            }
+
+            // 隐藏路径变更警告
+            function hidePathWarning() {
+                const pathWarning = document.getElementById('path-warning');
+                pathWarning.classList.add('hidden');
+            }
+
+            // 加载配置
+            async function loadConfig() {
+                try {
+                    const resp = await fetch(webPath + 'config/http');
+                    if (!resp.ok) {
+                        throw new Error(`HTTP error! status: ${resp.status}`);
+                    }
+                    const cfg = await resp.json();
+                    
+                    httpConfig = cfg || {};
+                    originalHttpConfig = JSON.parse(JSON.stringify(httpConfig)); // 保存原始配置副本
+                    
+                    document.getElementById('timeout').value = httpConfig.timeout || '';
+                    document.getElementById('connect_timeout').value = httpConfig.connect_timeout || '';
+                    document.getElementById('keepalive').value = httpConfig.keepalive || '';
+                    document.getElementById('response_header_timeout').value = httpConfig.response_header_timeout || '';
+                    document.getElementById('idle_conn_timeout').value = httpConfig.idle_conn_timeout || '';
+                    document.getElementById('tls_handshake_timeout').value = httpConfig.tls_handshake_timeout || '';
+                    document.getElementById('expect_continue_timeout').value = httpConfig.expect_continue_timeout || '';
+                    document.getElementById('max_idle_conns').value = httpConfig.max_idle_conns || '';
+                    document.getElementById('max_idle_conns_per_host').value = httpConfig.max_idle_conns_per_host || '';
+                    document.getElementById('max_conns_per_host').value = httpConfig.max_conns_per_host || '';
+                    document.getElementById('disable_keepalives').checked = httpConfig.disable_keepalives || false;
+                    
+                    hidePathWarning();
+                } catch (error) {
+                    console.error('加载配置失败:', error);
+                    showAlert('加载配置失败: ' + error.message, 'danger');
+                }
+            }
+
+            // 检查是否有未保存的更改
+            function hasUnsavedChanges() {
+                return JSON.stringify(httpConfig) !== JSON.stringify(originalHttpConfig);
+            }
+
+            // 保存配置
+            async function saveConfig() {
+                try {
+                    const payload = {
+                        timeout: document.getElementById('timeout').value,
+                        connect_timeout: document.getElementById('connect_timeout').value,
+                        keepalive: document.getElementById('keepalive').value,
+                        response_header_timeout: document.getElementById('response_header_timeout').value,
+                        idle_conn_timeout: document.getElementById('idle_conn_timeout').value,
+                        tls_handshake_timeout: document.getElementById('tls_handshake_timeout').value,
+                        expect_continue_timeout: document.getElementById('expect_continue_timeout').value,
+                        max_idle_conns: parseInt(document.getElementById('max_idle_conns').value) || 0,
+                        max_idle_conns_per_host: parseInt(document.getElementById('max_idle_conns_per_host').value) || 0,
+                        max_conns_per_host: parseInt(document.getElementById('max_conns_per_host').value) || 0,
+                        disable_keepalives: document.getElementById('disable_keepalives').checked
+                    };
+
+                    httpConfig = payload; // 更新配置副本
+
+                    const resp = await fetch(webPath + 'config/save-http', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (resp.ok) {
+                        originalHttpConfig = JSON.parse(JSON.stringify(httpConfig)); // 更新原始配置副本
+                        
+                        // 检查是否修改了路径配置
+                        const currentPath = window.location.pathname;
+                        // 注意: HTTP配置不涉及路径变更，这里仅为示例
+                        // 如果将来添加了路径配置字段，需要相应修改
+                        
+                        showAlert('配置保存成功,点击重新加载', 'success');
+                    } else {
+                        const errorMsg = await resp.text();
+                        throw new Error(errorMsg || '保存失败');
+                    }
+                } catch (error) {
+                    console.error('保存配置失败:', error);
+                    showAlert('保存配置失败: ' + error.message, 'danger');
+                }
+            }
+
+            // 重新加载配置
+            async function reloadConfig() {
+                if (hasUnsavedChanges()) {
+                    if (confirm('确定要重新加载配置吗？未保存的更改将会丢失。')) {
+                        await loadConfig();
+                        showAlert('配置已重新加载', 'success');
+                    }
+                } else {
+                    await loadConfig();
+                    showAlert('配置已重新加载', 'success');
+                }
+            }
+
+            // 页面加载时获取配置
+            document.addEventListener('DOMContentLoaded', function() {
+                loadConfig();
+            });
+
+            // 页面卸载前检查是否有未保存的更改
+            window.addEventListener('beforeunload', function(e) {
+                if (hasUnsavedChanges()) {
+                    e.preventDefault();
+                    e.returnValue = '';
+                    return '';
+                }
+            });
+        </script>
+    </div>
 </body>
 </html>

@@ -1,55 +1,400 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<title>TVGate Web管理配置</title>
-<style>
-body { font-family: Arial; margin:20px; }
-h1 { font-size: 24px; }
-label { display:inline-block; width:150px; font-weight:bold; margin-bottom:5px; }
-input[type=text], input[type=password], input[type=checkbox] { padding:5px; margin-bottom:10px; width:200px; }
-button { padding:5px 15px; cursor:pointer; margin-top:10px; }
-.message { margin-top:10px; font-weight:bold; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web管理配置编辑器 - TVGate Web管理</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #121212;
+            color: #e0e0e0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #1e1e1e;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+        }
+
+        h1 {
+            color: #ffffff;
+            text-align: center;
+        }
+
+        .auth-section {
+            text-align: right;
+            margin-bottom: 20px;
+        }
+
+        .auth-section a {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #28a745;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+
+        .auth-section a.logout {
+            background-color: #dc3545;
+        }
+
+        .auth-section a:hover {
+            opacity: 0.8;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #ffffff;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 10px;
+            background-color: #2c2c2c;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #e0e0e0;
+            box-sizing: border-box;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            margin-right: 10px;
+            transform: scale(1.5);
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        .btn:hover {
+            background-color: #0056b3;
+        }
+
+        .btn-success {
+            background-color: #28a745;
+        }
+
+        .btn-success:hover {
+            background-color: #1e7e34;
+        }
+
+        .btn-danger {
+            background-color: #dc3545;
+        }
+
+        .btn-danger:hover {
+            background-color: #bd2130;
+        }
+
+        .btn-warning {
+            background-color: #ffc107;
+            color: #212529;
+        }
+
+        .btn-warning:hover {
+            background-color: #e0a800;
+        }
+
+        .form-buttons {
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .alert-warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .section {
+            background-color: #2c2c2c;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+
+        .section-title {
+            color: #ffffff;
+            margin-top: 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #444;
+        }
+
+        .message {
+            margin-top: 10px;
+            font-weight: bold;
+            text-align: center;
+        }
+        
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
 </head>
 <body>
-<h1>Web管理配置编辑器</h1>
-<form id="webForm">
-<div><label>启用Web:</label><input type="checkbox" id="enabled"></div>
-<div><label>用户名:</label><input type="text" id="username"></div>
-<div><label>密码:</label><input type="password" id="password"></div>
-<div><label>路径:</label><input type="text" id="path"></div>
-<button type="submit">保存</button>
-</form>
-<div class="message" id="msg"></div>
+    <div class="container">
+        <div class="auth-section">
+            <a href="{{.webPath}}logout" class="logout">退出</a>
+        </div>
 
-<script>
-async function loadConfig(){
-  const resp = await fetch('/admin/config/web');
-  const cfg = await resp.json();
-  document.getElementById('enabled').checked = cfg.enabled;
-  document.getElementById('username').value = cfg.username;
-  document.getElementById('password').value = cfg.password;
-  document.getElementById('path').value = cfg.path;
-}
+        <h1>Web管理配置编辑器</h1>
 
-document.getElementById('webForm').addEventListener('submit', async e=>{
-  e.preventDefault();
-  const payload = {
-    enabled: document.getElementById('enabled').checked,
-    username: document.getElementById('username').value,
-    password: document.getElementById('password').value,
-    path: document.getElementById('path').value
-  };
-  const resp = await fetch('/admin/config/save-web',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(payload)
-  });
-  document.getElementById('msg').textContent = resp.ok?'保存成功':'保存失败';
-});
+        <div id="alert-container" class="hidden"></div>
 
-loadConfig();
-</script>
+        <div class="form-buttons">
+            <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+            <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+            <a href="{{.webPath}}" class="btn">返回首页</a>
+        </div>
+
+        <div id="path-warning" class="alert alert-warning hidden">
+            <strong>注意:</strong> 您已修改了Web管理路径配置，保存后请使用新路径访问: <span id="new-path"></span>
+        </div>
+
+        <form id="webForm">
+            <div class="section">
+                <h2 class="section-title">Web管理配置</h2>
+                
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="enabled" class="form-control">
+                        <label for="enabled">启用Web管理</label>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="username">用户名:</label>
+                    <input type="text" id="username" class="form-control" placeholder="请输入用户名">
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">密码:</label>
+                    <div style="position: relative;">
+                        <input type="password" id="password" class="form-control" placeholder="请输入密码">
+                        <span id="togglePassword" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer;">👁️</span>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="path">管理路径:</label>
+                    <input type="text" id="path" class="form-control" placeholder="例如: /web/">
+                </div>
+            </div>
+        </form>
+
+        <div class="form-buttons">
+            <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+            <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+            <a href="{{.webPath}}" class="btn">返回首页</a>
+        </div>
+
+        <script>
+            // 全局变量
+            let webConfig = {};
+            let originalWebConfig = {};
+            const webPath = '{{.webPath}}';
+
+            // 显示提示消息
+            function showAlert(message, type) {
+                const alertContainer = document.getElementById('alert-container');
+                alertContainer.className = 'alert alert-' + type;
+                alertContainer.textContent = message;
+                alertContainer.classList.remove('hidden');
+                
+                // 5秒后自动隐藏（给用户更多时间看到成功消息）
+                setTimeout(() => {
+                    alertContainer.classList.add('hidden');
+                }, 5000);
+            }
+
+            // 显示路径变更警告
+            function showPathWarning(newPath) {
+                const pathWarning = document.getElementById('path-warning');
+                const newPathSpan = document.getElementById('new-path');
+                newPathSpan.textContent = newPath;
+                pathWarning.classList.remove('hidden');
+            }
+
+            // 隐藏路径变更警告
+            function hidePathWarning() {
+                const pathWarning = document.getElementById('path-warning');
+                pathWarning.classList.add('hidden');
+            }
+
+            // 切换密码显示/隐藏
+            function togglePasswordVisibility() {
+                const passwordInput = document.getElementById('password');
+                const toggleIcon = document.getElementById('togglePassword');
+                
+                if (passwordInput.type === 'password') {
+                    passwordInput.type = 'text';
+                    toggleIcon.textContent = '🙈';
+                } else {
+                    passwordInput.type = 'password';
+                    toggleIcon.textContent = '👁️';
+                }
+            }
+
+            // 加载配置
+            async function loadConfig() {
+                try {
+                    const resp = await fetch(webPath + 'config/web');
+                    if (!resp.ok) {
+                        throw new Error(`HTTP error! status: ${resp.status}`);
+                    }
+                    const cfg = await resp.json();
+                    
+                    webConfig = cfg || {};
+                    originalWebConfig = JSON.parse(JSON.stringify(webConfig)); // 保存原始配置副本
+                    
+                    document.getElementById('enabled').checked = webConfig.enabled || false;
+                    document.getElementById('username').value = webConfig.username || '';
+                    document.getElementById('password').value = webConfig.password || '';
+                    document.getElementById('path').value = webConfig.path || '';
+                    
+                    // 只有在不是因为路径变更的情况下才隐藏警告
+                    if (!document.getElementById('path-warning') || !document.getElementById('path-warning').classList.contains('alert-warning')) {
+                        hidePathWarning();
+                    }
+                } catch (error) {
+                    console.error('加载配置失败:', error);
+                    showAlert('加载配置失败: ' + error.message, 'danger');
+                }
+            }
+
+            // 检查是否有未保存的更改
+            function hasUnsavedChanges() {
+                return JSON.stringify(webConfig) !== JSON.stringify(originalWebConfig);
+            }
+
+            // 保存配置
+            async function saveConfig() {
+                try {
+                    const pathInput = document.getElementById('path');
+                    const payload = {
+                        enabled: document.getElementById('enabled').checked,
+                        username: document.getElementById('username').value,
+                        password: document.getElementById('password').value,
+                        path: pathInput.value
+                    };
+
+                    // 检查路径是否变更
+                    const pathChanged = payload.path && payload.path !== originalWebConfig.path;
+                    const newPath = payload.path;
+                    
+                    webConfig = payload; // 更新配置副本
+
+                    const resp = await fetch(webPath + 'config/save-web', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (resp.ok) {
+                        originalWebConfig = JSON.parse(JSON.stringify(webConfig)); // 更新原始配置副本
+                        
+                        // 检查路径是否变更
+                        if (pathChanged) {
+                            showPathWarning(newPath);
+                            showAlert('配置保存成功，请使用新路径访问: ' + newPath, 'success');
+                        } else {
+                            showAlert('配置保存成功,点击重新加载', 'success');
+                        }
+                    } else {
+                        const errorMsg = await resp.text();
+                        throw new Error(errorMsg || '保存失败');
+                    }
+                } catch (error) {
+                    console.error('保存配置失败:', error);
+                    showAlert('保存配置失败: ' + error.message, 'danger');
+                }
+            }
+
+            // 重新加载配置
+            async function reloadConfig() {
+                if (hasUnsavedChanges()) {
+                    if (confirm('确定要重新加载配置吗？未保存的更改将会丢失。')) {
+                        await loadConfig();
+                        showAlert('配置已重新加载', 'success');
+                    }
+                } else {
+                    await loadConfig();
+                    showAlert('配置已重新加载', 'success');
+                }
+            }
+
+            // 页面加载时获取配置
+            document.addEventListener('DOMContentLoaded', function() {
+                loadConfig();
+                
+                // 添加密码切换事件监听器
+                const togglePassword = document.getElementById('togglePassword');
+                if (togglePassword) {
+                    togglePassword.addEventListener('click', togglePasswordVisibility);
+                }
+            });
+
+            // 页面卸载前检查是否有未保存的更改
+            window.addEventListener('beforeunload', function(e) {
+                if (hasUnsavedChanges()) {
+                    e.preventDefault();
+                    e.returnValue = '';
+                    return '';
+                }
+            });
+        </script>
+    </div>
 </body>
 </html>

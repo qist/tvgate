@@ -118,6 +118,9 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"jx-editor", h.cookieAuth(h.handleJXEditor))
 	mux.HandleFunc(webPath+"server-monitor-editor", h.cookieAuth(h.handleServerMonitorEditor))
 	mux.HandleFunc(webPath+"server-editor", h.cookieAuth(h.handleServerEditor))
+	mux.HandleFunc(webPath+"web-editor", h.cookieAuth(h.handleWebEditor))
+	mux.HandleFunc(webPath+"reload-editor", h.cookieAuth(h.handleReloadEditor))
+	mux.HandleFunc(webPath+"http-editor", h.cookieAuth(h.handleHTTPEditor))
 	mux.HandleFunc(webPath+"log-editor", h.cookieAuth(http.HandlerFunc(h.handleLogEditor)))
 	
 	mux.HandleFunc(webPath+"config", h.cookieAuth(h.handleConfig))
@@ -130,6 +133,9 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/save-jx", h.cookieAuth(h.handleJXConfigSave))
 	mux.HandleFunc(webPath+"config/save-server-monitor", h.cookieAuth(h.handleServerMonitorConfigSave))
 	mux.HandleFunc(webPath+"config/save-server", h.cookieAuth(h.handleServerConfigSave))
+	mux.HandleFunc(webPath+"config/save-web", h.cookieAuth(h.handleWebConfigSave))
+	mux.HandleFunc(webPath+"config/save-reload", h.cookieAuth(h.handleReloadConfigSave))
+	mux.HandleFunc(webPath+"config/save-http", h.cookieAuth(h.handleHTTPConfigSave))
 	mux.HandleFunc(webPath+"config/save-log", h.cookieAuth(http.HandlerFunc(h.handleSaveLogConfig)))
 
 	mux.HandleFunc(webPath+"config/validate", h.cookieAuth(h.handleConfigValidate))
@@ -141,6 +147,9 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/jx", h.cookieAuth(h.handleJXConfig))
 	mux.HandleFunc(webPath+"config/server-monitor", h.cookieAuth(h.handleServerMonitorConfig))
 	mux.HandleFunc(webPath+"config/server", h.cookieAuth(h.handleServerConfig))
+	mux.HandleFunc(webPath+"config/web", h.cookieAuth(h.handleWebConfig))
+	mux.HandleFunc(webPath+"config/reload", h.cookieAuth(h.handleReloadConfig))
+	mux.HandleFunc(webPath+"config/http", h.cookieAuth(h.handleHTTPConfig))
 	mux.HandleFunc(webPath+"config/log", h.cookieAuth(http.HandlerFunc(h.handleGetLogConfig)))
 
 }

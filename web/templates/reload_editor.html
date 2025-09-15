@@ -2,91 +2,269 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>TVGate 配置重新加载间隔</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>配置重新加载间隔 - TVGate Web管理</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            margin: 20px;
+            margin: 0;
+            padding: 20px;
+            background-color: #121212;
+            color: #e0e0e0;
         }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #1e1e1e;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+        }
+
         h1 {
-            font-size: 24px;
+            color: #ffffff;
+            text-align: center;
+        }
+
+        .auth-section {
+            text-align: right;
             margin-bottom: 20px;
         }
-        label {
+
+        .auth-section a {
             display: inline-block;
-            width: 150px;
+            padding: 8px 16px;
+            background-color: #28a745;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+
+        .auth-section a.logout {
+            background-color: #dc3545;
+        }
+
+        .auth-section a:hover {
+            opacity: 0.8;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
             font-weight: bold;
+            color: #ffffff;
         }
-        input[type="number"] {
-            width: 80px;
-            padding: 5px;
+
+        .form-control {
+            width: 100%;
+            padding: 10px;
+            background-color: #2c2c2c;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #e0e0e0;
+            box-sizing: border-box;
         }
-        button {
-            padding: 5px 15px;
-            margin-top: 10px;
+
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            border: none;
             cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
         }
+
+        .btn:hover {
+            background-color: #0056b3;
+        }
+
+        .btn-success {
+            background-color: #28a745;
+        }
+
+        .btn-success:hover {
+            background-color: #1e7e34;
+        }
+
+        .btn-danger {
+            background-color: #dc3545;
+        }
+
+        .btn-danger:hover {
+            background-color: #bd2130;
+        }
+
+        .btn-warning {
+            background-color: #ffc107;
+            color: #212529;
+        }
+
+        .btn-warning:hover {
+            background-color: #e0a800;
+        }
+
+        .form-buttons {
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .section {
+            background-color: #2c2c2c;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+
+        .section-title {
+            color: #ffffff;
+            margin-top: 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #444;
+        }
+
         .message {
             margin-top: 10px;
             font-weight: bold;
+            text-align: center;
         }
     </style>
 </head>
 <body>
-    <h1>TVGate 配置重新加载间隔</h1>
-    <form id="reloadForm">
-        <div>
-            <label for="reload">Reload (秒):</label>
-            <input type="number" id="reload" name="reload" min="1" required>
+    <div class="container">
+        <div class="auth-section">
+            <a href="{{.webPath}}logout" class="logout">退出</a>
         </div>
-        <button type="submit">保存</button>
-    </form>
-    <div class="message" id="message"></div>
 
-    <script>
-        const form = document.getElementById('reloadForm');
-        const reloadInput = document.getElementById('reload');
-        const messageDiv = document.getElementById('message');
+        <h1>配置重新加载间隔</h1>
 
-        // 获取当前配置
-        async function loadConfig() {
-            try {
-                const resp = await fetch('config/reload');
-                const data = await resp.json();
-                reloadInput.value = data.reload || 5;
-            } catch (err) {
-                messageDiv.textContent = "获取配置失败: " + err;
+        <div id="alert-container" class="hidden"></div>
+
+        <div class="form-buttons">
+            <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+            <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+            <a href="{{.webPath}}" class="btn">返回首页</a>
+        </div>
+
+        <form id="reloadForm">
+            <div class="section">
+                <h2 class="section-title">重新加载配置</h2>
+                
+                <div class="form-group">
+                    <label for="reload">重新加载间隔 (秒):</label>
+                    <input type="number" id="reload" class="form-control" min="1" placeholder="请输入重新加载间隔(秒)">
+                </div>
+            </div>
+        </form>
+
+        <div class="form-buttons">
+            <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+            <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+            <a href="{{.webPath}}" class="btn">返回首页</a>
+        </div>
+
+        <script>
+            const webPath = '{{.webPath}}';
+
+            // 显示提示消息
+            function showAlert(message, type) {
+                const alertContainer = document.getElementById('alert-container');
+                alertContainer.className = 'alert alert-' + type;
+                alertContainer.textContent = message;
+                alertContainer.classList.remove('hidden');
+                
+                // 5秒后自动隐藏
+                setTimeout(() => {
+                    alertContainer.classList.add('hidden');
+                }, 5000);
             }
-        }
 
-        // 提交保存配置
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const reloadValue = parseInt(reloadInput.value, 10);
-            if (isNaN(reloadValue) || reloadValue < 1) {
-                messageDiv.textContent = "请输入有效的数字 (>=1)";
-                return;
-            }
-
-            try {
-                const resp = await fetch('config/save-reload', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ reload: reloadValue })
-                });
-                if (resp.ok) {
-                    messageDiv.textContent = "保存成功!";
-                } else {
-                    const text = await resp.text();
-                    messageDiv.textContent = "保存失败: " + text;
+            // 加载配置
+            async function loadConfig() {
+                try {
+                    const resp = await fetch(webPath + 'config/reload');
+                    if (!resp.ok) {
+                        throw new Error(`HTTP error! status: ${resp.status}`);
+                    }
+                    const data = await resp.json();
+                    document.getElementById('reload').value = data.reload || 5;
+                } catch (error) {
+                    console.error('加载配置失败:', error);
+                    showAlert('加载配置失败: ' + error.message, 'danger');
                 }
-            } catch (err) {
-                messageDiv.textContent = "保存失败: " + err;
             }
-        });
 
-        // 页面加载时获取配置
-        loadConfig();
-    </script>
+            // 保存配置
+            async function saveConfig() {
+                try {
+                    const reloadValue = parseInt(document.getElementById('reload').value, 10);
+                    if (isNaN(reloadValue) || reloadValue < 1) {
+                        showAlert("请输入有效的数字 (>=1)", 'danger');
+                        return;
+                    }
+
+                    const resp = await fetch(webPath + 'config/save-reload', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ reload: reloadValue })
+                    });
+
+                    if (resp.ok) {
+                        showAlert('配置保存成功', 'success');
+                    } else {
+                        const text = await resp.text();
+                        throw new Error(text || '保存失败');
+                    }
+                } catch (error) {
+                    console.error('保存配置失败:', error);
+                    showAlert('保存配置失败: ' + error.message, 'danger');
+                }
+            }
+
+            // 重新加载配置
+            async function reloadConfig() {
+                await loadConfig();
+                showAlert('配置已重新加载', 'success');
+            }
+
+            // 页面加载时获取配置
+            document.addEventListener('DOMContentLoaded', function() {
+                loadConfig();
+            });
+        </script>
+    </div>
 </body>
 </html>
