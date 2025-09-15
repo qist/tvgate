@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>服务器监控编辑器 - TVGate Web管理</title>
+    <title>服务器配置编辑器 - TVGate Web管理</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -182,17 +182,57 @@
             color: #aaa;
             margin-top: 5px;
         }
+        
+        .multicast-ifaces-container {
+            margin-top: 10px;
+        }
+        
+        .iface-item {
+            display: flex;
+            margin-bottom: 5px;
+        }
+        
+        .iface-item input {
+            flex: 1;
+            margin-right: 10px;
+        }
+        
+        .iface-item button {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 5px 10px;
+        }
+        
+        .iface-item button:hover {
+            background-color: #bd2130;
+        }
+        
+        .add-iface-btn {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 8px 12px;
+            margin-top: 10px;
+        }
+        
+        .add-iface-btn:hover {
+            background-color: #1e7e34;
+        }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
 </head>
 <body>
     <div class="container">
         <div class="auth-section">
-            <a href="{{.monitorPath}}" class="btn btn-secondary" target="_blank">系统监控</a>
             <a href="{{.webPath}}logout" class="logout">退出</a>
         </div>
 
-        <h1>服务器监控编辑器</h1>
+        <h1>服务器配置编辑器</h1>
 
         <div id="alert-container" class="hidden"></div>
 
@@ -202,14 +242,78 @@
             <a href="{{.webPath}}" class="btn">返回首页</a>
         </div>
 
-        <form id="server-monitor-form">
+        <form id="server-config-form">
             <div class="section">
-                <h2 class="section-title">监控配置</h2>
+                <h2 class="section-title">基础配置</h2>
                 
                 <div class="form-group">
-                    <label for="monitor_path">监控路径:</label>
-                    <input type="text" id="monitor_path" class="form-control" placeholder="/status" onchange="updateConfig('monitor_path', this.value)">
-                    <div class="help-text">设置服务器监控页面的访问路径，默认为/status</div>
+                    <label for="port">监听端口:</label>
+                    <input type="number" id="port" class="form-control" 
+                           placeholder="8888" 
+                           value="{{ if .config.port }}{{ .config.port }}{{ end }}" 
+                           onchange="updateConfig('port', parseInt(this.value))">
+                    <div class="help-text">服务器监听的端口号</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="certfile">证书文件路径:</label>
+                    <input type="text" id="certfile" class="form-control" 
+                           placeholder="" 
+                           value="{{ if .config.certfile }}{{ .config.certfile }}{{ end }}" 
+                           onchange="updateConfig('certfile', this.value)">
+                    <div class="help-text">TLS证书文件路径，留空表示不启用HTTPS</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="keyfile">私钥文件路径:</label>
+                    <input type="text" id="keyfile" class="form-control" 
+                           placeholder="" 
+                           value="{{ if .config.keyfile }}{{ .config.keyfile }}{{ end }}" 
+                           onchange="updateConfig('keyfile', this.value)">
+                    <div class="help-text">TLS私钥文件路径，留空表示不启用HTTPS</div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2 class="section-title">SSL配置</h2>
+                
+                <div class="form-group">
+                    <label for="ssl_protocols">SSL协议版本:</label>
+                    <input type="text" id="ssl_protocols" class="form-control" 
+                           placeholder="TLSv1.2 TLSv1.3" 
+                           value="{{ if .config.ssl_protocols }}{{ .config.ssl_protocols }}{{ else }}{{ end }}" 
+                           onchange="updateConfig('ssl_protocols', this.value)">
+                    <div class="help-text">支持的TLS协议版本，多个版本用空格分隔</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="ssl_ciphers">SSL加密套件:</label>
+                    <textarea id="ssl_ciphers" class="form-control" rows="4"
+                              placeholder="TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305:TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305:TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256" 
+                              onchange="updateConfig('ssl_ciphers', this.value)">{{ if .config.ssl_ciphers }}{{ .config.ssl_ciphers }}{{ else }}{{ end }}</textarea>
+                    <div class="help-text">支持的TLS加密套件，多个套件用冒号分隔</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="ssl_ecdh_curve">SSL ECDH曲线:</label>
+                    <input type="text" id="ssl_ecdh_curve" class="form-control" 
+                           placeholder="X25519MLKEM768:X25519:P-384:P-256" 
+                           value="{{ if .config.ssl_ecdh_curve }}{{ .config.ssl_ecdh_curve }}{{ else }}{{ end }}" 
+                           onchange="updateConfig('ssl_ecdh_curve', this.value)">
+                    <div class="help-text">支持的TLS曲线，多个曲线用冒号分隔</div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2 class="section-title">组播配置</h2>
+                
+                <div class="form-group">
+                    <label>组播监听接口:</label>
+                    <div class="multicast-ifaces-container" id="multicast-ifaces-container">
+                        <!-- 动态添加接口项 -->
+                    </div>
+                    <button type="button" class="add-iface-btn" onclick="addMulticastIface()">添加接口</button>
+                    <div class="help-text">组播监听的网络接口列表，留空表示使用默认接口</div>
                 </div>
             </div>
         </form>
@@ -240,7 +344,7 @@
 
         // 加载配置
         function loadConfig() {
-            fetch(webPath + 'config/server-monitor')
+            fetch(webPath + 'config/server')
                 .then(response => {
                     if (!response.ok) {
                         throw new Error('加载配置失败');
@@ -260,12 +364,64 @@
 
         // 填充表单
         function populateForm() {
-            document.getElementById('monitor_path').value = serverConfig.monitor_path || '/status';
+            document.getElementById('port').value = serverConfig.port || 8888;
+            document.getElementById('certfile').value = serverConfig.certfile || '';
+            document.getElementById('keyfile').value = serverConfig.keyfile || '';
+            document.getElementById('ssl_protocols').value = serverConfig.ssl_protocols || '';
+            document.getElementById('ssl_ciphers').value = serverConfig.ssl_ciphers || '';
+            document.getElementById('ssl_ecdh_curve').value = serverConfig.ssl_ecdh_curve || '';
+            
+            // 处理组播接口列表
+            const container = document.getElementById('multicast-ifaces-container');
+            container.innerHTML = ''; // 清空现有内容
+            
+            if (Array.isArray(serverConfig.multicast_ifaces) && serverConfig.multicast_ifaces.length > 0) {
+                serverConfig.multicast_ifaces.forEach(iface => {
+                    addMulticastIface(iface);
+                });
+            } else {
+                // 默认添加一个空的接口输入框
+                addMulticastIface();
+            }
+        }
+
+        // 添加组播接口输入框
+        function addMulticastIface(value = '') {
+            const container = document.getElementById('multicast-ifaces-container');
+            const ifaceItem = document.createElement('div');
+            ifaceItem.className = 'iface-item';
+            ifaceItem.innerHTML = `
+                <input type="text" class="form-control" placeholder="eth0" value="${value}">
+                <button type="button" onclick="removeMulticastIface(this)">删除</button>
+            `;
+            container.appendChild(ifaceItem);
+        }
+
+        // 删除组播接口输入框
+        function removeMulticastIface(button) {
+            const ifaceItem = button.parentElement;
+            ifaceItem.remove();
+        }
+
+        // 获取所有组播接口值
+        function getMulticastIfaces() {
+            const ifaces = [];
+            const inputs = document.querySelectorAll('#multicast-ifaces-container .iface-item input');
+            inputs.forEach(input => {
+                const value = input.value.trim();
+                if (value) {
+                    ifaces.push(value);
+                }
+            });
+            return ifaces;
         }
 
         // 检查表单是否有未保存的更改
         function hasUnsavedChanges() {
-            return JSON.stringify(serverConfig) !== JSON.stringify(originalConfig);
+            // 特别处理multicast_ifaces字段
+            const currentConfig = JSON.parse(JSON.stringify(serverConfig));
+            currentConfig.multicast_ifaces = getMulticastIfaces();
+            return JSON.stringify(currentConfig) !== JSON.stringify(originalConfig);
         }
 
         // 更新配置
@@ -275,13 +431,16 @@
 
         // 保存配置
         function saveConfig() {
+            // 收集组播接口数据
+            serverConfig.multicast_ifaces = getMulticastIfaces();
+            
             // 验证必填字段
-            if (!serverConfig.monitor_path) {
-                showAlert('监控路径不能为空', 'danger');
+            if (!serverConfig.port) {
+                showAlert('监听端口不能为空', 'danger');
                 return;
             }
 
-            fetch(webPath + 'config/save-server-monitor', {
+            fetch(webPath + 'config/save-server', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'

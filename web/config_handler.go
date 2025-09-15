@@ -117,6 +117,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"global-auth-editor", h.cookieAuth(h.handleGlobalAuthEditor))
 	mux.HandleFunc(webPath+"jx-editor", h.cookieAuth(h.handleJXEditor))
 	mux.HandleFunc(webPath+"server-monitor-editor", h.cookieAuth(h.handleServerMonitorEditor))
+	mux.HandleFunc(webPath+"server-editor", h.cookieAuth(h.handleServerEditor))
 	mux.HandleFunc(webPath+"config", h.cookieAuth(h.handleConfig))
 	mux.HandleFunc(webPath+"config/save", h.cookieAuth(h.handleConfigSave))
 	mux.HandleFunc(webPath+"config/save-node", h.cookieAuth(h.handleConfigSaveNode))
@@ -126,6 +127,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/save-global-auth", h.cookieAuth(h.handleGlobalAuthConfigSave))
 	mux.HandleFunc(webPath+"config/save-jx", h.cookieAuth(h.handleJXConfigSave))
 	mux.HandleFunc(webPath+"config/save-server-monitor", h.cookieAuth(h.handleServerMonitorConfigSave))
+	mux.HandleFunc(webPath+"config/save-server", h.cookieAuth(h.handleServerConfigSave))
 	mux.HandleFunc(webPath+"config/validate", h.cookieAuth(h.handleConfigValidate))
 	mux.HandleFunc(webPath+"config/node", h.cookieAuth(h.handleNodeConfig))
 	mux.HandleFunc(webPath+"config/group", h.cookieAuth(h.handleGroupConfig))
@@ -134,6 +136,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/global-auth", h.cookieAuth(h.handleGlobalAuthConfig))
 	mux.HandleFunc(webPath+"config/jx", h.cookieAuth(h.handleJXConfig))
 	mux.HandleFunc(webPath+"config/server-monitor", h.cookieAuth(h.handleServerMonitorConfig))
+	mux.HandleFunc(webPath+"config/server", h.cookieAuth(h.handleServerConfig))
 }
 
 // handleWeb 处理web管理界面首页

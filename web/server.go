@@ -1,0 +1,248 @@
+package web
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/qist/tvgate/config"
+	"gopkg.in/yaml.v3"
+)
+
+// handleServerEditor 处理服务器配置编辑器页面
+func (h *ConfigHandler) handleServerEditor(w http.ResponseWriter, r *http.Request) {
+	webPath := h.getWebPath()
+
+	data := map[string]interface{}{
+		"title":   "TVGate 服务器配置编辑器",
+		"webPath": webPath,
+	}
+
+	if err := h.renderTemplate(w, r, "server_editor", "templates/server_editor.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleServerConfig 处理服务器配置获取请求
+func (h *ConfigHandler) handleServerConfig(w http.ResponseWriter, r *http.Request) {
+	// 设置响应头
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	// 获取当前配置
+	config.CfgMu.RLock()
+	server := config.Cfg.Server
+	config.CfgMu.RUnlock()
+
+	// 转换为可JSON序列化的格式
+	serverConfig := map[string]interface{}{
+		"port":              server.Port,
+		"certfile":          server.CertFile,
+		"keyfile":           server.KeyFile,
+		"ssl_protocols":     server.SSLProtocols,
+		"ssl_ciphers":       server.SSLCiphers,
+		"ssl_ecdh_curve":    server.SSLECDHCurve,
+		"multicast_ifaces":  server.MulticastIfaces,
+	}
+
+	// 返回JSON格式的配置
+	if err := json.NewEncoder(w).Encode(serverConfig); err != nil {
+		http.Error(w, "序列化配置失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+// handleServerConfigSave 处理服务器配置保存请求
+func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Request) {
+	// 检查请求方法
+	if r.Method != http.MethodPost {
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 读取请求体
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "读取请求体失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// 解析JSON数据
+	var serverConfig map[string]interface{}
+	if err := json.Unmarshal(body, &serverConfig); err != nil {
+		http.Error(w, "解析JSON失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// 读取配置文件
+	configPath := *config.ConfigFilePath
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		http.Error(w, "读取配置文件失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 使用yaml.Node解析YAML配置以保持注释和格式
+	var fullNode yaml.Node
+	if err := yaml.Unmarshal(data, &fullNode); err != nil {
+		http.Error(w, "解析配置文件失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 查找并更新server节点
+	if fullNode.Kind == yaml.DocumentNode && len(fullNode.Content) > 0 {
+		doc := fullNode.Content[0]
+		if doc.Kind == yaml.MappingNode {
+			// 查找server节点
+			serverFound := false
+			for i := 0; i < len(doc.Content); i += 2 {
+				keyNode := doc.Content[i]
+				if keyNode.Kind == yaml.ScalarNode && keyNode.Value == "server" {
+					// 创建新的server节点
+					newServerNode := &yaml.Node{Kind: yaml.MappingNode}
+
+					// 添加port
+					if port, ok := serverConfig["port"]; ok {
+						newServerNode.Content = append(newServerNode.Content,
+							&yaml.Node{Kind: yaml.ScalarNode, Value: "port"},
+							&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", port)})
+					}
+
+					// 添加certfile
+					if certfile, ok := serverConfig["certfile"]; ok {
+						certfileStr := fmt.Sprintf("%v", certfile)
+						if certfileStr != "" {
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "certfile"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: certfileStr, Style: yaml.DoubleQuotedStyle})
+						}
+					}
+
+					// 添加keyfile
+					if keyfile, ok := serverConfig["keyfile"]; ok {
+						keyfileStr := fmt.Sprintf("%v", keyfile)
+						if keyfileStr != "" {
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "keyfile"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: keyfileStr, Style: yaml.DoubleQuotedStyle})
+						}
+					}
+
+					// 添加ssl_protocols
+					if sslProtocols, ok := serverConfig["ssl_protocols"]; ok {
+						sslProtocolsStr := fmt.Sprintf("%v", sslProtocols)
+						if sslProtocolsStr != "" {
+							// 去除可能存在的引号
+							// trimmed := strings.Trim(sslProtocolsStr, "\"")
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_protocols"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: sslProtocolsStr, Style: yaml.DoubleQuotedStyle})
+						}
+					}
+
+					// 添加ssl_ciphers
+					if sslCiphers, ok := serverConfig["ssl_ciphers"]; ok {
+						sslCiphersStr := fmt.Sprintf("%v", sslCiphers)
+						if sslCiphersStr != "" {
+							// 去除可能存在的引号
+							// trimmed := strings.Trim(sslCiphersStr, "\"")
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_ciphers"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: sslCiphersStr, Style: yaml.DoubleQuotedStyle})
+						}
+					}
+
+					// 添加ssl_ecdh_curve
+					if sslECDHCurve, ok := serverConfig["ssl_ecdh_curve"]; ok {
+						sslECDHCurveStr := fmt.Sprintf("%v", sslECDHCurve)
+						if sslECDHCurveStr != "" {
+							// 去除可能存在的引号
+							// trimmed := strings.Trim(sslECDHCurveStr, "\"")
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_ecdh_curve"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: sslECDHCurveStr, Style: yaml.DoubleQuotedStyle})
+						}
+					}
+
+					// 添加multicast_ifaces
+					if multicastIfaces, ok := serverConfig["multicast_ifaces"]; ok {
+						if ifaces, ok := multicastIfaces.([]interface{}); ok && len(ifaces) > 0 {
+							ifacesNode := &yaml.Node{Kind: yaml.SequenceNode}
+							for _, iface := range ifaces {
+								ifaceStr := fmt.Sprintf("%v", iface)
+								if ifaceStr != "" {
+									ifacesNode.Content = append(ifacesNode.Content,
+										&yaml.Node{Kind: yaml.ScalarNode, Value: ifaceStr})
+								}
+							}
+							if len(ifacesNode.Content) > 0 {
+								newServerNode.Content = append(newServerNode.Content,
+									&yaml.Node{Kind: yaml.ScalarNode, Value: "multicast_ifaces"},
+									ifacesNode)
+							}
+						} else if ifacesStr, ok := multicastIfaces.(string); ok {
+							// 处理字符串形式的接口列表
+							ifaces := strings.Split(ifacesStr, ",")
+							ifacesNode := &yaml.Node{Kind: yaml.SequenceNode}
+							for _, iface := range ifaces {
+								iface = strings.TrimSpace(iface)
+								if iface != "" {
+									ifacesNode.Content = append(ifacesNode.Content,
+										&yaml.Node{Kind: yaml.ScalarNode, Value: iface})
+								}
+							}
+							if len(ifacesNode.Content) > 0 {
+								newServerNode.Content = append(newServerNode.Content,
+									&yaml.Node{Kind: yaml.ScalarNode, Value: "multicast_ifaces"},
+									ifacesNode)
+							}
+						}
+					}
+
+					// 替换server节点
+					doc.Content[i+1] = newServerNode
+					serverFound = true
+					break
+				}
+			}
+
+			// 如果没有找到server节点，则创建一个新的
+			if !serverFound {
+				doc.Content = append(doc.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: "server"},
+					&yaml.Node{Kind: yaml.MappingNode})
+			}
+		}
+	}
+
+	// 序列化为YAML格式
+	newData, err := yaml.Marshal(&fullNode)
+	if err != nil {
+		http.Error(w, "序列化配置失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 创建备份文件
+	backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
+	if err := os.WriteFile(backupPath, data, 0644); err != nil {
+		http.Error(w, "创建备份文件失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 写入新配置
+	if err := os.WriteFile(configPath, newData, 0644); err != nil {
+		// 恢复备份文件
+		os.WriteFile(configPath, data, 0644)
+		http.Error(w, "写入配置文件失败，已恢复备份: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 返回成功响应
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("配置保存成功"))
+}
