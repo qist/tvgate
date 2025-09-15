@@ -24,6 +24,9 @@ import (
 //go:embed templates/*
 var templatesFS embed.FS
 
+//go:embed static/*
+var staticFS embed.FS
+
 // WebConfig web管理界面配置
 type WebConfig struct {
 	Username string `yaml:"username"`
@@ -86,6 +89,50 @@ func (h *ConfigHandler) renderTemplate(w http.ResponseWriter, r *http.Request, t
 	return tmpl.Execute(w, data)
 }
 
+// serveStaticFiles 提供静态文件服务
+func (h *ConfigHandler) serveStaticFiles(w http.ResponseWriter, r *http.Request) {
+	// 获取文件路径，去除前缀
+	filePath := strings.TrimPrefix(r.URL.Path, "/static/")
+	
+	// 从嵌入的静态文件系统读取文件
+	data, err := staticFS.ReadFile("static/" + filePath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	
+	// 根据文件扩展名设置正确的MIME类型
+	switch {
+	case strings.HasSuffix(filePath, ".css"):
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	case strings.HasSuffix(filePath, ".js"):
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	case strings.HasSuffix(filePath, ".png"):
+		w.Header().Set("Content-Type", "image/png")
+	case strings.HasSuffix(filePath, ".jpg"), strings.HasSuffix(filePath, ".jpeg"):
+		w.Header().Set("Content-Type", "image/jpeg")
+	case strings.HasSuffix(filePath, ".gif"):
+		w.Header().Set("Content-Type", "image/gif")
+	case strings.HasSuffix(filePath, ".svg"):
+		w.Header().Set("Content-Type", "image/svg+xml")
+	case strings.HasSuffix(filePath, ".ico"):
+		w.Header().Set("Content-Type", "image/x-icon")
+	case strings.HasSuffix(filePath, ".woff"):
+		w.Header().Set("Content-Type", "font/woff")
+	case strings.HasSuffix(filePath, ".woff2"):
+		w.Header().Set("Content-Type", "font/woff2")
+	case strings.HasSuffix(filePath, ".ttf"):
+		w.Header().Set("Content-Type", "font/ttf")
+	case strings.HasSuffix(filePath, ".eot"):
+		w.Header().Set("Content-Type", "application/vnd.ms-fontobject")
+	default:
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+	
+	// 写入文件内容
+	w.Write(data)
+}
+
 // ServeMux 注册配置管理路由
 func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	// 获取配置的Web路径，默认为/web/
@@ -107,6 +154,9 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"login", h.handleLogin)
 	mux.HandleFunc(webPath+"logout", h.handleLogout)
 	mux.HandleFunc(webPath+"auth-status", h.handleAuthStatus)
+	
+	// 注册静态文件服务路由
+	mux.HandleFunc("/static/", h.serveStaticFiles)
 
 	// 注册需要认证的路由，使用基于Cookie的认证中间件
 	mux.HandleFunc(webPath+"editor", h.cookieAuth(h.handleEditor))
@@ -279,6 +329,7 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// log.Printf("处理登录请求: Path=%s, Method=%s", r.URL.Path, r.Method)
 
 	webPath := h.getWebPath()
+
 	// log.Printf("Web路径配置: %s", webPath)
 
 	// GET请求显示登录页面
@@ -290,6 +341,7 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, redirectURL, http.StatusFound)
 			return
 		}
+
 
 		// log.Printf("显示登录页面")
 
@@ -343,9 +395,13 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+
 		// log.Printf("收到登录凭据，用户名: %s", credentials.Username)
 
 		// 验证用户名和密码
+
+
+
 		usernameMatch := subtle.ConstantTimeCompare([]byte(credentials.Username), []byte(h.webConfig.Username)) == 1
 		passwordMatch := subtle.ConstantTimeCompare([]byte(credentials.Password), []byte(h.webConfig.Password)) == 1
 
@@ -373,6 +429,7 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "用户名或密码错误", http.StatusUnauthorized)
 		return
 	}
+
 
 	// log.Printf("不支持的请求方法: %s", r.Method)
 	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

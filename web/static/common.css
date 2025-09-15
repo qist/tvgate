@@ -1,0 +1,432 @@
+/* Windows 11风格主题CSS */
+
+:root {
+  /* 深色主题 */
+  --win11-bg-dark: #202020;
+  --win11-surface-dark: #2d2d2d;
+  --win11-card-dark: #363636;
+  --win11-text-primary-dark: #ffffff;
+  --win11-text-secondary-dark: #cccccc;
+  --win11-text-tertiary-dark: #aaaaaa;
+  --win11-accent-dark: #0078d4;
+  --win11-accent-hover-dark: #0066b4;
+  --win11-accent-active-dark: #005a9e;
+  --win11-success-dark: #66c266;
+  --win11-warning-dark: #ffcc00;
+  --win11-danger-dark: #e81123;
+  --win11-border-dark: #454545;
+  --win11-shadow-dark: rgba(0, 0, 0, 0.5);
+  
+  /* 浅色主题 */
+  --win11-bg-light: #f3f3f3;
+  --win11-surface-light: #ffffff;
+  --win11-card-light: #f9f9f9;
+  --win11-text-primary-light: #000000;
+  --win11-text-secondary-light: #333333;
+  --win11-text-tertiary-light: #666666;
+  --win11-accent-light: #0078d4;
+  --win11-accent-hover-light: #106ebe;
+  --win11-accent-active-light: #005a9e;
+  --win11-success-light: #107c10;
+  --win11-warning-light: #fdbd00;
+  --win11-danger-light: #d13438;
+  --win11-border-light: #e1e1e1;
+  --win11-shadow-light: rgba(0, 0, 0, 0.1);
+  
+  /* 当前主题变量 */
+  --win11-bg: var(--win11-bg-dark);
+  --win11-surface: var(--win11-surface-dark);
+  --win11-card: var(--win11-card-dark);
+  --win11-text-primary: var(--win11-text-primary-dark);
+  --win11-text-secondary: var(--win11-text-secondary-dark);
+  --win11-text-tertiary: var(--win11-text-tertiary-dark);
+  --win11-accent: var(--win11-accent-dark);
+  --win11-accent-hover: var(--win11-accent-hover-dark);
+  --win11-accent-active: var(--win11-accent-active-dark);
+  --win11-success: var(--win11-success-dark);
+  --win11-warning: var(--win11-warning-dark);
+  --win11-danger: var(--win11-danger-dark);
+  --win11-border: var(--win11-border-dark);
+  --win11-shadow: var(--win11-shadow-dark);
+}
+
+[data-theme="light"] {
+  --win11-bg: var(--win11-bg-light);
+  --win11-surface: var(--win11-surface-light);
+  --win11-card: var(--win11-card-light);
+  --win11-text-primary: var(--win11-text-primary-light);
+  --win11-text-secondary: var(--win11-text-secondary-light);
+  --win11-text-tertiary: var(--win11-text-tertiary-light);
+  --win11-accent: var(--win11-accent-light);
+  --win11-accent-hover: var(--win11-accent-hover-light);
+  --win11-accent-active: var(--win11-accent-active-light);
+  --win11-success: var(--win11-success-light);
+  --win11-warning: var(--win11-warning-light);
+  --win11-danger: var(--win11-danger-light);
+  --win11-border: var(--win11-border-light);
+  --win11-shadow: var(--win11-shadow-light);
+}
+
+/* 基础样式 */
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  margin: 0;
+  padding: 0;
+  background-color: var(--win11-bg);
+  color: var(--win11-text-primary);
+  transition: background-color 0.3s, color 0.3s;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  background-color: var(--win11-surface);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px var(--win11-shadow);
+  transition: background-color 0.3s, box-shadow 0.3s;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--win11-text-primary);
+  font-weight: 600;
+  margin-top: 0;
+  transition: color 0.3s;
+}
+
+h1 {
+  font-size: 24px;
+  text-align: center;
+  padding: 20px 0;
+}
+
+/* 主题切换按钮 */
+.theme-toggle {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: var(--win11-card);
+  border: 1px solid var(--win11-border);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px var(--win11-shadow);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.3s, border-color 0.3s;
+}
+
+.theme-toggle:hover {
+  background-color: var(--win11-accent);
+  border-color: var(--win11-accent);
+}
+
+.theme-toggle svg {
+  width: 20px;
+  height: 20px;
+  color: var(--win11-text-primary);
+}
+
+/* 认证区域 */
+.auth-section {
+  text-align: right;
+  padding: 15px 20px;
+  border-bottom: 1px solid var(--win11-border);
+  transition: border-color 0.3s;
+}
+
+.auth-section a {
+  display: inline-block;
+  padding: 8px 16px;
+  background-color: var(--win11-success);
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
+  transition: background-color 0.3s;
+  margin-left: 10px;
+  font-size: 13px;
+  border: none;
+  cursor: pointer;
+}
+
+.auth-section a.logout {
+  background-color: var(--win11-danger);
+}
+
+.auth-section a:hover {
+  opacity: 0.9;
+}
+
+/* 卡片样式 */
+.card {
+  background-color: var(--win11-card);
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px var(--win11-shadow);
+  transition: background-color 0.3s, box-shadow 0.3s, transform 0.3s;
+  margin-bottom: 20px;
+  border: 1px solid var(--win11-border);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px var(--win11-shadow);
+}
+
+.card h2 {
+  margin-top: 0;
+  font-size: 18px;
+}
+
+/* 表单样式 */
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: var(--win11-text-primary);
+  transition: color 0.3s;
+}
+
+.form-control {
+  width: 100%;
+  padding: 10px 12px;
+  background-color: var(--win11-card);
+  border: 1px solid var(--win11-border);
+  border-radius: 4px;
+  color: var(--win11-text-primary);
+  box-sizing: border-box;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  transition: background-color 0.3s, border-color 0.3s, color 0.3s;
+}
+
+.form-control:focus {
+  outline: none;
+  border-color: var(--win11-accent);
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+}
+
+/* 按钮样式 */
+.btn {
+  display: inline-block;
+  padding: 10px 20px;
+  background-color: var(--win11-accent);
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background-color 0.3s, transform 0.2s;
+}
+
+.btn:hover {
+  background-color: var(--win11-accent-hover);
+  transform: translateY(-1px);
+}
+
+.btn:active {
+  background-color: var(--win11-accent-active);
+  transform: translateY(0);
+}
+
+.btn-success {
+  background-color: var(--win11-success);
+}
+
+.btn-success:hover {
+  background-color: #57a357;
+}
+
+.btn-success:active {
+  background-color: #4d944d;
+}
+
+.btn-danger {
+  background-color: var(--win11-danger);
+}
+
+.btn-danger:hover {
+  background-color: #c40f1d;
+}
+
+.btn-danger:active {
+  background-color: #b00d1a;
+}
+
+.btn-warning {
+  background-color: var(--win11-warning);
+  color: #000000;
+}
+
+.btn-warning:hover {
+  background-color: #e6b800;
+}
+
+.btn-warning:active {
+  background-color: #cca300;
+}
+
+/* 表单按钮区域 */
+.form-buttons {
+  text-align: center;
+  margin: 25px 0;
+  padding: 0 20px;
+}
+
+.form-buttons .btn {
+  margin: 0 10px;
+}
+
+/* 提示信息 */
+.alert {
+  padding: 15px;
+  margin-bottom: 20px;
+  border-radius: 4px;
+  transition: all 0.3s;
+  animation: fadeIn 0.3s;
+}
+
+.alert-success {
+  background-color: rgba(102, 194, 102, 0.2);
+  color: var(--win11-success);
+  border: 1px solid var(--win11-success);
+}
+
+.alert-danger {
+  background-color: rgba(232, 17, 35, 0.2);
+  color: var(--win11-danger);
+  border: 1px solid var(--win11-danger);
+}
+
+.alert-warning {
+  background-color: rgba(255, 204, 0, 0.2);
+  color: var(--win11-warning);
+  border: 1px solid var(--win11-warning);
+}
+
+.hidden {
+  display: none;
+}
+
+/* 网格布局 */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
+  padding: 0 20px 20px;
+}
+
+/* 信息区域 */
+.info-section {
+  background-color: var(--win11-card);
+  padding: 20px;
+  border-radius: 8px;
+  margin: 0 20px 20px;
+  border: 1px solid var(--win11-border);
+  transition: background-color 0.3s, border-color 0.3s;
+}
+
+.info-section h2 {
+  margin-top: 0;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 15px;
+}
+
+.info-item {
+  background-color: var(--win11-surface);
+  padding: 15px;
+  border-radius: 4px;
+  border: 1px solid var(--win11-border);
+  transition: background-color 0.3s, border-color 0.3s;
+}
+
+.info-item h3 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  font-size: 16px;
+}
+
+.configured {
+  color: var(--win11-success);
+}
+
+.not-configured {
+  color: var(--win11-danger);
+}
+
+/* 帮助文本 */
+.help-text {
+  font-size: 13px;
+  color: var(--win11-text-tertiary);
+  margin-top: 5px;
+  transition: color 0.3s;
+}
+
+/* 动画 */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.5s ease-out;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .container {
+    margin: 10px;
+  }
+  
+  .grid {
+    grid-template-columns: 1fr;
+    padding: 0 10px 10px;
+  }
+  
+  .form-buttons {
+    padding: 0 10px;
+  }
+  
+  .info-section {
+    margin: 0 10px 10px;
+  }
+  
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  h1 {
+    font-size: 20px;
+    padding: 15px 0;
+  }
+}
