@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>TVGate Web管理配置</title>
+<style>
+body { font-family: Arial; margin:20px; }
+h1 { font-size: 24px; }
+label { display:inline-block; width:150px; font-weight:bold; margin-bottom:5px; }
+input[type=text], input[type=password], input[type=checkbox] { padding:5px; margin-bottom:10px; width:200px; }
+button { padding:5px 15px; cursor:pointer; margin-top:10px; }
+.message { margin-top:10px; font-weight:bold; }
+</style>
+</head>
+<body>
+<h1>Web管理配置编辑器</h1>
+<form id="webForm">
+<div><label>启用Web:</label><input type="checkbox" id="enabled"></div>
+<div><label>用户名:</label><input type="text" id="username"></div>
+<div><label>密码:</label><input type="password" id="password"></div>
+<div><label>路径:</label><input type="text" id="path"></div>
+<button type="submit">保存</button>
+</form>
+<div class="message" id="msg"></div>
+
+<script>
+async function loadConfig(){
+  const resp = await fetch('/admin/config/web');
+  const cfg = await resp.json();
+  document.getElementById('enabled').checked = cfg.enabled;
+  document.getElementById('username').value = cfg.username;
+  document.getElementById('password').value = cfg.password;
+  document.getElementById('path').value = cfg.path;
+}
+
+document.getElementById('webForm').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const payload = {
+    enabled: document.getElementById('enabled').checked,
+    username: document.getElementById('username').value,
+    password: document.getElementById('password').value,
+    path: document.getElementById('path').value
+  };
+  const resp = await fetch('/admin/config/save-web',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  document.getElementById('msg').textContent = resp.ok?'保存成功':'保存失败';
+});
+
+loadConfig();
+</script>
+</body>
+</html>

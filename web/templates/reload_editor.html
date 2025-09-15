@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>TVGate 配置重新加载间隔</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        label {
+            display: inline-block;
+            width: 150px;
+            font-weight: bold;
+        }
+        input[type="number"] {
+            width: 80px;
+            padding: 5px;
+        }
+        button {
+            padding: 5px 15px;
+            margin-top: 10px;
+            cursor: pointer;
+        }
+        .message {
+            margin-top: 10px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>TVGate 配置重新加载间隔</h1>
+    <form id="reloadForm">
+        <div>
+            <label for="reload">Reload (秒):</label>
+            <input type="number" id="reload" name="reload" min="1" required>
+        </div>
+        <button type="submit">保存</button>
+    </form>
+    <div class="message" id="message"></div>
+
+    <script>
+        const form = document.getElementById('reloadForm');
+        const reloadInput = document.getElementById('reload');
+        const messageDiv = document.getElementById('message');
+
+        // 获取当前配置
+        async function loadConfig() {
+            try {
+                const resp = await fetch('config/reload');
+                const data = await resp.json();
+                reloadInput.value = data.reload || 5;
+            } catch (err) {
+                messageDiv.textContent = "获取配置失败: " + err;
+            }
+        }
+
+        // 提交保存配置
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const reloadValue = parseInt(reloadInput.value, 10);
+            if (isNaN(reloadValue) || reloadValue < 1) {
+                messageDiv.textContent = "请输入有效的数字 (>=1)";
+                return;
+            }
+
+            try {
+                const resp = await fetch('config/save-reload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reload: reloadValue })
+                });
+                if (resp.ok) {
+                    messageDiv.textContent = "保存成功!";
+                } else {
+                    const text = await resp.text();
+                    messageDiv.textContent = "保存失败: " + text;
+                }
+            } catch (err) {
+                messageDiv.textContent = "保存失败: " + err;
+            }
+        });
+
+        // 页面加载时获取配置
+        loadConfig();
+    </script>
+</body>
+</html>

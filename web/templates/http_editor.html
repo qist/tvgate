@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>TVGate HTTP配置编辑器</title>
+<style>
+body{font-family:Arial;margin:20px;}
+h1{font-size:24px;}
+label{display:inline-block;width:200px;font-weight:bold;}
+input[type=text], input[type=checkbox]{padding:5px;margin-bottom:10px;}
+button{padding:5px 15px; cursor:pointer;margin-top:10px;}
+.message{margin-top:10px;font-weight:bold;}
+</style>
+</head>
+<body>
+<h1>HTTP配置编辑器</h1>
+<form id="httpForm">
+<div><label>整体请求超时(s):</label><input type="text" id="timeout"></div>
+<div><label>连接超时(s):</label><input type="text" id="connect_timeout"></div>
+<div><label>TCP保活(s):</label><input type="text" id="keepalive"></div>
+<div><label>响应头超时(s):</label><input type="text" id="response_header_timeout"></div>
+<div><label>空闲连接超时(s):</label><input type="text" id="idle_conn_timeout"></div>
+<div><label>TLS握手超时(s):</label><input type="text" id="tls_handshake_timeout"></div>
+<div><label>禁用KeepAlive:</label><input type="checkbox" id="disable_keepalives"></div>
+<button type="submit">保存</button>
+</form>
+<div class="message" id="msg"></div>
+
+<script>
+async function loadConfig(){
+  const resp = await fetch('/admin/config/http');
+  const cfg = await resp.json();
+  document.getElementById('timeout').value = cfg.timeout_sec;
+  document.getElementById('connect_timeout').value = cfg.connect_timeout_sec;
+  document.getElementById('keepalive').value = cfg.keepalive_sec;
+  document.getElementById('response_header_timeout').value = cfg.response_header_timeout_sec;
+  document.getElementById('idle_conn_timeout').value = cfg.idle_conn_timeout_sec;
+  document.getElementById('tls_handshake_timeout').value = cfg.tls_handshake_timeout_sec;
+  document.getElementById('disable_keepalives').checked = cfg.disable_keepalives;
+}
+
+document.getElementById('httpForm').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const payload = {
+    timeout_sec: parseInt(document.getElementById('timeout').value),
+    connect_timeout_sec: parseInt(document.getElementById('connect_timeout').value),
+    keepalive_sec: parseInt(document.getElementById('keepalive').value),
+    response_header_timeout_sec: parseInt(document.getElementById('response_header_timeout').value),
+    idle_conn_timeout_sec: parseInt(document.getElementById('idle_conn_timeout').value),
+    tls_handshake_timeout_sec: parseInt(document.getElementById('tls_handshake_timeout').value),
+    disable_keepalives: document.getElementById('disable_keepalives').checked
+  };
+  const resp = await fetch('/admin/config/save-http',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)
+  });
+  document.getElementById('msg').textContent = resp.ok?'保存成功':'保存失败';
+});
+
+loadConfig();
+</script>
+</body>
+</html>
