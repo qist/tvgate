@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>日志配置编辑器 - TVGate Web管理</title>
+    <style>
+        body { background:#121212; color:#e0e0e0; font-family: Arial; padding:20px; }
+        .container { background:#1e1e1e; padding:20px; border-radius:8px; max-width:800px; margin:auto; }
+        h1 { text-align:center; color:#fff; }
+        .form-group { margin-bottom:15px; }
+        label { display:block; margin-bottom:5px; font-weight:bold; }
+        .form-control { width:100%; padding:8px; border:1px solid #444; border-radius:4px; background:#2c2c2c; color:#fff; }
+        .btn { padding:10px 20px; border:none; border-radius:4px; cursor:pointer; margin-right:10px; }
+        .btn-success { background:#28a745; color:#fff; }
+        .btn-warning { background:#ffc107; color:#000; }
+        .alert { padding:10px; margin:10px 0; border-radius:4px; }
+        .alert-success { background:#d4edda; color:#155724; }
+        .alert-danger { background:#f8d7da; color:#721c24; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>日志配置编辑器</h1>
+        <div id="alert" class="hidden"></div>
+
+        <div class="form-group">
+            <label><input type="checkbox" id="enabled"> 启用日志</label>
+        </div>
+        <div class="form-group">
+            <label>日志文件路径</label>
+            <input type="text" id="file" class="form-control">
+        </div>
+        <div class="form-group">
+            <label>最大大小 (MB)</label>
+            <input type="number" id="maxsize" class="form-control">
+        </div>
+        <div class="form-group">
+            <label>最大备份数量</label>
+            <input type="number" id="maxbackups" class="form-control">
+        </div>
+        <div class="form-group">
+            <label>最大保留天数</label>
+            <input type="number" id="maxage" class="form-control">
+        </div>
+        <div class="form-group">
+            <label><input type="checkbox" id="compress"> 启用压缩</label>
+        </div>
+
+        <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+        <button class="btn btn-warning" onclick="loadConfig()">重新加载</button>
+        <a href="{{.webPath}}" class="btn">返回首页</a>
+    </div>
+
+    <script>
+        const webPath = "{{.webPath}}";
+        let logConfig = {};
+
+        function showAlert(msg, type) {
+            const el = document.getElementById("alert");
+            el.className = `alert alert-${type}`;
+            el.innerText = msg;
+        }
+
+        function loadConfig() {
+            fetch(webPath + "config/log")
+                .then(r => r.json())
+                .then(data => {
+                    logConfig = data;
+                    document.getElementById("enabled").checked = logConfig.enabled || false;
+                    document.getElementById("file").value = logConfig.file || "";
+                    document.getElementById("maxsize").value = logConfig.maxsize || 0;
+                    document.getElementById("maxbackups").value = logConfig.maxbackups || 0;
+                    document.getElementById("maxage").value = logConfig.maxage || 0;
+                    document.getElementById("compress").checked = logConfig.compress || false;
+                })
+                .catch(e => showAlert("加载失败: "+e.message, "danger"));
+        }
+
+        function saveConfig() {
+            logConfig = {
+                enabled: document.getElementById("enabled").checked,
+                file: document.getElementById("file").value,
+                maxsize: parseInt(document.getElementById("maxsize").value) || 0,
+                maxbackups: parseInt(document.getElementById("maxbackups").value) || 0,
+                maxage: parseInt(document.getElementById("maxage").value) || 0,
+                compress: document.getElementById("compress").checked
+            };
+
+            fetch(webPath + "config/save-log", {
+                method: "POST",
+                headers: {"Content-Type":"application/json"},
+                body: JSON.stringify(logConfig)
+            })
+            .then(r => {
+                if (!r.ok) return r.text().then(t => {throw new Error(t)});
+                return r.text();
+            })
+            .then(msg => showAlert(msg, "success"))
+            .catch(e => showAlert("保存失败: "+e.message, "danger"));
+        }
+
+        window.onload = loadConfig;
+    </script>
+</body>
+</html>
