@@ -48,29 +48,32 @@
             margin-bottom: 15px;
         }
         .btn {
-            padding: 8px 16px;
-            background-color: #007acc;
-            color: white;
-            border: none;
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: #ffffff;
+            text-decoration: none;
             border-radius: 4px;
+            border: none;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 16px;
             transition: background-color 0.3s;
         }
         .btn:hover {
-            background-color: #005a9e;
+            background-color: #0056b3;
         }
         .btn.validate {
-            background-color: #4caf50;
+            background-color: #28a745;
         }
         .btn.validate:hover {
-            background-color: #388e3c;
+            background-color: #1e7e34;
         }
         .btn.format {
-            background-color: #ff9800;
+            background-color: #ffc107;
+            color: #212529;
         }
         .btn.format:hover {
-            background-color: #f57c00;
+            background-color: #e0a800;
         }
         .status {
             padding: 10px;
@@ -151,7 +154,6 @@
             <h1 class="title">{{.title}}</h1>
             <div class="nav-links">
                 <a href="{{.webPath}}" class="btn">返回首页</a>
-                <a href="{{.webPath}}node-editor" class="btn">节点配置编辑器</a>
             </div>
         </div>
 
