@@ -281,9 +281,21 @@
         /* 新增样式：用于列表视图 */
         .api-group-list {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
             gap: 15px;
             margin-bottom: 20px;
+        }
+        
+        .filter-section {
+            background-color: #333;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        
+        .filter-section h4 {
+            margin-top: 0;
+            color: #ffffff;
         }
         
         .api-group-card {
@@ -330,9 +342,20 @@
 
         <!-- 列表视图 -->
         <div id="list-view" class="list-view">
+            <div class="form-group">
+                <label for="jx-path">JX路径:</label>
+                <input type="text" id="jx-path" class="form-control" onchange="updateJXPath(this.value)">
+            </div>
+            
+            <div class="form-group">
+                <label for="default-id">默认ID:</label>
+                <input type="text" id="default-id" class="form-control" onchange="updateDefaultID(this.value)">
+            </div>
+
             <div class="form-buttons">
                 <button class="btn btn-success" onclick="switchToDetailView('')">添加API组</button>
                 <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+                <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
                 <a href="{{.webPath}}" class="btn">返回首页</a>
             </div>
             
@@ -343,6 +366,7 @@
             <div class="form-buttons">
                 <button class="btn btn-success" onclick="switchToDetailView('')">添加API组</button>
                 <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+                <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
                 <a href="{{.webPath}}" class="btn">返回首页</a>
             </div>
         </div>
@@ -420,11 +444,86 @@
                     jxConfig = data || {};
                     originalJXConfig = JSON.parse(JSON.stringify(jxConfig)); // 保存原始配置副本
                     renderAPIGroupList();
+                    renderMainConfig();
                 })
                 .catch(error => {
                     console.error('加载配置失败:', error);
                     showAlert('加载配置失败: ' + error.message, 'danger');
                 });
+        }
+
+        // 保存配置
+        function saveConfig() {
+            // console.log('准备保存配置:', jxConfig);
+            
+            // 验证必填字段
+            if (!jxConfig.path) {
+                showAlert('JX路径不能为空', 'danger');
+                // console.log('669996996');
+                return;
+            }
+            
+            if (!jxConfig.default_id) {
+                showAlert('默认ID不能为空', 'danger');
+                // console.log('ddddddd');
+                return;
+            }
+            
+            // 验证API组
+            if (jxConfig.api_groups) {
+                for (const groupName in jxConfig.api_groups) {
+                    const group = jxConfig.api_groups[groupName];
+                    if (!group.endpoints || group.endpoints.length === 0 || 
+                        (group.endpoints.length === 1 && group.endpoints[0] === "")) {
+                        showAlert(`API组 "${groupName}" 至少需要一个有效的接口地址`, 'danger');
+                        return;
+                    }
+                    
+                    // 检查是否有有效的端点
+                    const hasValidEndpoint = group.endpoints.some(endpoint => endpoint && endpoint.trim() !== "");
+                    if (!hasValidEndpoint) {
+                        showAlert(`API组 "${groupName}" 至少需要一个有效的接口地址`, 'danger');
+                        return;
+                    }
+                }
+            }
+
+            // 添加日志，确认发送的数据
+            // console.log('实际发送的数据:', JSON.stringify(jxConfig));
+
+            fetch(webPath + 'config/save-jx', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(jxConfig)
+            })
+            .then(response => {
+                // console.log('保存配置响应状态:', response.status);
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        console.error('保存配置失败响应内容:', text);
+                        throw new Error(text || '保存失败');
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                // console.log('保存配置成功响应:', data);
+                if (data && data.path !== undefined && data.default_id !== undefined) {
+                    // 如果返回了配置数据，则更新本地配置
+                    jxConfig = data;
+                }
+                originalJXConfig = JSON.parse(JSON.stringify(jxConfig)); // 更新原始配置副本
+                showAlert('配置已保存,点击重新加载', 'success');
+                // 保存成功后更新界面显示，但不重新加载配置
+                renderMainConfig();
+                renderAPIGroupList(); // 同时更新API组列表显示
+            })
+            .catch(error => {
+                console.error('保存配置失败:', error);
+                showAlert('保存配置失败: ' + error.message, 'danger');
+            });
         }
 
         // 渲染API组列表
@@ -451,9 +550,9 @@
             cardDiv.className = 'api-group-card';
             cardDiv.innerHTML = `
                 <h3>${groupName}</h3>
-                <p><strong>接口数量:</strong> ${(groupData.endpoints || []).length}</p>
-                <p><strong>主API:</strong> ${groupData.primary ? '是' : '否'}</p>
-                <p><strong>备用API:</strong> ${groupData.fallback ? '是' : '否'}</p>
+                <p><strong>接口数量:</strong> ${((groupData && groupData.endpoints) || []).length}</p>
+                <p><strong>主API:</strong> ${(groupData && groupData.primary) ? '是' : '否'}</p>
+                <p><strong>备用API:</strong> ${(groupData && groupData.fallback) ? '是' : '否'}</p>
             `;
             cardDiv.onclick = function() {
                 switchToDetailView(groupName);
@@ -498,7 +597,22 @@
                 };
             } else {
                 // 编辑模式
-                groupData = jxConfig.api_groups[currentEditGroupName];
+                // 添加检查确保 api_groups 存在
+                if (jxConfig && jxConfig.api_groups && jxConfig.api_groups[currentEditGroupName]) {
+                    groupData = jxConfig.api_groups[currentEditGroupName];
+                } else {
+                    // 如果找不到组数据，则使用默认值
+                    groupData = {
+                        endpoints: [],
+                        timeout: "",
+                        query_template: "",
+                        primary: false,
+                        weight: 0,
+                        fallback: false,
+                        max_retries: 0,
+                        filters: {}
+                    };
+                }
             }
             
             // 创建过滤器HTML
@@ -507,11 +621,11 @@
                 Object.keys(groupData.filters).forEach(key => {
                     // 转义特殊字符，特别是处理空键的情况
                     const escapedKey = key.replace(/'/g, "\\'").replace(/"/g, "&quot;");
-                    const escapedValue = groupData.filters[key].replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                    const escapedValue = (groupData.filters[key] || '').toString().replace(/'/g, "\\'").replace(/"/g, "&quot;");
                     filtersHTML += `
                         <div class="filter-item">
-                            <input type="text" class="form-control" value="${key}" placeholder="键" onchange="updateAPIGroupFilterKey('${currentEditGroupName}', '${escapedKey}', this.value)">
-                            <input type="text" class="form-control" value="${groupData.filters[key]}" placeholder="值" onchange="updateAPIGroupFilterValue('${currentEditGroupName}', '${escapedKey}', this.value)">
+                            <input type="text" class="form-control" value="${escapedKey}" placeholder="键" onchange="updateAPIGroupFilterKey('${currentEditGroupName}', '${escapedKey}', this.value)">
+                            <input type="text" class="form-control" value="${escapedValue}" placeholder="值" onchange="updateAPIGroupFilterValue('${currentEditGroupName}', '${escapedKey}', this.value)">
                             <button class="remove-filter" onclick="removeAPIGroupFilter('${currentEditGroupName}', '${escapedKey}')">删除</button>
                         </div>
                     `;
@@ -572,12 +686,6 @@
                                 onchange="updateExcludeFilter(this.value)"
                                 placeholder="例如: 电影解说,纪录片,动漫">
                         </div>
-                        <div class="form-group">
-                            <label for="other-filters">其他过滤条件:</label>
-                            <textarea id="other-filters" class="form-control" rows="3" 
-                                onchange="updateOtherFilters(this.value)"
-                                placeholder="格式: key=value&#10;每行一个过滤条件">${getOtherFiltersText(groupData.filters)}</textarea>
-                        </div>
                     </div>
                 
             `;
@@ -591,39 +699,135 @@
         // 获取exclude过滤器的值
         function getExcludeFilterValue(filters) {
             if (!filters) return '';
-            return (filters.exclude || []).join(',');
+            // 修复：filters.exclude 应该是一个字符串，直接返回
+            return filters.exclude || '';
         }
 
         // 更新exclude过滤器的值
         function updateExcludeFilter(value) {
-            const exclude = value.split(',').map(item => item.trim()).filter(item => item);
+            // 修复：确保 currentEditGroupName 存在
+            if (!currentEditGroupName || !jxConfig.api_groups[currentEditGroupName]) {
+                return;
+            }
+            
+            // 修复：直接保存字符串值，而不是数组
+            const exclude = value.trim();
+            const currentFilters = jxConfig.api_groups[currentEditGroupName].filters || {};
             updateCurrentAPIGroupField('filters', {
-                ...jxConfig.api_groups[currentEditGroupName].filters,
-                exclude: exclude
+                ...currentFilters,
+                exclude: exclude  // 直接保存字符串
             });
         }
 
-        // 获取其他过滤器的文本
-        function getOtherFiltersText(filters) {
-            if (!filters) return '';
-            return Object.keys(filters)
-                .filter(key => key !== 'exclude')
-                .map(key => `${key}=${filters[key]}`)
-                .join('\n');
+        // 渲染其他过滤条件
+        function renderOtherFilters(filters) {
+            const container = document.getElementById('other-filters-container');
+            if (!container) return;
+            
+            let filtersHTML = '';
+            const excludeKey = 'exclude';
+            
+            // 渲染除exclude之外的其他过滤条件
+            if (filters) {
+                Object.keys(filters).forEach(key => {
+                    // 跳过exclude键，它在单独的输入框中处理
+                    if (key === excludeKey) return;
+                    
+                    const value = filters[key];
+                    // 转义特殊字符
+                    const escapedKey = key.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                    const escapedValue = String(value).replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                    
+                    filtersHTML += `
+                        <div class="filter-item" data-filter-key="${escapedKey}">
+                            <input type="text" class="form-control" value="${escapedKey}" placeholder="键" onchange="updateOtherFilterKey('${escapedKey}', this.value)">
+                            <input type="text" class="form-control" value="${escapedValue}" placeholder="值" onchange="updateOtherFilterValue('${escapedKey}', this.value)">
+                            <button class="remove-filter" onclick="removeOtherFilter('${escapedKey}')">删除</button>
+                        </div>
+                    `;
+                });
+            }
+            
+            container.innerHTML = filtersHTML || '<p>暂无其他过滤条件</p>';
         }
 
-        // 更新其他过滤器的值
-        function updateOtherFilters(value) {
-            const lines = value.split('\n').map(line => line.trim()).filter(line => line);
-            const newFilters = {};
-            lines.forEach(line => {
-                const [key, val] = line.split('=');
-                newFilters[key.trim()] = val.trim();
-            });
-            updateCurrentAPIGroupField('filters', {
-                ...jxConfig.api_groups[currentEditGroupName].filters,
-                ...newFilters
-            });
+        // 添加其他过滤条件
+        function addOtherFilter() {
+            // 修复：确保 currentEditGroupName 存在
+            if (!currentEditGroupName || !jxConfig.api_groups[currentEditGroupName]) {
+                return;
+            }
+            
+            const currentFilters = jxConfig.api_groups[currentEditGroupName].filters || {};
+            const newKey = "新键";
+            let uniqueKey = newKey;
+            let counter = 1;
+            
+            // 确保键名唯一
+            while (currentFilters.hasOwnProperty(uniqueKey)) {
+                uniqueKey = newKey + counter;
+                counter++;
+            }
+            
+            currentFilters[uniqueKey] = "新值";
+            updateCurrentAPIGroupField('filters', currentFilters);
+            renderOtherFilters(currentFilters);
+        }
+
+        // 更新其他过滤条件的键
+        function updateOtherFilterKey(oldKey, newKey) {
+            // 修复：确保 currentEditGroupName 存在
+            if (!currentEditGroupName || !jxConfig.api_groups[currentEditGroupName]) {
+                return;
+            }
+            
+            // 确保键不为空
+            if (!newKey.trim()) {
+                showAlert('键不能为空', 'danger');
+                return;
+            }
+            
+            const currentFilters = jxConfig.api_groups[currentEditGroupName].filters || {};
+            
+            // 如果键没有改变，直接返回
+            if (oldKey === newKey) return;
+            
+            // 检查新键是否已存在
+            if (currentFilters.hasOwnProperty(newKey)) {
+                showAlert('键已存在', 'danger');
+                return;
+            }
+            
+            // 更新键
+            currentFilters[newKey] = currentFilters[oldKey];
+            delete currentFilters[oldKey];
+            updateCurrentAPIGroupField('filters', currentFilters);
+            renderOtherFilters(currentFilters);
+        }
+
+        // 更新其他过滤条件的值
+        function updateOtherFilterValue(key, value) {
+            // 修复：确保 currentEditGroupName 存在
+            if (!currentEditGroupName || !jxConfig.api_groups[currentEditGroupName]) {
+                return;
+            }
+            
+            const currentFilters = jxConfig.api_groups[currentEditGroupName].filters || {};
+            currentFilters[key] = value;
+            updateCurrentAPIGroupField('filters', currentFilters);
+        }
+
+        // 删除其他过滤条件
+        function removeOtherFilter(key) {
+            // 修复：确保 currentEditGroupName 存在
+            if (!currentEditGroupName || !jxConfig.api_groups[currentEditGroupName]) {
+                return;
+            }
+            
+            const currentFilters = jxConfig.api_groups[currentEditGroupName].filters || {};
+            delete currentFilters[key];
+            updateCurrentAPIGroupField('filters', currentFilters);
+            renderOtherFilters(currentFilters);
         }
 
         // 更新当前组名
@@ -641,6 +845,10 @@
 
         // 更新当前API组的字段
         function updateCurrentAPIGroupField(fieldName, value) {
+            // 修复：确保 jxConfig 和 currentEditGroupName 有效
+            if (!jxConfig || !currentEditGroupName || !jxConfig.api_groups[currentEditGroupName]) {
+                return;
+            }
             jxConfig.api_groups[currentEditGroupName][fieldName] = value;
         }
 
@@ -666,6 +874,104 @@
         function removeAPIGroupFilter(groupName, key) {
             delete jxConfig.api_groups[groupName].filters[key];
             renderDetailView();
+        }
+
+        // 添加API端点输入框
+        function addAPIEndpoint(groupId) {
+            // 确保 currentEditGroupName 存在
+            if (!currentEditGroupName && currentEditGroupName !== "") {
+                return;
+            }
+            
+            // 如果是新增模式（currentEditGroupName 为空字符串），则使用空字符串作为键
+            if (currentEditGroupName === "") {
+                // 确保临时组存在
+                if (!jxConfig.api_groups[""]) {
+                    jxConfig.api_groups[""] = {
+                        endpoints: [],
+                        timeout: "",
+                        query_template: "",
+                        primary: false,
+                        weight: 0,
+                        fallback: false,
+                        max_retries: 0,
+                        filters: {}
+                    };
+                }
+                const endpoints = jxConfig.api_groups[""].endpoints || [];
+                endpoints.push("");
+                jxConfig.api_groups[""].endpoints = endpoints;
+                renderAPIEndpoints('current', endpoints);
+            } else {
+                // 编辑现有组
+                if (!jxConfig.api_groups[currentEditGroupName]) {
+                    return;
+                }
+                
+                const endpoints = jxConfig.api_groups[currentEditGroupName].endpoints || [];
+                endpoints.push("");
+                jxConfig.api_groups[currentEditGroupName].endpoints = endpoints;
+                renderAPIEndpoints('current', endpoints);
+            }
+        }
+
+        // 更新API端点值
+        function updateAPIEndpointValue(groupId, index, value) {
+            // 确保 currentEditGroupName 存在
+            if (!currentEditGroupName || !jxConfig.api_groups[currentEditGroupName]) {
+                return;
+            }
+            
+            const endpoints = jxConfig.api_groups[currentEditGroupName].endpoints || [];
+            endpoints[index] = value;
+            jxConfig.api_groups[currentEditGroupName].endpoints = endpoints;
+        }
+
+        // 删除API端点
+        function removeAPIEndpoint(groupId, index) {
+            // 确保 currentEditGroupName 存在
+            if (!currentEditGroupName || !jxConfig.api_groups[currentEditGroupName]) {
+                return;
+            }
+            
+            const endpoints = jxConfig.api_groups[currentEditGroupName].endpoints || [];
+            endpoints.splice(index, 1);
+            jxConfig.api_groups[currentEditGroupName].endpoints = endpoints;
+            renderAPIEndpoints('current', endpoints);
+        }
+
+        // 渲染API端点列表
+        function renderAPIEndpoints(groupId, endpoints) {
+            const containerId = `endpoints-container-${groupId}`;
+            const container = document.getElementById(containerId);
+            
+            // 如果找不到容器，尝试使用 'current' 作为 groupId
+            if (!container) {
+                const currentContainer = document.getElementById('endpoints-container-current');
+                if (currentContainer) {
+                    renderEndpointsInContainer(currentContainer, endpoints);
+                }
+                return;
+            }
+            
+            renderEndpointsInContainer(container, endpoints);
+        }
+
+        // 在指定容器中渲染端点
+        function renderEndpointsInContainer(container, endpoints) {
+            let endpointsHTML = '';
+            endpoints.forEach((endpoint, index) => {
+                endpointsHTML += `
+                    <div class="endpoint-item">
+                        <input type="text" class="form-control" value="${endpoint || ''}" 
+                            placeholder="例如: https://api.example.com/jx" 
+                            onchange="updateAPIEndpointValue('current', ${index}, this.value)">
+                        <button class="remove-endpoint" onclick="removeAPIEndpoint('current', ${index})">删除</button>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = endpointsHTML;
         }
 
         // 添加API组
@@ -696,10 +1002,77 @@
                 renderAPIGroupList();
             }
         }
-
+ 
         // 保存当前API组
         function saveCurrentAPIGroup() {
-            fetch(webPath + 'config/jx', {
+            // 验证当前编辑的组
+            if (currentEditGroupName && jxConfig.api_groups && jxConfig.api_groups[currentEditGroupName]) {
+                // 编辑现有API组
+                const group = jxConfig.api_groups[currentEditGroupName];
+                if (!group.endpoints || group.endpoints.length === 0 || 
+                    (group.endpoints.length === 1 && group.endpoints[0] === "")) {
+                    showAlert('至少需要一个有效的接口地址', 'danger');
+                    return;
+                }
+                
+                // 检查是否有有效的端点
+                const hasValidEndpoint = group.endpoints.some(endpoint => endpoint && endpoint.trim() !== "");
+                if (!hasValidEndpoint) {
+                    showAlert('至少需要一个有效的接口地址', 'danger');
+                    return;
+                }
+            } else if (currentEditGroupName === "") {
+                // 新增API组，需要输入组名
+                const newGroupName = prompt('请输入组名称:');
+                if (!newGroupName) {
+                    showAlert('组名称不能为空', 'danger');
+                    return;
+                }
+                
+                // 检查组名是否已存在
+                if (jxConfig.api_groups && jxConfig.api_groups[newGroupName]) {
+                    showAlert('组名已存在', 'danger');
+                    return;
+                }
+                
+                // 验证新组的数据
+                const newGroup = jxConfig.api_groups[""] || {
+                    endpoints: [],
+                    timeout: "",
+                    query_template: "",
+                    primary: false,
+                    weight: 0,
+                    fallback: false,
+                    max_retries: 0,
+                    filters: {}
+                };
+                
+                if (!newGroup.endpoints || newGroup.endpoints.length === 0 || 
+                    (newGroup.endpoints.length === 1 && newGroup.endpoints[0] === "")) {
+                    showAlert('至少需要一个有效的接口地址', 'danger');
+                    return;
+                }
+                
+                // 检查是否有有效的端点
+                const hasValidEndpoint = newGroup.endpoints.some(endpoint => endpoint && endpoint.trim() !== "");
+                if (!hasValidEndpoint) {
+                    showAlert('至少需要一个有效的接口地址', 'danger');
+                    return;
+                }
+                
+                // 将临时组数据移动到新的组名下
+                jxConfig.api_groups[newGroupName] = newGroup;
+                delete jxConfig.api_groups[""];
+                currentEditGroupName = newGroupName;
+            } else {
+                showAlert('无效的组名', 'danger');
+                return;
+            }
+            
+            // 添加日志，确认发送的数据
+            // console.log('保存当前API组时发送的数据:', JSON.stringify(jxConfig));
+
+            fetch(webPath + 'config/save-jx', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -707,11 +1080,28 @@
                 body: JSON.stringify(jxConfig)
             })
             .then(response => {
+                // console.log('保存当前API组响应状态:', response.status);
                 if (!response.ok) {
-                    throw new Error('保存配置失败');
+                    return response.text().then(text => {
+                        console.error('保存当前API组失败响应内容:', text);
+                        throw new Error(text || '保存配置失败');
+                    });
                 }
+                return response.json();
+            })
+            .then(data => {
+                // console.log('保存当前API组成功响应:', data);
+                // if (data && data.path !== undefined && data.default_id !== undefined) {
+                    // 如果返回了配置数据，则更新本地配置
+                    jxConfig = data;
+                // }
+                // console.log('保存当前API组成功响应:', jxConfig);
                 originalJXConfig = JSON.parse(JSON.stringify(jxConfig)); // 更新原始配置副本
-                showAlert('配置已保存', 'success');
+                showAlert('配置已保存,点击重新加载', 'success');
+                // 保存成功后更新界面显示，但不重新加载配置
+                renderMainConfig();
+                renderAPIGroupList(); // 同时更新API组列表显示
+                backToListView();
             })
             .catch(error => {
                 console.error('保存配置失败:', error);
@@ -730,7 +1120,7 @@
             }
         }
 
-        // 退出登录
+        // 退出登录 
         function logout() {
             fetch(webPath + 'logout')
                 .then(response => {
@@ -744,6 +1134,22 @@
                     console.error('退出登录失败:', error);
                     showAlert('退出登录失败: ' + error.message, 'danger');
                 });
+        }
+
+        // 渲染主配置
+        function renderMainConfig() {
+            document.getElementById('jx-path').value = jxConfig.path || '';
+            document.getElementById('default-id').value = jxConfig.default_id || '';
+        }
+
+        // 更新JX路径
+        function updateJXPath(value) {
+            jxConfig.path = value;
+        }
+
+        // 更新默认ID
+        function updateDefaultID(value) {
+            jxConfig.default_id = value;
         }
     </script>
 </body>

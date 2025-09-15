@@ -389,7 +389,7 @@
             })
             .then(data => {
                 originalGlobalAuth = JSON.parse(JSON.stringify(globalAuth)); // 更新原始配置副本
-                showAlert('配置保存成功', 'success');
+                showAlert('配置保存成功,点击重新加载', 'success');
             })
             .catch(error => {
                 console.error('保存配置失败:', error);

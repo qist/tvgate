@@ -333,13 +333,13 @@
                 try {
                     const result = JSON.parse(data);
                     if (result.status === 'success') {
-                        showStatus('配置保存成功', 'success');
+                        showStatus('配置保存成功,点击重新加载', 'success');
                     } else {
                         showStatus('保存失败: ' + result.message, 'error');
                     }
                 } catch (e) {
                     // 如果不是JSON格式，直接显示返回内容
-                    showStatus('配置保存成功', 'success');
+                    showStatus('配置保存成功,点击重新加载', 'success');
                 }
             })
             .catch(error => {

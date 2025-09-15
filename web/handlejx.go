@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"net/http"
 
@@ -36,6 +37,9 @@ func (h *ConfigHandler) handleJXConfig(w http.ResponseWriter, r *http.Request) {
 	jx := config.Cfg.JX
 	config.CfgMu.RUnlock()
 
+	// 添加日志，打印从内存中读取的配置
+	// fmt.Printf("DEBUG: 从内存中读取的JX配置: Path=%s, DefaultID=%s\n", jx.Path, jx.DefaultID)
+
 	// 转换为可JSON序列化的格式
 	jxMap := map[string]interface{}{
 		"path":       jx.Path,
@@ -43,8 +47,8 @@ func (h *ConfigHandler) handleJXConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 添加api_groups配置（如果存在）
+	apiGroups := make(map[string]interface{})
 	if len(jx.APIGroups) > 0 {
-		apiGroups := make(map[string]interface{})
 		for groupName, group := range jx.APIGroups {
 			groupMap := map[string]interface{}{
 				"endpoints":      group.Endpoints,
@@ -58,14 +62,16 @@ func (h *ConfigHandler) handleJXConfig(w http.ResponseWriter, r *http.Request) {
 			}
 			apiGroups[groupName] = groupMap
 		}
-		jxMap["api_groups"] = apiGroups
 	}
+	jxMap["api_groups"] = apiGroups
 
-	// 返回JSON格式的配置
-	if err := json.NewEncoder(w).Encode(jxMap); err != nil {
-		http.Error(w, "序列化配置失败: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	// 添加日志，打印将要返回给前端的数据
+	// fmt.Printf("DEBUG: 将要返回给前端的数据: %+v\n", jxMap)
+
+	// 返回成功响应
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(jxMap)
 }
 
 // handleJXConfigSave 处理jx配置保存请求
@@ -84,12 +90,27 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 	}
 	defer r.Body.Close()
 
+	// 添加日志，打印接收到的原始请求体
+	// fmt.Printf("DEBUG: 接收到的原始请求体: %s\n", string(body))
+
 	// 解析JSON数据
 	var jxConfig map[string]interface{}
 	if err := json.Unmarshal(body, &jxConfig); err != nil {
 		http.Error(w, "解析JSON失败: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// 添加日志，打印解析后的数据
+	// fmt.Printf("DEBUG: 解析后的jxConfig: %+v\n", jxConfig)
+	
+	// 特别打印 path 和 default_id 字段
+	// if path, ok := jxConfig["path"]; ok {
+	// 	fmt.Printf("DEBUG: path字段值: %v, 类型: %T\n", path, path)
+	// }
+	
+	// if defaultID, ok := jxConfig["default_id"]; ok {
+	// 	fmt.Printf("DEBUG: default_id字段值: %v, 类型: %T\n", defaultID, defaultID)
+	// }
 
 	// 读取配置文件
 	configPath := *config.ConfigFilePath
@@ -136,6 +157,7 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 
 			// 添加path字段
 			if path, ok := jxConfig["path"]; ok && path != "" {
+				// fmt.Printf("DEBUG: 正在设置path字段，值为: %v\n", path)
 				jxNode.Content = append(jxNode.Content,
 					&yaml.Node{Kind: yaml.ScalarNode, Value: "path"},
 					&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", path)})
@@ -143,6 +165,7 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 
 			// 添加default_id字段
 			if defaultID, ok := jxConfig["default_id"]; ok && defaultID != "" {
+				// fmt.Printf("DEBUG: 正在设置default_id字段，值为: %v\n", defaultID)
 				jxNode.Content = append(jxNode.Content,
 					&yaml.Node{Kind: yaml.ScalarNode, Value: "default_id"},
 					&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", defaultID)})
@@ -262,13 +285,59 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := os.WriteFile(configPath, output, 0644); err != nil {
-		http.Error(w, "写入配置文件失败: "+err.Error(), http.StatusInternalServerError)
+	// 创建备份文件
+	backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
+	if err := os.WriteFile(backupPath, data, 0644); err != nil {
+		http.Error(w, "创建备份文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// 写入新配置
+	if err := os.WriteFile(configPath, output, 0644); err != nil {
+		// 恢复备份文件
+		os.WriteFile(configPath, data, 0644)
+		http.Error(w, "写入配置文件失败，已恢复备份: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 返回更新后的配置数据
+	config.CfgMu.RLock()
+	jx := config.Cfg.JX
+	config.CfgMu.RUnlock()
+
+	// 添加日志，打印从内存中读取的配置
+	// fmt.Printf("DEBUG: 从内存中读取的JX配置: Path=%s, DefaultID=%s\n", jx.Path, jx.DefaultID)
+
+	// 转换为可JSON序列化的格式
+	jxMap := map[string]interface{}{
+		"path":       jx.Path,
+		"default_id": jx.DefaultID,
+	}
+
+	// 添加api_groups配置（如果存在）
+	apiGroups := make(map[string]interface{})
+	if len(jx.APIGroups) > 0 {
+		for groupName, group := range jx.APIGroups {
+			groupMap := map[string]interface{}{
+				"endpoints":      group.Endpoints,
+				"timeout":        formatDuration(group.Timeout),
+				"query_template": group.QueryTemplate,
+				"primary":        group.Primary,
+				"weight":         group.Weight,
+				"fallback":       group.Fallback,
+				"max_retries":    group.MaxRetries,
+				"filters":        group.Filters,
+			}
+			apiGroups[groupName] = groupMap
+		}
+	}
+	jxMap["api_groups"] = apiGroups
+
+	// 添加日志，打印将要返回给前端的数据
+	// fmt.Printf("DEBUG: 将要返回给前端的数据: %+v\n", jxMap)
 
 	// 返回成功响应
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "配置保存成功"})
+	json.NewEncoder(w).Encode(jxMap)
 }
