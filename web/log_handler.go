@@ -104,7 +104,7 @@ func (h *ConfigHandler) handleSaveLogConfig(w http.ResponseWriter, r *http.Reque
 						if fileStr != "" {
 							newLogNode.Content = append(newLogNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "file"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: fileStr})
+								&yaml.Node{Kind: yaml.ScalarNode, Value: fileStr, Style: yaml.DoubleQuotedStyle})
 						}
 					}
 					

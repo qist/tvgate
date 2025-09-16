@@ -118,7 +118,7 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 						if certfileStr != "" {
 							newServerNode.Content = append(newServerNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "certfile"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: certfileStr})
+								&yaml.Node{Kind: yaml.ScalarNode, Value: certfileStr, Style: yaml.DoubleQuotedStyle})
 						}
 					}
 
@@ -128,7 +128,7 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 						if keyfileStr != "" {
 							newServerNode.Content = append(newServerNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "keyfile"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: keyfileStr})
+								&yaml.Node{Kind: yaml.ScalarNode, Value: keyfileStr, Style: yaml.DoubleQuotedStyle})
 						}
 					}
 
@@ -136,11 +136,11 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 					if sslProtocols, ok := serverConfig["ssl_protocols"]; ok {
 						sslProtocolsStr := fmt.Sprintf("%v", sslProtocols)
 						if sslProtocolsStr != "" {
-							// 去除可能存在的引号，让YAML库自动处理引号
-							trimmed := strings.Trim(sslProtocolsStr, "\"")
+							// 去除可能存在的引号
+							// trimmed := strings.Trim(sslProtocolsStr, "\"")
 							newServerNode.Content = append(newServerNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_protocols"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: trimmed})
+								&yaml.Node{Kind: yaml.ScalarNode, Value: sslProtocolsStr, Style: yaml.DoubleQuotedStyle})
 						}
 					}
 
@@ -148,11 +148,11 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 					if sslCiphers, ok := serverConfig["ssl_ciphers"]; ok {
 						sslCiphersStr := fmt.Sprintf("%v", sslCiphers)
 						if sslCiphersStr != "" {
-							// 去除可能存在的引号，让YAML库自动处理引号
-							trimmed := strings.Trim(sslCiphersStr, "\"")
+							// 去除可能存在的引号
+							// trimmed := strings.Trim(sslCiphersStr, "\"")
 							newServerNode.Content = append(newServerNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_ciphers"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: trimmed})
+								&yaml.Node{Kind: yaml.ScalarNode, Value: sslCiphersStr, Style: yaml.DoubleQuotedStyle})
 						}
 					}
 
@@ -160,11 +160,11 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 					if sslECDHCurve, ok := serverConfig["ssl_ecdh_curve"]; ok {
 						sslECDHCurveStr := fmt.Sprintf("%v", sslECDHCurve)
 						if sslECDHCurveStr != "" {
-							// 去除可能存在的引号，让YAML库自动处理引号
-							trimmed := strings.Trim(sslECDHCurveStr, "\"")
+							// 去除可能存在的引号
+							// trimmed := strings.Trim(sslECDHCurveStr, "\"")
 							newServerNode.Content = append(newServerNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_ecdh_curve"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: trimmed})
+								&yaml.Node{Kind: yaml.ScalarNode, Value: sslECDHCurveStr, Style: yaml.DoubleQuotedStyle})
 						}
 					}
 
