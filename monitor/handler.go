@@ -101,6 +101,16 @@ body {
 .refresh-on {background:#4CAF50; color:white;}
 .refresh-off {background:#f44336; color:white;}
 .toggle-column {cursor:pointer; user-select:none;}
+.theme-btn {
+    border:none; 
+    padding:8px 15px; 
+    border-radius:5px; 
+    font-weight:bold; 
+    cursor:pointer;
+    background:#555;
+    color:white;
+    margin-left:10px;
+}
 .card {
     background: #1f1f1f;
     padding: 15px; 
@@ -128,6 +138,7 @@ body {
 <option value="10000">10s</option>
 <option value="30000">30s</option>
 </select>
+<button id="toggleTheme" class="theme-btn">🌓 切换主题</button>
 </div>
 
 <h2>系统信息</h2>
@@ -348,6 +359,121 @@ document.querySelectorAll('.toggle-column').forEach(el => {
 
 toggleBtn.onclick=()=>{ auto=!auto; if(auto) startTimer(); else stopTimer(); applyButtonUI(); persist(); };
 intervalSelect.onchange=()=>{ refreshMs=parseInt(intervalSelect.value); if(auto) startTimer(); applyButtonUI(); persist(); };
+
+// 主题切换功能
+const toggleThemeBtn = document.getElementById('toggleTheme');
+let currentTheme = localStorage.getItem('theme') || 'dark';
+
+// 同步主题到后端
+async function syncThemeToBackend(theme) {
+    try {
+        const response = await fetch('/api/theme', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ theme: theme })
+        });
+        const result = await response.json();
+        if (result.status !== 'success') {
+            console.error('主题同步失败:', result);
+        }
+    } catch (error) {
+        console.error('主题同步请求失败:', error);
+    }
+}
+
+// 从后端获取当前主题
+async function getCurrentThemeFromBackend() {
+    try {
+        const response = await fetch('/api/theme');
+        const result = await response.json();
+        if (result.theme && (result.theme === 'dark' || result.theme === 'light')) {
+            return result.theme;
+        }
+    } catch (error) {
+        console.error('获取主题失败:', error);
+    }
+    return null;
+}
+
+function applyTheme() {
+    if (currentTheme === 'light') {
+        document.body.style.backgroundColor = '#ffffff';
+        document.body.style.color = '#333333';
+        document.querySelectorAll('.card, .header').forEach(el => {
+            el.style.backgroundColor = '#f5f5f5';
+            el.style.color = '#333333';
+        });
+        document.querySelectorAll('.table th').forEach(el => {
+            el.style.backgroundColor = '#f5f5f5';
+        });
+        document.querySelectorAll('.table tr:nth-child(even)').forEach(el => {
+            el.style.backgroundColor = '#f0f0f0';
+        });
+    } else {
+        document.body.style.backgroundColor = '#121212';
+        document.body.style.color = '#e0e0e0';
+        document.querySelectorAll('.card, .header').forEach(el => {
+            el.style.backgroundColor = '#1f1f1f';
+            el.style.color = '#e0e0e0';
+        });
+        document.querySelectorAll('.table th').forEach(el => {
+            el.style.backgroundColor = '#1f1f1f';
+        });
+        document.querySelectorAll('.table tr:nth-child(even)').forEach(el => {
+            el.style.backgroundColor = '#181818';
+        });
+    }
+    localStorage.setItem('theme', currentTheme);
+    syncThemeToBackend(currentTheme);
+}
+
+toggleThemeBtn.addEventListener('click', () => {
+    currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    applyTheme();
+});
+
+// 初始化应用主题
+(async function initTheme() {
+    // 优先使用本地存储的主题
+    const localTheme = localStorage.getItem('theme');
+    if (localTheme === 'dark' || localTheme === 'light') {
+        currentTheme = localTheme;
+    }
+    
+    // 从后端获取主题并比较
+    const backendTheme = await getCurrentThemeFromBackend();
+    if (backendTheme) {
+        // 如果本地没有主题或与后端不一致，使用后端主题
+        if (!localTheme || backendTheme !== currentTheme) {
+            currentTheme = backendTheme;
+            localStorage.setItem('theme', currentTheme);
+        }
+    }
+    
+    applyTheme();
+    
+    // 监听页面可见性变化，当页面重新获得焦点时同步主题
+    document.addEventListener('visibilitychange', async () => {
+        if (!document.hidden) {
+            const backendTheme = await getCurrentThemeFromBackend();
+            if (backendTheme && backendTheme !== currentTheme) {
+                currentTheme = backendTheme;
+                localStorage.setItem('theme', currentTheme);
+                applyTheme();
+            }
+        }
+    });
+    
+    // 添加主题变化事件监听器
+    window.addEventListener('storage', (event) => {
+        if (event.key === 'theme' && (event.newValue === 'dark' || event.newValue === 'light')) {
+            currentTheme = event.newValue;
+            applyTheme();
+        }
+    });
+})();
 </script>
 
 </body>
@@ -356,19 +482,37 @@ intervalSelect.onchange=()=>{ refreshMs=parseInt(intervalSelect.value); if(auto)
 	t, err := template.New("status").Funcs(template.FuncMap{
 		"divInt64": func(a int64, b ...int64) float64 {
 			result := float64(a)
-			for _, v := range b { if v != 0 { result /= float64(v) } }
+			for _, v := range b {
+				if v != 0 {
+					result /= float64(v)
+				}
+			}
 			return result
 		},
-		"modInt64": func(a int64, b int64) int64 { if b!=0 { return a%b }; return 0 },
+		"modInt64": func(a int64, b int64) int64 {
+			if b != 0 {
+				return a % b
+			}
+			return 0
+		},
 		"divFloat64": func(a float64, b ...float64) float64 {
 			result := a
-			for _, v := range b { if v!=0 { result/=v } }
+			for _, v := range b {
+				if v != 0 {
+					result /= v
+				}
+			}
 			return result
 		},
-		"modFloat64": func(a,b float64) float64 { if b!=0 { return float64(int64(a)%int64(b)) }; return 0 },
-		"float64ToInt64": func(a float64) int64 { return int64(a) },
-		"FormatBytes": FormatBytes,
-		"FormatBytesPerSec": FormatBytesPerSec,
+		"modFloat64": func(a, b float64) float64 {
+			if b != 0 {
+				return float64(int64(a) % int64(b))
+			}
+			return 0
+		},
+		"float64ToInt64":         func(a float64) int64 { return int64(a) },
+		"FormatBytes":            FormatBytes,
+		"FormatBytesPerSec":      FormatBytesPerSec,
 		"FormatNetworkBandwidth": FormatNetworkBandwidth,
 	}).Parse(tmpl)
 
@@ -381,7 +525,6 @@ intervalSelect.onchange=()=>{ refreshMs=parseInt(intervalSelect.value); if(auto)
 		http.Error(w, "模板执行错误: "+err.Error(), http.StatusInternalServerError)
 	}
 }
-
 
 // 字节格式化
 func FormatBytes(b uint64) string {
