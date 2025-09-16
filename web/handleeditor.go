@@ -46,6 +46,7 @@ func (h *ConfigHandler) handleEditor(w http.ResponseWriter, r *http.Request) {
 			"webPath":        webPath,
 			"hasDomainMap":   hasDomainMap,
 			"hasProxyGroups": hasProxyGroups,
+			"configPath":     *config.ConfigFilePath, // 添加配置文件路径到模板数据
 		}
 
 		// 从嵌入的文件系统读取模板

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-theme="dark">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,37 +12,43 @@
             display: flex;
             min-height: 100vh;
         }
+
         .sidebar {
             width: 250px;
             /* 恢复为主题相关的背景色 */
             background-color: var(--win11-accent);
             padding: 20px;
             color: white;
-            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
             flex-shrink: 0;
         }
+
         .content {
             flex: 1;
             padding: 20px;
             background-color: var(--win11-bg);
         }
+
         .sidebar-item {
             padding: 15px;
             margin-bottom: 15px;
             border-radius: 8px;
             cursor: pointer;
             transition: all 0.3s ease;
-            background-color: rgba(255,255,255,0.1);
+            background-color: rgba(255, 255, 255, 0.1);
         }
+
         .sidebar-item:hover {
-            background-color: rgba(255,255,255,0.2);
+            background-color: rgba(255, 255, 255, 0.2);
             transform: translateX(5px);
         }
+
         .status-info p {
             margin: 5px 0;
             font-size: 0.9em;
             opacity: 0.9;
         }
+
         .btn {
             display: inline-block;
             padding: 10px 20px;
@@ -54,14 +61,16 @@
             border: none;
             cursor: pointer;
         }
+
         .btn:hover {
             background-color: #0056b3;
         }
+
         .btn:disabled {
             background-color: #cccccc;
             cursor: not-allowed;
         }
-        
+
         /* 圆形进度条样式 */
         .circle-chart-container {
             display: flex;
@@ -69,17 +78,20 @@
             flex-wrap: wrap;
             margin: 20px 0;
         }
+
         .circle-chart {
             position: relative;
             width: 120px;
             height: 120px;
             margin: 10px;
         }
+
         .circle-chart-bg {
             fill: none;
             stroke: #eee;
             stroke-width: 10;
         }
+
         .circle-chart-fill {
             fill: none;
             stroke-width: 10;
@@ -88,11 +100,28 @@
             transform-origin: 50% 50%;
             transition: stroke-dashoffset 0.5s ease;
         }
-        .circle-chart-fill.cpu { stroke: #4CAF50; }
-        .circle-chart-fill.memory { stroke: #2196F3; }
-        .circle-chart-fill.swap { stroke: #FF9800; }
-        .circle-chart-fill.disk { stroke: #9C27B0; }
-        .circle-chart-fill.high-usage { stroke: #F44336; }
+
+        .circle-chart-fill.cpu {
+            stroke: #4CAF50;
+        }
+
+        .circle-chart-fill.memory {
+            stroke: #2196F3;
+        }
+
+        .circle-chart-fill.swap {
+            stroke: #FF9800;
+        }
+
+        .circle-chart-fill.disk {
+            stroke: #9C27B0;
+        }
+
+        .circle-chart-fill.high-usage {
+            stroke: #F44336;
+        }
+
+
         .circle-chart-text {
             position: absolute;
             top: 50%;
@@ -102,14 +131,17 @@
             font-size: 14px;
             font-weight: bold;
         }
+
         .circle-chart-value {
             font-size: 20px;
             font-weight: bold;
         }
+
         .circle-chart-label {
             font-size: 12px;
             color: #666;
         }
+
         .resource-info {
             text-align: center;
             font-size: 12px;
@@ -122,148 +154,155 @@
             padding: 20px;
             background-color: var(--win11-surface);
             border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
         }
-        
+
         .system-status h2 {
             margin-top: 0;
             color: var(--win11-text);
             border-bottom: 1px solid #eee;
             padding-bottom: 10px;
         }
-        
+
         /* TVGate状态信息样式 */
         .tvgate-status {
             margin-top: 30px;
             background-color: var(--win11-surface);
             border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
         }
-        
+
         .tvgate-status-header {
             padding: 20px 20px 10px 20px;
             color: var(--win11-text);
             border-bottom: 1px solid #eee;
         }
-        
+
         .tvgate-status-header h2 {
             margin: 0;
         }
-        
+
         .tvgate-status .status-grid {
             padding: 0 20px 20px 20px;
         }
-        
+
         .tvgate-status h2 {
             margin-top: 0;
             margin-bottom: 10px;
             color: var(--win11-text);
             font-size: 1.2em;
         }
-        
+
         .status-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
             margin-top: 15px;
         }
-        
+
         .status-item {
             display: flex;
             justify-content: space-between;
             padding: 10px;
-            background-color: rgba(0,0,0,0.05);
+            background-color: rgba(0, 0, 0, 0.05);
             border-radius: 6px;
         }
-        
+
         .status-label {
             font-weight: bold;
             color: var(--win11-text-secondary);
         }
-        
+
         .status-value {
             color: var(--win11-text);
             font-family: 'Courier New', monospace;
         }
-        
+
         /* 功能模块样式 */
         .features-container {
             margin-top: 20px;
         }
-        
+
         .feature-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
         }
-        
+
         .feature-card {
             background-color: var(--win11-surface);
             padding: 10px;
             border-radius: 10px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         }
-        
+
         .feature-card h3 {
             margin-top: 0;
             margin-bottom: 8px;
             color: var(--win11-text);
             font-size: 1.1em;
         }
-        
+
         .feature-card p {
             color: var(--win11-text-secondary);
             margin: 5px 0;
             font-size: 0.9em;
         }
-        
+
         /* 存储信息和网卡流量详情样式 */
         .details-container {
             margin-top: 30px;
         }
-        
+
         .details-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 20px;
         }
-        
-        .storage-info, .network-info {
+
+        .storage-info,
+        .network-info {
             padding: 20px;
             background-color: var(--win11-surface);
             border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
         }
-        
-        .storage-info h2, .network-info h2 {
+
+        .storage-info h2,
+        .network-info h2 {
             margin-top: 0;
             color: var(--win11-text);
             border-bottom: 1px solid #eee;
             padding-bottom: 10px;
         }
-        
-        .storage-table, .network-table {
+
+        .storage-table,
+        .network-table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 15px;
         }
-        
-        .storage-table th, .storage-table td, 
-        .network-table th, .network-table td {
+
+        .storage-table th,
+        .storage-table td,
+        .network-table th,
+        .network-table td {
             padding: 12px 15px;
             text-align: left;
             border-bottom: 1px solid #ddd;
         }
-        
-        .storage-table th, .network-table th {
-            background-color: rgba(0,0,0,0.05);
+
+        .storage-table th,
+        .network-table th {
+            background-color: rgba(0, 0, 0, 0.05);
             font-weight: bold;
         }
-        
-        .storage-table tr:hover, .network-table tr:hover {
-            background-color: rgba(0,0,0,0.02);
+
+        .storage-table tr:hover,
+        .network-table tr:hover {
+            background-color: rgba(0, 0, 0, 0.02);
         }
-        
+
         .usage-bar-container {
             width: 100%;
             height: 10px;
@@ -271,147 +310,153 @@
             border-radius: 5px;
             overflow: hidden;
         }
-        
+
         .usage-bar {
             height: 100%;
             background-color: #4CAF50;
         }
-        
+
         .usage-bar.warning {
             background-color: #FF9800;
         }
-        
+
         .usage-bar.critical {
             background-color: #F44336;
         }
-        
+
         /* 活跃客户端连接样式 */
         .active-clients {
             margin-top: 30px;
             padding: 20px;
             background-color: var(--win11-surface);
             border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
         }
-        
+
         .active-clients h2 {
             margin-top: 0;
             color: var(--win11-text);
             border-bottom: 1px solid #eee;
             padding-bottom: 10px;
         }
-        
+
         .clients-table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 15px;
             font-size: 0.9em;
         }
-        
-        .clients-table th, .clients-table td {
+
+        .clients-table th,
+        .clients-table td {
             padding: 12px 15px;
             text-align: left;
             border-bottom: 1px solid #ddd;
         }
-        
+
         .clients-table th {
-            background-color: rgba(0,0,0,0.05);
+            background-color: rgba(0, 0, 0, 0.05);
             font-weight: bold;
         }
-        
+
         .clients-table tr:hover {
-            background-color: rgba(0,0,0,0.02);
+            background-color: rgba(0, 0, 0, 0.02);
         }
-        
+
         /* 为IP列设置固定宽度，确保能显示完整的IPv6地址 */
-        .clients-table th:nth-child(1), 
+        .clients-table th:nth-child(1),
         .clients-table td:nth-child(1) {
             width: 400px;
             font-family: 'Courier New', monospace;
         }
-        
+
         /* 为URL列设置最大宽度并允许文本截断 */
-        .clients-table th:nth-child(2), 
+        .clients-table th:nth-child(2),
         .clients-table td:nth-child(2) {
             max-width: 300px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
-        
+
         /* 为类型列设置固定宽度 */
-        .clients-table th:nth-child(3), 
+        .clients-table th:nth-child(3),
         .clients-table td:nth-child(3) {
             width: 80px;
         }
-        
+
         /* 为UA列设置最大宽度并允许文本截断 */
-        .clients-table th:nth-child(4), 
+        .clients-table th:nth-child(4),
         .clients-table td:nth-child(4) {
             max-width: 250px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
-        
+
         /* 为时间列设置固定宽度 */
-        .clients-table th:nth-child(5), 
+        .clients-table th:nth-child(5),
         .clients-table td:nth-child(5),
-        .clients-table th:nth-child(6), 
+        .clients-table th:nth-child(6),
         .clients-table td:nth-child(6) {
             width: 150px;
             font-size: 0.85em;
         }
-        
+
         /* 左侧边栏主题适配 */
         html[data-theme="dark"] .sidebar {
             background-color: var(--win11-accent-dark);
             color: white;
         }
-        
+
         html[data-theme="light"] .sidebar {
             background-color: var(--win11-accent-light);
             color: white;
         }
-        
+
         html[data-theme="dark"] .sidebar-item {
-            background-color: rgba(255,255,255,0.1);
+            background-color: rgba(255, 255, 255, 0.1);
             color: white;
         }
-        
+
         html[data-theme="light"] .sidebar-item {
-            background-color: rgba(255,255,255,0.1);
+            background-color: rgba(255, 255, 255, 0.1);
             color: white;
         }
-        
+
         html[data-theme="dark"] .sidebar-item:hover {
-            background-color: rgba(255,255,255,0.2);
+            background-color: rgba(255, 255, 255, 0.2);
         }
-        
+
         html[data-theme="light"] .sidebar-item:hover {
-            background-color: rgba(255,255,255,0.2);
+            background-color: rgba(255, 255, 255, 0.2);
         }
 
         @media (max-width: 768px) {
             .main-container {
                 flex-direction: column;
             }
+
             .sidebar {
                 width: 100%;
             }
+
             .circle-chart-container {
                 justify-content: center;
             }
-            
-            .storage-table, .network-table {
+
+            .storage-table,
+            .network-table {
                 font-size: 0.8em;
             }
-            
-            .storage-table th, .storage-table td, 
-            .network-table th, .network-table td {
+
+            .storage-table th,
+            .storage-table td,
+            .network-table th,
+            .network-table td {
                 padding: 8px 10px;
             }
-            
+
             /* 在小屏幕设备上，存储信息和网卡流量详情垂直排列 */
             .details-grid {
                 grid-template-columns: 1fr;
@@ -419,21 +464,22 @@
         }
     </style>
 </head>
+
 <body>
     <div class="main-container">
         {{template "sidebar" .}}
-        
+
         <div class="content">
             <h1>欢迎使用 TVGate 管理系统</h1>
-            
+
             <!-- 圆形进度条 -->
             <div class="circle-chart-container">
                 <!-- CPU使用率 -->
                 <div class="circle-chart">
                     <svg viewBox="0 0 120 120">
                         <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
-                        <circle class="circle-chart-fill cpu" cx="60" cy="60" r="50" 
-                                stroke-dasharray="0, 100" id="cpuChart"></circle>
+                        <circle class="circle-chart-fill cpu" cx="60" cy="60" r="50" stroke-dasharray="0, 100"
+                            id="cpuChart"></circle>
                     </svg>
                     <div class="circle-chart-text">
                         <div class="circle-chart-value" id="cpuValue">0%</div>
@@ -441,13 +487,13 @@
                     </div>
                     <div class="resource-info">使用率</div>
                 </div>
-                
+
                 <!-- 内存使用率 -->
                 <div class="circle-chart">
                     <svg viewBox="0 0 120 120">
                         <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
-                        <circle class="circle-chart-fill memory" cx="60" cy="60" r="50" 
-                                stroke-dasharray="0, 100" id="memoryChart"></circle>
+                        <circle class="circle-chart-fill memory" cx="60" cy="60" r="50" stroke-dasharray="0, 100"
+                            id="memoryChart"></circle>
                     </svg>
                     <div class="circle-chart-text">
                         <div class="circle-chart-value" id="memoryValue">0%</div>
@@ -455,13 +501,13 @@
                     </div>
                     <div class="resource-info" id="memoryInfo">0B / 0B</div>
                 </div>
-                
+
                 <!-- SWAP使用率 -->
                 <div class="circle-chart">
                     <svg viewBox="0 0 120 120">
                         <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
-                        <circle class="circle-chart-fill swap" cx="60" cy="60" r="50" 
-                                stroke-dasharray="0, 100" id="swapChart"></circle>
+                        <circle class="circle-chart-fill swap" cx="60" cy="60" r="50" stroke-dasharray="0, 100"
+                            id="swapChart"></circle>
                     </svg>
                     <div class="circle-chart-text">
                         <div class="circle-chart-value" id="swapValue">0%</div>
@@ -469,13 +515,13 @@
                     </div>
                     <div class="resource-info" id="swapInfo">0B / 0B</div>
                 </div>
-                
+
                 <!-- 硬盘使用率 -->
                 <div class="circle-chart">
                     <svg viewBox="0 0 120 120">
                         <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
-                        <circle class="circle-chart-fill disk" cx="60" cy="60" r="50" 
-                                stroke-dasharray="0, 100" id="diskChart"></circle>
+                        <circle class="circle-chart-fill disk" cx="60" cy="60" r="50" stroke-dasharray="0, 100"
+                            id="diskChart"></circle>
                     </svg>
                     <div class="circle-chart-text">
                         <div class="circle-chart-value" id="diskValue">0%</div>
@@ -484,7 +530,7 @@
                     <div class="resource-info" id="diskInfo">0B / 0B</div>
                 </div>
             </div>
-            
+
             <!-- 系统状态信息 -->
             <div class="system-status">
                 <h2>系统状态</h2>
@@ -521,7 +567,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- TVGate状态信息 -->
             <div class="tvgate-status">
                 <div class="tvgate-status-header">
@@ -550,40 +596,40 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- 功能模块区域 -->
             <div class="features-container">
                 <div class="feature-grid">
+                    <!-- 功能面板 -->
+                    <div class="feature-card">
+                        <h3>功能面板</h3>
+                        <p>功能面板编辑</p>
+                        <a href="{{.webPath}}home" class="btn">访问编辑器</a>
+                    </div>
+
+                    <!-- 服务器配置 -->
+                    <div class="feature-card">
+                        <h3>服务器配置</h3>
+                        <p>服务器配置相关配置</p>
+                        <a href="{{.webPath}}server-editor" class="btn">访问编辑器</a>
+                    </div>
+
                     <!-- YAML编辑器 -->
                     <div class="feature-card">
                         <h3>YAML编辑器</h3>
                         <p>在线编辑和管理TVGate配置文件</p>
                         <a href="{{.webPath}}editor" class="btn">访问编辑器</a>
                     </div>
-                    
+
                     <!-- 配置还原恢复 -->
                     <div class="feature-card">
                         <h3>配置还原/恢复</h3>
                         <p>备份和恢复您的配置文件</p>
-                        <button class="btn" disabled>功能开发中</button>
-                    </div>
-                    
-                    <!-- TVGate版本切换 -->
-                    <div class="feature-card">
-                        <h3>TVGate版本切换</h3>
-                        <p>切换到不同的TVGate版本</p>
-                        <button class="btn" disabled>功能开发中</button>
-                    </div>
-                    
-                    <!-- 推流配置 -->
-                    <div class="feature-card">
-                        <h3>推流配置</h3>
-                        <p>配置和管理推流设置</p>
-                        <button class="btn" disabled>功能开发中</button>
+                        <a href="{{.webPath}}config/backup" class="btn">访问备份管理</a>
                     </div>
                 </div>
             </div>
-            
+
             <!-- 存储信息和网卡流量详情 -->
             <div class="details-container">
                 <div class="details-grid">
@@ -606,7 +652,7 @@
                             </tbody>
                         </table>
                     </div>
-                    
+
                     <!-- 网卡流量详情 -->
                     <div class="network-info">
                         <h2>网卡流量详情</h2>
@@ -627,7 +673,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- 活跃客户端连接 -->
             <div class="active-clients">
                 <h2>活跃客户端连接</h2>
@@ -648,7 +694,7 @@
                 </table>
             </div>
         </div>
-        
+
         <script>
             // 设置监控路径为全局变量，供system-stats.js使用
             window.monitorPath = "{{.monitorPath}}";
@@ -656,4 +702,5 @@
         <script src="{{.webPath}}static/js/system-stats.js"></script>
     </div>
 </body>
+
 </html>

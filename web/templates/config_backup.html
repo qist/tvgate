@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>配置备份管理</title>
+<link rel="stylesheet" href="{{.webPath}}static/common.css">
+<script src="{{.webPath}}static/js/theme.js"></script>
+<style>
+.main-container {
+    display: flex;
+    min-height: 100vh;
+}
+
+.sidebar {
+    width: 250px;
+    background-color: var(--win11-accent);
+    padding: 20px;
+    color: white;
+    box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+    flex-shrink: 0;
+}
+
+.content {
+    flex: 1;
+    padding: 20px;
+    background-color: var(--win11-bg);
+}
+
+.sidebar-item {
+    padding: 15px;
+    margin-bottom: 15px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background-color: rgba(255,255,255,0.1);
+    color: white;
+    text-decoration: none;
+    display: block;
+}
+
+.sidebar-item:hover {
+    background-color: rgba(255,255,255,0.2);
+    transform: translateX(5px);
+}
+
+.status-info p {
+    margin: 5px 0;
+    font-size: 0.9em;
+    opacity: 0.9;
+}
+
+.btn {
+    display: inline-block;
+    padding: 8px 16px;
+    margin: 0 5px;
+    background-color: var(--win11-accent);
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+    transition: background-color 0.3s;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.btn:hover {
+    background-color: var(--win11-accent-hover);
+}
+
+.btn:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+}
+
+.btn-danger {
+    background-color: var(--win11-danger);
+}
+
+.btn-danger:hover {
+    background-color: #c73c3c;
+}
+
+.btn-success {
+    background-color: var(--win11-success);
+}
+
+.btn-success:hover {
+    background-color: #57a757;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background-color: var(--win11-surface);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px var(--win11-shadow);
+    transition: background-color 0.3s, box-shadow 0.3s;
+    padding: 20px;
+}
+
+h2 {
+    color: var(--win11-text-primary);
+    font-weight: 600;
+    margin-top: 0;
+    font-size: 24px;
+    text-align: center;
+    padding: 20px 0;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+    background-color: var(--win11-card);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px var(--win11-shadow);
+}
+
+th, td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid var(--win11-border);
+}
+
+th {
+    background-color: var(--win11-accent);
+    color: white;
+    font-weight: 600;
+}
+
+tr:hover {
+    background-color: rgba(0, 120, 212, 0.1);
+}
+
+.alert {
+    padding: 15px;
+    margin: 20px 0;
+    border-radius: 4px;
+    display: none;
+}
+
+.alert-success {
+    background-color: rgba(102, 194, 102, 0.2);
+    color: var(--win11-success);
+    border: 1px solid var(--win11-success);
+}
+
+.alert-error {
+    background-color: rgba(232, 17, 35, 0.2);
+    color: var(--win11-danger);
+    border: 1px solid var(--win11-danger);
+}
+
+.text-center {
+    text-align: center;
+}
+
+.no-backups {
+    text-align: center;
+    padding: 40px;
+    color: var(--win11-text-secondary);
+}
+</style>
+</head>
+<body>
+<div class="main-container">
+    <div class="sidebar">
+        <h2>TVGate</h2>
+        <div class="sidebar-item" onclick="location.href='{{.webPath}}home'">
+            <h3>主页</h3>
+            <div class="status-info">
+                <p>返回主控制台</p>
+            </div>
+        </div>
+        <a href="{{.webPath}}config/backup" class="sidebar-item">
+            <h3>配置备份</h3>
+            <div class="status-info">
+                <p>管理配置备份</p>
+            </div>
+        </a>
+        <div class="sidebar-item" onclick="location.href='{{.webPath}}editor'">
+            <h3>配置编辑</h3>
+            <div class="status-info">
+                <p>编辑配置文件</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="content">
+        <div class="container">
+            <h2>配置备份管理</h2>
+            
+            <div id="alert" class="alert">
+                <span id="alert-message"></span>
+            </div>
+            
+            <div class="text-center" style="margin: 20px 0;">
+                <button class="btn" onclick="loadBackups()">刷新列表</button>
+            </div>
+            
+            <table id="backupTable">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>文件路径</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td colspan="3" class="no-backups">加载中...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+const webPath = "{{.webPath}}";
+
+function showAlert(message, type) {
+    const alert = document.getElementById('alert');
+    const alertMessage = document.getElementById('alert-message');
+    
+    alert.className = 'alert alert-' + type;
+    alertMessage.textContent = message;
+    alert.style.display = 'block';
+    
+    // 3秒后自动隐藏
+    setTimeout(() => {
+        alert.style.display = 'none';
+    }, 3000);
+}
+
+async function loadBackups() {
+    try {
+        const res = await fetch(webPath + "config/backup/list");
+        const data = await res.json();
+        const tbody = document.querySelector("#backupTable tbody");
+        
+        if (!data.backups || data.backups.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" class="no-backups">暂无备份文件</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = "";
+        data.backups.forEach((file, index) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td>${index + 1}</td>
+                <td>${file}</td>
+                <td>
+                    <button class="btn btn-success" onclick="restoreBackup('${encodeURIComponent(file)}')">还原</button>
+                    <button class="btn" onclick="downloadBackup('${encodeURIComponent(file)}')">下载</button>
+                    <button class="btn btn-danger" onclick="deleteBackup('${encodeURIComponent(file)}')">删除</button>
+                </td>`;
+            tbody.appendChild(tr);
+        });
+    } catch (error) {
+        showAlert('加载备份列表失败: ' + error.message, 'error');
+        document.querySelector("#backupTable tbody").innerHTML = '<tr><td colspan="3" class="no-backups">加载失败</td></tr>';
+    }
+}
+
+async function deleteBackup(file) {
+    if (!confirm("确认删除该备份吗？此操作不可恢复！")) return;
+    
+    try {
+        const res = await fetch(webPath + "config/backup/delete?file=" + file);
+        if (res.ok) {
+            showAlert("删除成功", "success");
+            loadBackups();
+        } else {
+            const text = await res.text();
+            showAlert("删除失败: " + text, "error");
+        }
+    } catch (error) {
+        showAlert("删除失败: " + error.message, "error");
+    }
+}
+
+async function restoreBackup(file) {
+    if (!confirm("⚠️ 警告：确认将该备份还原到当前配置吗？\n这将覆盖当前配置，建议先手动备份当前配置。")) return;
+    
+    try {
+        const res = await fetch(webPath + "config/backup/restore?file=" + file);
+        if (res.ok) {
+            showAlert("还原成功！请手动刷新页面以确保配置生效。", "success");
+            loadBackups();
+        } else {
+            const text = await res.text();
+            showAlert("还原失败: " + text, "error");
+        }
+    } catch (error) {
+        showAlert("还原失败: " + error.message, "error");
+    }
+}
+
+function downloadBackup(file) {
+    // 创建一个隐藏的iframe来触发下载
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = webPath + 'config/backup/download?file=' + file;
+    document.body.appendChild(iframe);
+    
+    // 下载完成后移除iframe
+    setTimeout(() => {
+        document.body.removeChild(iframe);
+    }, 1000);
+}
+
+// 页面加载时初始化
+document.addEventListener('DOMContentLoaded', function() {
+    loadBackups();
+});
+</script>
+</body>
+</html>

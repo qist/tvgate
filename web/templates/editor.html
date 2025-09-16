@@ -36,6 +36,24 @@
             background-color: var(--win11-bg);
         }
         
+        .config-info {
+            background-color: var(--win11-card);
+            padding: 10px 15px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            border: 1px solid var(--win11-border);
+        }
+        
+        .config-info p {
+            margin: 0;
+            font-size: 14px;
+            color: var(--win11-text-secondary);
+        }
+        
+        .config-info strong {
+            color: var(--win11-text-primary);
+        }
+        
         .sidebar-item {
             padding: 15px;
             margin-bottom: 15px;
@@ -190,46 +208,61 @@
         
         <div class="content">
             <div class="container">
-        <div class="header">
-            <h1 class="title">{{.title}}</h1>
-            <div class="nav-links">
-                <a href="{{.webPath}}" class="btn">返回首页</a>
-                <div class="theme-toggle"></div>
+                <h1>{{.title}}</h1>
+                
+                <div id="alert" class="alert" style="display: none;">
+                    <span id="alert-message"></span>
+                    <button class="alert-close" onclick="hideAlert()">&times;</button>
+                </div>
+                
+                <div class="config-info">
+                    <p><strong>配置文件路径:</strong> <span id="config-path">{{.configPath}}</span></p>
+                </div>
+                
+                <div class="editor-toolbar">
+                    <button class="btn" onclick="window.location.href='{{.webPath}}home'">返回首页</button>
+                    <button class="btn" onclick="saveConfig()">保存配置 (Ctrl+S)</button>
+                    <button class="btn" onclick="loadConfig()">重新加载 (Ctrl+R)</button>
+                    <button class="btn btn-warning" onclick="validateConfig()">验证配置 (Ctrl+Shift+V)</button>
+                    <button class="btn" onclick="formatConfig()">格式化 (Ctrl+Shift+F)</button>
+                    <button class="btn" onclick="toggleComment()">注释/取消注释 (Ctrl+Q)</button>
+                </div>
+                
+                <div id="status" class="status"></div>
+                
+                <div class="editor-container">
+                    <textarea id="editor"></textarea>
+                </div>
+                
+                <div class="help-text">
+                    <h3>快捷键说明</h3>
+                    <ul>
+                        <li><kbd>Ctrl+S</kbd> - 保存配置</li>
+                        <li><kbd>Ctrl+R</kbd> - 重新加载配置</li>
+                        <li><kbd>Ctrl+Q</kbd> - 注释/取消注释</li>
+                        <li><kbd>Ctrl+Shift+V</kbd> - 验证YAML格式</li>
+                        <li><kbd>Ctrl+Shift+F</kbd> - 格式化YAML</li>
+                    </ul>
+                    <p>注意：编辑配置前请先备份配置文件，错误的配置可能导致服务异常。</p>
+                </div>
+                
             </div>
         </div>
-
-        <div class="toolbar">
-            <button class="btn" onclick="saveConfig()">保存配置 (Ctrl+S)</button>
-            <button class="btn" onclick="loadConfig()">重新加载 (Ctrl+R)</button>
-            <button class="btn validate" onclick="validateYaml()">验证格式 (Ctrl+Shift+V)</button>
-            <button class="btn format" onclick="formatYaml()">格式化 (Ctrl+Shift+F)</button>
-        </div>
-
-        <div id="status" class="status"></div>
-
-        <div class="editor-container">
-            <textarea id="editor"></textarea>
-        </div>
-
-        <div class="help-text">
-            <h3>快捷键说明</h3>
-            <ul>
-                <li><kbd>Ctrl+S</kbd> - 保存配置</li>
-                <li><kbd>Ctrl+R</kbd> - 重新加载配置</li>
-                <li><kbd>Ctrl+Q</kbd> - 注释/取消注释</li>
-                <li><kbd>Ctrl+Shift+V</kbd> - 验证YAML格式</li>
-                <li><kbd>Ctrl+Shift+F</kbd> - 格式化YAML</li>
-            </ul>
-            <p>注意：编辑配置前请先备份配置文件，错误的配置可能导致服务异常。</p>
-        </div>
-
     </div>
 
     <script src="{{.webPath}}static/js/theme.js"></script>
     <script>
-        // 获取Web路径前缀
+        // 全局变量
+        let originalConfig = '';
+        let hasUnsavedChanges = false;
         const webPath = "{{.webPath}}";
-        window.webPath = webPath; // 设为全局变量供theme.js使用
+        const configPath = "{{.configPath}}";  // 添加配置文件路径
+        
+        // 初始化编辑器
+        document.addEventListener('DOMContentLoaded', function() {
+            setupEditor();
+            loadConfig();
+        });
         
         // 更新编辑器主题
         function updateEditorTheme() {

@@ -171,6 +171,15 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	// // 注册静态文件服务路由
 	// mux.HandleFunc("/static/", h.serveStaticFiles)
 
+	// 页面渲染
+	mux.HandleFunc(webPath+"config/backup", h.cookieAuth(h.handleConfigBackupPage))
+
+	// JSON 接口
+	backupHandler := &ConfigBackupHandler{}
+	mux.HandleFunc(webPath+"config/backup/list", h.cookieAuth(backupHandler.handleListBackups))
+	mux.HandleFunc(webPath+"config/backup/delete", h.cookieAuth(backupHandler.handleDeleteBackup))
+	mux.HandleFunc(webPath+"config/backup/restore", h.cookieAuth(backupHandler.handleRestoreBackup))
+	mux.HandleFunc(webPath+"config/backup/download", h.cookieAuth(backupHandler.handleDownloadBackup))
 	// 注册需要认证的路由，使用基于Cookie的认证中间件
 	mux.HandleFunc(webPath+"home", h.cookieAuth(h.handleHome))
 	mux.HandleFunc(webPath+"editor", h.cookieAuth(h.handleEditor))

@@ -38,6 +38,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("确保配置文件失败: %v", err)
 	}
+	
+	// 更新 ConfigFilePath 变量以指向实际的配置文件路径
+	*config.ConfigFilePath = configFilePath
+	
 	fmt.Println("使用配置文件:", configFilePath)
 
 	if err := load.LoadConfig(configFilePath); err != nil {
