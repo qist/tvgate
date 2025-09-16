@@ -25,7 +25,7 @@ log:
   # 日志保留天数
   maxage: 28
   # 是否压缩
-  compress: true
+  compress: false
 http:
   timeout: 0s # 整个请求超时时间 (0 表示不限制)
   connect_timeout: 10s # 建立连接的超时时间
