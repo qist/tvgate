@@ -30,23 +30,22 @@ func main() {
 		fmt.Println("程序版本:", config.Version)
 		return
 	}
-	configPath := *config.ConfigFilePath
-	// if configPath == "" {
-	// 	log.Fatal("未指定配置文件路径")
-	// }
+	// 获取用户传入的 -config 参数
+	userConfigPath := *config.ConfigFilePath
+
 	// 使用 EnsureConfigFile 自动生成默认配置文件
-	configPath, err := web.EnsureConfigFile(configPath)
+	configFilePath, err := web.EnsureConfigFile(userConfigPath)
 	if err != nil {
 		log.Fatalf("确保配置文件失败: %v", err)
 	}
-	fmt.Println("使用配置文件:", configPath)
-	
-	if err := load.LoadConfig(configPath); err != nil {
+	fmt.Println("使用配置文件:", configFilePath)
+
+	if err := load.LoadConfig(configFilePath); err != nil {
 		log.Fatalf("加载配置文件失败: %v", err)
 	}
 
 	if *config.ConfigFilePath != "" {
-		err := load.LoadConfig(*config.ConfigFilePath)
+		err := load.LoadConfig(configFilePath)
 		if err != nil {
 			log.Fatalf("读取YAML配置文件失败: %v", err)
 		}
