@@ -15,6 +15,47 @@
     <script src="{{.webPath}}static/js/codemirror/closebrackets.min.js"></script>
     <script src="{{.webPath}}static/js/codemirror/comment.min.js"></script>
     <style>
+        .main-container {
+            display: flex;
+            min-height: 100vh;
+        }
+        
+        .sidebar {
+            width: 250px;
+            /* 使用主题相关的背景色 */
+            background-color: var(--win11-accent);
+            padding: 20px;
+            color: white;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+            flex-shrink: 0;
+        }
+        
+        .content {
+            flex: 1;
+            padding: 20px;
+            background-color: var(--win11-bg);
+        }
+        
+        .sidebar-item {
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background-color: rgba(255,255,255,0.1);
+        }
+        
+        .sidebar-item:hover {
+            background-color: rgba(255,255,255,0.2);
+            transform: translateX(5px);
+        }
+        
+        .status-info p {
+            margin: 5px 0;
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+        
         .header {
             display: flex;
             justify-content: space-between;
@@ -102,10 +143,53 @@
             font-family: monospace;
             font-size: 12px;
         }
+        
+        /* 左侧边栏主题适配 */
+        html[data-theme="dark"] .sidebar {
+            background-color: var(--win11-accent-dark);
+            color: white;
+        }
+        
+        html[data-theme="light"] .sidebar {
+            background-color: var(--win11-accent-light);
+            color: white;
+        }
+        
+        html[data-theme="dark"] .sidebar-item {
+            background-color: rgba(255,255,255,0.1);
+            color: white;
+        }
+        
+        html[data-theme="light"] .sidebar-item {
+            background-color: rgba(255,255,255,0.1);
+            color: white;
+        }
+        
+        html[data-theme="dark"] .sidebar-item:hover {
+            background-color: rgba(255,255,255,0.2);
+        }
+        
+        html[data-theme="light"] .sidebar-item:hover {
+            background-color: rgba(255,255,255,0.2);
+        }
+        
+        @media (max-width: 768px) {
+            .main-container {
+                flex-direction: column;
+            }
+            
+            .sidebar {
+                width: 100%;
+            }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="main-container">
+        {{template "sidebar" .}}
+        
+        <div class="content">
+            <div class="container">
         <div class="header">
             <h1 class="title">{{.title}}</h1>
             <div class="nav-links">

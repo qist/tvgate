@@ -5,6 +5,8 @@ import (
 	"html/template"
 	"net/http"
 	"strings"
+
+	"github.com/qist/tvgate/config"
 )
 // handleEditor 处理配置编辑器页面请求
 func (h *ConfigHandler) handleEditor(w http.ResponseWriter, r *http.Request) {
@@ -30,10 +32,20 @@ func (h *ConfigHandler) handleEditor(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// 检查是否有domainmap配置
+		config.CfgMu.RLock()
+		hasDomainMap := len(config.Cfg.DomainMap) > 0
+
+		// 检查proxygroups是否配置了有效内容
+		hasProxyGroups := len(config.Cfg.ProxyGroups) > 0
+		config.CfgMu.RUnlock()
+
 		// 渲染编辑器模板
 		data := map[string]interface{}{
-			"title":   "TVGate 配置编辑器",
-			"webPath": webPath,
+			"title":          "TVGate 配置编辑器",
+			"webPath":        webPath,
+			"hasDomainMap":   hasDomainMap,
+			"hasProxyGroups": hasProxyGroups,
 		}
 
 		// 从嵌入的文件系统读取模板
@@ -47,6 +59,20 @@ func (h *ConfigHandler) handleEditor(w http.ResponseWriter, r *http.Request) {
 		tmpl, err := template.New("editor").Parse(string(content))
 		if err != nil {
 			http.Error(w, "Failed to parse template: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// 读取侧边栏模板
+		sidebarContent, err := templatesFS.ReadFile("templates/sidebar.html")
+		if err != nil {
+			http.Error(w, "Failed to read sidebar template file: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// 解析侧边栏模板
+		_, err = tmpl.New("sidebar").Parse(string(sidebarContent))
+		if err != nil {
+			http.Error(w, "Failed to parse sidebar template: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
