@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/qist/tvgate/config"
-	"github.com/qist/tvgate/logger"
+	// "github.com/qist/tvgate/logger"
 	"gopkg.in/yaml.v3"
 )
 
@@ -45,7 +45,7 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 		proxies := make([]map[string]interface{}, len(pg.Proxies))
 		for i, proxy := range pg.Proxies {
 			// 打印单个代理日志
-			logger.LogPrintf("代理组 [%s] - 代理 #%d: %+v (类型: %T)", name, i, proxy, proxy)
+			// logger.LogPrintf("代理组 [%s] - 代理 #%d: %+v (类型: %T)", name, i, proxy, proxy)
 
 			proxyMap := map[string]interface{}{
 				"name":     proxy.Name,
@@ -76,12 +76,12 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 			"max_rt":      formatDuration(pg.MaxRT),
 		}
 
-		// 打印整个代理组 JSON 日志
-		if data, err := json.MarshalIndent(pgMap, "", "  "); err == nil {
-			logger.LogPrintf("代理组 [%s] 完整配置:\n%s", name, string(data))
-		} else {
-			logger.LogPrintf("代理组 [%s] 配置序列化失败: %v", name, err)
-		}
+		// // 打印整个代理组 JSON 日志
+		// if data, err := json.MarshalIndent(pgMap, "", "  "); err == nil {
+		// 	logger.LogPrintf("代理组 [%s] 完整配置:\n%s", name, string(data))
+		// } else {
+		// 	logger.LogPrintf("代理组 [%s] 配置序列化失败: %v", name, err)
+		// }
 
 		proxyGroupsMap[name] = pgMap
 	}
