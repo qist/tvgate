@@ -13,6 +13,7 @@
         }
         .sidebar {
             width: 250px;
+            /* 恢复为主题相关的背景色 */
             background-color: var(--win11-accent);
             padding: 20px;
             color: white;
@@ -362,6 +363,35 @@
             font-size: 0.85em;
         }
         
+        /* 左侧边栏主题适配 */
+        html[data-theme="dark"] .sidebar {
+            background-color: var(--win11-accent-dark);
+            color: white;
+        }
+        
+        html[data-theme="light"] .sidebar {
+            background-color: var(--win11-accent-light);
+            color: white;
+        }
+        
+        html[data-theme="dark"] .sidebar-item {
+            background-color: rgba(255,255,255,0.1);
+            color: white;
+        }
+        
+        html[data-theme="light"] .sidebar-item {
+            background-color: rgba(255,255,255,0.1);
+            color: white;
+        }
+        
+        html[data-theme="dark"] .sidebar-item:hover {
+            background-color: rgba(255,255,255,0.2);
+        }
+        
+        html[data-theme="light"] .sidebar-item:hover {
+            background-color: rgba(255,255,255,0.2);
+        }
+
         @media (max-width: 768px) {
             .main-container {
                 flex-direction: column;
