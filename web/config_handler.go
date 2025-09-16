@@ -227,19 +227,124 @@ func (h *ConfigHandler) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 获取监控路径，默认为/status
+	monitorPath := config.Cfg.Monitor.Path
+	if monitorPath == "" {
+		monitorPath = "/status"
+	}
+
+	// 从monitor模块获取系统状态数据
+	config.CfgMu.RLock()
+	trafficStats := monitor.GlobalTrafficStats.GetTrafficStats()
+	activeConns := monitor.ActiveClients.GetAll()
+	config.CfgMu.RUnlock()
+
+	// 计算服务器运行时间
+	uptime := getSystemUptime()
+
+	// 检查是否有domainmap和global_auth配置
+	hasDomainMap := len(config.Cfg.DomainMap) > 0
+
+	// 检查domainmap中是否有任何组配置了auth
+	hasDomainMapAuth := false
+	for _, dm := range config.Cfg.DomainMap {
+		if dm.Auth.TokensEnabled ||
+			dm.Auth.TokenParamName != "" ||
+			dm.Auth.DynamicTokens.EnableDynamic ||
+			dm.Auth.DynamicTokens.Secret != "" ||
+			dm.Auth.DynamicTokens.Salt != "" ||
+			dm.Auth.StaticTokens.EnableStatic ||
+			dm.Auth.StaticTokens.Token != "" {
+			hasDomainMapAuth = true
+			break
+		}
+	}
+
+	// 检查global_auth是否配置了有效内容
+	globalAuth := config.Cfg.GlobalAuth
+	hasGlobalAuth := globalAuth.TokensEnabled ||
+		globalAuth.TokenParamName != "" ||
+		globalAuth.DynamicTokens.EnableDynamic ||
+		globalAuth.DynamicTokens.Secret != "" ||
+		globalAuth.DynamicTokens.Salt != "" ||
+		globalAuth.StaticTokens.EnableStatic ||
+		globalAuth.StaticTokens.Token != ""
+
+	// 检查proxygroups是否配置了有效内容
+	hasProxyGroups := len(config.Cfg.ProxyGroups) > 0
+
+	// 检查是否有JX配置
+	hasJXConfig := hasJXConfiguration(&config.Cfg.JX)
+
+	// 检查是否有服务器监控配置
+	hasServerMonitorConfig := config.Cfg.Monitor.Path != ""
+
+	// 获取客户端IP
+	clientIP := r.RemoteAddr
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		clientIP = strings.Split(xff, ",")[0]
+	} else if xr := r.Header.Get("X-Real-IP"); xr != "" {
+		clientIP = xr
+	} else {
+		// 只取IP部分，去除端口号
+		if host, _, err := net.SplitHostPort(clientIP); err == nil {
+			clientIP = host
+		}
+	}
+
+	data := map[string]interface{}{
+		"title":                  "TVGate 功能面板",
+		"webPath":                h.getWebPath(),
+		"monitorPath":            monitorPath,
+		"hasDomainMap":           hasDomainMap,
+		"hasDomainMapAuth":       hasDomainMapAuth,
+		"hasGlobalAuth":          hasGlobalAuth,
+		"hasProxyGroups":         hasProxyGroups,
+		"hasJXConfig":            hasJXConfig,
+		"hasServerMonitorConfig": hasServerMonitorConfig,
+		"uptime":                 uptime,
+		"cpuUsage":               int(trafficStats.CPUUsage),
+		"memoryUsage":            0,
+		"memoryUsed":             trafficStats.MemoryUsage,
+		"memoryTotal":            trafficStats.MemoryTotal,
+		"swapUsage":              uint64(0),
+		"swapTotal":              uint64(0),
+		"swapUsagePercent":       0,
+		"diskUsage":              uint64(0),
+		"diskTotal":              uint64(0),
+		"diskUsagePercent":       0,
+		"activeConnections":      len(activeConns),
+		"os":                     trafficStats.HostInfo.Platform,
+		"kernelVersion":          trafficStats.HostInfo.KernelVersion,
+		"cpuArch":                trafficStats.HostInfo.KernelArch,
+		"version":                config.Version,
+		"goroutines":             runtime.NumGoroutine(),
+		"clientIP":               clientIP,
+	}
+
+	// 设置响应头
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// 创建模板并解析
 	tmpl, err := template.New("home").Parse(string(content))
 	if err != nil {
 		http.Error(w, "Failed to parse template", http.StatusInternalServerError)
 		return
 	}
 
-	data := map[string]interface{}{
-		"title":   "TVGate 功能面板",
-		"webPath": h.getWebPath(),
+	// 读取侧边栏模板
+	sidebarContent, err := templatesFS.ReadFile("templates/sidebar.html")
+	if err != nil {
+		http.Error(w, "Failed to read sidebar template file", http.StatusInternalServerError)
+		return
 	}
 
-	// 设置响应头
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// 解析侧边栏模板
+	_, err = tmpl.New("sidebar").Parse(string(sidebarContent))
+	if err != nil {
+		http.Error(w, "Failed to parse sidebar template", http.StatusInternalServerError)
+		return
+	}
 
 	// 执行模板
 	if err := tmpl.Execute(w, data); err != nil {
@@ -446,12 +551,28 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// 读取侧边栏模板
+		sidebarContent, err := templatesFS.ReadFile("templates/sidebar.html")
+		if err != nil {
+			// log.Printf("读取侧边栏模板文件失败: %v", err)
+			http.Error(w, "Failed to read sidebar template file", http.StatusInternalServerError)
+			return
+		}
+
 		tmpl, err := template.New("index").Funcs(template.FuncMap{
 			"formatBytes": formatBytes,
 		}).Parse(string(content))
 		if err != nil {
 			// log.Printf("解析模板失败: %v", err)
 			http.Error(w, "Failed to parse template", http.StatusInternalServerError)
+			return
+		}
+
+		// 解析侧边栏模板
+		_, err = tmpl.New("sidebar").Parse(string(sidebarContent))
+		if err != nil {
+			// log.Printf("解析侧边栏模板失败: %v", err)
+			http.Error(w, "Failed to parse sidebar template", http.StatusInternalServerError)
 			return
 		}
 

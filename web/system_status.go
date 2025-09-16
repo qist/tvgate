@@ -25,6 +25,6 @@ func formatUptime(d time.Duration) string {
 func getSystemUptime() string {
 	uptime := time.Since(config.StartTime)
 	// 添加调试信息
-	fmt.Printf("DEBUG: config.StartTime=%v, uptime=%v, formatted=%s\n", config.StartTime, uptime, formatUptime(uptime))
+	// fmt.Printf("DEBUG: config.StartTime=%v, uptime=%v, formatted=%s\n", config.StartTime, uptime, formatUptime(uptime))
 	return formatUptime(uptime)
 }

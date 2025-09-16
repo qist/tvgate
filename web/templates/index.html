@@ -421,53 +421,8 @@
 </head>
 <body>
     <div class="main-container">
-        <!-- 左侧边栏 -->
-        <div class="sidebar">
-            <div class="sidebar-item">
-                <a href="{{.webPath}}" style="color: inherit; text-decoration: none;">
-                    <h3>系统状态</h3>
-                    <div class="status-info">
-                        <p>操作系统: <span id="os">{{.os}}</span></p>
-                        <p>内核版本: <span id="kernelVersion">{{.kernelVersion}}</span></p>
-                        <p>CPU架构: <span id="cpuArch">{{.cpuArch}}</span></p>
-                        <p>版本: <span id="version">{{.version}}</span></p>
-                        <p>运行时间: <span id="uptime">{{.uptime}}</span></p>
-                        <p>Goroutines: <span id="goroutines">{{.goroutines}}</span></p>
-                        <p>客户端IP: <span id="clientIP">{{.clientIP}}</span></p>
-                    </div>
-                </a>
-            </div>
-            
-            <div class="sidebar-item">
-                <a href="{{.webPath}}home" style="color: inherit; text-decoration: none;">
-                    <h3>功能面板</h3>
-                </a>
-            </div>
-            
-            {{if .hasDomainMap}}
-            <div class="sidebar-item">
-                <a href="{{.webPath}}domainmap-editor" style="color: inherit; text-decoration: none;">
-                    <h3>域名映射配置</h3>
-                </a>
-            </div>
-            {{end}}
-            
-            {{if .hasProxyGroups}}
-            <div class="sidebar-item">
-                <a href="{{.webPath}}proxygroups-editor" style="color: inherit; text-decoration: none;">
-                    <h3>代理组配置</h3>
-                </a>
-            </div>
-            {{end}}
-            
-            <div class="sidebar-item">
-                <a href="{{.webPath}}logout" style="color: inherit; text-decoration: none;">
-                    <h3>退出登录</h3>
-                </a>
-            </div>
-        </div>
+        {{template "sidebar" .}}
         
-        <!-- 正文内容 -->
         <div class="content">
             <h1>欢迎使用 TVGate 管理系统</h1>
             
