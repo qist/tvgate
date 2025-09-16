@@ -388,7 +388,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 		)
 		// logger.LogPrintf("添加重试延迟: %s", retryDelay)
 		
-		// 添加max_rt字段，提供默认值 "1s"
+		// 添加max_rt字段，提供默认值 "200ms"
 		maxRT := "200ms"
 		if maxRTVal, ok := pg["max_rt"]; ok && maxRTVal != "" {
 			if formattedRT, err := formatDurationValue(maxRTVal); err == nil {
@@ -505,43 +505,4 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 	w.Write([]byte("配置保存成功"))
 	
 	// logger.LogPrintf("代理组配置保存完成")
-}
-
-// min 返回两个整数中的较小值
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// formatDurationValue 格式化时间值，接受字符串或time.Duration类型
-func formatDurationValue(value interface{}) (string, error) {
-	switch v := value.(type) {
-	case string:
-		// 如果已经包含时间单位，则直接返回
-		if len(v) > 0 {
-			lastChar := v[len(v)-1:]
-			if lastChar == "s" || lastChar == "m" || lastChar == "h" {
-				return v, nil
-			}
-		}
-		
-		// 尝试解析为数字（秒）
-		var seconds int
-		if _, err := fmt.Sscanf(v, "%d", &seconds); err == nil {
-			return fmt.Sprintf("%ds", seconds), nil
-		}
-		
-		return v, fmt.Errorf("invalid string duration format: %v", v)
-		
-	case time.Duration:
-		if v == 0 {
-			return "", fmt.Errorf("zero duration")
-		}
-		return v.String(), nil
-		
-	default:
-		return "", fmt.Errorf("unsupported duration type: %T", value)
-	}
 }
