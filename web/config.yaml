@@ -1,0 +1,58 @@
+server:
+  #监听端口
+  port: 8888
+# 监控配置
+monitor:
+  path: "/status" # 状态信息
+
+# 配置文件编辑接口
+web:
+  enabled: true
+  username: admin
+  password: admin
+  path: /web/ # 自定义路径
+
+# 日志输出配置
+log:
+  # 是否输出日志
+  enabled: true
+  # 日志输出文件地址 "" 表示标准输出，否则输出到指定文件 ./access.log
+  file: ""
+  # 日志大小M单位
+  maxsize: 10
+  # 压缩文件备份个数
+  maxbackups: 10
+  # 日志保留天数
+  maxage: 28
+  # 是否压缩
+  compress: true
+http:
+  timeout: 0s # 整个请求超时时间 (0 表示不限制)
+  connect_timeout: 10s # 建立连接的超时时间
+  keepalive: 10s # 长连接的保活时间
+  response_header_timeout: 10s # 接收响应头的超时时间
+  idle_conn_timeout: 5s # 空闲连接在连接池中的保留时间
+  tls_handshake_timeout: 10s # TLS 握手超时时间
+  expect_continue_timeout: 1s # Expect: 100-continue 的等待超时时间
+  max_idle_conns: 100 # 最大空闲连接数（全局）
+  max_idle_conns_per_host: 4 # 每个主机最大空闲连接数
+  max_conns_per_host: 8 # 每个主机最大连接数（总数，含空闲和活跃）
+  disable_keepalives: false # 是否禁用长连接复用 (false 表示启用 KeepAlive)
+# 10 万并发参考
+#  http:
+#   timeout: 0s                       # 整体请求超时，不限制（由上层逻辑控制超时）
+#   connect_timeout: 3s               # 建立连接的超时时间（越短越好，失败快速切换）
+#   keepalive: 30s                    # 长连接保活时间，保证高并发时连接复用
+#   response_header_timeout: 5s       # 响应头超时，避免服务端卡死
+#   idle_conn_timeout: 90s            # 空闲连接保留时间，过短会频繁建连，过长会浪费 FD
+#   tls_handshake_timeout: 5s         # TLS 握手超时，CDN/直播源一般很快
+#   expect_continue_timeout: 1s       # 基本不用，保持默认
+
+#   max_idle_conns: 200000            # 全局最大空闲连接数（10 万并发需要翻倍冗余）
+#   max_idle_conns_per_host: 10000    # 单 host 的空闲连接上限，保证热点源站可复用
+#   max_conns_per_host: 20000         # 单 host 总连接数上限（活跃+空闲），防止热点源阻塞
+
+#   disable_keepalives: false         # 必须启用长连接，否则 10 万并发会把源站打爆
+
+# 配置文件重新加载时间(秒)
+reload: 5

@@ -6,5 +6,4 @@ build.zip
 tools/
 cmd/
 tvgate
-config.yaml
 test_start_time

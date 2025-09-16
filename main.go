@@ -31,10 +31,16 @@ func main() {
 		return
 	}
 	configPath := *config.ConfigFilePath
-	if configPath == "" {
-		log.Fatal("未指定配置文件路径")
+	// if configPath == "" {
+	// 	log.Fatal("未指定配置文件路径")
+	// }
+	// 使用 EnsureConfigFile 自动生成默认配置文件
+	configPath, err := web.EnsureConfigFile(configPath)
+	if err != nil {
+		log.Fatalf("确保配置文件失败: %v", err)
 	}
-
+	fmt.Println("使用配置文件:", configPath)
+	
 	if err := load.LoadConfig(configPath); err != nil {
 		log.Fatalf("加载配置文件失败: %v", err)
 	}
@@ -128,18 +134,18 @@ func main() {
 
 	// 注册 Web 管理界面处理器
 	// 注册 Web 管理界面处理器
-			// 注册 Web 管理界面处理器
-			if config.Cfg.Web.Enabled {
-				// 将config.Cfg.Web转换为web.WebConfig类型
-				webConfig := web.WebConfig{
-					Username: config.Cfg.Web.Username,
-					Password: config.Cfg.Web.Password,
-					Enabled:  config.Cfg.Web.Enabled,
-					Path:     config.Cfg.Web.Path,
-				}
-				configHandler := web.NewConfigHandler(webConfig)
-				configHandler.ServeMux(mux)
-			}
+	// 注册 Web 管理界面处理器
+	if config.Cfg.Web.Enabled {
+		// 将config.Cfg.Web转换为web.WebConfig类型
+		webConfig := web.WebConfig{
+			Username: config.Cfg.Web.Username,
+			Password: config.Cfg.Web.Password,
+			Enabled:  config.Cfg.Web.Enabled,
+			Path:     config.Cfg.Web.Path,
+		}
+		configHandler := web.NewConfigHandler(webConfig)
+		configHandler.ServeMux(mux)
+	}
 
 	// 创建默认处理器
 	defaultHandler := server.SecurityHeaders(http.HandlerFunc(h.Handler(client)))
