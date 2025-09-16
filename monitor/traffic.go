@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"math"
 	"os"
 	"runtime"
 	"strings"
@@ -70,7 +71,7 @@ type AppStats struct {
 	OutboundBandwidth uint64
 	LastUpdate        time.Time
 	PrevIOCounters    *process.IOCountersStat
-	PrevCPUTime float64 // ← 新增，用于计算 CPU 百分比
+	PrevCPUTime       float64 // ← 新增，用于计算 CPU 百分比
 }
 
 type TrafficStats struct {
@@ -133,7 +134,6 @@ func AddAppOutboundBytes(n uint64) {
 	GlobalTrafficStats.App.OutboundBytes += n
 	GlobalTrafficStats.App.TotalBytes += n
 }
-
 
 func (ts *TrafficStats) GetTrafficStats() *TrafficStats {
 	ts.mu.RLock()
@@ -201,26 +201,53 @@ func StartSystemStatsUpdater(interval time.Duration) {
 	}()
 }
 
+var (
+	lastCPUSample      time.Time
+	cpuUsageCache      float64
+	cpuCountCache      int
+	lastCPUCountUpdate time.Time
+)
+
 func updateSystemStats() {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
-	// CPU
-	cpuPercent, _ := cpu.Percent(500*time.Millisecond, false)
-	cpuUsage := 0.0
-	if len(cpuPercent) > 0 {
-		cpuUsage = cpuPercent[0]
+	// CPU - 使用缓存减少频繁采样
+	now := time.Now()
+
+	// 更新CPU核心数缓存(每小时更新一次)
+	if now.Sub(lastCPUCountUpdate) > time.Hour {
+		if count, err := cpu.Counts(true); err == nil {
+			cpuCountCache = count
+		}
+		lastCPUCountUpdate = now
 	}
-	cpuCount, _ := cpu.Counts(true)
-	if cpuCount > 0 {
-		cpuUsage = cpuUsage / float64(cpuCount)
+
+	// CPU使用率采样(5秒间隔)
+	if now.Sub(lastCPUSample) > 5*time.Second {
+		// 使用更短的采样时间(300ms)降低开销
+		cpuPercent, _ := cpu.Percent(300*time.Millisecond, false)
+		if len(cpuPercent) > 0 {
+			cpuUsage := cpuPercent[0]
+			// 简化计算逻辑
+			if cpuCountCache > 0 {
+				cpuUsage = cpuUsage / float64(cpuCountCache)
+			}
+			// 限制范围并平滑变化
+			if cpuUsage > 0 {
+				cpuUsageCache = math.Min(cpuUsage, 100)
+				// 如果变化小于1%，保持原值减少抖动
+				if math.Abs(cpuUsageCache-cpuUsage) < 1.0 {
+					cpuUsageCache = cpuUsage
+				}
+			} else {
+				cpuUsageCache = 0
+			}
+			lastCPUSample = now
+		}
 	}
-	if cpuUsage < 0 {
-		cpuUsage = 0
-	}
-	if cpuUsage > 100 {
-		cpuUsage = 100
-	}
+	cpuUsage := cpuUsageCache
+	GlobalTrafficStats.CPUCount = cpuCountCache // 更新全局CPU核心数
 
 	// 内存
 	vmem, _ := mem.VirtualMemory()
@@ -230,50 +257,65 @@ func updateSystemStats() {
 		memTotal = vmem.Total
 	}
 
-	// 磁盘
-	diskPartitions := make([]DiskPartitionInfo, 0)
-	parts, _ := disk.Partitions(true)
-	var diskUsage, diskTotal uint64
-	var diskUsedPercent float64
+	// 磁盘 - 使用缓存减少频繁扫描
+	var (
+		lastDiskScan    time.Time
+		diskPartitions  []DiskPartitionInfo
+		diskUsage       uint64
+		diskTotal       uint64
+		diskUsedPercent float64
+	)
 
-	for _, part := range parts {
-		if runtime.GOOS != "windows" {
-			if strings.HasPrefix(part.Mountpoint, "/proc") ||
-				strings.HasPrefix(part.Mountpoint, "/sys") ||
-				strings.HasPrefix(part.Mountpoint, "/run") ||
-				strings.HasPrefix(part.Mountpoint, "/dev") ||
-				part.Fstype == "tmpfs" || part.Fstype == "devtmpfs" {
+	if now.Sub(lastDiskScan) > 30*time.Second {
+		parts, _ := disk.Partitions(true)
+		tempPartitions := make([]DiskPartitionInfo, 0)
+		var tempUsage, tempTotal uint64
+		var tempUsedPercent float64
+
+		for _, part := range parts {
+			if runtime.GOOS != "windows" {
+				if strings.HasPrefix(part.Mountpoint, "/proc") ||
+					strings.HasPrefix(part.Mountpoint, "/sys") ||
+					strings.HasPrefix(part.Mountpoint, "/run") ||
+					strings.HasPrefix(part.Mountpoint, "/dev") ||
+					part.Fstype == "tmpfs" || part.Fstype == "devtmpfs" {
+					continue
+				}
+			}
+			stat, err := disk.Usage(part.Mountpoint)
+			if err != nil {
 				continue
 			}
-		}
-		stat, err := disk.Usage(part.Mountpoint)
-		if err != nil {
-			continue
-		}
-		skip := false
-		for _, p := range diskPartitions {
-			if p.MountPoint == stat.Path {
-				skip = true
-				break
+			skip := false
+			for _, p := range tempPartitions {
+				if p.MountPoint == stat.Path {
+					skip = true
+					break
+				}
 			}
+			if skip {
+				continue
+			}
+			if tempTotal == 0 {
+				tempUsage = stat.Used
+				tempTotal = stat.Total
+				tempUsedPercent = stat.UsedPercent
+			}
+			tempPartitions = append(tempPartitions, DiskPartitionInfo{
+				Path:        part.Device,
+				Total:       stat.Total,
+				Used:        stat.Used,
+				Free:        stat.Free,
+				UsedPercent: stat.UsedPercent,
+				FsType:      part.Fstype,
+				MountPoint:  stat.Path,
+			})
 		}
-		if skip {
-			continue
-		}
-		if diskTotal == 0 {
-			diskUsage = stat.Used
-			diskTotal = stat.Total
-			diskUsedPercent = stat.UsedPercent
-		}
-		diskPartitions = append(diskPartitions, DiskPartitionInfo{
-			Path:        part.Device,
-			Total:       stat.Total,
-			Used:        stat.Used,
-			Free:        stat.Free,
-			UsedPercent: stat.UsedPercent,
-			FsType:      part.Fstype,
-			MountPoint:  stat.Path,
-		})
+		diskPartitions = tempPartitions
+		diskUsage = tempUsage
+		diskTotal = tempTotal
+		diskUsedPercent = tempUsedPercent
+		lastDiskScan = now
 	}
 
 	// 系统负载
@@ -295,54 +337,66 @@ func updateSystemStats() {
 		hostDetails.KernelVersion = hostInfo.KernelVersion
 	}
 
-	// 网络流量
-	counters, _ := net.IOCounters(true)
-	var totalIn, totalOut uint64
-	for _, c := range counters {
-		totalIn += c.BytesRecv
-		totalOut += c.BytesSent
-	}
+	// 网络流量 - 使用缓存减少频繁采样
+	var (
+		lastNetSample     time.Time
+		networkInterfaces []NetworkInterfaceInfo
+		totalIn, totalOut uint64
+	)
 
-	// 带宽计算
-	now := time.Now()
-	GlobalTrafficStats.mu.Lock()
-	oldTotalIn := GlobalTrafficStats.InboundBytes
-	oldTotalOut := GlobalTrafficStats.OutboundBytes
-	timeDiff := now.Sub(GlobalTrafficStats.LastUpdate).Seconds()
-	inboundBW, outboundBW := uint64(0), uint64(0)
-	if timeDiff > 0 {
-		inboundBW = uint64(float64(totalIn-oldTotalIn) / timeDiff)
-		outboundBW = uint64(float64(totalOut-oldTotalOut) / timeDiff)
-	}
+	if now.Sub(lastNetSample) > 1*time.Second {
+		counters, _ := net.IOCounters(true)
+		tempInterfaces := make([]NetworkInterfaceInfo, 0, len(counters))
+		var tempIn, tempOut uint64
 
-	// 网络接口信息
-	networkInterfaces := make([]NetworkInterfaceInfo, 0)
-	for _, c := range counters {
-		info := NetworkInterfaceInfo{
-			Name:        c.Name,
-			BytesRecv:   c.BytesRecv,
-			BytesSent:   c.BytesSent,
-			PacketsRecv: c.PacketsRecv,
-			PacketsSent: c.PacketsSent,
+		for _, c := range counters {
+			tempIn += c.BytesRecv
+			tempOut += c.BytesSent
+
+			info := NetworkInterfaceInfo{
+				Name:        c.Name,
+				BytesRecv:   c.BytesRecv,
+				BytesSent:   c.BytesSent,
+				PacketsRecv: c.PacketsRecv,
+				PacketsSent: c.PacketsSent,
+			}
+			if prev, ok := GlobalTrafficStats.PrevNetCounters[c.Name]; ok {
+				timeDiff := now.Sub(GlobalTrafficStats.LastUpdate).Seconds()
+				if timeDiff > 0 {
+					info.RecvBandwidth = uint64(float64(c.BytesRecv-prev.BytesRecv) / timeDiff)
+					info.SendBandwidth = uint64(float64(c.BytesSent-prev.BytesSent) / timeDiff)
+				}
+			}
+			tempInterfaces = append(tempInterfaces, info)
 		}
-		if prev, ok := GlobalTrafficStats.PrevNetCounters[c.Name]; ok && timeDiff > 0 {
-			info.RecvBandwidth = uint64(float64(c.BytesRecv-prev.BytesRecv) / timeDiff)
-			info.SendBandwidth = uint64(float64(c.BytesSent-prev.BytesSent) / timeDiff)
-		}
-		networkInterfaces = append(networkInterfaces, info)
-	}
 
-	prevCounters := make(map[string]net.IOCountersStat)
-	for _, c := range counters {
-		prevCounters[c.Name] = c
+		networkInterfaces = tempInterfaces
+		totalIn = tempIn
+		totalOut = tempOut
+		lastNetSample = now
+
+		// 带宽计算
+		GlobalTrafficStats.mu.Lock()
+		oldTotalIn := GlobalTrafficStats.InboundBytes
+		oldTotalOut := GlobalTrafficStats.OutboundBytes
+		timeDiff := now.Sub(GlobalTrafficStats.LastUpdate).Seconds()
+		if timeDiff > 0 {
+			GlobalTrafficStats.InboundBandwidth = uint64(float64(totalIn-oldTotalIn) / timeDiff)
+			GlobalTrafficStats.OutboundBandwidth = uint64(float64(totalOut-oldTotalOut) / timeDiff)
+		}
+
+		prevCounters := make(map[string]net.IOCountersStat)
+		for _, c := range counters {
+			prevCounters[c.Name] = c
+		}
+		GlobalTrafficStats.PrevNetCounters = prevCounters
+		GlobalTrafficStats.mu.Unlock()
 	}
-	GlobalTrafficStats.mu.Unlock()
 
 	// 更新全局统计
 	GlobalTrafficStats.mu.Lock()
 	defer GlobalTrafficStats.mu.Unlock()
 	GlobalTrafficStats.CPUUsage = cpuUsage
-	GlobalTrafficStats.CPUCount = cpuCount
 	GlobalTrafficStats.MemoryUsage = memUsage
 	GlobalTrafficStats.MemoryTotal = memTotal
 	GlobalTrafficStats.DiskUsage = diskUsage
@@ -352,11 +406,8 @@ func updateSystemStats() {
 	GlobalTrafficStats.LoadAverage = loadAverage
 	GlobalTrafficStats.HostInfo = hostDetails
 	GlobalTrafficStats.NetworkInterfaces = networkInterfaces
-	GlobalTrafficStats.PrevNetCounters = prevCounters
 	GlobalTrafficStats.InboundBytes = totalIn
 	GlobalTrafficStats.OutboundBytes = totalOut
-	GlobalTrafficStats.InboundBandwidth = inboundBW
-	GlobalTrafficStats.OutboundBandwidth = outboundBW
 	GlobalTrafficStats.TotalBytes = totalIn + totalOut
 	GlobalTrafficStats.LastUpdate = now
 
@@ -366,9 +417,21 @@ func updateSystemStats() {
 
 // -------------------- 应用自身统计 --------------------
 
+var (
+	appProcess     *process.Process
+	appProcessOnce sync.Once
+)
+
+func getAppProcess() *process.Process {
+	appProcessOnce.Do(func() {
+		appProcess, _ = process.NewProcess(int32(os.Getpid()))
+	})
+	return appProcess
+}
+
 func updateAppStats(ts *TrafficStats) {
-	p, err := process.NewProcess(int32(os.Getpid()))
-	if err != nil {
+	p := getAppProcess()
+	if p == nil {
 		return
 	}
 
@@ -395,16 +458,14 @@ func updateAppStats(ts *TrafficStats) {
 	}
 
 	// ---------------- 内存 ----------------
-	memInfo, _ := p.MemoryInfo()
 	memUsage := uint64(0)
-	if memInfo != nil {
-		memUsage = memInfo.RSS
+	if memStats, err := p.MemoryInfo(); err == nil {
+		memUsage = memStats.RSS
 	}
 
 	// ---------------- IO 流量 ----------------
-	ioCounters, _ := p.IOCounters()
 	inBytes, outBytes := uint64(0), uint64(0)
-	if ioCounters != nil {
+	if ioCounters, err := p.IOCounters(); err == nil {
 		inBytes = ioCounters.ReadBytes
 		outBytes = ioCounters.WriteBytes
 	}
@@ -432,7 +493,10 @@ func updateAppStats(ts *TrafficStats) {
 	ts.App.InboundBandwidth = inBW
 	ts.App.OutboundBandwidth = outBW
 	ts.App.LastUpdate = now
-	ts.App.PrevIOCounters = ioCounters
+	ts.App.PrevIOCounters = &process.IOCountersStat{
+		ReadBytes:  inBytes,
+		WriteBytes: outBytes,
+	}
 
 	// ---------------- 累加总流量 ----------------
 	ts.App.TotalBytes += inDiff + outDiff
