@@ -24,6 +24,7 @@ type StatusData struct {
 	TrafficStats  *TrafficStats
 	ClientIP      string
 	ActiveClients []*ClientConnection
+	WebPath       string
 }
 
 // HTTP 处理入口
@@ -363,11 +364,11 @@ intervalSelect.onchange=()=>{ refreshMs=parseInt(intervalSelect.value); if(auto)
 // 主题切换功能
 const toggleThemeBtn = document.getElementById('toggleTheme');
 let currentTheme = localStorage.getItem('theme') || 'dark';
-
+const webBase = '{{.WebPath}}';
 // 同步主题到后端
 async function syncThemeToBackend(theme) {
     try {
-        const response = await fetch('/api/theme', {
+        const response = await fetch(webBase + 'sync-theme', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -386,7 +387,7 @@ async function syncThemeToBackend(theme) {
 // 从后端获取当前主题
 async function getCurrentThemeFromBackend() {
     try {
-        const response = await fetch('/api/theme');
+        const response = await fetch(webBase + 'sync-theme');
         const result = await response.json();
         if (result.theme && (result.theme === 'dark' || result.theme === 'light')) {
             return result.theme;
@@ -603,6 +604,7 @@ func prepareStatusData(r *http.Request) StatusData {
 		TrafficStats:  trafficStats, // 包含系统统计 + 应用统计
 		ClientIP:      clientIP,
 		ActiveClients: ActiveClients.GetAll(),
+		WebPath:       config.Cfg.Web.Path, // 注入动态 Web.Path
 	}
 }
 
