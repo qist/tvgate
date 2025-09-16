@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	// "io/fs"
+	"io/fs"
+	"sync"
+
 	// "log"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -24,7 +26,7 @@ import (
 //go:embed templates/*
 var templatesFS embed.FS
 
-//go:embed static/*
+//go:embed all:static/*
 var staticFS embed.FS
 
 // WebConfig web管理界面配置
@@ -35,16 +37,40 @@ type WebConfig struct {
 	Path     string `yaml:"path"` // Web管理界面的访问路径
 }
 
+// WebHandler web管理界面处理器
+type WebHandler struct {
+	configHandler *ConfigHandler
+}
+
+// NewWebHandler 创建web管理界面处理器
+func NewWebHandler(configHandler *ConfigHandler) *WebHandler {
+	return &WebHandler{
+		configHandler: configHandler,
+	}
+}
+// ServeMux 注册web管理界面路由
+func (h *WebHandler) ServeMux(mux *http.ServeMux) {
+	// 路由已在config_handler.go中注册，此处无需重复注册
+}
 // ConfigHandler 配置文件管理处理器
 type ConfigHandler struct {
-	webConfig WebConfig
+	webConfig    WebConfig
+	currentTheme string
+	themeMutex   sync.RWMutex
+}
+
+// init 初始化主题状态
+func (h *ConfigHandler) init() {
+	h.currentTheme = "dark"
 }
 
 // NewConfigHandler 创建配置管理处理器
 func NewConfigHandler(webConfig WebConfig) *ConfigHandler {
-	return &ConfigHandler{
+	handler := &ConfigHandler{
 		webConfig: webConfig,
 	}
+	handler.init()
+	return handler
 }
 
 // cookieAuth 中间件，用于基于Cookie的认证
@@ -89,52 +115,10 @@ func (h *ConfigHandler) renderTemplate(w http.ResponseWriter, r *http.Request, t
 	return tmpl.Execute(w, data)
 }
 
-// serveStaticFiles 提供静态文件服务
-func (h *ConfigHandler) serveStaticFiles(w http.ResponseWriter, r *http.Request) {
-	// 获取文件路径，去除前缀
-	filePath := strings.TrimPrefix(r.URL.Path, "/static/")
-	
-	// 从嵌入的静态文件系统读取文件
-	data, err := staticFS.ReadFile("static/" + filePath)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	
-	// 根据文件扩展名设置正确的MIME类型
-	switch {
-	case strings.HasSuffix(filePath, ".css"):
-		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	case strings.HasSuffix(filePath, ".js"):
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-	case strings.HasSuffix(filePath, ".png"):
-		w.Header().Set("Content-Type", "image/png")
-	case strings.HasSuffix(filePath, ".jpg"), strings.HasSuffix(filePath, ".jpeg"):
-		w.Header().Set("Content-Type", "image/jpeg")
-	case strings.HasSuffix(filePath, ".gif"):
-		w.Header().Set("Content-Type", "image/gif")
-	case strings.HasSuffix(filePath, ".svg"):
-		w.Header().Set("Content-Type", "image/svg+xml")
-	case strings.HasSuffix(filePath, ".ico"):
-		w.Header().Set("Content-Type", "image/x-icon")
-	case strings.HasSuffix(filePath, ".woff"):
-		w.Header().Set("Content-Type", "font/woff")
-	case strings.HasSuffix(filePath, ".woff2"):
-		w.Header().Set("Content-Type", "font/woff2")
-	case strings.HasSuffix(filePath, ".ttf"):
-		w.Header().Set("Content-Type", "font/ttf")
-	case strings.HasSuffix(filePath, ".eot"):
-		w.Header().Set("Content-Type", "application/vnd.ms-fontobject")
-	default:
-		w.Header().Set("Content-Type", "application/octet-stream")
-	}
-	
-	// 写入文件内容
-	w.Write(data)
-}
-
 // ServeMux 注册配置管理路由
 func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
+	// 注册主题同步路由
+	mux.HandleFunc(h.getWebPath()+"sync-theme", h.handleSyncTheme)
 	// 获取配置的Web路径，默认为/web/
 	webPath := h.webConfig.Path
 	if webPath == "" {
@@ -149,14 +133,19 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 		webPath = webPath + "/"
 	}
 
+	// --- 静态文件 ---
+	subFS, _ := fs.Sub(staticFS, "static")
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(subFS))))
+	mux.Handle(webPath+"static/", http.StripPrefix(webPath+"static/", http.FileServer(http.FS(subFS))))
+
 	// 注册不需要认证的路由
 	mux.HandleFunc(webPath, h.handleWeb)
 	mux.HandleFunc(webPath+"login", h.handleLogin)
 	mux.HandleFunc(webPath+"logout", h.handleLogout)
 	mux.HandleFunc(webPath+"auth-status", h.handleAuthStatus)
-	
-	// 注册静态文件服务路由
-	mux.HandleFunc("/static/", h.serveStaticFiles)
+
+	// // 注册静态文件服务路由
+	// mux.HandleFunc("/static/", h.serveStaticFiles)
 
 	// 注册需要认证的路由，使用基于Cookie的认证中间件
 	mux.HandleFunc(webPath+"editor", h.cookieAuth(h.handleEditor))
@@ -172,7 +161,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"reload-editor", h.cookieAuth(h.handleReloadEditor))
 	mux.HandleFunc(webPath+"http-editor", h.cookieAuth(h.handleHTTPEditor))
 	mux.HandleFunc(webPath+"log-editor", h.cookieAuth(http.HandlerFunc(h.handleLogEditor)))
-	
+
 	mux.HandleFunc(webPath+"config", h.cookieAuth(h.handleConfig))
 	mux.HandleFunc(webPath+"config/save", h.cookieAuth(h.handleConfigSave))
 	mux.HandleFunc(webPath+"config/save-node", h.cookieAuth(h.handleConfigSaveNode))
@@ -202,6 +191,36 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/http", h.cookieAuth(h.handleHTTPConfig))
 	mux.HandleFunc(webPath+"config/log", h.cookieAuth(http.HandlerFunc(h.handleGetLogConfig)))
 
+}
+
+// handleSyncTheme 处理主题同步请求
+func (h *ConfigHandler) handleSyncTheme(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.themeMutex.RLock()
+		defer h.themeMutex.RUnlock()
+		json.NewEncoder(w).Encode(map[string]string{
+			"theme": h.currentTheme,
+		})
+	case http.MethodPost:
+		var req struct {
+			Theme string `json:"theme"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Theme != "dark" && req.Theme != "light" {
+			http.Error(w, "Invalid theme value", http.StatusBadRequest)
+			return
+		}
+		h.themeMutex.Lock()
+		h.currentTheme = req.Theme
+		h.themeMutex.Unlock()
+		w.WriteHeader(http.StatusOK)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // handleWeb 处理web管理界面首页
@@ -280,14 +299,14 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 		hasServerMonitorConfig := config.Cfg.Monitor.Path != ""
 
 		data := map[string]interface{}{
-			"title":               "TVGate Web管理",
-			"webPath":             webPath,
-			"monitorPath":         monitorPath,
-			"hasDomainMap":        hasDomainMap,
-			"hasDomainMapAuth":    hasDomainMapAuth,
-			"hasGlobalAuth":       hasGlobalAuth,
-			"hasProxyGroups":      hasProxyGroups,
-			"hasJXConfig":         hasJXConfig,
+			"title":                  "TVGate Web管理",
+			"webPath":                webPath,
+			"monitorPath":            monitorPath,
+			"hasDomainMap":           hasDomainMap,
+			"hasDomainMapAuth":       hasDomainMapAuth,
+			"hasGlobalAuth":          hasGlobalAuth,
+			"hasProxyGroups":         hasProxyGroups,
+			"hasJXConfig":            hasJXConfig,
 			"hasServerMonitorConfig": hasServerMonitorConfig,
 		}
 
@@ -342,7 +361,6 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-
 		// log.Printf("显示登录页面")
 
 		// 显示登录页面
@@ -395,12 +413,9 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-
 		// log.Printf("收到登录凭据，用户名: %s", credentials.Username)
 
 		// 验证用户名和密码
-
-
 
 		usernameMatch := subtle.ConstantTimeCompare([]byte(credentials.Username), []byte(h.webConfig.Username)) == 1
 		passwordMatch := subtle.ConstantTimeCompare([]byte(credentials.Password), []byte(h.webConfig.Password)) == 1
@@ -429,7 +444,6 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "用户名或密码错误", http.StatusUnauthorized)
 		return
 	}
-
 
 	// log.Printf("不支持的请求方法: %s", r.Method)
 	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -619,8 +633,6 @@ func (h *ConfigHandler) getUsernameFromCookie(cookieValue string) string {
 	return ""
 }
 
-
-
 // handleGroupEditor 处理组编辑器页面请求
 func (h *ConfigHandler) handleGroupEditor(w http.ResponseWriter, r *http.Request) {
 	// 获取配置的Web路径，默认为/web/
@@ -771,7 +783,7 @@ func (h *ConfigHandler) handleConfigSave(w http.ResponseWriter, r *http.Request)
 		configPath := *config.ConfigFilePath
 
 		// 备份当前配置文件
-		backupPath := configPath  + ".backup." + time.Now().Format("20060102150405")
+		backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
 		if err := copyFile(configPath, backupPath); err != nil {
 			http.Error(w, "Failed to create backup: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -797,7 +809,7 @@ func (h *ConfigHandler) handleConfigSave(w http.ResponseWriter, r *http.Request)
 
 	http.NotFound(w, r)
 }
- 
+
 // handleConfigValidate 处理配置验证请求
 func (h *ConfigHandler) handleConfigValidate(w http.ResponseWriter, r *http.Request) {
 	// 获取配置的Web路径，默认为/web/
@@ -1089,7 +1101,7 @@ func (h *ConfigHandler) handleConfigSaveNode(w http.ResponseWriter, r *http.Requ
 		}
 
 		// 备份当前配置文件
-		backupPath := configPath  + ".backup." + time.Now().Format("20060102150405")
+		backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
 		if err := copyFile(configPath, backupPath); err != nil {
 			http.Error(w, "Failed to create backup: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -1466,7 +1478,7 @@ func (h *ConfigHandler) handleConfigSaveGroup(w http.ResponseWriter, r *http.Req
 		}
 
 		// 备份当前配置文件
-		backupPath := configPath  + ".backup." + time.Now().Format("20060102150405")
+		backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
 		if err := copyFile(configPath, backupPath); err != nil {
 			http.Error(w, "Failed to create backup: "+err.Error(), http.StatusInternalServerError)
 			return

@@ -6,3 +6,4 @@ build.zip
 tools/
 cmd/
 tvgate
+config.yaml

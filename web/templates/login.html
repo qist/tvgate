@@ -5,30 +5,33 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.title}}</title>
+    <link rel="stylesheet" href="{{.webPath}}static/common.css">
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             margin: 0;
             padding: 20px;
-            background-color: #121212;
-            /* 暗黑背景 */
-            color: #e0e0e0;
+            background-color: var(--win11-bg);
+            color: var(--win11-text-primary);
+            transition: background-color 0.3s, color 0.3s;
         }
 
         .container {
             max-width: 400px;
             margin: 100px auto;
-            background-color: #1e1e1e;
-            /* 暗色容器 */
+            background-color: var(--win11-surface);
             padding: 30px;
             border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+            box-shadow: 0 4px 12px var(--win11-shadow);
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, box-shadow 0.3s;
         }
 
         h1 {
-            color: #ffffff;
+            color: var(--win11-text-primary);
             text-align: center;
             margin-bottom: 30px;
+            font-weight: 600;
         }
 
         .form-group {
@@ -37,63 +40,114 @@
 
         label {
             display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-            color: #cccccc;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--win11-text-secondary);
+            transition: color 0.3s;
         }
 
         input[type="text"],
         input[type="password"] {
             width: 100%;
-            padding: 10px;
-            border: 1px solid #555;
+            padding: 12px;
+            border: 1px solid var(--win11-border);
             border-radius: 4px;
             box-sizing: border-box;
-            font-size: 16px;
-            background-color: #2c2c2c;
-            color: #ffffff;
+            font-size: 14px;
+            background-color: var(--win11-card);
+            color: var(--win11-text-primary);
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            transition: background-color 0.3s, border-color 0.3s, color 0.3s;
+        }
+
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            outline: none;
+            border-color: var(--win11-accent);
+            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
         }
 
         input[type="text"]::placeholder,
         input[type="password"]::placeholder {
-            color: #888888;
+            color: var(--win11-text-tertiary);
         }
 
         .btn {
             width: 100%;
             padding: 12px;
-            background-color: #007bff;
+            background-color: var(--win11-accent);
             color: white;
             border: none;
             border-radius: 4px;
-            font-size: 16px;
+            font-size: 14px;
+            font-weight: 600;
             cursor: pointer;
-            transition: background-color 0.3s;
+            transition: background-color 0.3s, transform 0.2s;
         }
 
         .btn:hover {
-            background-color: #0056b3;
+            background-color: var(--win11-accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            background-color: var(--win11-accent-active);
+            transform: translateY(0);
         }
 
         .error-message {
-            color: #ff4d4d;
+            color: var(--win11-danger);
             text-align: center;
             margin-top: 15px;
             display: none;
+            padding: 10px;
+            background-color: rgba(232, 17, 35, 0.2);
+            border-radius: 4px;
+            border: 1px solid var(--win11-danger);
         }
 
         .back-link {
             display: block;
             text-align: center;
             margin-top: 20px;
-            color: #66b0ff;
+            color: var(--win11-accent);
             text-decoration: none;
+            transition: color 0.3s;
         }
 
         .back-link:hover {
             text-decoration: underline;
+            color: var(--win11-accent-hover);
+        }
+
+        .theme-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: var(--win11-card);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 2px 10px var(--win11-shadow);
+            transition: all 0.3s;
+            z-index: 1000;
+        }
+
+        .theme-toggle:hover {
+            transform: scale(1.1);
+        }
+
+        .theme-toggle svg {
+            width: 24px;
+            height: 24px;
+            stroke: var(--win11-text-primary);
         }
     </style>
+    <script src="{{.webPath}}static/js/theme.js"></script>
 </head>
 
 <body>
@@ -116,6 +170,10 @@
 
     <script>
         const webPath = "{{.webPath}}";
+        window.webPath = webPath; // 设为全局变量供theme.js使用
+        
+        // 添加主题切换按钮容器
+        document.body.appendChild(document.createElement('div')).className = 'theme-toggle';
 
         document.getElementById('login-form').addEventListener('submit', function (e) {
             e.preventDefault();

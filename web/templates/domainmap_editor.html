@@ -4,27 +4,32 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>域名映射编辑器 - TVGate Web管理</title>
+    <link rel="stylesheet" href="{{.webPath}}static/common.css">
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             margin: 0;
             padding: 20px;
-            background-color: #121212;
-            color: #e0e0e0;
+            background-color: var(--win11-bg);
+            color: var(--win11-text-primary);
+            transition: background-color 0.3s, color 0.3s;
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            background-color: #1e1e1e;
+            background-color: var(--win11-surface);
             padding: 20px;
             border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+            box-shadow: 0 4px 12px var(--win11-shadow);
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, box-shadow 0.3s;
         }
 
         h1 {
-            color: #ffffff;
+            color: var(--win11-text-primary);
             text-align: center;
+            font-weight: 600;
         }
 
         .auth-section {
@@ -35,8 +40,8 @@
         .auth-section a {
             display: inline-block;
             padding: 8px 16px;
-            background-color: #28a745;
-            color: #ffffff;
+            background-color: var(--win11-success);
+            color: white;
             text-decoration: none;
             border-radius: 4px;
             transition: background-color 0.3s;
@@ -44,11 +49,11 @@
         }
 
         .auth-section a.logout {
-            background-color: #dc3545;
+            background-color: var(--win11-danger);
         }
 
         .auth-section a:hover {
-            opacity: 0.8;
+            opacity: 0.9;
         }
 
         .form-group {
@@ -57,95 +62,112 @@
 
         .form-group label {
             display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-            color: #ffffff;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--win11-text-secondary);
         }
 
         .form-control {
             width: 100%;
-            padding: 10px;
-            background-color: #2c2c2c;
-            border: 1px solid #444;
+            padding: 12px;
+            background-color: var(--win11-card);
+            border: 1px solid var(--win11-border);
             border-radius: 4px;
-            color: #e0e0e0;
+            color: var(--win11-text-primary);
             box-sizing: border-box;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--win11-accent);
+            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
         }
 
         textarea.form-control {
             min-height: 300px;
-            font-family: 'Courier New', monospace;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             resize: vertical;
         }
 
         .btn {
             display: inline-block;
             padding: 10px 20px;
-            background-color: #007bff;
-            color: #ffffff;
+            background-color: var(--win11-accent);
+            color: white;
             text-decoration: none;
             border-radius: 4px;
             border: none;
             cursor: pointer;
-            font-size: 16px;
-            transition: background-color 0.3s;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background-color 0.3s, transform 0.2s;
         }
 
         .btn:hover {
-            background-color: #0056b3;
+            background-color: var(--win11-accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            background-color: var(--win11-accent-active);
+            transform: translateY(0);
         }
 
         .btn-success {
-            background-color: #28a745;
+            background-color: var(--win11-success);
         }
 
         .btn-success:hover {
-            background-color: #1e7e34;
+            background-color: #57a357;
         }
 
         .btn-danger {
-            background-color: #dc3545;
+            background-color: var(--win11-danger);
         }
 
         .btn-danger:hover {
-            background-color: #bd2130;
+            background-color: #c40f1d;
         }
 
         .btn-warning {
-            background-color: #ffc107;
-            color: #212529;
+            background-color: var(--win11-warning);
+            color: #000000;
         }
 
         .btn-warning:hover {
-            background-color: #e0a800;
+            background-color: #e6b800;
         }
 
         .btn-sm {
             padding: 5px 10px;
-            font-size: 14px;
+            font-size: 13px;
         }
 
         .form-buttons {
             text-align: center;
-            margin-top: 20px;
+            margin: 20px 0;
         }
 
         .alert {
             padding: 15px;
             margin-bottom: 20px;
             border-radius: 4px;
+            transition: all 0.3s;
+            animation: fadeIn 0.3s;
         }
 
         .alert-success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
+            background-color: rgba(102, 194, 102, 0.2);
+            color: var(--win11-success);
+            border: 1px solid var(--win11-success);
         }
 
         .alert-danger {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
+            background-color: rgba(232, 17, 35, 0.2);
+            color: var(--win11-danger);
+            border: 1px solid var(--win11-danger);
         }
 
         .hidden {
@@ -153,11 +175,17 @@
         }
 
         .domainmap-item {
-            background-color: #2c2c2c;
+            background-color: var(--win11-card);
             padding: 15px;
             margin-bottom: 15px;
-            border-radius: 4px;
-            border: 1px solid #444;
+            border-radius: 8px;
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, transform 0.3s;
+        }
+
+        .domainmap-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px var(--win11-shadow);
         }
 
         .domainmap-item-header {
@@ -166,29 +194,31 @@
             align-items: center;
             margin-bottom: 10px;
             padding-bottom: 10px;
-            border-bottom: 1px solid #444;
+            border-bottom: 1px solid var(--win11-border);
         }
 
         .domainmap-item-title {
-            font-weight: bold;
-            color: #ffffff;
+            font-weight: 600;
+            color: var(--win11-text-primary);
         }
 
         .add-btn {
             display: block;
             width: 100%;
             padding: 15px;
-            background-color: #28a745;
-            color: #ffffff;
+            background-color: var(--win11-success);
+            color: white;
             text-align: center;
             text-decoration: none;
-            border-radius: 4px;
+            border-radius: 8px;
             margin-bottom: 20px;
             box-sizing: border-box;
+            transition: background-color 0.3s, transform 0.2s;
         }
 
         .add-btn:hover {
-            background-color: #1e7e34;
+            background-color: #57a357;
+            transform: translateY(-1px);
         }
 
         .checkbox-group {
@@ -202,28 +232,30 @@
         }
 
         .subsection {
-            background-color: #3a3a3a;
+            background-color: var(--win11-card);
             padding: 15px;
             margin-bottom: 15px;
-            border-radius: 4px;
+            border-radius: 8px;
+            border: 1px solid var(--win11-border);
         }
 
         .subsection-title {
-            color: #ffffff;
+            color: var(--win11-text-primary);
             margin-top: 0;
             margin-bottom: 15px;
             padding-bottom: 5px;
-            border-bottom: 1px solid #555;
+            border-bottom: 1px solid var(--win11-border);
         }
 
         .auth-section-container {
-            background-color: #3a3a3a;
+            background-color: var(--win11-card);
             padding: 15px;
-            border-radius: 4px;
+            border-radius: 8px;
             margin-top: 15px;
+            border: 1px solid var(--win11-border);
         }
         
-        /* 新增样式：用于列表视图 */
+        /* 列表视图样式 */
         .domainmap-list {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -232,33 +264,41 @@
         }
         
         .domainmap-card {
-            background-color: #2c2c2c;
-            border: 1px solid #444;
-            border-radius: 4px;
+            background-color: var(--win11-card);
+            border: 1px solid var(--win11-border);
+            border-radius: 8px;
             padding: 15px;
             cursor: pointer;
-            transition: background-color 0.3s;
+            transition: all 0.3s;
         }
         
         .domainmap-card:hover {
-            background-color: #3a3a3a;
+            background-color: var(--win11-surface);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px var(--win11-shadow);
         }
         
         .domainmap-card h3 {
             margin: 0 0 10px 0;
-            color: #ffffff;
+            color: var(--win11-text-primary);
         }
         
         .domainmap-card p {
             margin: 5px 0;
-            color: #cccccc;
+            color: var(--win11-text-secondary);
             font-size: 14px;
         }
         
         .detail-view {
             display: none;
         }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
     </style>
+    <script src="{{.webPath}}static/js/theme.js"></script>
 </head>
 <body>
     <div class="container">
@@ -311,6 +351,7 @@
 
     <script>
         const webPath = "{{.webPath}}";
+        window.webPath = webPath; // 设为全局变量供theme.js使用
         let domainMaps = [];
         let originalDomainMaps = []; // 用于跟踪原始配置
         let currentEditIndex = -1; // 当前编辑的索引，-1表示新增
@@ -488,6 +529,38 @@
                             <option value="rtsp" ${domainMap.protocol === 'rtsp' ? 'selected' : ''}>RTSP</option>
                         </select>
                     </div>
+
+                    <div class="subsection">
+                        <h3 class="subsection-title">客户端请求头</h3>
+                        <div id="client-headers-container">
+                            ${domainMap.client_headers ? Object.entries(domainMap.client_headers).map(([key, value]) => `
+                                <div class="form-group header-field">
+                                    <div style="display: flex; gap: 10px;">
+                                        <input type="text" class="form-control" placeholder="头名称" value="${key}" style="flex: 1;">
+                                        <input type="text" class="form-control" placeholder="头值" value="${value}" style="flex: 1;">
+                                        <button type="button" class="btn btn-danger btn-sm" onclick="removeHeaderField(this.parentNode.parentNode)">删除</button>
+                                    </div>
+                                </div>
+                            `).join('') : ''}
+                        </div>
+                        <button type="button" class="btn btn-sm" onclick="addHeaderField('client')">添加请求头</button>
+                    </div>
+
+                    <div class="subsection">
+                        <h3 class="subsection-title">服务端响应头</h3>
+                        <div id="server-headers-container">
+                            ${domainMap.server_headers ? Object.entries(domainMap.server_headers).map(([key, value]) => `
+                                <div class="form-group header-field">
+                                    <div style="display: flex; gap: 10px;">
+                                        <input type="text" class="form-control" placeholder="头名称" value="${key}" style="flex: 1;">
+                                        <input type="text" class="form-control" placeholder="头值" value="${value}" style="flex: 1;">
+                                        <button type="button" class="btn btn-danger btn-sm" onclick="removeHeaderField(this.parentNode.parentNode)">删除</button>
+                                    </div>
+                                </div>
+                            `).join('') : ''}
+                        </div>
+                        <button type="button" class="btn btn-sm" onclick="addHeaderField('server')">添加响应头</button>
+                    </div>
                     {{if .hasAuthConfig}}
                     <div class="form-group">
                         <div class="checkbox-group">
@@ -633,6 +706,26 @@
             }
         }
 
+        // 添加头部字段
+        function addHeaderField(type) {
+            const container = document.getElementById(`${type}-headers-container`);
+            const div = document.createElement('div');
+            div.className = 'form-group header-field';
+            div.innerHTML = `
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" class="form-control" placeholder="头名称" style="flex: 1;">
+                    <input type="text" class="form-control" placeholder="头值" style="flex: 1;">
+                    <button type="button" class="btn btn-danger btn-sm" onclick="removeHeaderField(this.parentNode.parentNode)">删除</button>
+                </div>
+            `;
+            container.appendChild(div);
+        }
+
+        // 删除头部字段
+        function removeHeaderField(element) {
+            element.remove();
+        }
+
         // 更新当前编辑的域名映射属性
         function updateCurrentDomainMap(field, value) {
             if (currentEditIndex === -1) {
@@ -645,6 +738,72 @@
                 // 编辑模式
                 domainMaps[currentEditIndex][field] = value;
             }
+        }
+
+        // 收集所有头部字段
+        function collectHeaders(type) {
+            const headers = {};
+            const container = document.getElementById(`${type}-headers-container`);
+            const fields = container.querySelectorAll('.header-field');
+            
+            fields.forEach(field => {
+                const inputs = field.querySelectorAll('input');
+                const key = inputs[0].value.trim();
+                const value = inputs[1].value.trim();
+                if (key && value) {
+                    headers[key] = value;
+                }
+            });
+            
+            return Object.keys(headers).length > 0 ? headers : null;
+        }
+
+        // 更新当前编辑的域名映射属性
+        function updateCurrentDomainMap(field, value) {
+            if (currentEditIndex === -1) {
+                // 新增模式
+                if (!domainMaps[currentEditIndex]) {
+                    domainMaps[currentEditIndex] = {};
+                }
+                domainMaps[currentEditIndex][field] = value;
+            } else {
+                // 编辑模式
+                domainMaps[currentEditIndex][field] = value;
+            }
+        }
+
+        // 保存当前编辑的域名映射
+        function saveCurrentDomainMap() {
+            // 验证必填字段
+            const dm = domainMaps[currentEditIndex];
+            if (!dm.name || !dm.source || !dm.target) {
+                showAlert(`名称、源域名和目标域名不能为空`, 'danger');
+                return;
+            }
+
+            // 收集headers数据
+            const clientHeaders = collectHeaders('client');
+            if (clientHeaders) {
+                domainMaps[currentEditIndex].client_headers = clientHeaders;
+            } else {
+                delete domainMaps[currentEditIndex].client_headers;
+            }
+
+            const serverHeaders = collectHeaders('server');
+            if (serverHeaders) {
+                domainMaps[currentEditIndex].server_headers = serverHeaders;
+            } else {
+                delete domainMaps[currentEditIndex].server_headers;
+            }
+
+            // 如果是新增模式，添加到数组中
+            if (currentEditIndex === -1) {
+                domainMaps.push(dm);
+                currentEditIndex = domainMaps.length - 1;
+            }
+
+            // 保存配置
+            saveConfig();
         }
 
         // 更新当前编辑的认证配置
@@ -726,6 +885,21 @@
             if (!dm.name || !dm.source || !dm.target) {
                 showAlert(`名称、源域名和目标域名不能为空`, 'danger');
                 return;
+            }
+
+            // 收集headers数据
+            const clientHeaders = collectHeaders('client');
+            if (clientHeaders) {
+                domainMaps[currentEditIndex].client_headers = clientHeaders;
+            } else {
+                delete domainMaps[currentEditIndex].client_headers;
+            }
+
+            const serverHeaders = collectHeaders('server');
+            if (serverHeaders) {
+                domainMaps[currentEditIndex].server_headers = serverHeaders;
+            } else {
+                delete domainMaps[currentEditIndex].server_headers;
             }
 
             // 如果是新增模式，添加到数组中
@@ -824,8 +998,24 @@
                     showAlert('配置已重新加载', 'success');
                 }
             } else {
-                loadConfig();
-                showAlert('配置已重新加载', 'success');
+                // 强制重新加载所有数据，包括headers
+                fetch(webPath + 'config/domainmap?' + new Date().getTime())
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('加载配置失败');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        domainMaps = data || [];
+                        originalDomainMaps = JSON.parse(JSON.stringify(domainMaps));
+                        renderDomainMapList();
+                        showAlert('配置已重新加载', 'success');
+                    })
+                    .catch(error => {
+                        console.error('重新加载配置失败:', error);
+                        showAlert('重新加载配置失败: ' + error.message, 'danger');
+                    });
             }
         }
 

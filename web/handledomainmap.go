@@ -36,8 +36,8 @@ func (h *ConfigHandler) handleDomainMapEditor(w http.ResponseWriter, r *http.Req
 	config.CfgMu.RUnlock()
 
 	data := map[string]interface{}{
-		"title":        "TVGate 域名映射编辑器",
-		"webPath":      webPath,
+		"title":         "TVGate 域名映射编辑器",
+		"webPath":       webPath,
 		"hasAuthConfig": hasAuthConfig,
 	}
 
@@ -90,6 +90,14 @@ func (h *ConfigHandler) handleDomainMapConfig(w http.ResponseWriter, r *http.Req
 					"expire_hours":  formatDuration(dm.Auth.StaticTokens.ExpireHours),
 				},
 			}
+		}
+
+		// 添加client_headers和server_headers
+		if len(dm.ClientHeaders) > 0 {
+			dmMap["client_headers"] = dm.ClientHeaders
+		}
+		if len(dm.ServerHeaders) > 0 {
+			dmMap["server_headers"] = dm.ServerHeaders
 		}
 
 		domainMapList[i] = dmMap
@@ -154,6 +162,36 @@ func (h *ConfigHandler) handleDomainMapConfigSave(w http.ResponseWriter, r *http
 			&yaml.Node{Kind: yaml.ScalarNode, Value: "target"},
 			&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", dm["target"])},
 		)
+
+		// 添加client_headers
+		if clientHeaders, ok := dm["client_headers"].(map[string]interface{}); ok && len(clientHeaders) > 0 {
+			headersNode := &yaml.Node{Kind: yaml.MappingNode}
+			for k, v := range clientHeaders {
+				headersNode.Content = append(headersNode.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: k},
+					&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", v)},
+				)
+			}
+			domainMapNode.Content = append(domainMapNode.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "client_headers"},
+				headersNode,
+			)
+		}
+
+		// 添加server_headers
+		if serverHeaders, ok := dm["server_headers"].(map[string]interface{}); ok && len(serverHeaders) > 0 {
+			headersNode := &yaml.Node{Kind: yaml.MappingNode}
+			for k, v := range serverHeaders {
+				headersNode.Content = append(headersNode.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: k},
+					&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", v)},
+				)
+			}
+			domainMapNode.Content = append(domainMapNode.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "server_headers"},
+				headersNode,
+			)
+		}
 
 		// 添加协议字段（如果存在且非空）
 		if protocol, ok := dm["protocol"]; ok && protocol != "" && protocol != nil {

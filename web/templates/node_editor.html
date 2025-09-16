@@ -5,28 +5,33 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.title}}</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
-
-    <link rel="stylesheet"
-        href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-darker.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/lint/lint.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/yaml/yaml.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/lint/lint.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/comment/comment.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+    <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/codemirror.min.css">
+    <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/theme/material-darker.min.css">
+    <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/addon/lint/lint.min.css">
+    <script src="{{.webPath}}static/js/codemirror/codemirror.min.js"></script>
+    <script src="{{.webPath}}static/js/codemirror/mode/yaml/yaml.min.js"></script>
+    <script src="{{.webPath}}static/js/codemirror/addon/lint/lint.min.js"></script>
+    <script src="{{.webPath}}static/js/codemirror/addon/comment/comment.min.js"></script>
+    <script src="{{.webPath}}static/js/js-yaml.min.js"></script>
+    <script src="{{.webPath}}static/js/theme.js"></script>
     <style>
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             margin: 0;
             padding: 20px;
-            background-color: #1e1e1e;
-            color: #d4d4d4;
+            background-color: var(--win11-bg);
+            color: var(--win11-text-primary);
+            transition: background-color 0.3s, color 0.3s;
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
+            background-color: var(--win11-surface);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px var(--win11-shadow);
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, box-shadow 0.3s;
         }
 
         .header {
@@ -35,12 +40,15 @@
             align-items: center;
             margin-bottom: 20px;
             padding-bottom: 10px;
-            border-bottom: 1px solid #3c3c3c;
+            border-bottom: 1px solid var(--win11-border);
+            transition: border-color 0.3s;
         }
 
         .title {
-            color: #ffffff;
+            color: var(--win11-text-primary);
             margin: 0;
+            font-weight: 600;
+            transition: color 0.3s;
         }
 
         .nav-links {
@@ -56,13 +64,14 @@
 
         .btn {
             padding: 8px 16px;
-            background-color: #007acc;
+            background-color: var(--win11-accent);
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             font-size: 14px;
-            transition: background-color 0.3s;
+            font-weight: 600;
+            transition: background-color 0.3s, transform 0.2s;
         }
 
         /* 自定义高亮说明文字样式 */
@@ -93,31 +102,33 @@
 
 
         .btn:hover {
-            background-color: #005a9e;
+            background-color: var(--win11-accent-hover);
+            transform: translateY(-1px);
         }
 
         .btn.validate {
-            background-color: #4caf50;
+            background-color: var(--win11-success);
         }
 
         .btn.validate:hover {
-            background-color: #388e3c;
+            background-color: var(--win11-success-hover);
         }
 
         .btn.format {
-            background-color: #ff9800;
+            background-color: var(--win11-warning);
+            color: #000000;
         }
 
         .btn.format:hover {
-            background-color: #f57c00;
+            background-color: var(--win11-warning-hover);
         }
 
         .btn.group {
-            background-color: #9c27b0;
+            background-color: var(--win11-accent-secondary);
         }
 
         .btn.group:hover {
-            background-color: #7b1fa2;
+            background-color: var(--win11-accent-secondary-hover);
         }
 
         .status {
@@ -146,23 +157,27 @@
         }
 
         .editor-container {
-            border: 1px solid #3c3c3c;
+            border: 1px solid var(--win11-border);
             border-radius: 4px;
             overflow: hidden;
+            background-color: var(--win11-card);
+            transition: border-color 0.3s, background-color 0.3s;
         }
 
         .help-text {
             margin-top: 20px;
             padding: 15px;
-            background-color: #2d2d30;
+            background-color: var(--win11-card);
             border-radius: 4px;
-            border: 1px solid #3c3c3c;
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, border-color 0.3s;
         }
 
         .help-text h3 {
             margin-top: 0;
             margin-bottom: 10px;
-            color: #ffffff;
+            color: var(--win11-text-primary);
+            transition: color 0.3s;
         }
 
         .help-text ul {
@@ -174,17 +189,19 @@
         }
 
         .help-text kbd {
-            background-color: #3c3c3c;
+            background-color: var(--win11-card);
             padding: 2px 6px;
             border-radius: 3px;
-            border: 1px solid #555;
+            border: 1px solid var(--win11-border);
             font-family: monospace;
+            transition: background-color 0.3s, border-color 0.3s;
         }
 
         .help-text p {
             margin-top: 15px;
-            color: #ffa500;
+            color: var(--win11-warning);
             font-weight: bold;
+            transition: color 0.3s;
         }
 
         .footer-links {
@@ -195,9 +212,10 @@
         }
 
         .footer-links a {
-            color: #4fc3f7;
+            color: var(--win11-accent);
             text-decoration: none;
             margin: 0 10px;
+            transition: color 0.3s;
         }
 
         .footer-links a:hover {
@@ -205,17 +223,19 @@
         }
 
         .node-selector {
-            background-color: #2d2d30;
+            background-color: var(--win11-card);
             padding: 15px;
             border-radius: 4px;
             margin-bottom: 15px;
-            border: 1px solid #3c3c3c;
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, border-color 0.3s;
         }
 
         .node-selector h3 {
             margin-top: 0;
             margin-bottom: 10px;
-            color: #ffffff;
+            color: var(--win11-text-primary);
+            transition: color 0.3s;
         }
 
         .node-list {
@@ -226,33 +246,34 @@
 
         .node-item {
             padding: 8px 16px;
-            background-color: #3c3c3c;
-            color: #d4d4d4;
-            border: 1px solid #555;
+            background-color: var(--win11-card);
+            color: var(--win11-text-primary);
+            border: 1px solid var(--win11-border);
             border-radius: 4px;
             cursor: pointer;
             transition: all 0.2s ease;
         }
 
         .node-item:hover {
-            background-color: #007acc;
+            background-color: var(--win11-accent);
             color: white;
-            border-color: #007acc;
+            border-color: var(--win11-accent);
         }
 
         .node-item.active {
-            background-color: #007acc;
+            background-color: var(--win11-accent);
             color: white;
-            border-color: #007acc;
+            border-color: var(--win11-accent);
         }
 
         .group-selector {
-            background-color: #2d2d30;
+            background-color: var(--win11-card);
             padding: 15px;
             border-radius: 4px;
             margin-bottom: 15px;
-            border: 1px solid #3c3c3c;
+            border: 1px solid var(--win11-border);
             display: none;
+            transition: background-color 0.3s, border-color 0.3s;
         }
 
         .group-selector h3 {
@@ -269,24 +290,24 @@
 
         .group-item {
             padding: 8px 16px;
-            background-color: #3c3c3c;
-            color: #d4d4d4;
-            border: 1px solid #555;
+            background-color: var(--win11-card);
+            color: var(--win11-text-primary);
+            border: 1px solid var(--win11-border);
             border-radius: 4px;
             cursor: pointer;
             transition: all 0.2s ease;
         }
 
         .group-item:hover {
-            background-color: #9c27b0;
+            background-color: var(--win11-accent-secondary);
             color: white;
-            border-color: #9c27b0;
+            border-color: var(--win11-accent-secondary);
         }
 
         .group-item.active {
-            background-color: #9c27b0;
+            background-color: var(--win11-accent-secondary);
             color: white;
-            border-color: #9c27b0;
+            border-color: var(--win11-accent-secondary);
         }
 
         /* 添加到CSS样式部分，如果还没有的话 */
@@ -299,8 +320,8 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background-color: #2d2d30;
-            border: 2px solid #c62828;
+            background-color: var(--win11-surface);
+            border: 2px solid var(--win11-danger);
             border-radius: 4px;
             padding: 20px;
             z-index: 1000;
@@ -308,6 +329,8 @@
             max-width: 80%;
             max-height: 80%;
             overflow: auto;
+            box-shadow: 0 4px 12px var(--win11-shadow);
+            transition: background-color 0.3s, border-color 0.3s;
         }
 
         .validation-error-header {
@@ -316,32 +339,36 @@
             align-items: center;
             margin-bottom: 15px;
             padding-bottom: 10px;
-            border-bottom: 1px solid #3c3c3c;
+            border-bottom: 1px solid var(--win11-border);
+            transition: border-color 0.3s;
         }
 
         .validation-error-header span {
             font-weight: bold;
-            color: #c62828;
+            color: var(--win11-danger);
             font-size: 18px;
+            transition: color 0.3s;
         }
 
         .close-error {
             background: none;
             border: none;
-            color: #d4d4d4;
+            color: var(--win11-text-secondary);
             font-size: 24px;
             cursor: pointer;
+            transition: color 0.3s;
         }
 
         .close-error:hover {
-            color: #c62828;
+            color: var(--win11-danger);
         }
 
         .error-content {
-            color: #d4d4d4;
+            color: var(--win11-text-primary);
             white-space: pre-wrap;
             font-family: monospace;
             font-size: 14px;
+            transition: color 0.3s;
         }
 
         /* 弹窗样式 */
@@ -357,15 +384,17 @@
         }
 
         .modal-content {
-            background-color: #2d2d30;
+            background-color: var(--win11-surface);
             margin: 2% auto;
             padding: 20px;
-            border: 1px solid #3c3c3c;
+            border: 1px solid var(--win11-border);
             border-radius: 5px;
             width: 90%;
             max-width: 800px;
             max-height: 90vh;
             overflow-y: auto;
+            box-shadow: 0 4px 12px var(--win11-shadow);
+            transition: background-color 0.3s, border-color 0.3s;
         }
 
         .modal-header {
@@ -379,7 +408,8 @@
 
         .modal-header h2 {
             margin: 0;
-            color: #ffffff;
+            color: var(--win11-text-primary);
+            transition: color 0.3s;
         }
 
         .close-modal {

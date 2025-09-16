@@ -4,27 +4,32 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JX编辑器 - TVGate Web管理</title>
+    <link rel="stylesheet" href="{{.webPath}}static/common.css">
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             margin: 0;
             padding: 20px;
-            background-color: #121212;
-            color: #e0e0e0;
+            background-color: var(--win11-bg);
+            color: var(--win11-text-primary);
+            transition: background-color 0.3s, color 0.3s;
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            background-color: #1e1e1e;
+            background-color: var(--win11-surface);
             padding: 20px;
             border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+            box-shadow: 0 4px 12px var(--win11-shadow);
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, box-shadow 0.3s;
         }
 
         h1 {
-            color: #ffffff;
+            color: var(--win11-text-primary);
             text-align: center;
+            font-weight: 600;
         }
 
         .auth-section {
@@ -35,8 +40,8 @@
         .auth-section a {
             display: inline-block;
             padding: 8px 16px;
-            background-color: #28a745;
-            color: #ffffff;
+            background-color: var(--win11-success);
+            color: white;
             text-decoration: none;
             border-radius: 4px;
             transition: background-color 0.3s;
@@ -44,11 +49,11 @@
         }
 
         .auth-section a.logout {
-            background-color: #dc3545;
+            background-color: var(--win11-danger);
         }
 
         .auth-section a:hover {
-            opacity: 0.8;
+            opacity: 0.9;
         }
 
         .form-group {
@@ -57,96 +62,112 @@
 
         .form-group label {
             display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-            color: #ffffff;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--win11-text-secondary);
         }
 
         .form-control {
             width: 100%;
-            padding: 10px;
-            background-color: #2c2c2c;
-            border: 1px solid #444;
+            padding: 12px;
+            background-color: var(--win11-card);
+            border: 1px solid var(--win11-border);
             border-radius: 4px;
-            color: #e0e0e0;
+            color: var(--win11-text-primary);
             box-sizing: border-box;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--win11-accent);
+            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
         }
 
         textarea.form-control {
             min-height: 100px;
-            font-family: 'Courier New', monospace;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             resize: vertical;
         }
 
         .btn {
             display: inline-block;
             padding: 10px 20px;
-            background-color: #007bff;
-            color: #ffffff;
+            background-color: var(--win11-accent);
+            color: white;
             text-decoration: none;
             border-radius: 4px;
             border: none;
             cursor: pointer;
-            font-size: 16px;
-            transition: background-color 0.3s;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background-color 0.3s, transform 0.2s;
         }
 
         .btn:hover {
-            background-color: #0056b3;
+            background-color: var(--win11-accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            background-color: var(--win11-accent-active);
+            transform: translateY(0);
         }
 
         .btn-success {
-            background-color: #28a745;
+            background-color: var(--win11-success);
         }
 
         .btn-success:hover {
-            background-color: #1e7e34;
+            background-color: #57a357;
         }
 
         .btn-danger {
-            background-color: #dc3545;
+            background-color: var(--win11-danger);
         }
 
         .btn-danger:hover {
-            background-color: #bd2130;
+            background-color: #c40f1d;
         }
 
         .btn-warning {
-            background-color: #ffc107;
-            color: #212529;
+            background-color: var(--win11-warning);
+            color: #000000;
         }
 
         .btn-warning:hover {
-            background-color: #e0a800;
+            background-color: #e6b800;
         }
 
         .btn-sm {
             padding: 5px 10px;
-            font-size: 14px;
+            font-size: 13px;
         }
 
         .form-buttons {
             text-align: center;
-            margin-top: 20px;
-            margin-bottom: 20px;
+            margin: 20px 0;
         }
 
         .alert {
             padding: 15px;
             margin-bottom: 20px;
             border-radius: 4px;
+            transition: all 0.3s;
+            animation: fadeIn 0.3s;
         }
 
         .alert-success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
+            background-color: rgba(102, 194, 102, 0.2);
+            color: var(--win11-success);
+            border: 1px solid var(--win11-success);
         }
 
         .alert-danger {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
+            background-color: rgba(232, 17, 35, 0.2);
+            color: var(--win11-danger);
+            border: 1px solid var(--win11-danger);
         }
 
         .hidden {
@@ -154,26 +175,33 @@
         }
 
         .subsection {
-            background-color: #3a3a3a;
+            background-color: var(--win11-card);
             padding: 15px;
             margin-bottom: 15px;
-            border-radius: 4px;
+            border-radius: 8px;
+            border: 1px solid var(--win11-border);
         }
 
         .subsection-title {
-            color: #ffffff;
+            color: var(--win11-text-primary);
             margin-top: 0;
             margin-bottom: 15px;
             padding-bottom: 5px;
-            border-bottom: 1px solid #555;
+            border-bottom: 1px solid var(--win11-border);
         }
 
         .api-group-item {
-            background-color: #2c2c2c;
+            background-color: var(--win11-card);
             padding: 15px;
             margin-bottom: 15px;
-            border-radius: 4px;
-            border: 1px solid #444;
+            border-radius: 8px;
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, transform 0.3s;
+        }
+
+        .api-group-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px var(--win11-shadow);
         }
 
         .api-group-item-header {
@@ -182,29 +210,31 @@
             align-items: center;
             margin-bottom: 10px;
             padding-bottom: 10px;
-            border-bottom: 1px solid #444;
+            border-bottom: 1px solid var(--win11-border);
         }
 
         .api-group-item-title {
-            font-weight: bold;
-            color: #ffffff;
+            font-weight: 600;
+            color: var(--win11-text-primary);
         }
 
         .add-btn {
             display: block;
             width: 100%;
             padding: 15px;
-            background-color: #28a745;
-            color: #ffffff;
+            background-color: var(--win11-success);
+            color: white;
             text-align: center;
             text-decoration: none;
-            border-radius: 4px;
+            border-radius: 8px;
             margin-bottom: 20px;
             box-sizing: border-box;
+            transition: background-color 0.3s, transform 0.2s;
         }
 
         .add-btn:hover {
-            background-color: #1e7e34;
+            background-color: #57a357;
+            transform: translateY(-1px);
         }
 
         .detail-view {
@@ -226,22 +256,32 @@
         }
 
         .remove-filter {
-            background-color: #dc3545;
+            background-color: var(--win11-danger);
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             padding: 5px 10px;
+            transition: background-color 0.3s;
+        }
+
+        .remove-filter:hover {
+            background-color: #c40f1d;
         }
 
         .add-filter {
-            background-color: #28a745;
+            background-color: var(--win11-success);
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             padding: 5px 10px;
             margin-bottom: 10px;
+            transition: background-color 0.3s;
+        }
+
+        .add-filter:hover {
+            background-color: #57a357;
         }
         
         .endpoint-item {
@@ -253,32 +293,41 @@
         .endpoint-item input {
             flex: 1;
             padding: 8px;
-            border: 1px solid #555;
+            border: 1px solid var(--win11-border);
             border-radius: 4px;
-            background-color: #333;
-            color: #e0e0e0;
+            background-color: var(--win11-card);
+            color: var(--win11-text-primary);
         }
         
         .remove-endpoint {
-            background-color: #dc3545;
+            background-color: var(--win11-danger);
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             padding: 8px 12px;
+            transition: background-color 0.3s;
+        }
+        
+        .remove-endpoint:hover {
+            background-color: #c40f1d;
         }
         
         .add-endpoint {
-            background-color: #28a745;
+            background-color: var(--win11-success);
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             padding: 8px 12px;
             margin-bottom: 10px;
+            transition: background-color 0.3s;
         }
         
-        /* 新增样式：用于列表视图 */
+        .add-endpoint:hover {
+            background-color: #57a357;
+        }
+        
         .api-group-list {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -287,38 +336,41 @@
         }
         
         .filter-section {
-            background-color: #333;
+            background-color: var(--win11-card);
             padding: 10px;
-            border-radius: 4px;
+            border-radius: 8px;
             margin-top: 10px;
+            border: 1px solid var(--win11-border);
         }
         
         .filter-section h4 {
             margin-top: 0;
-            color: #ffffff;
+            color: var(--win11-text-primary);
         }
         
         .api-group-card {
-            background-color: #2c2c2c;
-            border: 1px solid #444;
-            border-radius: 4px;
+            background-color: var(--win11-card);
+            border: 1px solid var(--win11-border);
+            border-radius: 8px;
             padding: 15px;
             cursor: pointer;
-            transition: background-color 0.3s;
+            transition: all 0.3s;
         }
         
         .api-group-card:hover {
-            background-color: #3a3a3a;
+            background-color: var(--win11-surface);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px var(--win11-shadow);
         }
         
         .api-group-card h3 {
             margin: 0 0 10px 0;
-            color: #ffffff;
+            color: var(--win11-text-primary);
         }
         
         .api-group-card p {
             margin: 5px 0;
-            color: #b0b0b0;
+            color: var(--win11-text-secondary);
         }
         
         .list-view {
@@ -328,7 +380,13 @@
         .detail-view {
             display: none;
         }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
     </style>
+    <script src="{{.webPath}}static/js/theme.js"></script>
 </head>
 <body>
     <div class="container">
@@ -393,6 +451,7 @@
 
     <script>
         const webPath = "{{.webPath}}";
+        window.webPath = webPath; // 设为全局变量供theme.js使用
         let jxConfig = {
             path: "",
             default_id: "",

@@ -1,41 +1,29 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.title}}</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-darker.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/lint/lint.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/yaml/yaml.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/lint/lint.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/matchbrackets.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/closebrackets.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/comment/comment.min.js"></script>
+    <link rel="stylesheet" href="{{.webPath}}static/common.css">
+    <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/codemirror.min.css">
+    <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/lint.min.css">
+    <script src="{{.webPath}}static/js/codemirror/codemirror.min.js"></script>
+    <script src="{{.webPath}}static/js/codemirror/yaml.min.js"></script>
+    <script src="{{.webPath}}static/js/codemirror/lint.min.js"></script>
+    <script src="{{.webPath}}static/js/js-yaml.min.js"></script>
+    <script src="{{.webPath}}static/js/codemirror/matchbrackets.min.js"></script>
+    <script src="{{.webPath}}static/js/codemirror/closebrackets.min.js"></script>
+    <script src="{{.webPath}}static/js/codemirror/comment.min.js"></script>
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #1e1e1e;
-            color: #d4d4d4;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
         .header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
             padding-bottom: 10px;
-            border-bottom: 1px solid #3c3c3c;
+            border-bottom: 1px solid var(--win11-border);
         }
         .title {
-            color: #ffffff;
             margin: 0;
         }
         .nav-links {
@@ -47,76 +35,56 @@
             gap: 10px;
             margin-bottom: 15px;
         }
-        .btn {
-            display: inline-block;
-            padding: 10px 20px;
-            background-color: #007bff;
-            color: #ffffff;
-            text-decoration: none;
-            border-radius: 4px;
-            border: none;
-            cursor: pointer;
-            font-size: 16px;
-            transition: background-color 0.3s;
-        }
-        .btn:hover {
-            background-color: #0056b3;
-        }
         .btn.validate {
-            background-color: #28a745;
-        }
-        .btn.validate:hover {
-            background-color: #1e7e34;
+            background-color: var(--win11-success);
         }
         .btn.format {
-            background-color: #ffc107;
-            color: #212529;
-        }
-        .btn.format:hover {
-            background-color: #e0a800;
+            background-color: var(--win11-warning);
+            color: #000000;
         }
         .status {
             padding: 10px;
             margin-bottom: 15px;
             border-radius: 4px;
             display: none;
+            background-color: var(--win11-card);
+            border: 1px solid var(--win11-border);
         }
         .status.info {
-            background-color: #1e3a5f;
-            color: #4fc3f7;
-            border: 1px solid #4fc3f7;
+            color: var(--win11-accent);
         }
         .status.success {
-            background-color: #2e7d32;
-            color: #a5d6a7;
-            border: 1px solid #a5d6a7;
+            color: var(--win11-success);
         }
         .status.error {
-            background-color: #c62828;
-            color: #ffcdd2;
-            border: 1px solid #ffcdd2;
+            color: var(--win11-danger);
         }
         .editor-container {
-            border: 1px solid #3c3c3c;
-            border-radius: 4px;
+            border: 1px solid var(--win11-border);
+            border-radius: 8px;
             overflow: hidden;
+            background-color: var(--win11-card);
         }
         .CodeMirror {
             height: calc(100vh - 250px);
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 14px;
         }
+        .CodeMirror-gutters {
+            background-color: var(--win11-card) !important;
+            border-right: 1px solid var(--win11-border) !important;
+        }
         .help-text {
             margin-top: 15px;
-            padding: 10px;
-            background-color: #2d2d30;
-            border-radius: 4px;
+            padding: 15px;
+            background-color: var(--win11-card);
+            border-radius: 8px;
             font-size: 13px;
-            color: #9e9e9e;
+            color: var(--win11-text-tertiary);
+            border: 1px solid var(--win11-border);
         }
         .help-text h3 {
             margin-top: 0;
-            color: #ffffff;
         }
         .help-text ul {
             margin: 10px 0;
@@ -128,23 +96,11 @@
         .help-text kbd {
             display: inline-block;
             padding: 2px 6px;
-            background-color: #3c3c3c;
-            border: 1px solid #555;
+            background-color: var(--win11-surface);
+            border: 1px solid var(--win11-border);
             border-radius: 3px;
             font-family: monospace;
             font-size: 12px;
-        }
-        .footer-links {
-            margin-top: 20px;
-            text-align: center;
-        }
-        .footer-links a {
-            color: #4fc3f7;
-            text-decoration: none;
-            margin: 0 10px;
-        }
-        .footer-links a:hover {
-            text-decoration: underline;
         }
     </style>
 </head>
@@ -154,6 +110,7 @@
             <h1 class="title">{{.title}}</h1>
             <div class="nav-links">
                 <a href="{{.webPath}}" class="btn">返回首页</a>
+                <div class="theme-toggle"></div>
             </div>
         </div>
 
@@ -184,14 +141,25 @@
 
     </div>
 
+    <script src="{{.webPath}}static/js/theme.js"></script>
     <script>
         // 获取Web路径前缀
         const webPath = "{{.webPath}}";
+        window.webPath = webPath; // 设为全局变量供theme.js使用
+        
+        // 更新编辑器主题
+        function updateEditorTheme() {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            editor.setOption('theme', isDark ? 'material-darker' : 'default');
+        }
+        
+        // 监听主题变化
+        document.addEventListener('themeChanged', updateEditorTheme);
         
         // 初始化CodeMirror编辑器
         const editor = CodeMirror.fromTextArea(document.getElementById("editor"), {
             mode: "text/yaml",
-            theme: "material-darker",
+            theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'material-darker' : 'default',
             lineNumbers: true,
             lint: true,
             gutters: ["CodeMirror-linenumbers", "CodeMirror-lint-markers"],
@@ -202,6 +170,9 @@
             indentWithTabs: false,
             lineWrapping: true
         });
+        
+        // 初始化编辑器后更新主题
+        updateEditorTheme();
         
         // 添加快捷键支持
         editor.setOption("extraKeys", {
