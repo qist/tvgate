@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/monitor"
+	"github.com/shirou/gopsutil/v3/mem"
 	"gopkg.in/yaml.v3"
 )
 
@@ -48,10 +50,30 @@ func NewWebHandler(configHandler *ConfigHandler) *WebHandler {
 		configHandler: configHandler,
 	}
 }
-// ServeMux 注册web管理界面路由
-func (h *WebHandler) ServeMux(mux *http.ServeMux) {
-	// 路由已在config_handler.go中注册，此处无需重复注册
+
+// formatBytes 格式化字节数
+func formatBytes(bytes uint64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+		TB = GB * 1024
+	)
+
+	switch {
+	case bytes >= TB:
+		return fmt.Sprintf("%.2f TB", float64(bytes)/TB)
+	case bytes >= GB:
+		return fmt.Sprintf("%.2f GB", float64(bytes)/GB)
+	case bytes >= MB:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
+	case bytes >= KB:
+		return fmt.Sprintf("%.2f KB", float64(bytes)/KB)
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
 }
+
 // ConfigHandler 配置文件管理处理器
 type ConfigHandler struct {
 	webConfig    WebConfig
@@ -148,6 +170,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	// mux.HandleFunc("/static/", h.serveStaticFiles)
 
 	// 注册需要认证的路由，使用基于Cookie的认证中间件
+	mux.HandleFunc(webPath+"home", h.cookieAuth(h.handleHome))
 	mux.HandleFunc(webPath+"editor", h.cookieAuth(h.handleEditor))
 	mux.HandleFunc(webPath+"node-editor", h.cookieAuth(h.handleNodeEditor))
 	mux.HandleFunc(webPath+"group-editor", h.cookieAuth(h.handleGroupEditor))
@@ -191,6 +214,36 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/http", h.cookieAuth(h.handleHTTPConfig))
 	mux.HandleFunc(webPath+"config/log", h.cookieAuth(http.HandlerFunc(h.handleGetLogConfig)))
 
+}
+
+// handleHome 处理功能面板页面
+func (h *ConfigHandler) handleHome(w http.ResponseWriter, r *http.Request) {
+	// 从嵌入的文件系统读取模板
+	content, err := templatesFS.ReadFile("templates/home.html")
+	if err != nil {
+		http.Error(w, "Failed to read template file", http.StatusInternalServerError)
+		return
+	}
+
+	tmpl, err := template.New("home").Parse(string(content))
+	if err != nil {
+		http.Error(w, "Failed to parse template", http.StatusInternalServerError)
+		return
+	}
+
+	data := map[string]interface{}{
+		"title":   "TVGate 功能面板",
+		"webPath": h.getWebPath(),
+	}
+
+	// 设置响应头
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// 执行模板
+	if err := tmpl.Execute(w, data); err != nil {
+		http.Error(w, "Failed to execute template", http.StatusInternalServerError)
+		return
+	}
 }
 
 // handleSyncTheme 处理主题同步请求
@@ -261,6 +314,15 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			monitorPath = "/status"
 		}
 
+		// 从monitor模块获取系统状态数据
+		config.CfgMu.RLock()
+		trafficStats := monitor.GlobalTrafficStats.GetTrafficStats()
+		activeConns := monitor.ActiveClients.GetAll()
+		config.CfgMu.RUnlock()
+
+		// 计算服务器运行时间
+		uptime := getSystemUptime()
+
 		// 检查是否有domainmap和global_auth配置
 		hasDomainMap := len(config.Cfg.DomainMap) > 0
 
@@ -298,6 +360,39 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 		// 检查是否有服务器监控配置
 		hasServerMonitorConfig := config.Cfg.Monitor.Path != ""
 
+		// 计算内存使用率
+		memoryUsagePercent := 0
+		if trafficStats.MemoryTotal > 0 {
+			memoryUsagePercent = int(trafficStats.MemoryUsage * 100 / trafficStats.MemoryTotal)
+		}
+
+		// 计算SWAP使用情况
+		swapUsage := uint64(0)
+		swapTotal := uint64(0)
+		swapUsagePercent := 0
+		
+		// 获取SWAP信息
+		swapMemory, _ := mem.SwapMemory()
+		if swapMemory != nil {
+			swapUsage = swapMemory.Used
+			swapTotal = swapMemory.Total
+			if swapTotal > 0 {
+				swapUsagePercent = int(swapMemory.UsedPercent)
+			}
+		}
+
+		// 获取硬盘使用情况 (系统盘)
+		diskUsage := uint64(0)
+		diskTotal := uint64(0)
+		diskUsagePercent := 0
+		if len(trafficStats.DiskPartitions) > 0 {
+			diskUsage = trafficStats.DiskUsage
+			diskTotal = trafficStats.DiskTotal
+			if diskTotal > 0 {
+				diskUsagePercent = int(float64(diskUsage) * 100 / float64(diskTotal))
+			}
+		}
+
 		data := map[string]interface{}{
 			"title":                  "TVGate Web管理",
 			"webPath":                webPath,
@@ -308,6 +403,18 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			"hasProxyGroups":         hasProxyGroups,
 			"hasJXConfig":            hasJXConfig,
 			"hasServerMonitorConfig": hasServerMonitorConfig,
+			"uptime":                 uptime,
+			"cpuUsage":               int(trafficStats.CPUUsage),
+			"memoryUsage":            memoryUsagePercent,
+			"memoryUsed":             trafficStats.MemoryUsage,
+			"memoryTotal":            trafficStats.MemoryTotal,
+			"swapUsage":              swapUsage,
+			"swapTotal":              swapTotal,
+			"swapUsagePercent":       swapUsagePercent,
+			"diskUsage":              diskUsage,
+			"diskTotal":              diskTotal,
+			"diskUsagePercent":       diskUsagePercent,
+			"activeConnections":      len(activeConns),
 		}
 
 		// 从嵌入的文件系统读取模板
@@ -318,7 +425,9 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		tmpl, err := template.New("index").Parse(string(content))
+		tmpl, err := template.New("index").Funcs(template.FuncMap{
+			"formatBytes": formatBytes,
+		}).Parse(string(content))
 		if err != nil {
 			// log.Printf("解析模板失败: %v", err)
 			http.Error(w, "Failed to parse template", http.StatusInternalServerError)

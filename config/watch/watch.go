@@ -150,6 +150,7 @@ func WatchConfigFile(configPath string) {
 			})))
 			// 注册 Web 管理界面处理器
 			if config.Cfg.Web.Enabled {
+				// 将config.Cfg.Web转换为web.WebConfig类型
 				webConfig := web.WebConfig{
 					Username: config.Cfg.Web.Username,
 					Password: config.Cfg.Web.Password,
@@ -158,9 +159,6 @@ func WatchConfigFile(configPath string) {
 				}
 				configHandler := web.NewConfigHandler(webConfig)
 				configHandler.ServeMux(newMux)
-
-				webHandler := web.NewWebHandler(configHandler)
-				webHandler.ServeMux(newMux)
 			}
 
 			// 创建默认处理器

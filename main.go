@@ -127,19 +127,19 @@ func main() {
 	})))
 
 	// 注册 Web 管理界面处理器
-	if config.Cfg.Web.Enabled {
-		webConfig := web.WebConfig{
-			Username: config.Cfg.Web.Username,
-			Password: config.Cfg.Web.Password,
-			Enabled:  config.Cfg.Web.Enabled,
-			Path:     config.Cfg.Web.Path,
-		}
-		configHandler := web.NewConfigHandler(webConfig)
-		configHandler.ServeMux(mux)
-
-		webHandler := web.NewWebHandler(configHandler)
-		webHandler.ServeMux(mux)
-	}
+	// 注册 Web 管理界面处理器
+			// 注册 Web 管理界面处理器
+			if config.Cfg.Web.Enabled {
+				// 将config.Cfg.Web转换为web.WebConfig类型
+				webConfig := web.WebConfig{
+					Username: config.Cfg.Web.Username,
+					Password: config.Cfg.Web.Password,
+					Enabled:  config.Cfg.Web.Enabled,
+					Path:     config.Cfg.Web.Path,
+				}
+				configHandler := web.NewConfigHandler(webConfig)
+				configHandler.ServeMux(mux)
+			}
 
 	// 创建默认处理器
 	defaultHandler := server.SecurityHeaders(http.HandlerFunc(h.Handler(client)))

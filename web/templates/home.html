@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <link rel="stylesheet" href="{{.webPath}}static/common.css">
+    <script src="{{.webPath}}static/js/theme.js"></script>
+    <script>
+        const webPath = "{{.webPath}}";
+        window.webPath = webPath; // 设为全局变量供theme.js使用
+        
+        // 卡片悬停动画
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach(card => {
+                card.addEventListener('mouseenter', function() {
+                    this.style.transform = 'translateY(-5px)';
+                    this.style.boxShadow = '0 8px 16px var(--win11-shadow)';
+                });
+                card.addEventListener('mouseleave', function() {
+                    this.style.transform = '';
+                    this.style.boxShadow = '';
+                });
+            });
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>{{.title}}</h1>
+        
+        <div class="auth-section">
+            <a href="{{.webPath}}" class="btn btn-secondary">返回首页</a>
+            <a href="{{.monitorPath}}" class="btn btn-secondary" target="_blank">系统监控</a>
+            <a href="{{.webPath}}logout" class="logout">退出登录</a>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h2>配置编辑器</h2>
+                <p>使用可视化编辑器编辑TVGate配置文件，支持实时预览和语法验证。</p>
+                <a href="{{.webPath}}editor" class="btn">进入编辑器</a>
+            </div>
+
+            {{if .hasDomainMap}}
+            <div class="card">
+                <h2>域名映射编辑器</h2>
+                <p>配置域名映射规则，将请求从一个域名转发到另一个域名。</p>
+                <a href="{{.webPath}}domainmap-editor" class="btn">进入编辑器</a>
+            </div>
+            {{end}}
+
+            {{if .hasProxyGroups}}
+            <div class="card">
+                <h2>代理组配置编辑器</h2>
+                <p>配置和管理代理服务器组，包括代理服务器和域名规则。</p>
+                <a href="{{.webPath}}proxygroups-editor" class="btn">进入编辑器</a>
+            </div>
+            {{end}}
+
+            {{if .hasJXConfig}}
+            <div class="card">
+                <h2>JX配置编辑器</h2>
+                <p>配置和管理视频解析接口组。</p>
+                <a href="{{.webPath}}jx-editor" class="btn">进入编辑器</a>
+            </div>
+            {{end}}
+
+            {{if .hasGlobalAuth}}
+            <div class="card">
+                <h2>全局认证编辑器</h2>
+                <p>配置全局认证设置，包括动态和静态token管理。</p>
+                <a href="{{.webPath}}global-auth-editor" class="btn">进入编辑器</a>
+            </div>
+            {{end}}
+            
+            {{if .hasServerMonitorConfig}}
+            <div class="card">
+                <h2>服务器监控编辑器</h2>
+                <p>配置服务器监控设置，包括监控路径和重新加载间隔。</p>
+                <a href="{{.webPath}}server-monitor-editor" class="btn">进入编辑器</a>
+            </div>
+            {{end}}
+
+            <div class="card">
+                <h2>HTTP配置编辑器</h2>
+                <p>配置HTTP客户端参数，包括超时、连接池等设置。</p>
+                <a href="{{.webPath}}http-editor" class="btn">进入编辑器</a>
+            </div>
+
+            <div class="card">
+                <h2>服务器配置编辑器</h2>
+                <p>配置服务器基础设置</p>
+                <a href="{{.webPath}}server-editor" class="btn">编辑服务器</a>
+            </div>
+
+            <div class="card">
+                <h2>日志配置编辑器</h2>
+                <p>配置日志设置，包括日志文件路径和轮转策略。</p>
+                <a href="{{.webPath}}log-editor" class="btn">进入编辑器</a>
+            </div>
+            
+            <div class="card">
+                <h2>Web配置编辑器</h2>
+                <p>配置Web管理界面设置，包括访问路径、用户名和密码。</p>
+                <a href="{{.webPath}}web-editor" class="btn">进入编辑器</a>
+            </div>
+            
+            <div class="card">
+                <h2>重新加载配置编辑器</h2>
+                <p>配置TVGate重新加载间隔设置。</p>
+                <a href="{{.webPath}}reload-editor" class="btn">进入编辑器</a>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <h2>配置状态</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <h3>基本配置</h3>
+                    <p class="configured">已配置</p>
+                </div>
+                
+                {{if .hasDomainMap}}
+                <div class="info-item">
+                    <h3>域名映射</h3>
+                    <p class="configured">已配置</p>
+                </div>
+                {{end}}
+                
+                {{if .hasGlobalAuth}}
+                <div class="info-item">
+                    <h3>全局认证</h3>
+                    <p>{{if .hasGlobalAuth}}已配置{{else}}未配置{{end}}</p>
+                </div>
+                {{end}}
+                
+                {{if .hasProxyGroups}}
+                <div class="info-item">
+                    <h3>代理组</h3>
+                    <p>{{if .hasProxyGroups}}已配置{{else}}未配置{{end}}</p>
+                </div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+</body>
+</html>
