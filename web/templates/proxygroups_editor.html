@@ -464,7 +464,7 @@
                 <div class="form-group">
                     <label for="loadbalance">负载均衡:</label>
                     <select id="loadbalance" class="form-control">
-                        <option value="roundrobin">轮询 (roundrobin)</option>
+                        <option value="round-robin">轮询 (round-robin)</option>
                         <option value="fastest">最快响应 (fastest)</option>
                     </select>
                 </div>
@@ -658,7 +658,7 @@
             document.getElementById('editProxyGroupName').value = '';
             document.getElementById('proxyGroupName').value = '';
             document.getElementById('proxyGroupName').readOnly = false;
-            document.getElementById('loadbalance').value = 'roundrobin';
+            document.getElementById('loadbalance').value = 'round-robin';
             document.getElementById('interval').value = '180s';
             document.getElementById('max_retries').value = '1';
             document.getElementById('retry_delay').value = '1s';
@@ -686,7 +686,7 @@
             document.getElementById('editProxyGroupName').value = name;
             document.getElementById('proxyGroupName').value = name;
             document.getElementById('proxyGroupName').readOnly = true;
-            document.getElementById('loadbalance').value = proxyGroup.loadbalance || 'roundrobin';
+            document.getElementById('loadbalance').value = proxyGroup.loadbalance || 'round-robin';
             document.getElementById('interval').value = proxyGroup.interval || '180s';
             document.getElementById('max_retries').value = proxyGroup.max_retries || 1;
             document.getElementById('retry_delay').value = proxyGroup.retry_delay || '1s';
@@ -975,7 +975,7 @@
                 proxyGroups[groupName] = { 
                     proxies: [], 
                     domains: [],
-                    loadbalance: 'roundrobin',
+                    loadbalance: 'round-robin',
                     interval: '180s',
                     max_retries: 1,
                     retry_delay: '1s',
@@ -1139,7 +1139,7 @@
             // }
 
             // 收集表单数据，提供默认值
-            const loadbalance = document.getElementById('loadbalance').value || 'roundrobin';
+            const loadbalance = document.getElementById('loadbalance').value || 'round-robin';
             const interval = document.getElementById('interval').value || '180s';
             const maxRetries = parseInt(document.getElementById('max_retries').value) || 1;
             const retryDelay = document.getElementById('retry_delay').value || '1s';
@@ -1208,7 +1208,7 @@
                 return;
             }
 
-            const loadbalance = document.getElementById('loadbalance').value || 'roundrobin';
+            const loadbalance = document.getElementById('loadbalance').value || 'round-robin';
             const interval = document.getElementById('interval').value || '180s';
             const maxRetries = parseInt(document.getElementById('max_retries').value) || 1;
             const retryDelay = document.getElementById('retry_delay').value || '1s';

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/qist/tvgate/config"
-	// "github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/logger"
 	"gopkg.in/yaml.v3"
 )
 
@@ -40,10 +40,13 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 
 	// 转换为可JSON序列化的格式
 	proxyGroupsMap := make(map[string]interface{})
-	
+
 	for name, pg := range proxyGroups {
 		proxies := make([]map[string]interface{}, len(pg.Proxies))
 		for i, proxy := range pg.Proxies {
+			// 打印单个代理日志
+			logger.LogPrintf("代理组 [%s] - 代理 #%d: %+v (类型: %T)", name, i, proxy, proxy)
+
 			proxyMap := map[string]interface{}{
 				"name":     proxy.Name,
 				"type":     proxy.Type,
@@ -53,30 +56,37 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 				"username": proxy.Username,
 				"password": proxy.Password,
 			}
-			
-			// 添加headers配置（如果存在）
+
+			// 添加 headers 配置（如果存在）
 			if len(proxy.Headers) > 0 {
 				proxyMap["headers"] = proxy.Headers
 			}
-			
+
 			proxies[i] = proxyMap
 		}
-		
+
 		pgMap := map[string]interface{}{
-			"proxies":      proxies,
-			"domains":      pg.Domains,
-			"ipv6":         pg.IPv6,
-			"interval":     formatDuration(pg.Interval),
-			"loadbalance":  pg.LoadBalance,
-			"max_retries":  pg.MaxRetries,
-			"retry_delay":  formatDuration(pg.RetryDelay),
-			"max_rt":       formatDuration(pg.MaxRT),
+			"proxies":     proxies,
+			"domains":     pg.Domains,
+			"ipv6":        pg.IPv6,
+			"interval":    formatDuration(pg.Interval),
+			"loadbalance": pg.LoadBalance,
+			"max_retries": pg.MaxRetries,
+			"retry_delay": formatDuration(pg.RetryDelay),
+			"max_rt":      formatDuration(pg.MaxRT),
 		}
-		
+
+		// 打印整个代理组 JSON 日志
+		if data, err := json.MarshalIndent(pgMap, "", "  "); err == nil {
+			logger.LogPrintf("代理组 [%s] 完整配置:\n%s", name, string(data))
+		} else {
+			logger.LogPrintf("代理组 [%s] 配置序列化失败: %v", name, err)
+		}
+
 		proxyGroupsMap[name] = pgMap
 	}
 
-	// 返回JSON格式的配置
+	// 返回 JSON 格式的配置
 	if err := json.NewEncoder(w).Encode(proxyGroupsMap); err != nil {
 		http.Error(w, "序列化配置失败: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -351,8 +361,8 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 		)
 		// logger.LogPrintf("添加检查间隔: %s", interval)
 		
-		// 添加loadbalance字段，提供默认值 "roundrobin"
-		loadbalance := "roundrobin"
+		// 添加loadbalance字段，提供默认值 "round-robin"
+		loadbalance := "round-robin"
 		if loadbalanceVal, ok := pg["loadbalance"]; ok && loadbalanceVal != "" {
 			loadbalance = fmt.Sprintf("%v", loadbalanceVal)
 		}

@@ -14,29 +14,36 @@ func formatDuration(d time.Duration) string {
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
 	s := int(d.Seconds()) % 60
+	ms := int(d.Milliseconds()) % 1000
 
-	// 只拼必要的部分
-	if h > 0 && m == 0 && s == 0 {
-		return fmt.Sprintf("%dh", h)
-	}
-	if h > 0 && s == 0 {
-		return fmt.Sprintf("%dh%dm", h, m)
-	}
-	if h > 0 {
-		return fmt.Sprintf("%dh%dm%ds", h, m, s)
-	}
-	if m > 0 && s == 0 {
-		return fmt.Sprintf("%dm", m)
-	}
-	if m > 0 {
+	switch {
+	case h > 0:
+		if m == 0 && s == 0 {
+			return fmt.Sprintf("%dh", h)
+		} else if s == 0 {
+			return fmt.Sprintf("%dh%dm", h, m)
+		} else {
+			return fmt.Sprintf("%dh%dm%ds", h, m, s)
+		}
+	case m > 0:
+		if s == 0 {
+			return fmt.Sprintf("%dm", m)
+		}
 		return fmt.Sprintf("%dm%ds", m, s)
+	case ms > 0:
+		if ms < 1000 {
+			return fmt.Sprintf("%dms", ms)
+		}
+		return fmt.Sprintf("%ds", s)
+	default:
+		return fmt.Sprintf("%ds", s)
 	}
-	return fmt.Sprintf("%ds", s)
 }
+
 
 // formatDurationString 格式化时间字符串，去掉多余的 0m0s
 func formatDurationString(durationStr string) string {
-    // 优先尝试解析为 Duration
+    // 尝试解析为 Duration
     d, err := time.ParseDuration(durationStr)
     if err != nil {
         // 如果原字符串没有单位，当成秒
@@ -47,37 +54,45 @@ func formatDurationString(durationStr string) string {
         }
     }
 
-    // 按 h/m/s 重新拼接
     h := int(d.Hours())
     m := int(d.Minutes()) % 60
     s := int(d.Seconds()) % 60
+    ms := int(d.Milliseconds()) % 1000
 
-    if h > 0 && m == 0 && s == 0 {
-        return fmt.Sprintf("%dh", h)
-    }
-    if h > 0 && s == 0 {
-        return fmt.Sprintf("%dh%dm", h, m)
-    }
-    if h > 0 {
-        return fmt.Sprintf("%dh%dm%ds", h, m, s)
-    }
-    if m > 0 && s == 0 {
-        return fmt.Sprintf("%dm", m)
-    }
-    if m > 0 {
+    switch {
+    case h > 0:
+        if m == 0 && s == 0 {
+            return fmt.Sprintf("%dh", h)
+        } else if s == 0 {
+            return fmt.Sprintf("%dh%dm", h, m)
+        } else {
+            return fmt.Sprintf("%dh%dm%ds", h, m, s)
+        }
+    case m > 0:
+        if s == 0 {
+            return fmt.Sprintf("%dm", m)
+        }
         return fmt.Sprintf("%dm%ds", m, s)
+    case s > 0:
+        if ms > 0 {
+            return fmt.Sprintf("%ds%dms", s, ms)
+        }
+        return fmt.Sprintf("%ds", s)
+    default:
+        return fmt.Sprintf("%dms", ms)
     }
-    return fmt.Sprintf("%ds", s)
 }
+
 
 func formatDurationValue(value interface{}) (string, error) {
 	var d time.Duration
+
 	switch v := value.(type) {
 	case string:
 		if v == "" {
 			return "", fmt.Errorf("empty string")
 		}
-		// 直接尝试 ParseDuration（支持 1h、30m、45s、1h30m5s、1h0m0s）
+		// 尝试解析带单位的 duration
 		parsed, err := time.ParseDuration(v)
 		if err != nil {
 			// 如果纯数字，则按秒解析
@@ -101,9 +116,40 @@ func formatDurationValue(value interface{}) (string, error) {
 		return "", fmt.Errorf("unsupported duration type: %T", value)
 	}
 
-	// 格式化为精简形式
-	return compactDuration(d), nil
+	if d <= 0 {
+		return "", nil
+	}
+
+	// 格式化为精简形式（支持 ms）
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+	ms := int(d.Milliseconds()) % 1000
+
+	switch {
+	case h > 0:
+		if m == 0 && s == 0 {
+			return fmt.Sprintf("%dh", h), nil
+		} else if s == 0 {
+			return fmt.Sprintf("%dh%dm", h, m), nil
+		} else {
+			return fmt.Sprintf("%dh%dm%ds", h, m, s), nil
+		}
+	case m > 0:
+		if s == 0 {
+			return fmt.Sprintf("%dm", m), nil
+		}
+		return fmt.Sprintf("%dm%ds", m, s), nil
+	case s > 0:
+		if ms > 0 {
+			return fmt.Sprintf("%ds%dms", s, ms), nil
+		}
+		return fmt.Sprintf("%ds", s), nil
+	default:
+		return fmt.Sprintf("%dms", ms), nil
+	}
 }
+
 
 // compactDuration 将 Duration 转换为 "1h"、"30m"、"45s" 这种简洁形式
 func compactDuration(d time.Duration) string {
