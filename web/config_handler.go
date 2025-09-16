@@ -7,6 +7,8 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"net"
+	"runtime"
 	"sync"
 
 	// "log"
@@ -370,7 +372,7 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 		swapUsage := uint64(0)
 		swapTotal := uint64(0)
 		swapUsagePercent := 0
-		
+
 		// 获取SWAP信息
 		swapMemory, _ := mem.SwapMemory()
 		if swapMemory != nil {
@@ -390,6 +392,19 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			diskTotal = trafficStats.DiskTotal
 			if diskTotal > 0 {
 				diskUsagePercent = int(float64(diskUsage) * 100 / float64(diskTotal))
+			}
+		}
+
+		// 获取客户端IP
+		clientIP := r.RemoteAddr
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			clientIP = strings.Split(xff, ",")[0]
+		} else if xr := r.Header.Get("X-Real-IP"); xr != "" {
+			clientIP = xr
+		} else {
+			// 只取IP部分，去除端口号
+			if host, _, err := net.SplitHostPort(clientIP); err == nil {
+				clientIP = host
 			}
 		}
 
@@ -415,6 +430,12 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			"diskTotal":              diskTotal,
 			"diskUsagePercent":       diskUsagePercent,
 			"activeConnections":      len(activeConns),
+			"os":                     trafficStats.HostInfo.Platform,
+			"kernelVersion":          trafficStats.HostInfo.KernelVersion,
+			"cpuArch":                trafficStats.HostInfo.KernelArch,
+			"version":                config.Version,
+			"goroutines":             runtime.NumGoroutine(),
+			"clientIP":               clientIP,
 		}
 
 		// 从嵌入的文件系统读取模板

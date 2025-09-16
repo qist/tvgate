@@ -89,6 +89,8 @@ type TrafficStats struct {
 	CPUCount        int
 	MemoryUsage     uint64
 	MemoryTotal     uint64
+	SwapUsage       uint64  // SWAP使用量
+	SwapTotal       uint64  // SWAP总量
 	DiskUsage       uint64
 	DiskTotal       uint64
 	DiskUsedPercent float64

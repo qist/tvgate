@@ -17,6 +17,7 @@
             padding: 20px;
             color: white;
             box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+            flex-shrink: 0;
         }
         .content {
             flex: 1;
@@ -40,35 +41,24 @@
             font-size: 0.9em;
             opacity: 0.9;
         }
-        .dashboard {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
-        }
-        .dashboard-card {
-            background-color: var(--win11-surface);
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .dashboard-card h2 {
-            margin-top: 0;
-            color: var(--win11-text-primary);
-        }
         .btn {
             display: inline-block;
-            padding: 8px 16px;
+            padding: 10px 20px;
+            margin: 5px;
             background-color: var(--win11-accent);
             color: white;
-            border-radius: 4px;
             text-decoration: none;
-            margin-right: 10px;
-            margin-top: 10px;
+            border-radius: 4px;
             transition: background-color 0.3s;
+            border: none;
+            cursor: pointer;
         }
         .btn:hover {
-            background-color: var(--win11-accent-light);
+            background-color: #0056b3;
+        }
+        .btn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
         }
         
         /* 圆形进度条样式 */
@@ -125,92 +115,295 @@
             margin-top: 5px;
         }
 
+        /* 系统状态信息样式 */
+        .system-status {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: var(--win11-surface);
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .system-status h2 {
+            margin-top: 0;
+            color: var(--win11-text);
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        
+        /* TVGate状态信息样式 */
+        .tvgate-status {
+            margin-top: 30px;
+            background-color: var(--win11-surface);
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .tvgate-status-header {
+            padding: 20px 20px 10px 20px;
+            color: var(--win11-text);
+            border-bottom: 1px solid #eee;
+        }
+        
+        .tvgate-status-header h2 {
+            margin: 0;
+        }
+        
+        .tvgate-status .status-grid {
+            padding: 0 20px 20px 20px;
+        }
+        
+        .tvgate-status h2 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: var(--win11-text);
+            font-size: 1.2em;
+        }
+        
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            background-color: rgba(0,0,0,0.05);
+            border-radius: 6px;
+        }
+        
+        .status-label {
+            font-weight: bold;
+            color: var(--win11-text-secondary);
+        }
+        
+        .status-value {
+            color: var(--win11-text);
+            font-family: 'Courier New', monospace;
+        }
+        
+        /* 功能模块样式 */
+        .features-container {
+            margin-top: 20px;
+        }
+        
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .feature-card {
+            background-color: var(--win11-surface);
+            padding: 10px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .feature-card h3 {
+            margin-top: 0;
+            margin-bottom: 8px;
+            color: var(--win11-text);
+            font-size: 1.1em;
+        }
+        
+        .feature-card p {
+            color: var(--win11-text-secondary);
+            margin: 5px 0;
+            font-size: 0.9em;
+        }
+        
+        /* 存储信息和网卡流量详情样式 */
+        .details-container {
+            margin-top: 30px;
+        }
+        
+        .details-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .storage-info, .network-info {
+            padding: 20px;
+            background-color: var(--win11-surface);
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .storage-info h2, .network-info h2 {
+            margin-top: 0;
+            color: var(--win11-text);
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        
+        .storage-table, .network-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        
+        .storage-table th, .storage-table td, 
+        .network-table th, .network-table td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .storage-table th, .network-table th {
+            background-color: rgba(0,0,0,0.05);
+            font-weight: bold;
+        }
+        
+        .storage-table tr:hover, .network-table tr:hover {
+            background-color: rgba(0,0,0,0.02);
+        }
+        
+        .usage-bar-container {
+            width: 100%;
+            height: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        
+        .usage-bar {
+            height: 100%;
+            background-color: #4CAF50;
+        }
+        
+        .usage-bar.warning {
+            background-color: #FF9800;
+        }
+        
+        .usage-bar.critical {
+            background-color: #F44336;
+        }
+        
+        /* 活跃客户端连接样式 */
+        .active-clients {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: var(--win11-surface);
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .active-clients h2 {
+            margin-top: 0;
+            color: var(--win11-text);
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        
+        .clients-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            font-size: 0.9em;
+        }
+        
+        .clients-table th, .clients-table td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .clients-table th {
+            background-color: rgba(0,0,0,0.05);
+            font-weight: bold;
+        }
+        
+        .clients-table tr:hover {
+            background-color: rgba(0,0,0,0.02);
+        }
+        
+        /* 为IP列设置固定宽度，确保能显示完整的IPv6地址 */
+        .clients-table th:nth-child(1), 
+        .clients-table td:nth-child(1) {
+            width: 400px;
+            font-family: 'Courier New', monospace;
+        }
+        
+        /* 为URL列设置最大宽度并允许文本截断 */
+        .clients-table th:nth-child(2), 
+        .clients-table td:nth-child(2) {
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        /* 为类型列设置固定宽度 */
+        .clients-table th:nth-child(3), 
+        .clients-table td:nth-child(3) {
+            width: 80px;
+        }
+        
+        /* 为UA列设置最大宽度并允许文本截断 */
+        .clients-table th:nth-child(4), 
+        .clients-table td:nth-child(4) {
+            max-width: 250px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        /* 为时间列设置固定宽度 */
+        .clients-table th:nth-child(5), 
+        .clients-table td:nth-child(5),
+        .clients-table th:nth-child(6), 
+        .clients-table td:nth-child(6) {
+            width: 150px;
+            font-size: 0.85em;
+        }
+        
         @media (max-width: 768px) {
             .main-container {
                 flex-direction: column;
             }
             .sidebar {
                 width: 100%;
-                order: 2;
+            }
+            .circle-chart-container {
+                justify-content: center;
+            }
+            
+            .storage-table, .network-table {
+                font-size: 0.8em;
+            }
+            
+            .storage-table th, .storage-table td, 
+            .network-table th, .network-table td {
+                padding: 8px 10px;
+            }
+            
+            /* 在小屏幕设备上，存储信息和网卡流量详情垂直排列 */
+            .details-grid {
+                grid-template-columns: 1fr;
             }
         }
     </style>
 </head>
 <body>
     <div class="main-container">
-        
-        <!-- 正文内容 -->
-        <div class="content">
-            <h1>欢迎使用 TVGate 管理系统</h1>
-            
-            <!-- 圆形进度条 -->
-            <div class="circle-chart-container">
-                <!-- CPU使用率 -->
-                <div class="circle-chart">
-                    <svg viewBox="0 0 120 120">
-                        <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
-                        <circle class="circle-chart-fill cpu{{if gt .cpuUsage 90}} high-usage{{end}}" cx="60" cy="60" r="50" 
-                                stroke-dasharray="{{.cpuUsage}}, 100"></circle>
-                    </svg>
-                    <div class="circle-chart-text">
-                        <div class="circle-chart-value">{{.cpuUsage}}%</div>
-                        <div class="circle-chart-label">CPU</div>
-                    </div>
-                    <div class="resource-info">使用率</div>
-                </div>
-                
-                <!-- 内存使用率 -->
-                <div class="circle-chart">
-                    <svg viewBox="0 0 120 120">
-                        <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
-                        <circle class="circle-chart-fill memory{{if gt .memoryUsage 90}} high-usage{{end}}" cx="60" cy="60" r="50" 
-                                stroke-dasharray="{{.memoryUsage}}, 100"></circle>
-                    </svg>
-                    <div class="circle-chart-text">
-                        <div class="circle-chart-value">{{.memoryUsage}}%</div>
-                        <div class="circle-chart-label">内存</div>
-                    </div>
-                    <div class="resource-info">{{formatBytes .memoryUsed}} / {{formatBytes .memoryTotal}}</div>
-                </div>
-                
-                <!-- SWAP使用率 -->
-                <div class="circle-chart">
-                    <svg viewBox="0 0 120 120">
-                        <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
-                        <circle class="circle-chart-fill swap{{if gt .swapUsagePercent 90}} high-usage{{end}}" cx="60" cy="60" r="50" 
-                                stroke-dasharray="{{.swapUsagePercent}}, 100"></circle>
-                    </svg>
-                    <div class="circle-chart-text">
-                        <div class="circle-chart-value">{{.swapUsagePercent}}%</div>
-                        <div class="circle-chart-label">SWAP</div>
-                    </div>
-                    <div class="resource-info">{{formatBytes .swapUsage}} / {{formatBytes .swapTotal}}</div>
-                </div>
-                
-                <!-- 硬盘使用率 -->
-                <div class="circle-chart">
-                    <svg viewBox="0 0 120 120">
-                        <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
-                        <circle class="circle-chart-fill disk{{if gt .diskUsagePercent 90}} high-usage{{end}}" cx="60" cy="60" r="50" 
-                                stroke-dasharray="{{.diskUsagePercent}}, 100"></circle>
-                    </svg>
-                    <div class="circle-chart-text">
-                        <div class="circle-chart-value">{{.diskUsagePercent}}%</div>
-                        <div class="circle-chart-label">硬盘</div>
-                    </div>
-                    <div class="resource-info">{{formatBytes .diskUsage}} / {{formatBytes .diskTotal}}</div>
-                </div>
-            </div>
         <!-- 左侧边栏 -->
         <div class="sidebar">
             <div class="sidebar-item">
                 <a href="{{.webPath}}" style="color: inherit; text-decoration: none;">
                     <h3>系统状态</h3>
                     <div class="status-info">
-                        <p>服务器运行时间: {{.uptime}}</p>
-                        <p>内存使用: {{.memoryUsage}}%</p>
-                        <p>CPU负载: {{.cpuLoad}}%</p>
-                        <p>活动连接数: {{.activeConnections}}</p>
+                        <p>操作系统: <span id="os">{{.os}}</span></p>
+                        <p>内核版本: <span id="kernelVersion">{{.kernelVersion}}</span></p>
+                        <p>CPU架构: <span id="cpuArch">{{.cpuArch}}</span></p>
+                        <p>版本: <span id="version">{{.version}}</span></p>
+                        <p>运行时间: <span id="uptime">{{.uptime}}</span></p>
+                        <p>Goroutines: <span id="goroutines">{{.goroutines}}</span></p>
+                        <p>客户端IP: <span id="clientIP">{{.clientIP}}</span></p>
                     </div>
                 </a>
             </div>
@@ -247,22 +440,235 @@
         <!-- 正文内容 -->
         <div class="content">
             <h1>欢迎使用 TVGate 管理系统</h1>
-            <div class="dashboard" style="margin-top: 40px;">
-                <div class="dashboard-card">
-                    <h2>系统概览</h2>
-                    <p>当前版本: {{.version}}</p>
-                    <p>最后更新时间: {{.lastUpdate}}</p>
+            
+            <!-- 圆形进度条 -->
+            <div class="circle-chart-container">
+                <!-- CPU使用率 -->
+                <div class="circle-chart">
+                    <svg viewBox="0 0 120 120">
+                        <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
+                        <circle class="circle-chart-fill cpu" cx="60" cy="60" r="50" 
+                                stroke-dasharray="0, 100" id="cpuChart"></circle>
+                    </svg>
+                    <div class="circle-chart-text">
+                        <div class="circle-chart-value" id="cpuValue">0%</div>
+                        <div class="circle-chart-label">CPU</div>
+                    </div>
+                    <div class="resource-info">使用率</div>
                 </div>
                 
-                <div class="dashboard-card">
-                    <h2>快速操作</h2>
-                    <a href="{{.webPath}}editor" class="btn">配置编辑器</a>
-                    <a href="{{.webPath}}domainmap-editor" class="btn">域名映射</a>
-                    <a href="{{.webPath}}proxygroups-editor" class="btn">代理组配置</a>
-                    <a href="{{.monitorPath}}" class="btn" target="_blank">系统监控</a>
+                <!-- 内存使用率 -->
+                <div class="circle-chart">
+                    <svg viewBox="0 0 120 120">
+                        <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
+                        <circle class="circle-chart-fill memory" cx="60" cy="60" r="50" 
+                                stroke-dasharray="0, 100" id="memoryChart"></circle>
+                    </svg>
+                    <div class="circle-chart-text">
+                        <div class="circle-chart-value" id="memoryValue">0%</div>
+                        <div class="circle-chart-label">内存</div>
+                    </div>
+                    <div class="resource-info" id="memoryInfo">0B / 0B</div>
+                </div>
+                
+                <!-- SWAP使用率 -->
+                <div class="circle-chart">
+                    <svg viewBox="0 0 120 120">
+                        <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
+                        <circle class="circle-chart-fill swap" cx="60" cy="60" r="50" 
+                                stroke-dasharray="0, 100" id="swapChart"></circle>
+                    </svg>
+                    <div class="circle-chart-text">
+                        <div class="circle-chart-value" id="swapValue">0%</div>
+                        <div class="circle-chart-label">SWAP</div>
+                    </div>
+                    <div class="resource-info" id="swapInfo">0B / 0B</div>
+                </div>
+                
+                <!-- 硬盘使用率 -->
+                <div class="circle-chart">
+                    <svg viewBox="0 0 120 120">
+                        <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
+                        <circle class="circle-chart-fill disk" cx="60" cy="60" r="50" 
+                                stroke-dasharray="0, 100" id="diskChart"></circle>
+                    </svg>
+                    <div class="circle-chart-text">
+                        <div class="circle-chart-value" id="diskValue">0%</div>
+                        <div class="circle-chart-label">硬盘</div>
+                    </div>
+                    <div class="resource-info" id="diskInfo">0B / 0B</div>
                 </div>
             </div>
+            
+            <!-- 系统状态信息 -->
+            <div class="system-status">
+                <h2>系统状态</h2>
+                <div class="status-grid">
+                    <!-- 系统负载 -->
+                    <div class="status-item">
+                        <span class="status-label">系统负载:</span>
+                        <span class="status-value" id="systemLoad">0.00, 0.00, 0.00</span>
+                    </div>
+                    <!-- 连接数 -->
+                    <div class="status-item">
+                        <span class="status-label">连接数:</span>
+                        <span class="status-value" id="connections">0</span>
+                    </div>
+                    <!-- 实时总带宽(入) -->
+                    <div class="status-item">
+                        <span class="status-label">实时入带宽:</span>
+                        <span class="status-value" id="inboundBandwidth">0B/s</span>
+                    </div>
+                    <!-- 实时总带宽(出) -->
+                    <div class="status-item">
+                        <span class="status-label">实时出带宽:</span>
+                        <span class="status-value" id="outboundBandwidth">0B/s</span>
+                    </div>
+                    <!-- 入口流量 -->
+                    <div class="status-item">
+                        <span class="status-label">入口流量:</span>
+                        <span class="status-value" id="inboundBytes">0B</span>
+                    </div>
+                    <!-- 出口流量 -->
+                    <div class="status-item">
+                        <span class="status-label">出口流量:</span>
+                        <span class="status-value" id="outboundBytes">0B</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- TVGate状态信息 -->
+            <div class="tvgate-status">
+                <div class="tvgate-status-header">
+                    <h2>TVGate状态</h2>
+                </div>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="status-label">CPU:</span>
+                        <span class="status-value" id="appCpuUsage">0%</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">内存:</span>
+                        <span class="status-value" id="appMemoryUsage">0B</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">总流量:</span>
+                        <span class="status-value" id="appTotalBytes">0B</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">流量入:</span>
+                        <span class="status-value" id="appInboundBytes">0B</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">流量出:</span>
+                        <span class="status-value" id="appOutboundBytes">0B</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 功能模块区域 -->
+            <div class="features-container">
+                <div class="feature-grid">
+                    <!-- YAML编辑器 -->
+                    <div class="feature-card">
+                        <h3>YAML编辑器</h3>
+                        <p>在线编辑和管理TVGate配置文件</p>
+                        <a href="{{.webPath}}editor" class="btn">访问编辑器</a>
+                    </div>
+                    
+                    <!-- 配置还原恢复 -->
+                    <div class="feature-card">
+                        <h3>配置还原/恢复</h3>
+                        <p>备份和恢复您的配置文件</p>
+                        <button class="btn" disabled>功能开发中</button>
+                    </div>
+                    
+                    <!-- TVGate版本切换 -->
+                    <div class="feature-card">
+                        <h3>TVGate版本切换</h3>
+                        <p>切换到不同的TVGate版本</p>
+                        <button class="btn" disabled>功能开发中</button>
+                    </div>
+                    
+                    <!-- 推流配置 -->
+                    <div class="feature-card">
+                        <h3>推流配置</h3>
+                        <p>配置和管理推流设置</p>
+                        <button class="btn" disabled>功能开发中</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 存储信息和网卡流量详情 -->
+            <div class="details-container">
+                <div class="details-grid">
+                    <!-- 存储信息 -->
+                    <div class="storage-info">
+                        <h2>存储信息</h2>
+                        <table class="storage-table">
+                            <thead>
+                                <tr>
+                                    <th>设备</th>
+                                    <th>挂载点</th>
+                                    <th>文件系统</th>
+                                    <th>已使用</th>
+                                    <th>总共</th>
+                                    <th>使用率</th>
+                                </tr>
+                            </thead>
+                            <tbody id="storage-table-body">
+                                <!-- 存储信息将通过JavaScript动态填充 -->
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- 网卡流量详情 -->
+                    <div class="network-info">
+                        <h2>网卡流量详情</h2>
+                        <table class="network-table">
+                            <thead>
+                                <tr>
+                                    <th>网卡名称</th>
+                                    <th>接收流量</th>
+                                    <th>发送流量</th>
+                                    <th>接收带宽</th>
+                                    <th>发送带宽</th>
+                                </tr>
+                            </thead>
+                            <tbody id="network-table-body">
+                                <!-- 网卡流量信息将通过JavaScript动态填充 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 活跃客户端连接 -->
+            <div class="active-clients">
+                <h2>活跃客户端连接</h2>
+                <table class="clients-table">
+                    <thead>
+                        <tr>
+                            <th>IP</th>
+                            <th>URL</th>
+                            <th>类型</th>
+                            <th>UA</th>
+                            <th>连接时间</th>
+                            <th>最后活跃</th>
+                        </tr>
+                    </thead>
+                    <tbody id="clients-table-body">
+                        <!-- 客户端连接信息将通过JavaScript动态填充 -->
+                    </tbody>
+                </table>
+            </div>
         </div>
+        
+        <script>
+            // 设置监控路径为全局变量，供system-stats.js使用
+            window.monitorPath = "{{.monitorPath}}";
+        </script>
+        <script src="{{.webPath}}static/js/system-stats.js"></script>
     </div>
 </body>
 </html>
