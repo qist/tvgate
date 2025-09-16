@@ -178,6 +178,7 @@ type ProxyStats struct {
 	Alive         bool          // 代理是否可用
 	FailCount     int           // 测速失败次数
 	CooldownUntil time.Time     // 冷却时间，防止频繁重试
+	StatusCode          int           // 测试返回状态码（HTTP/自定义）
 }
 
 // 全局定义测速结果结构体

@@ -280,6 +280,7 @@ body {
 <th>延迟 <span class="toggle-column" data-column="1" data-group="{{$name}}">👁</span></th>
 <th>类型 <span class="toggle-column" data-column="2" data-group="{{$name}}">👁</span></th>
 <th>服务器 <span class="toggle-column" data-column="3" data-group="{{$name}}">👁</span></th>
+<th>HTTP状态</th>
 <th>状态</th>
 </tr>
 {{range $proxy := $group.Proxies}}
@@ -288,12 +289,16 @@ body {
 <td data-column="1" data-group="{{$name}}" data-value="{{ $stats := index $group.Stats.ProxyStats $proxy.Name }}{{if $stats}}{{if gt $stats.ResponseTime 0}}{{printf "%.0f ms" (divInt64 $stats.ResponseTime.Nanoseconds 1000000)}}{{end}}{{end}}">*</td>
 <td data-column="2" data-group="{{$name}}" data-value="{{if $proxy.Type}}{{$proxy.Type}}{{end}}">*</td>
 <td data-column="3" data-group="{{$name}}" data-value="{{if $proxy.Server}}{{$proxy.Server}}{{end}}">*</td>
+  <td>
+    {{ $stats := index $group.Stats.ProxyStats $proxy.Name }}
+    {{if $stats}}{{if gt $stats.StatusCode 0}}{{$stats.StatusCode}}{{else}}-{{end}}{{else}}-{{end}}
+  </td>
 <td>
 {{ $stats := index $group.Stats.ProxyStats $proxy.Name }}
 {{if $stats}}
 {{if and $stats.Alive (or (gt $stats.ResponseTime 0) (gt $stats.FailCount 0))}}<span class="status-alive">✅ 活跃</span>
 {{else if $stats.CooldownUntil.After $.Timestamp}}<span class="status-cooldown">🚫 冷却</span>
-{{else if and (not $stats.Alive) (or (gt $stats.ResponseTime 0) (gt $stats.FailCount 0))}}<span class="status-dead">❌ 死亡</span>
+{{else if and (not $stats.Alive) (or (gt $stats.ResponseTime 0) (gt $stats.FailCount 0))}}<span class="status-dead">❌ 失败</span>
 {{else}}<span class="status-unknown">⚪ 未测试</span>
 {{end}}
 {{else}}<span class="status-unknown">⚪ 未初始化</span>{{end}}

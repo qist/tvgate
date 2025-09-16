@@ -1,4 +1,5 @@
 package lb
+
 import (
 	"context"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 )
+
 // selectFastestProxy 使用最快的代理
 func SelectFastestProxy(group *config.ProxyGroupConfig, targetURL string, forceTest bool) *config.ProxyConfig {
 	ctx, cancel := context.WithTimeout(context.Background(), config.DefaultDialTimeout)
@@ -57,7 +59,7 @@ func SelectFastestProxy(group *config.ProxyGroupConfig, targetURL string, forceT
 				continue
 			}
 
-			status := "❌死"
+			status := "❌失"
 			if stats.Alive && now.After(stats.CooldownUntil) && stats.ResponseTime > 0 {
 				status = "✅活"
 			} else if stats.Alive && now.Before(stats.CooldownUntil) {
@@ -69,12 +71,13 @@ func SelectFastestProxy(group *config.ProxyGroupConfig, targetURL string, forceT
 				cooldown = fmt.Sprintf("冷却中(至 %s)", stats.CooldownUntil.Format("15:04:05"))
 			}
 
-			logger.LogPrintf(" - %-16s [%-3s] RT: %-10v 上次测速已过: %-6v 最小测速间隔: %-6v 失败次数: %-2d %s",
+			logger.LogPrintf(" - %-16s [%-3s] RT: %-10v 上次测速已过: %-6v 最小测速间隔: %-6v HTTP状态: [%-3d] 失败次数: %-2d %s",
 				proxy.Name,
 				status,
 				stats.ResponseTime.Truncate(time.Microsecond), // 保留更合理的精度
 				now.Sub(stats.LastCheck).Truncate(time.Second),
 				interval,
+				stats.StatusCode,
 				stats.FailCount,
 				cooldown,
 			)
@@ -186,6 +189,7 @@ loop:
 				res.ResponseTime >= 0 && res.StatusCode < 500 {
 				stats.Alive = true
 				stats.ResponseTime = res.ResponseTime
+				stats.StatusCode = res.StatusCode
 				stats.FailCount = 0
 				stats.CooldownUntil = time.Time{}
 				group.Stats.Unlock()

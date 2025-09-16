@@ -63,7 +63,7 @@ func main() {
 			ProxyStats: make(map[string]*config.ProxyStats),
 		}
 	}
-	
+
 	// 初始化全局token管理器
 	if config.Cfg.GlobalAuth.TokensEnabled {
 		auth.GlobalTokenManager = auth.NewGlobalTokenManagerFromConfig(&config.Cfg.GlobalAuth)
@@ -91,6 +91,9 @@ func main() {
 
 	stopAccessCleaner := make(chan struct{})
 	go clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
+
+	stopCh := make(chan struct{})
+	go clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopCh)
 
 	logger.SetupLogger(logger.LogConfig{
 		Enabled:    config.Cfg.Log.Enabled,
@@ -177,5 +180,6 @@ func main() {
 	// 收到退出信号，通知清理任务退出
 	close(stopCleaner)
 	close(stopAccessCleaner)
+	close(stopCh)
 	config.Cancel()
 }
