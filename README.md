@@ -35,7 +35,7 @@ v2.0.8
 1、不在需要自己创建配置文件，启动程序会自动生成配置文件。启动方式支持 ./TVGate-linux-arm64 -config=/usr/local/TVGate/config.yaml 也支持目录 ./TVGate-linux-arm64 -config=/usr/local/ 直接启动 ./TVGate-linux-arm64 当前目录生成配置文件。
 2、添加域名映射支持：
 配置格式:
-pedomainmap:
+domainmap:
     - name: localhost-to-test
       source: test.test.cc # 自己的域名或IP地址 如果是ip 映射 别人就不能用ip 做代理了 打开是映射的网页 可以解析自己的域名 使用原始代理 不配置映射
       target: www.bing.com # 需要代理的域名 映射 80 http 443 https 其它端口记得携带上完整端口  www.bing.com:8080
@@ -45,14 +45,22 @@ pedomainmap:
         X-Forwarded-Proto: http
       protocol: http # 可选 默认http 支持 https http rtsp
     - name: 34444
-      source: www.baidu.com
-      target: 96336.ww.com
+      source: rtsp.test.cc
+      target: 123.147.112.17:8089
       client_headers:
-        ua: 1236545
+        User-Agent: okhttp/3.12.0 # 前端设置头 必须一致 okhttp 就不能访问
       protocol: rtsp
     - name: 99999
-      source: www.baidu.com
+      source: https.test.cc
       target: 96336.ww.com
+      protocol: https
+    - name: other # 默认后端是http
+      source: other.test.cc
+      target: 96336.ww.com
+访问：
+http: http://test.test.cc:8888/PLTV/88888888/224/3221236260/index.m3u8
+https: http://https.test.cc:8888/PLTV/88888888/224/3221236260/index.m3u8
+rtsp: http://rtsp.test.cc:8888/04000001/01000000004000000000000000000231?
 3、配置可以完全web 编辑可见所得 配置保存后等待后端重新加载后在点击前端的重新加载配置。
 4、配置文件没有对应的主节点 打开 YAML编辑器 添加主节点 web 就会自动显示跟相关配置
 5、添加在线配置还原删除备份，每次修改配置会自动备份。文件名字 config.yaml.backup.20250917171446 config.yaml 这个名字是你指定的配置文件名字 不一定是config.yaml aaa.yaml 等
