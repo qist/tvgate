@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"fmt"
+	// "fmt"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
@@ -235,14 +235,14 @@ func getTemperature() float64 {
 
 	if len(cpuTemps) > 0 {
 		maxTemp := cpuTemps[0].Temperature
-		bestSensor := cpuTemps[0].SensorKey
+		// bestSensor := cpuTemps[0].SensorKey
 		for _, t := range cpuTemps {
 			if t.Temperature > maxTemp {
 				maxTemp = t.Temperature
-				bestSensor = t.SensorKey
+				// bestSensor = t.SensorKey
 			}
 		}
-		fmt.Printf("DEBUG: Found CPU temperature sensor: %s = %.2f°C\n", bestSensor, maxTemp)
+		// fmt.Printf("DEBUG: Found CPU temperature sensor: %s = %.2f°C\n", bestSensor, maxTemp)
 		return maxTemp
 	}
 
