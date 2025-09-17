@@ -40,7 +40,7 @@ RUN apk add --no-cache ca-certificates tzdata bash fail2ban
 COPY --from=build /app/build/TVGate /app/TVGate
 
 # 复制配置文件
-COPY --from=build /app/doc/config.yaml /etc/tvgate/config.yaml
+# COPY --from=build /app/doc/config.yaml /etc/tvgate/config.yaml
 
 # 配置 fail2ban
 RUN rm -f /etc/fail2ban/jail.d/alpine-ssh.conf \
