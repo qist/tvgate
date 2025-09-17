@@ -10,11 +10,11 @@ function updateCircleChart(circle, percent) {
 // 实时更新系统资源使用率
 function updateSystemStats() {
     const monitorPath = window.monitorPath || '/status';
-    
+
     fetch(monitorPath + '?format=json')
         .then(response => response.json())
         .then(data => {
-            
+
             // ================= CPU =================
             const cpuUsage = Math.round(data.TrafficStats.CPUUsage);
             const cpuChart = document.getElementById('cpuChart');
@@ -49,25 +49,25 @@ function updateSystemStats() {
                 swapInfo.textContent = `${formatBytes(swapUsage)} / ${formatBytes(swapTotal)}`;
             }
 
-            // ================= 硬盘 =================
-            const diskTotal = data.TrafficStats.DiskTotal;
-            const diskUsage = data.TrafficStats.DiskUsage;
-            const diskUsagePercent = diskTotal > 0 ? Math.round((diskUsage / diskTotal) * 100) : 0;
-            const diskChart = document.getElementById('diskChart');
-            const diskValue = document.getElementById('diskValue');
-            const diskInfo = document.getElementById('diskInfo');
-            if (diskChart && diskValue && diskInfo) {
-                updateCircleChart(diskChart, diskUsagePercent);
-                diskValue.textContent = `${diskUsagePercent}%`;
-                diskInfo.textContent = `${formatBytes(diskUsage)} / ${formatBytes(diskTotal)}`;
+            // ================= CPU温度 =================
+            const cpuTemp = data.TrafficStats.CPUTemperature || 0;
+            const tempChart = document.getElementById('tempChart');
+            const tempValue = document.getElementById('tempValue');
+            const tempInfo = document.getElementById('tempInfo');
+            if (tempChart && tempValue && tempInfo) {
+                // CPU温度通常在0-100°C范围内，我们可以将其映射到0-100的百分比显示
+                const tempPercent = Math.min(100, Math.max(0, cpuTemp));
+                updateCircleChart(tempChart, tempPercent);
+                tempValue.textContent = `${Math.round(cpuTemp)}°C`;
+                tempInfo.textContent = `CPU温度`;
             }
 
             // ================= 高使用率变色 =================
             [
-                {chart: cpuChart, percent: cpuUsage},
-                {chart: memoryChart, percent: memoryUsage},
-                {chart: swapChart, percent: swapUsagePercent},
-                {chart: diskChart, percent: diskUsagePercent}
+                { chart: cpuChart, percent: cpuUsage },
+                { chart: memoryChart, percent: memoryUsage },
+                { chart: swapChart, percent: swapUsagePercent },
+                { chart: tempChart, percent: cpuTemp }
             ].forEach(item => {
                 if (!item.chart) return;
                 if (item.percent > 90) item.chart.classList.add('high-usage');
@@ -184,7 +184,18 @@ function updateSystemStats() {
             if (kernelVersionElement) kernelVersionElement.textContent = data.TrafficStats.HostInfo.KernelVersion || '未知';
             if (cpuArchElement) cpuArchElement.textContent = data.TrafficStats.HostInfo.KernelArch || '未知';
             if (versionElement) versionElement.textContent = data.Version || '未知';
-            
+            if (uptimeElement) {
+                let uptimeSec = 0;
+                if (data.TrafficStats && data.TrafficStats.Uptime) {
+                    // 纳秒 -> 秒
+                    uptimeSec = data.TrafficStats.Uptime / 1e9;
+                } else if (data.Uptime) {
+                    uptimeSec = data.Uptime / 1e9;
+                }
+                uptimeElement.textContent = formatUptime(uptimeSec);
+            }
+
+
             if (goroutinesElement) goroutinesElement.textContent = data.Goroutines || '未知';
             if (clientIPElement) clientIPElement.textContent = data.ClientIP || '未知';
         })
@@ -202,13 +213,18 @@ function formatBytes(bytes) {
 
 function formatUptime(uptime) {
     if (!uptime) return '0秒';
-    
+
     let totalSeconds;
-    
+
     // 处理不同类型的输入
     if (typeof uptime === 'number') {
-        // 直接是数字（秒数）
-        totalSeconds = Math.floor(uptime);
+        // 直接是数字（纳秒或秒数）
+        if (uptime > 1e12) {
+            // 假设这是纳秒值，转换为秒
+            totalSeconds = Math.floor(uptime / 1e9);
+        } else {
+            totalSeconds = Math.floor(uptime);
+        }
     } else if (typeof uptime === 'object' && 'Seconds' in uptime) {
         // 包含Seconds属性的对象
         totalSeconds = Math.floor(uptime.Seconds);
@@ -216,30 +232,46 @@ function formatUptime(uptime) {
         // 尝试解析字符串为秒数
         const uptimeValue = parseFloat(uptime);
         if (isNaN(uptimeValue)) return '0秒';
-        totalSeconds = Math.floor(uptimeValue);
+        // 如果数值非常大，可能是纳秒而不是秒
+        if (uptimeValue > 1e12) {
+            // 假设这是纳秒值，转换为秒
+            totalSeconds = Math.floor(uptimeValue / 1e9);
+        } else {
+            totalSeconds = Math.floor(uptimeValue);
+        }
     } else {
         return '0秒';
     }
-    
+
     // 确保秒数在合理范围内
     if (totalSeconds < 0) return '0秒';
-    
-    // 限制最大天数，避免显示异常大的数值
+
+    // 限制最大天数，避免显示异常大的数值（与Go版本保持一致）
     if (totalSeconds > 365 * 24 * 3600) {
         return '365天';
     }
-    
+
     const days = Math.floor(totalSeconds / 86400);
     const hours = Math.floor((totalSeconds % 86400) / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
-    
+
     let result = '';
-    if (days > 0) result += `${days}天`;
-    if (hours > 0) result += `${hours}小时`;
-    if (minutes > 0) result += `${minutes}分`;
-    result += `${seconds}秒`;
-    
+    if (days > 0) {
+        result += `${days}天`;
+        if (hours > 0) result += `${hours}小时`;
+        if (minutes > 0) result += `${minutes}分`;
+    } else if (hours > 0) {
+        result += `${hours}小时`;
+        if (minutes > 0) result += `${minutes}分`;
+        result += `${seconds}秒`;
+    } else if (minutes > 0) {
+        result += `${minutes}分`;
+        result += `${seconds}秒`;
+    } else {
+        result += `${seconds}秒`;
+    }
+
     return result;
 }
 
@@ -257,7 +289,7 @@ function formatTime(timeString) {
 }
 
 // ================= 页面加载后定时更新 =================
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     updateSystemStats();
     setInterval(updateSystemStats, 5000);
 });

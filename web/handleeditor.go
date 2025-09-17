@@ -33,7 +33,7 @@ func (h *ConfigHandler) handleEditor(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 计算服务器运行时间
-		uptime := getSystemUptime()
+		// uptime := getSystemUptime()
 		// 检查是否有domainmap配置
 		config.CfgMu.RLock()
 		hasDomainMap := len(config.Cfg.DomainMap) > 0
@@ -59,7 +59,7 @@ func (h *ConfigHandler) handleEditor(w http.ResponseWriter, r *http.Request) {
 			"hasProxyGroups": hasProxyGroups,
 			"configPath":     *config.ConfigFilePath, // 添加配置文件路径到模板数据
 			"monitorPath":    monitorPath,
-			"uptime":         uptime,
+			// "uptime":         uptime,
 		}
 
 		// 从嵌入的文件系统读取模板

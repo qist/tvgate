@@ -82,6 +82,10 @@
         .circle-chart-fill.disk {
             stroke: #9C27B0;
         }
+        
+        .circle-chart-fill.cpu-temp {
+            stroke: #FF5722;
+        }
 
         .circle-chart-fill.high-usage {
             stroke: #F44336;
@@ -132,7 +136,7 @@
 
         /* TVGate状态信息样式 */
         .tvgate-status {
-            margin-top: 30px;
+            margin-top: 20px;
             background-color: var(--win11-surface);
             border-radius: 10px;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
@@ -480,18 +484,18 @@
                     <div class="resource-info" id="swapInfo">0B / 0B</div>
                 </div>
 
-                <!-- 硬盘使用率 -->
+                <!-- CPU温度 -->
                 <div class="circle-chart">
                     <svg viewBox="0 0 120 120">
                         <circle class="circle-chart-bg" cx="60" cy="60" r="50"></circle>
-                        <circle class="circle-chart-fill disk" cx="60" cy="60" r="50" stroke-dasharray="0, 100"
-                            id="diskChart"></circle>
+                        <circle class="circle-chart-fill cpu" cx="60" cy="60" r="50" stroke-dasharray="0, 100"
+                            id="tempChart"></circle>
                     </svg>
                     <div class="circle-chart-text">
-                        <div class="circle-chart-value" id="diskValue">0%</div>
-                        <div class="circle-chart-label">硬盘</div>
+                        <div class="circle-chart-value" id="tempValue">0°C</div>
+                        <div class="circle-chart-label">CPU温度</div>
                     </div>
-                    <div class="resource-info" id="diskInfo">0B / 0B</div>
+                    <div class="resource-info" id="tempInfo">CPU温度</div>
                 </div>
             </div>
 
@@ -503,11 +507,6 @@
                     <div class="status-item">
                         <span class="status-label">系统负载:</span>
                         <span class="status-value" id="systemLoad">0.00, 0.00, 0.00</span>
-                    </div>
-                    <!-- 连接数 -->
-                    <div class="status-item">
-                        <span class="status-label">连接数:</span>
-                        <span class="status-value" id="connections">0</span>
                     </div>
                     <!-- 实时总带宽(入) -->
                     <div class="status-item">
@@ -529,6 +528,7 @@
                         <span class="status-label">出口流量:</span>
                         <span class="status-value" id="outboundBytes">0B</span>
                     </div>
+                </div>
             </div>
 
             <!-- TVGate状态信息 -->
@@ -538,24 +538,16 @@
                 </div>
                 <div class="status-grid">
                     <div class="status-item">
+                        <span class="status-label">连接数:</span>
+                        <span class="status-value" id="connections">0</span>
+                    </div>
+                    <div class="status-item">
                         <span class="status-label">CPU:</span>
                         <span class="status-value" id="appCpuUsage">0%</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">内存:</span>
                         <span class="status-value" id="appMemoryUsage">0B</span>
-                    </div>
-                    <div class="status-item">
-                        <span class="status-label">总流量:</span>
-                        <span class="status-value" id="appTotalBytes">0B</span>
-                    </div>
-                    <div class="status-item">
-                        <span class="status-label">流量入:</span>
-                        <span class="status-value" id="appInboundBytes">0B</span>
-                    </div>
-                    <div class="status-item">
-                        <span class="status-label">流量出:</span>
-                        <span class="status-value" id="appOutboundBytes">0B</span>
                     </div>
                 </div>
             </div>

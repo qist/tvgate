@@ -211,15 +211,15 @@ var (
 func getTemperature() float64 {
 	temps, err := host.SensorsTemperatures()
 	if err != nil || len(temps) == 0 {
-		fmt.Printf("DEBUG: Failed to get sensor temperatures: %v\n", err)
+		// fmt.Printf("DEBUG: Failed to get sensor temperatures: %v\n", err)
 		return -1
 	}
 
-	fmt.Printf("DEBUG: Got %d temperature sensors\n", len(temps))
+	// fmt.Printf("DEBUG: Got %d temperature sensors\n", len(temps))
 
 	var cpuTemps []host.TemperatureStat
-	for i, t := range temps {
-		fmt.Printf("DEBUG: Sensor %d: Key=%s, Temperature=%.2f°C\n", i, t.SensorKey, t.Temperature)
+	for _, t := range temps {
+		// fmt.Printf("DEBUG: Sensor %d: Key=%s, Temperature=%.2f°C\n", i, t.SensorKey, t.Temperature)
 		key := strings.ToLower(t.SensorKey)
 		if t.Temperature < 20 {
 			continue
@@ -248,14 +248,14 @@ func getTemperature() float64 {
 
 	// 如果没有明确 CPU 传感器，取最高温度
 	maxTemp := temps[0].Temperature
-	bestSensor := temps[0].SensorKey
+	// bestSensor := temps[0].SensorKey
 	for _, t := range temps {
 		if t.Temperature > maxTemp {
 			maxTemp = t.Temperature
-			bestSensor = t.SensorKey
+			// bestSensor = t.SensorKey
 		}
 	}
-	fmt.Printf("DEBUG: Using highest temperature sensor: %s = %.2f°C\n", bestSensor, maxTemp)
+	// fmt.Printf("DEBUG: Using highest temperature sensor: %s = %.2f°C\n", bestSensor, maxTemp)
 	return maxTemp
 }
 
@@ -268,7 +268,7 @@ func updateSystemStats() {
 
 	// 获取CPU温度
 	cpuTemperature := getTemperature()
-	fmt.Printf("DEBUG: CPU Temperature = %.2f°C\n", cpuTemperature)
+	// fmt.Printf("DEBUG: CPU Temperature = %.2f°C\n", cpuTemperature)
 
 	// 更新CPU核心数缓存(每小时更新一次)
 	if now.Sub(lastCPUCountUpdate) > time.Hour {
@@ -531,7 +531,7 @@ func updateAppStats(ts *TrafficStats) {
 	// }
 
 	// ---------------- 更新 AppStats ----------------
-	fmt.Printf("DEBUG: App Stats - CPU: %.2f%%, Memory: %d bytes\n", cpuUsage, memUsage)
+	// fmt.Printf("DEBUG: App Stats - CPU: %.2f%%, Memory: %d bytes\n", cpuUsage, memUsage)
 	ts.App.CPUPercent = cpuUsage
 	ts.App.MemoryUsage = memUsage
 	// ts.App.InboundBytes = inBytes
