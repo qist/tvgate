@@ -445,6 +445,63 @@ h1 {
   animation: fadeInUp 0.5s ease-out;
 }
 
+/* 表格样式 */
+.storage-table, .network-table, .clients-table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: var(--win11-card);
+  border: 1px solid var(--win11-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.storage-table th, .network-table th, .clients-table th,
+.storage-table td, .network-table td, .clients-table td {
+  padding: 12px 15px;
+  text-align: left;
+  border-bottom: 1px solid var(--win11-border);
+}
+
+.storage-table th, .network-table th, .clients-table th {
+  background-color: var(--win11-accent);
+  color: white;
+  font-weight: 600;
+}
+
+.storage-table tr:hover, .network-table tr:hover, .clients-table tr:hover {
+  background-color: rgba(0, 120, 212, 0.1);
+}
+
+/* 限制挂载点列的宽度，添加省略号，并在悬停时显示完整内容 */
+.mount-point {
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: relative;
+  cursor: pointer;
+}
+
+.mount-point::after {
+  content: attr(data-full-path);
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  background-color: var(--win11-card);
+  color: var(--win11-text-primary);
+  padding: 5px 10px;
+  border-radius: 4px;
+  box-shadow: 0 2px 10px var(--win11-shadow);
+  white-space: nowrap;
+  display: none;
+  z-index: 100;
+  border: 1px solid var(--win11-border);
+}
+
+.mount-point:hover::after {
+  display: block;
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
   .container {
@@ -486,5 +543,10 @@ h1 {
   
   .status-info p {
     font-size: 0.8em;
+  }
+  
+  /* 在小屏幕上进一步限制挂载点列宽度 */
+  .mount-point {
+    max-width: 120px;
   }
 }

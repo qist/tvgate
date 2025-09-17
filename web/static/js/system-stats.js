@@ -86,7 +86,7 @@ function updateSystemStats() {
                     storageHTML += `
                         <tr>
                             <td>${partition.Path}</td>
-                            <td>${partition.MountPoint}</td>
+                            <td title="${partition.MountPoint}">${partition.MountPoint}</td>
                             <td>${partition.FsType}</td>
                             <td>${formatBytes(partition.Used)}</td>
                             <td>${formatBytes(partition.Total)}</td>
