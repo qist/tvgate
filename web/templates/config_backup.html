@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>配置备份管理</title>
 <link rel="stylesheet" href="{{.webPath}}static/common.css">
+<link rel="stylesheet" href="{{.webPath}}static/mobile.css">
 <script src="{{.webPath}}static/js/theme.js"></script>
 <style>
 .main-container {
@@ -162,160 +163,86 @@ tr:hover {
     padding: 40px;
     color: var(--win11-text-secondary);
 }
-</style>
-</head>
-<body>
-<div class="main-container">
-    <div class="sidebar">
-        <h2>TVGate</h2>
-        <div class="sidebar-item" onclick="location.href='{{.webPath}}node'">
-            <h3>主页</h3>
-            <div class="status-info">
-                <p>返回主控制台</p>
-            </div>
-        </div>
-        <a href="{{.webPath}}config/backup" class="sidebar-item">
-            <h3>配置备份</h3>
-            <div class="status-info">
-                <p>管理配置备份</p>
-            </div>
-        </a>
-        <div class="sidebar-item" onclick="location.href='{{.webPath}}editor'">
-            <h3>配置编辑</h3>
-            <div class="status-info">
-                <p>编辑配置文件</p>
-            </div>
-        </div>
-    </div>
-    
-    <div class="content">
-        <div class="container">
-            <h2>配置备份管理</h2>
-            
-            <div id="alert" class="alert">
-                <span id="alert-message"></span>
-            </div>
-            
-            <div class="text-center" style="margin: 20px 0;">
-                <button class="btn" onclick="loadBackups()">刷新列表</button>
-            </div>
-            
-            <table id="backupTable">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>文件路径</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td colspan="3" class="no-backups">加载中...</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
 
-<script>
-const webPath = "{{.webPath}}";
+@media (max-width: 768px) {
+    .main-container {
+        flex-direction: column;
+        padding: 8px;
+    }
 
-function showAlert(message, type) {
-    const alert = document.getElementById('alert');
-    const alertMessage = document.getElementById('alert-message');
+    .sidebar {
+        width: 100%;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-around;
+        background-color: var(--win11-accent);
+        border-radius: 6px;
+        padding: 8px;
+        margin-bottom: 12px;
+    }
     
-    alert.className = 'alert alert-' + type;
-    alertMessage.textContent = message;
-    alert.style.display = 'block';
+    .sidebar-item {
+        flex: 1 1 auto;
+        min-width: 100px;
+        padding: 10px 8px;
+        margin: 4px;
+        text-align: center;
+        border-radius: 6px;
+        background-color: rgba(255, 255, 255, 0.1);
+        color: white;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        font-size: 14px;
+    }
     
-    // 3秒后自动隐藏
-    setTimeout(() => {
-        alert.style.display = 'none';
-    }, 3000);
-}
+    .sidebar-item:hover {
+        background-color: rgba(255, 255, 255, 0.2);
+        transform: translateY(-1px);
+    }
 
-async function loadBackups() {
-    try {
-        const res = await fetch(webPath + "config/backup/list");
-        const data = await res.json();
-        const tbody = document.querySelector("#backupTable tbody");
-        
-        if (!data.backups || data.backups.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" class="no-backups">暂无备份文件</td></tr>';
-            return;
-        }
-        
-        tbody.innerHTML = "";
-        data.backups.forEach((file, index) => {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `
-                <td>${index + 1}</td>
-                <td>${file}</td>
-                <td>
-                    <button class="btn btn-success" onclick="restoreBackup('${encodeURIComponent(file)}')">还原</button>
-                    <button class="btn" onclick="downloadBackup('${encodeURIComponent(file)}')">下载</button>
-                    <button class="btn btn-danger" onclick="deleteBackup('${encodeURIComponent(file)}')">删除</button>
-                </td>`;
-            tbody.appendChild(tr);
-        });
-    } catch (error) {
-        showAlert('加载备份列表失败: ' + error.message, 'error');
-        document.querySelector("#backupTable tbody").innerHTML = '<tr><td colspan="3" class="no-backups">加载失败</td></tr>';
+    .content {
+        padding: 8px;
+    }
+    
+    .container {
+        padding: 10px;
+    }
+    
+    h2 {
+        font-size: 18px;
+        padding: 10px 0;
+        text-align: center;
+    }
+    
+    .btn {
+        padding: 8px 12px;
+        font-size: 14px;
+        display: block;
+        width: 100%;
+        margin: 6px 0;
+        text-align: center;
+    }
+    
+    table {
+        font-size: 12px;
+    }
+    
+    th, td {
+        padding: 8px 6px;
+    }
+    
+    .alert {
+        padding: 8px;
+        font-size: 12px;
+        margin: 10px 0;
+    }
+    
+    .text-center {
+        text-align: center;
+    }
+    
+    .no-backups {
+        padding: 20px;
+        font-size: 14px;
     }
 }
-
-async function deleteBackup(file) {
-    if (!confirm("确认删除该备份吗？此操作不可恢复！")) return;
-    
-    try {
-        const res = await fetch(webPath + "config/backup/delete?file=" + file);
-        if (res.ok) {
-            showAlert("删除成功", "success");
-            loadBackups();
-        } else {
-            const text = await res.text();
-            showAlert("删除失败: " + text, "error");
-        }
-    } catch (error) {
-        showAlert("删除失败: " + error.message, "error");
-    }
-}
-
-async function restoreBackup(file) {
-    if (!confirm("⚠️ 警告：确认将该备份还原到当前配置吗？\n这将覆盖当前配置，建议先手动备份当前配置。")) return;
-    
-    try {
-        const res = await fetch(webPath + "config/backup/restore?file=" + file);
-        if (res.ok) {
-            showAlert("还原成功！请手动刷新页面以确保配置生效。", "success");
-            loadBackups();
-        } else {
-            const text = await res.text();
-            showAlert("还原失败: " + text, "error");
-        }
-    } catch (error) {
-        showAlert("还原失败: " + error.message, "error");
-    }
-}
-
-function downloadBackup(file) {
-    // 创建一个隐藏的iframe来触发下载
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = webPath + 'config/backup/download?file=' + file;
-    document.body.appendChild(iframe);
-    
-    // 下载完成后移除iframe
-    setTimeout(() => {
-        document.body.removeChild(iframe);
-    }, 1000);
-}
-
-// 页面加载时初始化
-document.addEventListener('DOMContentLoaded', function() {
-    loadBackups();
-});
-</script>
-</body>
-</html>

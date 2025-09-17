@@ -1,0 +1,562 @@
+/* 移动端适配CSS */
+
+/* 添加明显的测试样式，用于验证移动端CSS是否加载 */
+@media (max-width: 768px) {
+  body::before {
+    /* content: "Mobile CSS Loaded" !important; */
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    background: red !important;
+    color: white !important;
+    padding: 10px !important;
+    z-index: 9999 !important;
+    font-weight: bold !important;
+  }
+}
+
+/* 针对更小屏幕的优化 */
+@media (max-width: 768px) {
+
+  /* 调整容器样式 */
+  .container {
+    margin: 5px !important;
+    border-radius: 4px !important;
+    padding: 10px !important;
+  }
+
+  /* 调整标题 */
+  h1 {
+    font-size: 18px !important;
+    padding: 10px 0 !important;
+  }
+
+  h2 {
+    font-size: 16px !important;
+  }
+
+  /* 调整卡片样式 */
+  .card {
+    padding: 10px !important;
+    margin-bottom: 8px !important;
+  }
+
+  /* 调整表单元素 */
+  .form-group {
+    margin-bottom: 12px !important;
+  }
+
+  .form-control {
+    padding: 6px 8px !important;
+    font-size: 14px !important;
+    /* 防止iOS缩放 */
+  }
+
+  /* 调整按钮 */
+  .btn {
+    display: block !important;
+    width: 100% !important;
+    max-width: 280px !important;
+    /* 防止太长 */
+    margin: 8px auto !important;
+    /* 居中 */
+    padding: 12px 16px !important;
+    font-size: 16px !important;
+  }
+
+  .form-buttons {
+    padding: 0 8px !important;
+    margin: 12px 0 !important;
+  }
+
+  .form-buttons .btn {
+    margin: 0 0 8px 0 !important;
+    width: 100% !important;
+  }
+
+  /* 特别优化功能面板中的按钮 */
+  .feature-card .btn {
+    padding: 8px 16px !important;
+    font-size: 13px !important;
+    width: auto !important;
+    min-width: 120px !important;
+    margin: 8px 0 !important;
+  }
+
+  /* 调整侧边栏 */
+  .sidebar {
+    width: 100% !important;
+    padding: 8px !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: space-around !important;
+    background-color: var(--win11-accent) !important;
+    border-radius: 6px !important;
+    margin-bottom: 12px !important;
+  }
+
+  .sidebar-item {
+    flex: 1 1 auto !important;
+    min-width: 100px !important;
+    padding: 10px 8px !important;
+    margin: 4px !important;
+    text-align: center !important;
+    border-radius: 6px !important;
+    background-color: rgba(255, 255, 255, 0.1) !important;
+    color: white !important;
+    cursor: pointer !important;
+    transition: all 0.3s ease !important;
+    font-size: 14px !important;
+  }
+
+  .sidebar-item:hover {
+    background-color: rgba(255, 255, 255, 0.2) !important;
+    transform: translateY(-1px) !important;
+  }
+
+  .sidebar-item span {
+    display: inline !important;
+  }
+
+  .sidebar-item::before {
+    content: none !important;
+  }
+
+  .sidebar-item h3 {
+    margin: 0 0 8px 0 !important;
+    font-size: 14px !important;
+    color: white !important;
+  }
+
+  .status-info p {
+    font-size: 11px !important;
+    margin: 2px 0 !important;
+    color: rgba(255, 255, 255, 0.9) !important;
+  }
+
+  /* 调整网格布局 */
+  .grid {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+    padding: 0 4px 8px !important;
+  }
+
+  /* 调整信息区域 */
+  .info-section {
+    padding: 12px !important;
+    margin: 0 8px 8px !important;
+  }
+
+  .info-grid {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+  }
+
+  .info-item {
+    padding: 8px !important;
+  }
+
+  .info-item h3 {
+    font-size: 13px !important;
+    margin-bottom: 4px !important;
+  }
+
+  .info-item p {
+    font-size: 12px !important;
+  }
+
+  /* 调整表格 */
+  .storage-table,
+  .network-table,
+  .clients-table {
+    font-size: 11px !important;
+    display: block !important;
+    overflow-x: auto !important;
+    white-space: nowrap !important;
+  }
+
+  .storage-table th,
+  .network-table th,
+  .clients-table th,
+  .storage-table td,
+  .network-table td,
+  .clients-table td {
+    padding: 6px 4px !important;
+  }
+
+  /* 特别优化活跃客户端连接表格 */
+  .active-clients {
+    overflow-x: auto !important;
+  }
+
+  .clients-table {
+    min-width: 600px !important;
+    white-space: nowrap !important;
+  }
+
+  .clients-table th,
+  .clients-table td {
+    padding: 6px 8px !important;
+    text-align: left !important;
+  }
+
+  .clients-table th:nth-child(1),
+  .clients-table td:nth-child(1) {
+    /* IP列 */
+    min-width: 90px !important;
+  }
+
+  .clients-table th:nth-child(2),
+  .clients-table td:nth-child(2) {
+    /* URL列 */
+    min-width: 150px !important;
+  }
+
+  .clients-table th:nth-child(3),
+  .clients-table td:nth-child(3) {
+    /* 类型列 */
+    min-width: 60px !important;
+  }
+
+  .clients-table th:nth-child(4),
+  .clients-table td:nth-child(4) {
+    /* UA列 */
+    min-width: 120px !important;
+  }
+
+  .clients-table th:nth-child(5),
+  .clients-table td:nth-child(5),
+  /* 连接时间列 */
+  .clients-table th:nth-child(6),
+  .clients-table td:nth-child(6) {
+    /* 最后活跃列 */
+    min-width: 100px !important;
+  }
+
+  /* 调整认证区域 */
+  .auth-section {
+    padding: 8px !important;
+  }
+
+  .auth-section a {
+    padding: 5px 8px !important;
+    font-size: 11px !important;
+    margin-left: 4px !important;
+  }
+
+  /* 调整提示信息 */
+  .alert {
+    padding: 8px !important;
+    margin-bottom: 12px !important;
+    font-size: 11px !important;
+  }
+
+  /* 调整帮助文本 */
+  .help-text {
+    font-size: 10px !important;
+  }
+
+  /* 调整主容器 */
+  .main-container {
+    flex-direction: column !important;
+    padding: 8px !important;
+  }
+
+  /* 调整内容区域 */
+  .content {
+    padding: 8px !important;
+  }
+
+  /* 调整挂载点显示 */
+  .mount-point {
+    max-width: 100px !important;
+  }
+
+  /* 调整圆形图表容器 */
+  .circle-chart-container {
+    flex-wrap: wrap !important;
+    justify-content: space-around !important;
+  }
+
+  .circle-chart {
+    width: 80px !important;
+    height: 80px !important;
+    margin: 4px !important;
+  }
+
+  /* 调整圆形图表 */
+  .circle-chart-bg,
+  .circle-chart-fill {
+    stroke-width: 6 !important;
+  }
+
+  .circle-chart-text {
+    font-size: 10px !important;
+  }
+
+  .circle-chart-value {
+    font-size: 14px !important;
+  }
+
+  .circle-chart-label {
+    font-size: 8px !important;
+  }
+
+  /* 调整配置信息区域 */
+  .config-info {
+    padding: 8px 10px !important;
+    margin-bottom: 10px !important;
+  }
+
+  .config-info p {
+    font-size: 12px !important;
+    margin: 0 !important;
+  }
+
+  /* 调整编辑器容器 */
+  .editor-container {
+    border-radius: 4px !important;
+  }
+
+  .CodeMirror {
+    height: calc(100vh - 200px) !important;
+    font-size: 13px !important;
+  }
+
+  /* 调整表格容器 */
+  .table-container {
+    overflow-x: auto !important;
+  }
+
+  table {
+    min-width: 500px !important;
+  }
+
+  /* 优化详情网格在小屏幕上的显示 */
+  .details-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+}
+
+/* 针对触摸设备的优化 */
+@media (hover: none) and (pointer: coarse) {
+
+  /* 增大触摸目标 */
+  .btn {
+    min-height: 40px !important;
+    min-width: 40px !important;
+  }
+
+  .form-control {
+    min-height: 40px !important;
+  }
+
+  .sidebar-item {
+    min-height: 50px !important;
+    min-width: 90px !important;
+  }
+
+  /* 调整悬停效果 */
+  .card:hover {
+    transform: none !important;
+    box-shadow: 0 2px 4px var(--win11-shadow) !important;
+  }
+
+  .btn:hover {
+    transform: none !important;
+    background-color: var(--win11-accent) !important;
+  }
+
+  .btn-success:hover {
+    background-color: var(--win11-success) !important;
+  }
+
+  .btn-danger:hover {
+    background-color: var(--win11-danger) !important;
+  }
+
+  .btn-warning:hover {
+    background-color: var(--win11-warning) !important;
+  }
+}
+
+/* 横屏模式优化 */
+@media (max-height: 500px) and (orientation: landscape) {
+  .sidebar {
+    width: 100% !important;
+    padding: 5px !important;
+  }
+
+  .sidebar-item {
+    padding: 6px !important;
+    margin: 2px !important;
+    font-size: 11px !important;
+    min-width: 80px !important;
+  }
+
+  h1 {
+    font-size: 16px !important;
+    padding: 6px 0 !important;
+  }
+
+  .circle-chart {
+    width: 70px !important;
+    height: 70px !important;
+  }
+}
+
+/* 高分辨率屏幕优化 */
+@media (-webkit-min-device-pixel-ratio: 2),
+(min-resolution: 192dpi) {
+  :root {
+    /* 可以根据需要调整高分屏下的样式 */
+  }
+
+  .card {
+    box-shadow: 0 4px 12px var(--win11-shadow) !important;
+  }
+}
+
+/* iOS Safari 特殊处理 */
+@supports (-webkit-touch-callout: none) {
+
+  /* 防止iOS缩放 */
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+
+  /* 修复iOS上的固定定位问题 */
+  .theme-toggle {
+    position: absolute !important;
+  }
+}
+
+/* 添加一些通用的移动端优化 */
+@media (max-width: 768px) {
+
+  /* 确保页面内容不会超出屏幕宽度 */
+  body {
+    overflow-x: hidden !important;
+  }
+
+  /* 优化表格在小屏幕上的显示 */
+  table {
+    display: block !important;
+    overflow-x: auto !important;
+    white-space: nowrap !important;
+  }
+
+  /* 特别优化存储信息和网卡流量详情表格 */
+  .storage-info,
+  .network-info {
+    overflow-x: auto !important;
+  }
+
+  .storage-table,
+  .network-table {
+    min-width: 600px !important;
+  }
+
+  .storage-table th,
+  .storage-table td,
+  .network-table th,
+  .network-table td {
+    padding: 6px 8px !important;
+    text-align: left !important;
+  }
+
+  .storage-table th:nth-child(2),
+  .storage-table td:nth-child(2) {
+    /* 挂载点列 */
+    min-width: 120px !important;
+  }
+
+  .storage-table th:nth-child(4),
+  .storage-table td:nth-child(4),
+  /* 已使用列 */
+  .storage-table th:nth-child(5),
+  .storage-table td:nth-child(5) {
+    /* 总共列 */
+    min-width: 90px !important;
+  }
+
+  .network-table th:nth-child(1),
+  .network-table td:nth-child(1) {
+    /* 网卡名称列 */
+    min-width: 100px !important;
+  }
+
+  .network-table th:nth-child(2),
+  .network-table td:nth-child(2),
+  /* 接收流量列 */
+  .network-table th:nth-child(3),
+  .network-table td:nth-child(3) {
+    /* 发送流量列 */
+    min-width: 100px !important;
+  }
+
+  /* 优化系统状态网格布局 */
+  .status-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+  }
+
+  .status-item {
+    padding: 6px !important;
+  }
+
+  .status-label {
+    font-size: 12px !important;
+  }
+
+  .status-value {
+    font-size: 12px !important;
+  }
+
+  /* 优化TVGate状态网格布局 */
+  .tvgate-status .status-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+  }
+
+  /* 优化表单在小屏幕上的显示 */
+  .form-group label {
+    margin-bottom: 3px !important;
+    font-size: 13px !important;
+  }
+
+  /* 优化按钮在小屏幕上的显示 */
+  .btn {
+    display: inline-block !important;
+    width: auto !important;
+    margin-bottom: 8px !important;
+    text-align: center !important;
+  }
+
+  /* 优化网格系统在小屏幕上的显示 */
+  .grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  /* 优化卡片在小屏幕上的显示 */
+  .card {
+    margin-bottom: 12px !important;
+  }
+
+  /* 添加过渡动画使自适应更顺滑 */
+  .sidebar,
+  .sidebar-item,
+  .container,
+  .card,
+  .btn,
+  h1,
+  h2,
+  h3,
+  .circle-chart {
+    transition: all 0.3s ease-in-out !important;
+  }
+}

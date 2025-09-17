@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.title}}</title>
     <link rel="stylesheet" href="{{.webPath}}static/common.css">
+    <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
     <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/codemirror.min.css">
     <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/lint.min.css">
     <script src="{{.webPath}}static/js/codemirror/codemirror.min.js"></script>
@@ -194,10 +195,117 @@
         @media (max-width: 768px) {
             .main-container {
                 flex-direction: column;
+                padding: 8px;
             }
             
             .sidebar {
                 width: 100%;
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: space-around;
+                background-color: var(--win11-accent);
+                border-radius: 6px;
+                padding: 8px;
+                margin-bottom: 12px;
+            }
+            
+            .sidebar-item {
+                flex: 1 1 auto;
+                min-width: 100px;
+                padding: 10px 8px;
+                margin: 4px;
+                text-align: center;
+                border-radius: 6px;
+                background-color: rgba(255, 255, 255, 0.1);
+                color: white;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                font-size: 14px;
+            }
+            
+            .sidebar-item:hover {
+                background-color: rgba(255, 255, 255, 0.2);
+                transform: translateY(-1px);
+            }
+
+            .content {
+                padding: 8px;
+            }
+            
+            .container {
+                padding: 10px;
+            }
+            
+            h1 {
+                font-size: 18px;
+                padding: 10px 0;
+            }
+            
+            .editor-toolbar {
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-bottom: 12px;
+            }
+            
+            .btn {
+                padding: 8px 12px;
+                font-size: 14px;
+                flex: 1 1 auto;
+                min-width: 100px;
+            }
+            
+            .config-info {
+                padding: 8px 10px;
+                margin-bottom: 10px;
+            }
+            
+            .config-info p {
+                font-size: 12px;
+            }
+            
+            .editor-container {
+                border-radius: 4px;
+            }
+            
+            .CodeMirror {
+                height: calc(100vh - 200px);
+                font-size: 13px;
+            }
+            
+            .help-text {
+                font-size: 12px;
+                padding: 12px;
+            }
+            
+            .help-text h3 {
+                font-size: 16px;
+                margin-top: 0;
+            }
+            
+            .help-text ul {
+                margin: 8px 0;
+                padding-left: 16px;
+            }
+            
+            .help-text li {
+                margin-bottom: 4px;
+            }
+            
+            .help-text kbd {
+                font-size: 11px;
+                padding: 1px 4px;
+            }
+            
+            #status {
+                padding: 8px;
+                font-size: 13px;
+                margin: 8px 0;
+            }
+            
+            .alert {
+                padding: 8px;
+                font-size: 13px;
+                margin: 8px 0;
             }
         }
     </style>

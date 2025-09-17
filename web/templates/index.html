@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.title}}</title>
     <link rel="stylesheet" href="{{.webPath}}static/common.css">
+    <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
     <script src="{{.webPath}}static/js/theme.js"></script>
     <style>
 
@@ -403,31 +404,110 @@
         @media (max-width: 768px) {
             .main-container {
                 flex-direction: column;
+                padding: 8px;
             }
 
             .sidebar {
                 width: 100%;
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: space-around;
+                background-color: var(--win11-accent);
+                border-radius: 6px;
+                padding: 8px;
+                margin-bottom: 12px;
+            }
+            
+            .sidebar-item {
+                flex: 1 1 auto;
+                min-width: 100px;
+                padding: 10px 8px;
+                margin: 4px;
+                text-align: center;
+                border-radius: 6px;
+                background-color: rgba(255, 255, 255, 0.1);
+                color: white;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                font-size: 14px;
+            }
+            
+            .sidebar-item:hover {
+                background-color: rgba(255, 255, 255, 0.2);
+                transform: translateY(-1px);
+            }
+            
+            .sidebar-item h3 {
+                margin: 0 0 8px 0;
+                font-size: 14px;
+                color: white;
+            }
+            
+            .status-info p {
+                font-size: 11px;
+                margin: 2px 0;
+                color: rgba(255, 255, 255, 0.9);
             }
 
             .circle-chart-container {
                 justify-content: center;
             }
+            
+            .circle-chart {
+                width: 80px;
+                height: 80px;
+                margin: 4px;
+            }
+            
+            .circle-chart-bg, .circle-chart-fill {
+                stroke-width: 6;
+            }
+            
+            .circle-chart-text {
+                font-size: 10px;
+            }
+            
+            .circle-chart-value {
+                font-size: 14px;
+            }
+            
+            .circle-chart-label {
+                font-size: 8px;
+            }
 
             .storage-table,
             .network-table {
-                font-size: 0.8em;
+                font-size: 0.7em;
             }
 
             .storage-table th,
             .storage-table td,
             .network-table th,
             .network-table td {
-                padding: 8px 10px;
+                padding: 6px 8px;
             }
 
             /* 在小屏幕设备上，存储信息和网卡流量详情垂直排列 */
             .details-grid {
                 grid-template-columns: 1fr;
+                gap: 12px;
+            }
+            
+            h1 {
+                font-size: 18px;
+                padding: 10px 0;
+            }
+            
+            .auth-section {
+                padding: 8px;
+                text-align: center;
+            }
+            
+            .auth-section a {
+                display: inline-block;
+                padding: 6px 10px;
+                font-size: 12px;
+                margin: 4px 2px;
             }
         }
     </style>

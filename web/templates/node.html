@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.title}}</title>
     <link rel="stylesheet" href="{{.webPath}}static/common.css">
+    <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
     <script src="{{.webPath}}static/js/theme.js"></script>
     <script src="{{.webPath}}static/js/system-stats.js"></script>
     <style>
@@ -162,14 +163,77 @@
         @media (max-width: 768px) {
             .main-container {
                 flex-direction: column;
+                padding: 10px;
             }
 
             .sidebar {
                 width: 100%;
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: space-around;
+                background-color: var(--win11-accent);
+                border-radius: 8px;
+                padding: 10px;
+                margin-bottom: 15px;
+            }
+            
+            .sidebar-item {
+                flex: 1 1 auto;
+                min-width: 120px;
+                padding: 15px 10px;
+                margin: 5px;
+                text-align: center;
+                border-radius: 8px;
+                background-color: rgba(255, 255, 255, 0.1);
+                color: white;
+                cursor: pointer;
+                transition: all 0.3s ease;
+            }
+            
+            .sidebar-item:hover {
+                background-color: rgba(255, 255, 255, 0.2);
+                transform: translateY(-2px);
             }
 
             .grid {
                 grid-template-columns: 1fr;
+                gap: 15px;
+            }
+            
+            .card {
+                padding: 15px;
+                margin-bottom: 10px;
+            }
+            
+            h1 {
+                font-size: 20px;
+                padding: 10px 0;
+            }
+            
+            h2 {
+                font-size: 18px;
+            }
+            
+            .info-grid {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+            
+            .info-item {
+                padding: 10px;
+            }
+            
+            .auth-section {
+                text-align: center;
+                margin-bottom: 15px;
+            }
+            
+            .btn {
+                display: block;
+                width: 100%;
+                margin-bottom: 10px;
+                padding: 12px 15px;
+                font-size: 16px;
             }
         }
     </style>
