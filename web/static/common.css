@@ -382,6 +382,7 @@ h1 {
 
 .info-section h2 {
   margin-top: 0;
+  color: var(--win11-text-primary);
 }
 
 .info-grid {
@@ -402,6 +403,7 @@ h1 {
   margin-top: 0;
   margin-bottom: 10px;
   font-size: 16px;
+  color: var(--win11-text-primary);
 }
 
 .configured {
@@ -460,16 +462,23 @@ h1 {
   padding: 12px 15px;
   text-align: left;
   border-bottom: 1px solid var(--win11-border);
+  color: var(--win11-text-primary); /* 添加这行确保表格文字在不同主题下正确显示 */
 }
 
 .storage-table th, .network-table th, .clients-table th {
   background-color: var(--win11-accent);
-  color: white;
+  color: var(--win11-text-primary); /* 修改为使用主题变量而不是固定白色 */
   font-weight: 600;
 }
 
 .storage-table tr:hover, .network-table tr:hover, .clients-table tr:hover {
   background-color: rgba(0, 120, 212, 0.1);
+}
+
+/* 存储信息和网卡流量详情以及活跃客户端连接标题样式 */
+.network-info h2,
+.active-clients h2 {
+  color: var(--win11-text-primary);
 }
 
 /* 限制挂载点列的宽度，添加省略号，并在悬停时显示完整内容 */
