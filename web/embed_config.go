@@ -20,8 +20,10 @@ func EnsureConfigFile(configPath string) (string, error) {
 
 	var configFilePath string
 
-	// 末尾带 "/" → 当目录
-	if strings.HasSuffix(configPath, string(os.PathSeparator)) {
+	ext := filepath.Ext(configPath)
+
+	if ext == "" || strings.HasSuffix(configPath, string(os.PathSeparator)) {
+		// 没有扩展名或以 "/" 结尾 → 当目录处理
 		configFilePath = filepath.Join(configPath, "config.yaml")
 	} else {
 		info, err := os.Stat(configPath)
@@ -34,8 +36,8 @@ func EnsureConfigFile(configPath string) (string, error) {
 				configFilePath = configPath
 			}
 		} else if os.IsNotExist(err) {
-			// 不存在
-			configFilePath = configPath // 默认当文件
+			// 不存在 → 默认当文件
+			configFilePath = configPath
 		} else {
 			return "", fmt.Errorf("检查路径时出错: %w", err)
 		}

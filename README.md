@@ -1,7 +1,6 @@
 # TVGate — IPTV 转发 / 代理工具
 
 > 高性能的本地内网流/网页资源转发与代理工具，将内部可访问的 `http`/`rtsp`/`rtp` 等资源安全地发布到外网，并支持通过多种上游代理跨区域访问受限资源。
-
 ---
 
 ## 目录
@@ -30,7 +29,35 @@
   - [注意事项 / 常见问题](#注意事项--常见问题)
 
 ---
-
+changelog
+v2.0.8
+```
+1、不在需要自己创建配置文件，启动程序会自动生成配置文件。启动方式支持 ./TVGate-linux-arm64 -config=/usr/local/TVGate/config.yaml 也支持目录 ./TVGate-linux-arm64 -config=/usr/local/ 直接启动 ./TVGate-linux-arm64 当前目录生成配置文件。
+2、添加域名映射支持：
+配置格式:
+pedomainmap:
+    - name: localhost-to-qist
+      source: test.qist.cc # 自己的域名或IP地址 如果是ip 映射 别人就不能用ip 做代理了 打开是映射的网页 可以解析自己的域名 使用原始代理 不配置映射
+      target: www.bing.com # 需要代理的域名 映射 80 http 443 https 其它端口记得携带上完整端口  www.bing.com:8080
+      client_headers: # 前端验证头 头验证
+        X-Forwarded-For: 192.168.100.1
+      server_headers: # 后端发送头
+        X-Forwarded-Proto: http
+      protocol: http # 可选 默认http 支持 https http rtsp
+    - name: 34444
+      source: www.baidu.com
+      target: 96336.ww.com
+      client_headers:
+        ua: 1236545
+      protocol: rtsp
+    - name: 99999
+      source: www.baidu.com
+      target: 96336.ww.com
+3、配置可以完全web 编辑可见所得 配置保存后等待后端重新加载后在点击前端的重新加载配置。
+4、配置文件没有对应的主节点 打开 YAML编辑器 添加主节点 web 就会自动显示跟相关配置
+5、添加在线配置还原删除备份，每次修改配置会自动备份。文件名字 config.yaml.backup.20250917171446 config.yaml 这个名字是你指定的配置文件名字 不一定是config.yaml aaa.yaml 等
+6、还有一些影藏技能自己去发现了。
+```
 ## 功能
 
 ### 转发
@@ -74,17 +101,17 @@ nohup /usr/local/TVGate/TVGate-linux-amd64 -config=/usr/local/TVGate/config.yaml
 
 ### 方式一：使用 ghcr.io 镜像
 ```bash
-docker run -d   --name=tvgate   -p 8888:8888  --restart=unless-stopped  -v /usr/local/TVGate/config.yaml:/etc/tvgate/config.yaml   ghcr.io/qist/tvgate:latest
+docker run -d   --name=tvgate   -p 8888:8888  --restart=unless-stopped  -v /usr/local/TVGate/:/etc/tvgate/   ghcr.io/qist/tvgate:latest
 ```
 
 ### 方式二：使用 Docker Hub 镜像
 ```bash
-docker run -d   --name=tvgate   -p 8888:8888 --restart=unless-stopped  -v /usr/local/TVGate/config.yaml:/etc/tvgate/config.yaml   juestnow/tvgate:latest
+docker run -d   --name=tvgate   -p 8888:8888 --restart=unless-stopped  -v /usr/local/TVGate/:/etc/tvgate/   juestnow/tvgate:latest
 ```
 
 ### udp转发：
 ```bash
-docker run -d  --net=host  --name=tvgate --restart=unless-stopped -v /usr/local/TVGate/config.yaml:/etc/tvgate/config.yaml   ghcr.io/qist/tvgate:latest
+docker run -d  --net=host  --name=tvgate --restart=unless-stopped -v /usr/local/TVGate/:/etc/tvgate/   ghcr.io/qist/tvgate:latest
 ```
 
 ### docker-compose 示例
@@ -98,7 +125,7 @@ services:
     ports:
       - "8888:8888"
     volumes:
-      - /usr/local/TVGate/config.yaml:/etc/tvgate/config.yaml
+      - /usr/local/TVGate/:/etc/tvgate/
 ```
 
 运行后可通过 `http://宿主机IP:8888/` 访问。
@@ -208,13 +235,13 @@ stop_service() {
 访问示例：
 
 ```bash
-http://111.222.111.222:8888/jx?jx=https://v.qq.com/x/cover/mcv8hkc8zk8lnov/z0040syxb9c.html&full=1
+http://111.222.111.222:8888/jx?jx=https://v.xx.com/x/cover/mcv8hkc8zk8lnov/z0040syxb9c.html&full=1
 http://127.0.0.1:8888/jx?jx=爱情公寓3&id=11&full=1
 
 ```
 tvbox 配置文件：
 ```bash
-http://111.222.111.222:8888/jx?jx=https://v.qq.com/x/cover/mcv8hkc8zk8lnov/z0040syxb9c.html
+http://111.222.111.222:8888/jx?jx=https://v.xx.com/x/cover/mcv8hkc8zk8lnov/z0040syxb9c.html
 http://127.0.0.1:8888/jx?jx=爱情公寓3&id=11
 ```
 
@@ -314,7 +341,22 @@ jx:
             max_retries: 3 # 请求失败重试次数
             filters:
                 exclude: "电影解说,完美世界剧场版" # 排除包含指定关键字的视频
-                
+
+domainmap:
+    - name: localhost-to-test
+      source: test.test.cc
+      target: www.bing.cn
+      client_headers:
+        X-Forwarded-For: 192.168.100.1
+      server_headers:
+        X-Forwarded-Proto: http
+      protocol: http
+    - name: 34444
+      source: www.baidu.com
+      target: 96336.ww.com
+      client_headers:
+        ua: 1236545
+      protocol: rtsp                
 reload: 5
 
 proxygroups:
