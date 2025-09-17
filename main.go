@@ -125,7 +125,7 @@ func main() {
 	if monitorPath == "" {
 		monitorPath = "/status"
 	}
-	mux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.Handler)))
+	mux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.HandleMonitor)))
 	// jx 路径
 	jxPath := config.Cfg.JX.Path
 	if jxPath == "" {

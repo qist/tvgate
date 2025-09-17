@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"fmt"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
@@ -17,7 +18,20 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
+// 全局进程对象，避免每次新建
+var appProcess *process.Process
+
+func getAppProcess() *process.Process {
+	appProcessOnce.Do(func() {
+		appProcess, _ = process.NewProcess(int32(os.Getpid()))
+	})
+	return appProcess
+}
+
+var appProcessOnce sync.Once
+
 // -------------------- 数据结构 --------------------
+// 将appProcess变量定义移到了文件开头的导入部分之后
 
 type DiskPartitionInfo struct {
 	Path        string
@@ -72,6 +86,7 @@ type AppStats struct {
 	LastUpdate        time.Time
 	PrevIOCounters    *process.IOCountersStat
 	PrevCPUTime       float64 // ← 新增，用于计算 CPU 百分比
+	CPUTemperature    float64 // 添加CPU温度字段
 }
 
 type TrafficStats struct {
@@ -95,6 +110,7 @@ type TrafficStats struct {
 	DiskTotal       uint64
 	DiskUsedPercent float64
 	DiskPartitions  []DiskPartitionInfo
+	CPUTemperature  float64 // 添加CPU温度字段
 
 	LoadAverage LoadAverageInfo
 	HostInfo    HostInfo
@@ -121,22 +137,8 @@ var GlobalTrafficStats = &TrafficStats{
 
 // -------------------- 深拷贝方法 --------------------
 
-// AddAppInboundBytes 安全增加 App 入流量
-func AddAppInboundBytes(n uint64) {
-	GlobalTrafficStats.mu.Lock()
-	defer GlobalTrafficStats.mu.Unlock()
-	GlobalTrafficStats.App.InboundBytes += n
-	GlobalTrafficStats.App.TotalBytes += n
-}
 
-// AddAppOutboundBytes 安全增加 App 出流量
-func AddAppOutboundBytes(n uint64) {
-	GlobalTrafficStats.mu.Lock()
-	defer GlobalTrafficStats.mu.Unlock()
-	GlobalTrafficStats.App.OutboundBytes += n
-	GlobalTrafficStats.App.TotalBytes += n
-}
-
+// GetTrafficStats 获取流量统计信息的深拷贝
 func (ts *TrafficStats) GetTrafficStats() *TrafficStats {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
@@ -159,13 +161,7 @@ func (ts *TrafficStats) GetTrafficStats() *TrafficStats {
 	netCopy := append([]NetworkInterfaceInfo(nil), ts.NetworkInterfaces...)
 
 	// AppStats
-	var prevIO *process.IOCountersStat
-	if ts.App.PrevIOCounters != nil {
-		tmp := *ts.App.PrevIOCounters
-		prevIO = &tmp
-	}
 	appCopy := ts.App
-	appCopy.PrevIOCounters = prevIO
 
 	return &TrafficStats{
 		TotalConnections:  ts.TotalConnections,
@@ -177,6 +173,7 @@ func (ts *TrafficStats) GetTrafficStats() *TrafficStats {
 		OutboundBandwidth: ts.OutboundBandwidth,
 		CPUUsage:          ts.CPUUsage,
 		CPUCount:          ts.CPUCount,
+		CPUTemperature:    ts.CPUTemperature,
 		MemoryUsage:       ts.MemoryUsage,
 		MemoryTotal:       ts.MemoryTotal,
 		DiskUsage:         ts.DiskUsage,
@@ -210,12 +207,68 @@ var (
 	lastCPUCountUpdate time.Time
 )
 
+// 获取CPU温度（如果支持）
+func getTemperature() float64 {
+	temps, err := host.SensorsTemperatures()
+	if err != nil || len(temps) == 0 {
+		fmt.Printf("DEBUG: Failed to get sensor temperatures: %v\n", err)
+		return -1
+	}
+
+	fmt.Printf("DEBUG: Got %d temperature sensors\n", len(temps))
+
+	var cpuTemps []host.TemperatureStat
+	for i, t := range temps {
+		fmt.Printf("DEBUG: Sensor %d: Key=%s, Temperature=%.2f°C\n", i, t.SensorKey, t.Temperature)
+		key := strings.ToLower(t.SensorKey)
+		if t.Temperature < 20 {
+			continue
+		}
+		if strings.Contains(key, "cpu") ||
+			strings.Contains(key, "core") ||
+			strings.Contains(key, "package") ||
+			strings.Contains(key, "tctl") ||
+			strings.Contains(key, "tdie") {
+			cpuTemps = append(cpuTemps, t)
+		}
+	}
+
+	if len(cpuTemps) > 0 {
+		maxTemp := cpuTemps[0].Temperature
+		bestSensor := cpuTemps[0].SensorKey
+		for _, t := range cpuTemps {
+			if t.Temperature > maxTemp {
+				maxTemp = t.Temperature
+				bestSensor = t.SensorKey
+			}
+		}
+		fmt.Printf("DEBUG: Found CPU temperature sensor: %s = %.2f°C\n", bestSensor, maxTemp)
+		return maxTemp
+	}
+
+	// 如果没有明确 CPU 传感器，取最高温度
+	maxTemp := temps[0].Temperature
+	bestSensor := temps[0].SensorKey
+	for _, t := range temps {
+		if t.Temperature > maxTemp {
+			maxTemp = t.Temperature
+			bestSensor = t.SensorKey
+		}
+	}
+	fmt.Printf("DEBUG: Using highest temperature sensor: %s = %.2f°C\n", bestSensor, maxTemp)
+	return maxTemp
+}
+
 func updateSystemStats() {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
 	// CPU - 使用缓存减少频繁采样
 	now := time.Now()
+
+	// 获取CPU温度
+	cpuTemperature := getTemperature()
+	fmt.Printf("DEBUG: CPU Temperature = %.2f°C\n", cpuTemperature)
 
 	// 更新CPU核心数缓存(每小时更新一次)
 	if now.Sub(lastCPUCountUpdate) > time.Hour {
@@ -226,21 +279,22 @@ func updateSystemStats() {
 	}
 
 	// CPU使用率采样(5秒间隔)
+	var cpuUsage float64
 	if now.Sub(lastCPUSample) > 5*time.Second {
 		// 使用更短的采样时间(300ms)降低开销
 		cpuPercent, _ := cpu.Percent(300*time.Millisecond, false)
 		if len(cpuPercent) > 0 {
-			cpuUsage := cpuPercent[0]
+			rawUsage := cpuPercent[0]
 			// 简化计算逻辑
 			if cpuCountCache > 0 {
-				cpuUsage = cpuUsage / float64(cpuCountCache)
+				rawUsage = rawUsage / float64(cpuCountCache)
 			}
 			// 限制范围并平滑变化
-			if cpuUsage > 0 {
-				cpuUsageCache = math.Min(cpuUsage, 100)
+			if rawUsage > 0 {
+				cpuUsageCache = math.Min(rawUsage, 100)
 				// 如果变化小于1%，保持原值减少抖动
-				if math.Abs(cpuUsageCache-cpuUsage) < 1.0 {
-					cpuUsageCache = cpuUsage
+				if math.Abs(cpuUsageCache-rawUsage) < 1.0 {
+					cpuUsageCache = rawUsage
 				}
 			} else {
 				cpuUsageCache = 0
@@ -248,7 +302,7 @@ func updateSystemStats() {
 			lastCPUSample = now
 		}
 	}
-	cpuUsage := cpuUsageCache
+	cpuUsage = cpuUsageCache
 	GlobalTrafficStats.CPUCount = cpuCountCache // 更新全局CPU核心数
 
 	// 内存
@@ -261,7 +315,7 @@ func updateSystemStats() {
 
 	// 磁盘 - 使用缓存减少频繁扫描
 	var (
-		lastDiskScan    time.Time
+		lastDiskScan    = time.Now().Add(-time.Hour) // 初始化为一小时前
 		diskPartitions  []DiskPartitionInfo
 		diskUsage       uint64
 		diskTotal       uint64
@@ -341,7 +395,7 @@ func updateSystemStats() {
 
 	// 网络流量 - 使用缓存减少频繁采样
 	var (
-		lastNetSample     time.Time
+		lastNetSample     = time.Now().Add(-time.Hour) // 初始化为一小时前
 		networkInterfaces []NetworkInterfaceInfo
 		totalIn, totalOut uint64
 	)
@@ -399,6 +453,7 @@ func updateSystemStats() {
 	GlobalTrafficStats.mu.Lock()
 	defer GlobalTrafficStats.mu.Unlock()
 	GlobalTrafficStats.CPUUsage = cpuUsage
+	GlobalTrafficStats.CPUTemperature = cpuTemperature
 	GlobalTrafficStats.MemoryUsage = memUsage
 	GlobalTrafficStats.MemoryTotal = memTotal
 	GlobalTrafficStats.DiskUsage = diskUsage
@@ -418,18 +473,6 @@ func updateSystemStats() {
 }
 
 // -------------------- 应用自身统计 --------------------
-
-var (
-	appProcess     *process.Process
-	appProcessOnce sync.Once
-)
-
-func getAppProcess() *process.Process {
-	appProcessOnce.Do(func() {
-		appProcess, _ = process.NewProcess(int32(os.Getpid()))
-	})
-	return appProcess
-}
 
 func updateAppStats(ts *TrafficStats) {
 	p := getAppProcess()
@@ -466,40 +509,41 @@ func updateAppStats(ts *TrafficStats) {
 	}
 
 	// ---------------- IO 流量 ----------------
-	inBytes, outBytes := uint64(0), uint64(0)
-	if ioCounters, err := p.IOCounters(); err == nil {
-		inBytes = ioCounters.ReadBytes
-		outBytes = ioCounters.WriteBytes
-	}
+	// inBytes, outBytes := uint64(0), uint64(0)
+	// if ioCounters, err := p.IOCounters(); err == nil {
+	// 	inBytes = ioCounters.ReadBytes
+	// 	outBytes = ioCounters.WriteBytes
+	// }
 
 	// ---------------- 实时带宽 & 累加 TotalBytes ----------------
-	inBW, outBW := uint64(0), uint64(0)
-	inDiff, outDiff := uint64(0), uint64(0)
-	if !ts.App.LastUpdate.IsZero() {
-		duration := now.Sub(ts.App.LastUpdate).Seconds()
-		if duration > 0 && duration < 30 {
-			if ts.App.PrevIOCounters != nil {
-				inDiff = inBytes - ts.App.PrevIOCounters.ReadBytes
-				outDiff = outBytes - ts.App.PrevIOCounters.WriteBytes
-				inBW = uint64(float64(inDiff) / duration)
-				outBW = uint64(float64(outDiff) / duration)
-			}
-		}
-	}
+	// inBW, outBW := uint64(0), uint64(0)
+	// inDiff, outDiff := uint64(0), uint64(0)
+	// if !ts.App.LastUpdate.IsZero() {
+	// 	duration := now.Sub(ts.App.LastUpdate).Seconds()
+	// 	if duration > 0 && duration < 30 {
+	// 		if ts.App.PrevIOCounters != nil {
+	// 			inDiff = inBytes - ts.App.PrevIOCounters.ReadBytes
+	// 			outDiff = outBytes - ts.App.PrevIOCounters.WriteBytes
+	// 			inBW = uint64(float64(inDiff) / duration)
+	// 			outBW = uint64(float64(outDiff) / duration)
+	// 		}
+	// 	}
+	// }
 
 	// ---------------- 更新 AppStats ----------------
+	fmt.Printf("DEBUG: App Stats - CPU: %.2f%%, Memory: %d bytes\n", cpuUsage, memUsage)
 	ts.App.CPUPercent = cpuUsage
 	ts.App.MemoryUsage = memUsage
-	ts.App.InboundBytes = inBytes
-	ts.App.OutboundBytes = outBytes
-	ts.App.InboundBandwidth = inBW
-	ts.App.OutboundBandwidth = outBW
+	// ts.App.InboundBytes = inBytes
+	// ts.App.OutboundBytes = outBytes
+	// ts.App.InboundBandwidth = inBW
+	// ts.App.OutboundBandwidth = outBW
 	ts.App.LastUpdate = now
-	ts.App.PrevIOCounters = &process.IOCountersStat{
-		ReadBytes:  inBytes,
-		WriteBytes: outBytes,
-	}
+	// ts.App.PrevIOCounters = &process.IOCountersStat{
+		// ReadBytes:  inBytes,
+		// WriteBytes: outBytes,
+	// }
 
 	// ---------------- 累加总流量 ----------------
-	ts.App.TotalBytes += inDiff + outDiff
+	// ts.App.TotalBytes += inDiff + outDiff
 }

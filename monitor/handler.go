@@ -28,7 +28,7 @@ type StatusData struct {
 }
 
 // HTTP 处理入口
-func Handler(w http.ResponseWriter, r *http.Request) {
+func HandleMonitor(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("server", "TVGate")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if r.Header.Get("Accept") == "application/json" || r.URL.Query().Get("format") == "json" {
@@ -98,6 +98,7 @@ body {
 .status-cooldown {color:#ff9800;font-weight:bold;}
 .status-unknown {color:#9E9E9E;font-weight:bold;}
 .refresh-controls {margin:10px 0 20px; display:flex; align-items:center; gap:10px;}
+.refresh-btn {border:none; padding:8px 15px; border-radius:5px; font-weight:bold; cursor:pointer;}
 .refresh-btn {border:none; padding:8px 15px; border-radius:5px; font-weight:bold; cursor:pointer;}
 .refresh-on {background:#4CAF50; color:white;}
 .refresh-off {background:#f44336; color:white;}
@@ -181,6 +182,7 @@ body {
       <li><strong>系统负载:</strong> {{printf "%.2f" .TrafficStats.LoadAverage.Load1}} / {{printf "%.2f" .TrafficStats.LoadAverage.Load5}} / {{printf "%.2f" .TrafficStats.LoadAverage.Load15}}</li>
       <li><strong>CPU核心数:</strong> {{.TrafficStats.CPUCount}}</li> 
 	  <li><strong>CPU 使用率:</strong> {{printf "%.2f%%" .TrafficStats.CPUUsage}}</li>
+	  {{if ge .TrafficStats.CPUTemperature 0.0}}<li><strong>CPU 温度:</strong> {{printf "%.2f°C" .TrafficStats.CPUTemperature}}</li>{{end}}
 	  <li><strong>总内存:</strong> {{FormatBytes .TrafficStats.MemoryTotal}}</li>
       <li><strong>内存使用:</strong> {{FormatBytes .TrafficStats.MemoryUsage}}</li>
     </ul>
@@ -191,9 +193,6 @@ body {
     <ul style="list-style: none; padding: 0;">
       <li><strong>CPU:</strong> {{printf "%.2f%%" .TrafficStats.App.CPUPercent}} <small style="color:#aaa; font-size:10px;">（多核 CPU 时可能超过 100%）</small></li>
       <li><strong>内存:</strong> {{FormatBytes .TrafficStats.App.MemoryUsage}}</li>
-	  <li><strong>总流量:</strong> {{FormatBytes .TrafficStats.App.TotalBytes}}</li>
-      <li><strong>流量入:</strong> {{FormatBytes .TrafficStats.App.InboundBytes}}</li>
-      <li><strong>流量出:</strong> {{FormatBytes .TrafficStats.App.OutboundBytes}}</li>
     </ul>
   </div>
 </div>
@@ -515,6 +514,7 @@ toggleThemeBtn.addEventListener('click', () => {
 		"FormatBytes":            FormatBytes,
 		"FormatBytesPerSec":      FormatBytesPerSec,
 		"FormatNetworkBandwidth": FormatNetworkBandwidth,
+		"ge": func(a, b float64) bool { return a >= b }, // 添加ge函数用于温度比较
 	}).Parse(tmpl)
 
 	if err != nil {

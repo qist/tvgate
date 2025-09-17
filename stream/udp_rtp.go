@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/qist/tvgate/logger"
-	"github.com/qist/tvgate/monitor"
+	// "github.com/qist/tvgate/monitor"
 	"io"
 	"net"
 	"net/http"
@@ -166,7 +166,7 @@ func (h *StreamHub) readLoop() {
 				h.Mu.Lock()
 				clientCount := len(h.Clients)
 				h.Mu.Unlock()
-				
+
 				if clientCount == 0 {
 					logger.LogPrintf("没有客户端，停止接收数据并关闭连接: %s", h.addr)
 					h.Close()
@@ -185,18 +185,18 @@ func (h *StreamHub) readLoop() {
 			// 没有客户端，但继续监听以防新客户端加入
 			continue
 		}
-		
+
 		// 复制数据以避免竞态
 		data := make([]byte, n)
 		copy(data, buf[:n])
 		h.BufPool.Put(buf[:cap(buf)])
-		
+
 		// 统计入流量
-		monitor.AddAppInboundBytes(uint64(len(data)))
-		
+		// monitor.AddAppInboundBytes(uint64(len(data)))
+
 		// 更新最近一帧
 		h.LastFrame = data
-		
+
 		// 缓存数据包用于热切换
 		if len(h.CacheBuffer) >= 50 {
 			// 移除最旧的数据包
@@ -204,7 +204,7 @@ func (h *StreamHub) readLoop() {
 			h.CacheBuffer = h.CacheBuffer[:len(h.CacheBuffer)-1]
 		}
 		h.CacheBuffer = append(h.CacheBuffer, data)
-		
+
 		// 广播数据到所有客户端
 		for ch := range h.Clients {
 			select {
@@ -252,7 +252,8 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 			go func() {
 				n, err := w.Write(data)
 				if err == nil {
-					monitor.AddAppOutboundBytes(uint64(n))
+					// monitor.AddAppOutboundBytes(uint64(n))
+					_ = n // 避免未使用报错
 				}
 				errCh <- err
 			}()

@@ -139,7 +139,7 @@ func WatchConfigFile(configPath string) {
 				monitorPath = "/status"
 			}
 			client := httpclient.NewHTTPClient(&config.Cfg, nil)
-			newMux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.Handler)))
+			newMux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.HandleMonitor)))
 			// jx 路径
 			jxPath := config.Cfg.JX.Path
 			if jxPath == "" {
