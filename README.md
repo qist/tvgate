@@ -36,7 +36,7 @@ v2.0.8
 2、添加域名映射支持：
 配置格式:
 pedomainmap:
-    - name: localhost-to-qist
+    - name: localhost-to-test
       source: test.test.cc # 自己的域名或IP地址 如果是ip 映射 别人就不能用ip 做代理了 打开是映射的网页 可以解析自己的域名 使用原始代理 不配置映射
       target: www.bing.com # 需要代理的域名 映射 80 http 443 https 其它端口记得携带上完整端口  www.bing.com:8080
       client_headers: # 前端验证头 头验证
