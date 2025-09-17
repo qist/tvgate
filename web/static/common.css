@@ -131,6 +131,49 @@ h1 {
   color: var(--win11-text-primary);
 }
 
+/* 主容器布局 */
+.main-container {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* 侧边栏样式 */
+.sidebar {
+  width: 250px;
+  background-color: var(--win11-accent);
+  padding: 20px;
+  color: white;
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+}
+
+.content {
+  flex: 1;
+  padding: 20px;
+  background-color: var(--win11-bg);
+}
+
+.sidebar-item {
+  padding: 15px;
+  margin-bottom: 15px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.sidebar-item:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+  transform: translateX(5px);
+}
+
+.status-info p {
+  margin: 5px 0;
+  font-size: 0.9em;
+  opacity: 0.9;
+}
+
 /* 认证区域 */
 .auth-section {
   text-align: right;
@@ -428,5 +471,20 @@ h1 {
   h1 {
     font-size: 20px;
     padding: 15px 0;
+  }
+  
+  /* 侧边栏在小屏幕上的样式 */
+  .sidebar {
+    width: 200px;
+    padding: 15px;
+  }
+  
+  .sidebar-item {
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  
+  .status-info p {
+    font-size: 0.8em;
   }
 }

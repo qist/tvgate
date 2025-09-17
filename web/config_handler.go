@@ -181,9 +181,9 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/backup/restore", h.cookieAuth(backupHandler.handleRestoreBackup))
 	mux.HandleFunc(webPath+"config/backup/download", h.cookieAuth(backupHandler.handleDownloadBackup))
 	// 注册需要认证的路由，使用基于Cookie的认证中间件
-	mux.HandleFunc(webPath+"home", h.cookieAuth(h.handleHome))
+	mux.HandleFunc(webPath+"node", h.cookieAuth(h.handleNode))
 	mux.HandleFunc(webPath+"editor", h.cookieAuth(h.handleEditor))
-	mux.HandleFunc(webPath+"node-editor", h.cookieAuth(h.handleNodeEditor))
+	// mux.HandleFunc(webPath+"node-editor", h.cookieAuth(h.handleNodeEditor))
 	mux.HandleFunc(webPath+"group-editor", h.cookieAuth(h.handleGroupEditor))
 	mux.HandleFunc(webPath+"domainmap-editor", h.cookieAuth(h.handleDomainMapEditor))
 	mux.HandleFunc(webPath+"proxygroups-editor", h.cookieAuth(h.handleProxyGroupsEditor))
@@ -198,7 +198,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 
 	mux.HandleFunc(webPath+"config", h.cookieAuth(h.handleConfig))
 	mux.HandleFunc(webPath+"config/save", h.cookieAuth(h.handleConfigSave))
-	mux.HandleFunc(webPath+"config/save-node", h.cookieAuth(h.handleConfigSaveNode))
+	// mux.HandleFunc(webPath+"config/save-node", h.cookieAuth(h.handleConfigSaveNode))
 	mux.HandleFunc(webPath+"config/save-group", h.cookieAuth(h.handleConfigSaveGroup))
 	mux.HandleFunc(webPath+"config/save-domainmap", h.cookieAuth(h.handleDomainMapConfigSave))
 	mux.HandleFunc(webPath+"config/save-proxygroups", h.cookieAuth(h.handleProxyGroupsConfigSave))
@@ -212,7 +212,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/save-log", h.cookieAuth(http.HandlerFunc(h.handleSaveLogConfig)))
 
 	mux.HandleFunc(webPath+"config/validate", h.cookieAuth(h.handleConfigValidate))
-	mux.HandleFunc(webPath+"config/node", h.cookieAuth(h.handleNodeConfig))
+	// mux.HandleFunc(webPath+"config/node", h.cookieAuth(h.handleNodeConfig))
 	mux.HandleFunc(webPath+"config/group", h.cookieAuth(h.handleGroupConfig))
 	mux.HandleFunc(webPath+"config/domainmap", h.cookieAuth(h.handleDomainMapConfig))
 	mux.HandleFunc(webPath+"config/proxygroups", h.cookieAuth(h.handleProxyGroupsConfig))
@@ -228,9 +228,9 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 }
 
 // handleHome 处理功能面板页面
-func (h *ConfigHandler) handleHome(w http.ResponseWriter, r *http.Request) {
+func (h *ConfigHandler) handleNode(w http.ResponseWriter, r *http.Request) {
 	// 从嵌入的文件系统读取模板
-	content, err := templatesFS.ReadFile("templates/home.html")
+	content, err := templatesFS.ReadFile("templates/node.html")
 	if err != nil {
 		http.Error(w, "Failed to read template file", http.StatusInternalServerError)
 		return
@@ -240,6 +240,11 @@ func (h *ConfigHandler) handleHome(w http.ResponseWriter, r *http.Request) {
 	monitorPath := config.Cfg.Monitor.Path
 	if monitorPath == "" {
 		monitorPath = "/status"
+	} else {
+		// 确保monitorPath以/开头
+		if !strings.HasPrefix(monitorPath, "/") {
+			monitorPath = "/" + monitorPath
+		}
 	}
 
 	// 从monitor模块获取系统状态数据
@@ -428,6 +433,11 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 		monitorPath := config.Cfg.Monitor.Path
 		if monitorPath == "" {
 			monitorPath = "/status"
+		} else {
+			// 确保monitorPath以/开头
+			if !strings.HasPrefix(monitorPath, "/") {
+				monitorPath = "/" + monitorPath
+			}
 		}
 
 		// 从monitor模块获取系统状态数据
@@ -1763,56 +1773,6 @@ func (h *ConfigHandler) handleConfigSaveGroup(w http.ResponseWriter, r *http.Req
 	}
 
 	http.NotFound(w, r)
-}
-
-func (h *ConfigHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-
-	// 检查是否有任何domainmap配置了auth
-	config.CfgMu.RLock()
-	hasAuthConfig := false
-	for _, dm := range config.Cfg.DomainMap {
-		if dm.Auth.TokensEnabled ||
-			dm.Auth.TokenParamName != "" ||
-			dm.Auth.DynamicTokens.EnableDynamic ||
-			dm.Auth.DynamicTokens.Secret != "" ||
-			dm.Auth.DynamicTokens.Salt != "" ||
-			dm.Auth.StaticTokens.EnableStatic ||
-			dm.Auth.StaticTokens.Token != "" {
-			hasAuthConfig = true
-			break
-		}
-	}
-
-	// 检查是否有ProxyGroups配置
-	hasProxyGroups := len(config.Cfg.ProxyGroups) > 0
-
-	// 检查是否有全局认证配置
-	hasGlobalAuth := config.Cfg.GlobalAuth.TokensEnabled ||
-		config.Cfg.GlobalAuth.TokenParamName != "" ||
-		config.Cfg.GlobalAuth.DynamicTokens.EnableDynamic ||
-		config.Cfg.GlobalAuth.DynamicTokens.Secret != "" ||
-		config.Cfg.GlobalAuth.DynamicTokens.Salt != "" ||
-		config.Cfg.GlobalAuth.StaticTokens.EnableStatic ||
-		config.Cfg.GlobalAuth.StaticTokens.Token != ""
-
-	// 检查是否有JX配置
-	hasJXConfig := hasJXConfiguration(&config.Cfg.JX)
-	config.CfgMu.RUnlock() // 确保在检查后解锁
-
-	data := map[string]interface{}{
-		"title":          "TVGate Web管理",
-		"webPath":        webPath,
-		"hasAuthConfig":  hasAuthConfig,
-		"hasProxyGroups": hasProxyGroups,
-		"hasGlobalAuth":  hasGlobalAuth,
-		"hasJXConfig":    hasJXConfig,
-	}
-
-	if err := h.renderTemplate(w, r, "index", "templates/index.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 }
 
 // copyFile 复制文件的辅助函数

@@ -14,6 +14,7 @@ function updateSystemStats() {
     fetch(monitorPath + '?format=json')
         .then(response => response.json())
         .then(data => {
+            
             // ================= CPU =================
             const cpuUsage = Math.round(data.TrafficStats.CPUUsage);
             const cpuChart = document.getElementById('cpuChart');
@@ -183,7 +184,7 @@ function updateSystemStats() {
             if (kernelVersionElement) kernelVersionElement.textContent = data.TrafficStats.HostInfo.KernelVersion || '未知';
             if (cpuArchElement) cpuArchElement.textContent = data.TrafficStats.HostInfo.KernelArch || '未知';
             if (versionElement) versionElement.textContent = data.Version || '未知';
-            if (uptimeElement) uptimeElement.textContent = formatUptime(data.Uptime) || '未知';
+            
             if (goroutinesElement) goroutinesElement.textContent = data.Goroutines || '未知';
             if (clientIPElement) clientIPElement.textContent = data.ClientIP || '未知';
         })
@@ -200,12 +201,46 @@ function formatBytes(bytes) {
 }
 
 function formatUptime(uptime) {
-    if (!uptime) return '未知';
-    const totalSeconds = uptime.Seconds || 0;
+    if (!uptime) return '0秒';
+    
+    let totalSeconds;
+    
+    // 处理不同类型的输入
+    if (typeof uptime === 'number') {
+        // 直接是数字（秒数）
+        totalSeconds = Math.floor(uptime);
+    } else if (typeof uptime === 'object' && 'Seconds' in uptime) {
+        // 包含Seconds属性的对象
+        totalSeconds = Math.floor(uptime.Seconds);
+    } else if (typeof uptime === 'string') {
+        // 尝试解析字符串为秒数
+        const uptimeValue = parseFloat(uptime);
+        if (isNaN(uptimeValue)) return '0秒';
+        totalSeconds = Math.floor(uptimeValue);
+    } else {
+        return '0秒';
+    }
+    
+    // 确保秒数在合理范围内
+    if (totalSeconds < 0) return '0秒';
+    
+    // 限制最大天数，避免显示异常大的数值
+    if (totalSeconds > 365 * 24 * 3600) {
+        return '365天';
+    }
+    
     const days = Math.floor(totalSeconds / 86400);
     const hours = Math.floor((totalSeconds % 86400) / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
-    return `${days}天${hours}小时${minutes}分钟`;
+    const seconds = totalSeconds % 60;
+    
+    let result = '';
+    if (days > 0) result += `${days}天`;
+    if (hours > 0) result += `${hours}小时`;
+    if (minutes > 0) result += `${minutes}分`;
+    result += `${seconds}秒`;
+    
+    return result;
 }
 
 function formatTime(timeString) {

@@ -8,40 +8,6 @@
     <link rel="stylesheet" href="{{.webPath}}static/common.css">
     <script src="{{.webPath}}static/js/theme.js"></script>
     <style>
-        .main-container {
-            display: flex;
-            min-height: 100vh;
-        }
-
-        .sidebar {
-            width: 250px;
-            /* 恢复为主题相关的背景色 */
-            background-color: var(--win11-accent);
-            padding: 20px;
-            color: white;
-            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
-            flex-shrink: 0;
-        }
-
-        .content {
-            flex: 1;
-            padding: 20px;
-            background-color: var(--win11-bg);
-        }
-
-        .sidebar-item {
-            padding: 15px;
-            margin-bottom: 15px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            background-color: rgba(255, 255, 255, 0.1);
-        }
-
-        .sidebar-item:hover {
-            background-color: rgba(255, 255, 255, 0.2);
-            transform: translateX(5px);
-        }
 
         .status-info p {
             margin: 5px 0;
@@ -403,35 +369,6 @@
             font-size: 0.85em;
         }
 
-        /* 左侧边栏主题适配 */
-        html[data-theme="dark"] .sidebar {
-            background-color: var(--win11-accent-dark);
-            color: white;
-        }
-
-        html[data-theme="light"] .sidebar {
-            background-color: var(--win11-accent-light);
-            color: white;
-        }
-
-        html[data-theme="dark"] .sidebar-item {
-            background-color: rgba(255, 255, 255, 0.1);
-            color: white;
-        }
-
-        html[data-theme="light"] .sidebar-item {
-            background-color: rgba(255, 255, 255, 0.1);
-            color: white;
-        }
-
-        html[data-theme="dark"] .sidebar-item:hover {
-            background-color: rgba(255, 255, 255, 0.2);
-        }
-
-        html[data-theme="light"] .sidebar-item:hover {
-            background-color: rgba(255, 255, 255, 0.2);
-        }
-
         @media (max-width: 768px) {
             .main-container {
                 flex-direction: column;
@@ -565,6 +502,11 @@
                         <span class="status-label">出口流量:</span>
                         <span class="status-value" id="outboundBytes">0B</span>
                     </div>
+                    <!-- 运行时间 -->
+                    <div class="status-item">
+                        <span class="status-label">运行时间:</span>
+                        <span class="status-value" id="uptime">未知</span>
+                    </div>
                 </div>
             </div>
 
@@ -604,7 +546,7 @@
                     <div class="feature-card">
                         <h3>功能面板</h3>
                         <p>功能面板编辑</p>
-                        <a href="{{.webPath}}home" class="btn">访问编辑器</a>
+                        <a href="{{.webPath}}node" class="btn">访问编辑器</a>
                     </div>
 
                     <!-- 服务器配置 -->
@@ -696,8 +638,23 @@
         </div>
 
         <script>
-            // 设置监控路径为全局变量，供system-stats.js使用
-            window.monitorPath = "{{.monitorPath}}";
+            const webPath = "{{.webPath}}";
+            const monitorPath = "{{.monitorPath}}";
+            window.webPath = webPath; // 设为全局变量供theme.js使用
+            window.monitorPath = monitorPath; // 设为全局变量供system-stats.js使用
+        
+            // 侧边栏导航功能
+            document.addEventListener('DOMContentLoaded', function () {
+                const sidebarItems = document.querySelectorAll('.sidebar-item');
+                sidebarItems.forEach(item => {
+                    item.addEventListener('click', function () {
+                        const target = this.getAttribute('data-target');
+                        if (target) {
+                            window.location.href = webPath + target;
+                        }
+                    });
+                });
+            });
         </script>
         <script src="{{.webPath}}static/js/system-stats.js"></script>
     </div>

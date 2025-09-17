@@ -220,7 +220,7 @@
                 </div>
                 
                 <div class="editor-toolbar">
-                    <button class="btn" onclick="window.location.href='{{.webPath}}home'">返回首页</button>
+                    <button class="btn" onclick="window.location.href='{{.webPath}}'">返回首页</button>
                     <button class="btn" onclick="saveConfig()">保存配置 (Ctrl+S)</button>
                     <button class="btn" onclick="loadConfig()">重新加载 (Ctrl+R)</button>
                     <button class="btn btn-warning" onclick="validateConfig()">验证配置 (Ctrl+Shift+V)</button>
@@ -251,13 +251,15 @@
     </div>
 
     <script src="{{.webPath}}static/js/theme.js"></script>
+    <script src="{{.webPath}}static/js/system-stats.js"></script>
     <script>
         // 全局变量
         let originalConfig = '';
         let hasUnsavedChanges = false;
+        const monitorPath = "{{.monitorPath}}";
         const webPath = "{{.webPath}}";
         const configPath = "{{.configPath}}";  // 添加配置文件路径
-        
+        window.monitorPath = monitorPath; // 设为全局变量供system-stats.js使用
         // 初始化编辑器
         document.addEventListener('DOMContentLoaded', function() {
             setupEditor();
