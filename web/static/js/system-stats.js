@@ -1,11 +1,30 @@
 // 更新圆环进度的统一函数
-function updateCircleChart(circle, percent) {
+/**
+ * 更新圆环进度
+ * @param {SVGCircleElement} circle 圆环元素
+ * @param {number} percent 0-100 显示百分比
+ * @param {boolean} empty 是否为空/灰色显示
+ */
+function updateCircleChart(circle, percent, empty = false) {
     if (!circle) return;
+
     const radius = circle.r.baseVal.value;
     const circumference = 2 * Math.PI * radius;
-    circle.style.strokeDasharray = circumference;
-    circle.style.strokeDashoffset = circumference * (1 - percent / 100);
+
+    if (empty) {
+        // 数据不可用 → 显示灰色圆环
+        circle.style.strokeDasharray = circumference;
+        circle.style.strokeDashoffset = circumference;
+        circle.style.stroke = '#ccc';
+    } else {
+        // 正常显示百分比
+        const dashOffset = circumference * (1 - percent / 100);
+        circle.style.strokeDasharray = circumference;
+        circle.style.strokeDashoffset = dashOffset;
+        circle.style.stroke = ''; // 恢复默认颜色
+    }
 }
+
 
 // 实时更新系统资源使用率
 function updateSystemStats() {
@@ -50,18 +69,25 @@ function updateSystemStats() {
             }
 
             // ================= CPU温度 =================
-            const cpuTemp = data.TrafficStats.CPUTemperature || 0;
+            const cpuTemp = data.TrafficStats.CPUTemperature; // 不要用 || 0，这样 -1 不会被覆盖
             const tempChart = document.getElementById('tempChart');
             const tempValue = document.getElementById('tempValue');
             const tempInfo = document.getElementById('tempInfo');
-            if (tempChart && tempValue && tempInfo) {
-                // CPU温度通常在0-100°C范围内，我们可以将其映射到0-100的百分比显示
-                const tempPercent = Math.min(100, Math.max(0, cpuTemp));
-                updateCircleChart(tempChart, tempPercent);
-                tempValue.textContent = `${Math.round(cpuTemp)}°C`;
-                tempInfo.textContent = `CPU温度`;
-            }
 
+            if (tempChart && tempValue && tempInfo) {
+                if (cpuTemp === -1 || cpuTemp == null) {
+                    // 无法获取温度（虚拟机或普通用户）
+                    tempValue.textContent = '--';
+                    tempInfo.textContent = '需要管理员权限，虚拟机无数据';
+                    updateCircleChart(tempChart, 0, true); // 空/灰色圆环
+                } else {
+                    // 正常温度显示
+                    const tempPercent = Math.min(100, Math.max(0, cpuTemp));
+                    updateCircleChart(tempChart, tempPercent, false);
+                    tempValue.textContent = `${Math.round(cpuTemp)}°C`;
+                    tempInfo.textContent = 'CPU温度';
+                }
+            }
             // ================= 高使用率变色 =================
             [
                 { chart: cpuChart, percent: cpuUsage },
