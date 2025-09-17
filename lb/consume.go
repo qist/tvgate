@@ -28,6 +28,7 @@ func ConsumeRemainingResults(ch chan config.TestResult, count int, group *config
 			res.ResponseTime > 0 {
 			stats.Alive = true
 			stats.ResponseTime = res.ResponseTime
+			stats.StatusCode = res.StatusCode
 			stats.FailCount = 0
 			stats.CooldownUntil = time.Time{}
 			logger.LogPrintf("✅ 异步：代理 %s 测速成功: %v（已写入缓存）", res.Proxy.Name, res.ResponseTime)

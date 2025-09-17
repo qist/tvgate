@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
-	// "strings"
+	"strings"
 	"time"
 
 	"github.com/qist/tvgate/config"
@@ -17,10 +17,21 @@ import (
 // handleProxyGroupsEditor 处理代理组编辑器页面
 func (h *ConfigHandler) handleProxyGroupsEditor(w http.ResponseWriter, r *http.Request) {
 	webPath := h.getWebPath()
+	// 获取监控路径，默认为/status
+	monitorPath := config.Cfg.Monitor.Path
+	if monitorPath == "" {
+		monitorPath = "/status"
+	} else {
+		// 确保monitorPath以/开头
+		if !strings.HasPrefix(monitorPath, "/") {
+			monitorPath = "/" + monitorPath
+		}
+	}
 
 	data := map[string]interface{}{
-		"title":   "TVGate 代理组编辑器",
-		"webPath": webPath,
+		"title":       "TVGate 代理组编辑器",
+		"webPath":     webPath,
+		"monitorPath": monitorPath,
 	}
 
 	if err := h.renderTemplate(w, r, "proxygroups_editor", "templates/proxygroups_editor.html", data); err != nil {
@@ -65,6 +76,29 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 			proxies[i] = proxyMap
 		}
 
+		// 复制代理组统计信息（如果存在）
+		var statsMap map[string]interface{}
+		if pg.Stats != nil {
+			statsMap = make(map[string]interface{})
+			proxyStatsMap := make(map[string]interface{})
+			
+			pg.Stats.RLock()
+			for proxyName, proxyStats := range pg.Stats.ProxyStats {
+				proxyStatsMap[proxyName] = map[string]interface{}{
+					"LastCheck":     proxyStats.LastCheck,
+					"LastUsed":      proxyStats.LastUsed,
+					"ResponseTime":  proxyStats.ResponseTime,
+					"Alive":         proxyStats.Alive,
+					"FailCount":     proxyStats.FailCount,
+					"CooldownUntil": proxyStats.CooldownUntil,
+					"StatusCode":    proxyStats.StatusCode,
+				}
+			}
+			pg.Stats.RUnlock()
+			
+			statsMap["ProxyStats"] = proxyStatsMap
+		}
+
 		pgMap := map[string]interface{}{
 			"proxies":     proxies,
 			"domains":     pg.Domains,
@@ -74,6 +108,7 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 			"max_retries": pg.MaxRetries,
 			"retry_delay": formatDuration(pg.RetryDelay),
 			"max_rt":      formatDuration(pg.MaxRT),
+			"stats":       statsMap,
 		}
 
 		// // 打印整个代理组 JSON 日志
@@ -88,7 +123,7 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 
 	// 返回 JSON 格式的配置
 	if err := json.NewEncoder(w).Encode(proxyGroupsMap); err != nil {
-		http.Error(w, "序列化配置失败: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
@@ -96,14 +131,14 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 // handleProxyGroupsConfigSave 处理代理组配置保存请求
 func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *http.Request) {
 	// logger.LogPrintf("开始处理代理组配置保存请求")
-	
+
 	// 检查请求方法
 	if r.Method != http.MethodPost {
 		// logger.LogPrintf("错误：方法不允许: %s", r.Method)
 		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	// logger.LogPrintf("请求方法正确: %s", r.Method)
 
 	// 读取请求体
@@ -114,7 +149,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 		return
 	}
 	defer r.Body.Close()
-	
+
 	// logger.LogPrintf("接收到的请求体数据: %s", string(body))
 
 	// 解析JSON数据
@@ -124,9 +159,9 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 		http.Error(w, "解析JSON失败: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	
+
 	// logger.LogPrintf("解析后的代理组数据: %+v", proxyGroups)
-	
+
 	// 检查是否有数据
 	// if len(proxyGroups) == 0 {
 	// 	// logger.LogPrintf("警告：没有代理组数据")
@@ -151,14 +186,14 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 	// 读取配置文件
 	configPath := *config.ConfigFilePath
 	// logger.LogPrintf("配置文件路径: %s", configPath)
-	
+
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		// logger.LogPrintf("错误：读取配置文件失败: %v", err)
 		http.Error(w, "读取配置文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	// logger.LogPrintf("成功读取配置文件: %s", configPath)
 
 	// 使用yaml.Node解析YAML配置以保持注释和格式
@@ -168,17 +203,17 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 		http.Error(w, "解析配置文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	// logger.LogPrintf("成功解析YAML配置")
 
 	// 转换代理组数据
 	yamlProxyGroups := make(map[string]*yaml.Node)
-	
+
 	for name, pg := range proxyGroups {
 		// logger.LogPrintf("处理代理组: %s", name)
 		// logger.LogPrintf("代理组 %s 的原始数据: %+v", name, pg)
 		proxyGroupNode := &yaml.Node{Kind: yaml.MappingNode}
-		
+
 		// 添加proxies字段（如果存在）
 		if proxies, ok := pg["proxies"]; ok {
 			// logger.LogPrintf("代理组 %s 的proxies字段类型: %T", name, proxies)
@@ -186,12 +221,12 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 				// logger.LogPrintf("处理代理组 %s 的代理列表，共 %d 个代理", name, len(proxiesList))
 				proxiesNode := &yaml.Node{Kind: yaml.SequenceNode}
 				yamlProxies := make([]*yaml.Node, len(proxiesList))
-				
+
 				for i, p := range proxiesList {
 					// logger.LogPrintf("处理代理 #%d: %v (类型: %T)", i, p, p)
 					if proxyMap, ok := p.(map[string]interface{}); ok {
 						proxyNode := &yaml.Node{Kind: yaml.MappingNode}
-						
+
 						// 添加基本字段
 						if name, ok := proxyMap["name"]; ok && name != "" {
 							proxyNode.Content = append(proxyNode.Content,
@@ -200,7 +235,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 							)
 							// logger.LogPrintf("添加代理名称: %s", name)
 						}
-						
+
 						if typ, ok := proxyMap["type"]; ok && typ != "" {
 							proxyNode.Content = append(proxyNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "type"},
@@ -208,7 +243,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 							)
 							// logger.LogPrintf("添加代理类型: %s", typ)
 						}
-						
+
 						if server, ok := proxyMap["server"]; ok && server != "" {
 							proxyNode.Content = append(proxyNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "server"},
@@ -216,7 +251,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 							)
 							// logger.LogPrintf("添加服务器地址: %s", server)
 						}
-						
+
 						// 处理端口，提供默认值 80
 						port := 80
 						if portVal, ok := proxyMap["port"]; ok {
@@ -230,7 +265,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 							&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%d", port)},
 						)
 						// logger.LogPrintf("添加端口: %d", port)
-						
+
 						// 处理UDP字段，提供默认值 false
 						udp := false
 						if udpVal, ok := proxyMap["udp"]; ok {
@@ -245,7 +280,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 							)
 							// logger.LogPrintf("添加UDP设置: %v", udp)
 						}
-						
+
 						// 添加用户名（如果存在且非空）
 						if username, ok := proxyMap["username"]; ok && username != "" {
 							proxyNode.Content = append(proxyNode.Content,
@@ -254,7 +289,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 							)
 							// logger.LogPrintf("添加用户名: %s", username)
 						}
-						
+
 						// 添加密码（如果存在且非空）
 						if password, ok := proxyMap["password"]; ok && password != "" {
 							proxyNode.Content = append(proxyNode.Content,
@@ -263,7 +298,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 							)
 							// logger.LogPrintf("添加密码: [HIDDEN]")
 						}
-						
+
 						// 添加headers字段（如果存在）
 						if headers, ok := proxyMap["headers"]; ok {
 							// logger.LogPrintf("处理Headers: %v (类型: %T)", headers, headers)
@@ -282,12 +317,12 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 								// logger.LogPrintf("添加Headers，共 %d 个", len(headersMap))
 							}
 						}
-						
+
 						// logger.LogPrintf("完成代理 #%d 的处理，节点内容数量: %d", i, len(proxyNode.Content))
 						yamlProxies[i] = proxyNode
 					}
 				}
-				
+
 				// logger.LogPrintf("完成所有代理处理，代理数量: %d", len(yamlProxies))
 				proxiesNode.Content = yamlProxies
 				proxyGroupNode.Content = append(proxyGroupNode.Content,
@@ -313,18 +348,18 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 			)
 			// logger.LogPrintf("代理组 %s 缺少proxies字段，添加空的proxies字段", name)
 		}
-		
+
 		// 添加domains字段（如果存在）
 		if domains, ok := pg["domains"]; ok {
 			if domainsList, ok := domains.([]interface{}); ok && len(domainsList) > 0 {
 				// logger.LogPrintf("处理代理组 %s 的域名规则，共 %d 条", name, len(domainsList))
 				domainsNode := &yaml.Node{Kind: yaml.SequenceNode}
 				yamlDomains := make([]*yaml.Node, len(domainsList))
-				
+
 				for i, d := range domainsList {
 					yamlDomains[i] = &yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", d)}
 				}
-				
+
 				domainsNode.Content = yamlDomains
 				proxyGroupNode.Content = append(proxyGroupNode.Content,
 					&yaml.Node{Kind: yaml.ScalarNode, Value: "domains"},
@@ -332,7 +367,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 				)
 			}
 		}
-		
+
 		// 添加ipv6字段，提供默认值 false
 		ipv6 := false
 		if ipv6Val, ok := pg["ipv6"]; ok {
@@ -347,7 +382,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 			)
 			// logger.LogPrintf("添加IPv6设置: %v", ipv6)
 		}
-		
+
 		// 添加interval字段，提供默认值 "180s"
 		interval := "180s"
 		if intervalVal, ok := pg["interval"]; ok && intervalVal != "" {
@@ -360,7 +395,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 			&yaml.Node{Kind: yaml.ScalarNode, Value: interval},
 		)
 		// logger.LogPrintf("添加检查间隔: %s", interval)
-		
+
 		// 添加loadbalance字段，提供默认值 "round-robin"
 		loadbalance := "round-robin"
 		if loadbalanceVal, ok := pg["loadbalance"]; ok && loadbalanceVal != "" {
@@ -371,7 +406,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 			&yaml.Node{Kind: yaml.ScalarNode, Value: loadbalance},
 		)
 		// logger.LogPrintf("添加负载均衡方式: %s", loadbalance)
-		
+
 		// 添加max_retries字段，提供默认值 1
 		maxRetries := 1
 		if maxRetriesVal, ok := pg["max_retries"]; ok {
@@ -384,7 +419,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 			&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%d", maxRetries)},
 		)
 		// logger.LogPrintf("添加最大重试次数: %d", maxRetries)
-		
+
 		// 添加retry_delay字段，提供默认值 "1s"
 		retryDelay := "1s"
 		if retryDelayVal, ok := pg["retry_delay"]; ok && retryDelayVal != "" {
@@ -397,7 +432,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 			&yaml.Node{Kind: yaml.ScalarNode, Value: retryDelay},
 		)
 		// logger.LogPrintf("添加重试延迟: %s", retryDelay)
-		
+
 		// 添加max_rt字段，提供默认值 "200ms"
 		maxRT := "200ms"
 		if maxRTVal, ok := pg["max_rt"]; ok && maxRTVal != "" {
@@ -410,7 +445,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 			&yaml.Node{Kind: yaml.ScalarNode, Value: maxRT},
 		)
 		// logger.LogPrintf("添加最大响应时间: %s", maxRT)
-		
+
 		yamlProxyGroups[name] = proxyGroupNode
 	}
 
@@ -445,7 +480,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 					break
 				}
 			}
-			
+
 			// 如果没有找到proxygroups节点，则添加一个新的
 			if !found {
 				// logger.LogPrintf("未找到proxygroups节点，添加新的节点")
@@ -453,7 +488,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 					&yaml.Node{Kind: yaml.ScalarNode, Value: "proxygroups"},
 					&yaml.Node{Kind: yaml.MappingNode},
 				)
-				
+
 				// 获取新添加的proxygroups节点并填充数据
 				proxyGroupsNode := doc.Content[len(doc.Content)-1]
 				for name, node := range yamlProxyGroups {
@@ -479,7 +514,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 		http.Error(w, "序列化配置失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	// logger.LogPrintf("YAML序列化完成，数据长度: %d 字节", len(newData))
 
 	// 创建备份文件
@@ -500,9 +535,9 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 		http.Error(w, "写入配置文件失败，已恢复备份: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	// logger.LogPrintf("配置文件写入成功")
-	
+
 	// 记录写入的配置内容中包含的代理组信息
 	// logger.LogPrintf("写入的配置中包含 %d 个代理组", len(yamlProxyGroups))
 	// for name, node := range yamlProxyGroups {
@@ -513,6 +548,6 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("配置保存成功"))
-	
+
 	// logger.LogPrintf("代理组配置保存完成")
 }

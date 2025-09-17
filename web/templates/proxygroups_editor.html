@@ -409,6 +409,50 @@
         .add-domain-btn:hover {
             background-color: #57a357;
         }
+        
+        /* 添加状态信息表格样式 */
+        .proxy-status-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        
+        .proxy-status-table th,
+        .proxy-status-table td {
+            border: 1px solid #333;
+            padding: 4px;
+            text-align: left;
+        }
+        
+        .proxy-status-table th {
+            background-color: var(--win11-surface);
+            font-weight: bold;
+        }
+        
+        .proxy-status-table tr:nth-child(even) {
+            background-color: var(--win11-bg);
+        }
+        
+        .status-alive {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        
+        .status-dead {
+            color: #f44336;
+            font-weight: bold;
+        }
+        
+        .status-cooldown {
+            color: #ff9800;
+            font-weight: bold;
+        }
+        
+        .status-unknown {
+            color: #9E9E9E;
+            font-weight: bold;
+        }
 
         .grid {
             display: grid;
@@ -635,6 +679,8 @@
         function createProxyGroupCard(name, proxyGroup) {
             const cardDiv = document.createElement('div');
             cardDiv.className = 'domainmap-card';
+            
+            // 初始化状态信息占位符
             cardDiv.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <h3 style="margin: 0;">${name || '未命名'}</h3>
@@ -644,13 +690,74 @@
                 <p><strong>检查间隔:</strong> ${proxyGroup.interval || '未设置'}</p>
                 <p><strong>域名规则:</strong> ${(proxyGroup.domains && proxyGroup.domains.length) || 0} 条规则</p>
                 <p><strong>代理服务器:</strong> ${(proxyGroup.proxies && proxyGroup.proxies.length) || 0} 个</p>
+                <div class="proxy-status-container" id="status-${name}">
+                    <p><strong>状态信息:</strong> 加载中...</p>
+                </div>
             `;
             cardDiv.onclick = function (e) {
                 // 如果点击的是删除按钮，不触发编辑
                 if (e.target.closest('.btn')) return;
                 showEditProxyGroupModal(name);
             };
+            
+            // 异步加载状态信息
+            loadProxyGroupStatus(name, proxyGroup, cardDiv);
+            
             return cardDiv;
+        }
+        
+        // 加载代理组状态信息
+        function loadProxyGroupStatus(groupName, proxyGroup, cardElement) {
+            const statusContainer = cardElement.querySelector('.proxy-status-container');
+            
+            // 直接使用当前配置中的统计信息
+            try {
+                let statusHTML = '<div class="proxy-status-details">';
+                
+                // 显示每个代理的状态信息
+                if (proxyGroup.proxies && proxyGroup.stats && proxyGroup.stats.ProxyStats) {
+                    statusHTML += '<table class="proxy-status-table">';
+                    statusHTML += '<tr><th>代理</th><th>延迟</th><th>服务器</th><th>HTTP状态</th><th>状态</th></tr>';
+                    
+                    proxyGroup.proxies.forEach(proxy => {
+                        const stats = proxyGroup.stats.ProxyStats[proxy.name] || {};
+                        const responseTime = stats.ResponseTime > 0 ? `${(stats.ResponseTime / 1000000).toFixed(0)} ms` : '-';
+                        const server = proxy.server ? `${proxy.server}:${proxy.port}` : '-';
+                        const statusCode = stats.StatusCode > 0 ? stats.StatusCode : '-';
+                        
+                        let statusText = '⚪ 未测试';
+                        let statusClass = 'status-unknown';
+                        if (stats.Alive && (stats.ResponseTime > 0 || stats.FailCount > 0)) {
+                            statusText = '✅ 活跃';
+                            statusClass = 'status-alive';
+                        } else if (stats.CooldownUntil && new Date(stats.CooldownUntil) > new Date()) {
+                            statusText = '🚫 冷却';
+                            statusClass = 'status-cooldown';
+                        } else if (!stats.Alive && (stats.ResponseTime > 0 || stats.FailCount > 0)) {
+                            statusText = '❌ 失败';
+                            statusClass = 'status-dead';
+                        }
+                        
+                        statusHTML += `
+                            <tr>
+                                <td>${proxy.name}</td>
+                                <td>${responseTime}</td>
+                                <td>${server}</td>
+                                <td>${statusCode}</td>
+                                <td class="${statusClass}">${statusText}</td>
+                            </tr>
+                        `;
+                    });
+                    statusHTML += '</table>';
+                    statusHTML += '</div>';
+                    statusContainer.innerHTML = `<p><strong>状态信息:</strong></p>${statusHTML}`;
+                } else {
+                    statusContainer.innerHTML = '<p><strong>状态信息:</strong> 暂无数据</p>';
+                }
+            } catch (error) {
+                statusContainer.innerHTML = '<p><strong>状态信息:</strong> 加载失败</p>';
+                console.error('加载代理组状态失败:', error);
+            }
         }
 
         // 显示添加代理组模态框
