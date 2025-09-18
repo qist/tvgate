@@ -24,6 +24,7 @@ import (
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/server"
+	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/utils/upgrade"
 	// "github.com/qist/tvgate/updater"
 	httpclient "github.com/qist/tvgate/utils/http"
@@ -197,6 +198,14 @@ func main() {
 	// 启动升级监听
 	upgrade.StartUpgradeListener(func() {
 		fmt.Println("收到升级通知，优雅退出...")
+		// 修复StreamHub资源释放问题
+		stream.HubsMu.Lock()
+		for key, hub := range stream.Hubs {
+			hub.Close()
+			delete(stream.Hubs, key)
+		}
+		stream.HubsMu.Unlock()
+		
 		config.Cancel() // 旧程序退出
 	})
 	go func() {
