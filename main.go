@@ -206,6 +206,7 @@ func main() {
 		}
 		stream.HubsMu.Unlock()
 		
+		// 关闭其他需要释放的资源
 		config.Cancel() // 旧程序退出
 	})
 	go func() {
