@@ -1,0 +1,92 @@
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 999;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.4);
+}
+
+.modal-content {
+    background-color: #fff;
+    margin: 10% auto;
+    padding: 20px;
+    border-radius: 8px;
+    width: 400px;
+}
+
+.close {
+    float: right;
+    font-size: 24px;
+    cursor: pointer;
+}
+
+/* update-modal.css */
+
+/* 弹窗背景遮罩 */
+#updateModal {
+    display: none; /* 初始隐藏 */
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+
+/* 弹窗内容 */
+#updateModal .modal-content {
+    background-color: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    width: 400px;
+    max-width: 90%;
+    text-align: center;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    position: relative;
+}
+
+#updateModal h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 18px;
+    color: #222;
+}
+
+/* 关闭按钮 */
+.close-btn {
+    margin-top: 15px;
+    padding: 6px 16px;
+    font-size: 14px;
+    border: none;
+    border-radius: 6px;
+    background-color: #ef4444;
+    color: #fff;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.close-btn:hover {
+    background-color: #b91c1c;
+}
+
+/* 升级状态日志 */
+.status-log {
+    margin-top: 10px;
+    text-align: left;
+    font-size: 13px;
+    max-height: 200px;
+    overflow-y: auto;
+    background-color: #f9fafb;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+    color: #111827;
+    white-space: pre-line;
+}

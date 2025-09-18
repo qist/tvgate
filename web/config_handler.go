@@ -170,6 +170,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 
 	// // 注册静态文件服务路由
 	// mux.HandleFunc("/static/", h.serveStaticFiles)
+    RegisterGithubRoutes(mux, h.webConfig.Path, h.cookieAuth)
 
 	// 页面渲染
 	mux.HandleFunc(webPath+"config/backup", h.cookieAuth(h.handleConfigBackupPage))

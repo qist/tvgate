@@ -7,9 +7,9 @@
     <title>{{.title}}</title>
     <link rel="stylesheet" href="{{.webPath}}static/common.css">
     <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+    <link rel="stylesheet" href="{{.webPath}}static/version.css">
     <script src="{{.webPath}}static/js/theme.js"></script>
     <style>
-
         .status-info p {
             margin: 5px 0;
             font-size: 0.9em;
@@ -83,7 +83,7 @@
         .circle-chart-fill.disk {
             stroke: #9C27B0;
         }
-        
+
         .circle-chart-fill.cpu-temp {
             stroke: #FF5722;
         }
@@ -417,7 +417,7 @@
                 padding: 8px;
                 margin-bottom: 12px;
             }
-            
+
             .sidebar-item {
                 flex: 1 1 auto;
                 min-width: 100px;
@@ -431,18 +431,18 @@
                 transition: all 0.3s ease;
                 font-size: 14px;
             }
-            
+
             .sidebar-item:hover {
                 background-color: rgba(255, 255, 255, 0.2);
                 transform: translateY(-1px);
             }
-            
+
             .sidebar-item h3 {
                 margin: 0 0 8px 0;
                 font-size: 14px;
                 color: white;
             }
-            
+
             .status-info p {
                 font-size: 11px;
                 margin: 2px 0;
@@ -452,25 +452,26 @@
             .circle-chart-container {
                 justify-content: center;
             }
-            
+
             .circle-chart {
                 width: 80px;
                 height: 80px;
                 margin: 4px;
             }
-            
-            .circle-chart-bg, .circle-chart-fill {
+
+            .circle-chart-bg,
+            .circle-chart-fill {
                 stroke-width: 6;
             }
-            
+
             .circle-chart-text {
                 font-size: 10px;
             }
-            
+
             .circle-chart-value {
                 font-size: 14px;
             }
-            
+
             .circle-chart-label {
                 font-size: 8px;
             }
@@ -492,17 +493,17 @@
                 grid-template-columns: 1fr;
                 gap: 12px;
             }
-            
+
             h1 {
                 font-size: 18px;
                 padding: 10px 0;
             }
-            
+
             .auth-section {
                 padding: 8px;
                 text-align: center;
             }
-            
+
             .auth-section a {
                 display: inline-block;
                 padding: 6px 10px;
@@ -642,11 +643,11 @@
                         <a href="{{.webPath}}node" class="btn">访问编辑器</a>
                     </div>
 
-                    <!-- 服务器配置 -->
+                    <!-- 版本升级 -->
                     <div class="feature-card">
-                        <h3>服务器配置</h3>
-                        <p>服务器配置相关配置</p>
-                        <a href="{{.webPath}}server-editor" class="btn">访问编辑器</a>
+                        <h3>版本升级</h3>
+                        <p>当前版本: <span id="currentVersion">{{.version}}</span></p>
+                        <button id="showUpdateModal" class="btn">检查升级</button>
                     </div>
 
                     <!-- YAML编辑器 -->
@@ -728,28 +729,42 @@
                     </tbody>
                 </table>
             </div>
-        </div>
 
-        <script>
-            const webPath = "{{.webPath}}";
-            const monitorPath = "{{.monitorPath}}";
-            window.webPath = webPath; // 设为全局变量供theme.js使用
-            window.monitorPath = monitorPath; // 设为全局变量供system-stats.js使用
-        
-            // 侧边栏导航功能
-            document.addEventListener('DOMContentLoaded', function () {
-                const sidebarItems = document.querySelectorAll('.sidebar-item');
-                sidebarItems.forEach(item => {
-                    item.addEventListener('click', function () {
-                        const target = this.getAttribute('data-target');
-                        if (target) {
-                            window.location.href = webPath + target;
-                        }
-                    });
+            <!-- 升级弹窗 -->
+            <div id="updateModal">
+                <div class="modal-content">
+                    <h3>版本升级</h3>
+                    <div id="releaseList">
+                        <!-- 版本列表由 JS 动态填充 -->
+                    </div>
+                    <div class="status-log" id="updateStatusLog"></div>
+                    <button class="close-btn" id="closeUpdateModal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const webPath = "{{.webPath}}";
+        const monitorPath = "{{.monitorPath}}";
+        window.webPath = webPath; // 设为全局变量供theme.js使用
+        window.monitorPath = monitorPath; // 设为全局变量供system-stats.js使用
+
+        // 侧边栏导航功能
+        document.addEventListener('DOMContentLoaded', function () {
+            const sidebarItems = document.querySelectorAll('.sidebar-item');
+            sidebarItems.forEach(item => {
+                item.addEventListener('click', function () {
+                    const target = this.getAttribute('data-target');
+                    if (target) {
+                        window.location.href = webPath + target;
+                    }
                 });
             });
-        </script>
-        <script src="{{.webPath}}static/js/system-stats.js"></script>
+        });
+    </script>
+    <script src="{{.webPath}}static/js/system-stats.js"></script>
+    <script src="{{.webPath}}static/js/version-upgrade.js"></script>
     </div>
 </body>
 

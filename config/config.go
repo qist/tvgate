@@ -75,6 +75,9 @@ type Config struct {
 		Path     string `yaml:"path"`     // Web管理路径，默认为/web/
 	} `yaml:"web"`
 
+	// GitHub 加速配置
+	Github GithubConfig `yaml:"github"`
+
 	// 全局认证配置
 	GlobalAuth AuthConfig `yaml:"global_auth"`
 	// 域名映射配置
@@ -94,6 +97,15 @@ type DomainMapConfig struct {
 	Auth          AuthConfig        `yaml:"auth"`           // 动态/静态 token 配置
 	ClientHeaders map[string]string `yaml:"client_headers"` // 前端请求使用
 	ServerHeaders map[string]string `yaml:"server_headers"` // 后端请求使用
+}
+
+// GithubConfig GitHub 加速配置
+type GithubConfig struct {
+	Enabled    bool          `yaml:"enabled"`     // 是否启用
+	URL        string        `yaml:"url"`         // 主加速地址
+	BackupURLs []string      `yaml:"backup_urls"` // 备用加速地址
+	Timeout    time.Duration `yaml:"timeout"`     // 请求超时时间
+	Retry      int           `yaml:"retry"`       // 最大重试次数
 }
 
 // AuthConfig 授权 token 配置
@@ -178,7 +190,7 @@ type ProxyStats struct {
 	Alive         bool          // 代理是否可用
 	FailCount     int           // 测速失败次数
 	CooldownUntil time.Time     // 冷却时间，防止频繁重试
-	StatusCode          int           // 测试返回状态码（HTTP/自定义）
+	StatusCode    int           // 测试返回状态码（HTTP/自定义）
 }
 
 // 全局定义测速结果结构体
@@ -282,6 +294,13 @@ func (c *Config) SetDefaults() {
 	}
 	if c.HTTP.MaxConnsPerHost == 0 {
 		c.HTTP.MaxConnsPerHost = 8
+	}
+	// GitHub 默认值
+	if c.Github.Timeout == 0 {
+		c.Github.Timeout = 10 * time.Second
+	}
+	if c.Github.Retry == 0 {
+		c.Github.Retry = 3
 	}
 }
 

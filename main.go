@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/qist/tvgate/auth"
@@ -20,8 +24,14 @@ import (
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/server"
+	"github.com/qist/tvgate/utils/upgrade"
+	// "github.com/qist/tvgate/updater"
 	httpclient "github.com/qist/tvgate/utils/http"
 	"github.com/qist/tvgate/web"
+)
+
+var (
+	shutdownMux sync.Mutex
 )
 
 func main() {
@@ -38,10 +48,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("确保配置文件失败: %v", err)
 	}
-	
+
 	// 更新 ConfigFilePath 变量以指向实际的配置文件路径
 	*config.ConfigFilePath = configFilePath
-	
+
 	fmt.Println("使用配置文件:", configFilePath)
 
 	if err := load.LoadConfig(configFilePath); err != nil {
@@ -79,6 +89,7 @@ func main() {
 	} else {
 		auth.GlobalTokenManager = nil
 	}
+
 	tm := &auth.TokenManager{
 		Enabled:       true,
 		StaticTokens:  make(map[string]*auth.SessionInfo),
@@ -121,11 +132,13 @@ func main() {
 	go watch.WatchConfigFile(*config.ConfigFilePath)
 
 	// 添加监控路径处理
+
 	monitorPath := config.Cfg.Monitor.Path
 	if monitorPath == "" {
 		monitorPath = "/status"
 	}
 	mux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.HandleMonitor)))
+
 	// jx 路径
 	jxPath := config.Cfg.JX.Path
 	if jxPath == "" {
@@ -179,16 +192,44 @@ func main() {
 
 	config.ServerCtx, config.Cancel = context.WithCancel(context.Background())
 
+	// execPath, _ := os.Executable()
+	// updater.SetStartupInfo(execPath, os.Args[1:])
+	// 启动升级监听
+	upgrade.StartUpgradeListener(func() {
+		fmt.Println("收到升级通知，优雅退出...")
+		config.Cancel() // 旧程序退出
+	})
 	go func() {
 		if err := server.StartHTTPServer(config.ServerCtx, mux); err != nil {
 			log.Fatalf("启动HTTP服务器失败: %v", err)
 		}
 	}()
 
+	// 捕获系统信号优雅退出
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigChan
+		fmt.Println("收到退出信号，开始优雅退出")
+		gracefulShutdown()
+	}()
+
 	<-config.ServerCtx.Done()
 	// 收到退出信号，通知清理任务退出
+
 	close(stopCleaner)
 	close(stopAccessCleaner)
 	close(stopCh)
 	config.Cancel()
+}
+
+// gracefulShutdown 用于平滑升级或系统退出
+func gracefulShutdown() {
+	shutdownMux.Lock()
+	defer shutdownMux.Unlock()
+
+	if config.Cancel != nil {
+		config.Cancel()
+	}
+	fmt.Println("优雅退出完成")
 }
