@@ -170,7 +170,7 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 
 	// // 注册静态文件服务路由
 	// mux.HandleFunc("/static/", h.serveStaticFiles)
-    RegisterGithubRoutes(mux, h.webConfig.Path, h.cookieAuth)
+	RegisterGithubRoutes(mux, h.webConfig.Path, h.cookieAuth)
 
 	// 页面渲染
 	mux.HandleFunc(webPath+"config/backup", h.cookieAuth(h.handleConfigBackupPage))
@@ -561,6 +561,7 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			"version":                config.Version,
 			"goroutines":             runtime.NumGoroutine(),
 			"clientIP":               clientIP,
+			"isWindows":              strings.Contains(strings.ToLower(trafficStats.HostInfo.Platform), "windows"),
 		}
 
 		// 从嵌入的文件系统读取模板

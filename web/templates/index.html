@@ -644,10 +644,17 @@
                     </div>
 
                     <!-- 版本升级 -->
-                    <div class="feature-card">
+                    <div class="feature-card" id="upgradeCard">
                         <h3>版本升级</h3>
                         <p>当前版本: <span id="currentVersion">{{.version}}</span></p>
                         <button id="showUpdateModal" class="btn">检查升级</button>
+                    </div>
+
+                    <!-- 服务器配置 -->
+                    <div class="feature-card" id="serverConfigCard" style="display: none;">
+                        <h3>服务器配置</h3>
+                        <p>服务器配置相关配置</p>
+                        <a href="{{.webPath}}server-editor" class="btn">访问编辑器</a>
                     </div>
 
                     <!-- YAML编辑器 -->
@@ -747,11 +754,18 @@
     <script>
         const webPath = "{{.webPath}}";
         const monitorPath = "{{.monitorPath}}";
+        const isWindows = "{{.isWindows}}" === "true"; // 从后端传递的操作系统信息
         window.webPath = webPath; // 设为全局变量供theme.js使用
         window.monitorPath = monitorPath; // 设为全局变量供system-stats.js使用
 
         // 侧边栏导航功能
         document.addEventListener('DOMContentLoaded', function () {
+            // 根据操作系统类型切换显示内容
+            if (isWindows === true) {
+                document.getElementById('upgradeCard').style.display = 'none';
+                document.getElementById('serverConfigCard').style.display = 'block';
+            }
+
             const sidebarItems = document.querySelectorAll('.sidebar-item');
             sidebarItems.forEach(item => {
                 item.addEventListener('click', function () {
