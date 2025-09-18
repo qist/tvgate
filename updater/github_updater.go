@@ -160,7 +160,7 @@ func getDownloadURLs(cfg config.GithubConfig, version, zipFileName string) []str
 // --------------------
 func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	SetStatus("starting", "开始升级流程")
-	fmt.Println("开始升级到版本:", version)
+	// fmt.Println("开始升级到版本:", version)
 
 	arch, err := GetArchInfo()
 	if err != nil {
@@ -175,8 +175,8 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	SetStatus("downloading", "开始下载")
 	success := false
 	var lastErr error
-	for i, u := range urls {
-		fmt.Printf("下载源 #%d: %s\n", i+1, u)
+	for _, u := range urls {
+		// fmt.Printf("下载源 #%d: %s\n", i+1, u)
 		if err := downloadFile(u, tmpFile); err != nil {
 			fmt.Printf("下载失败: %v\n", err)
 			lastErr = err
@@ -193,7 +193,7 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	execPath, _ := os.Executable()
 	backupPath := execPath + ".bak"
 	_ = copyFile(execPath, backupPath)
-	fmt.Println("备份完成:", backupPath)
+	// fmt.Println("备份完成:", backupPath)
 
 	tmpDestDir := filepath.Join(filepath.Dir(execPath), ".tmp_upgrade")
 	_ = os.RemoveAll(tmpDestDir)

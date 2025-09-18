@@ -41,7 +41,7 @@ func StartUpgradeListener(callback func()) {
 
 	// 确保 socket 所在目录存在
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
-		fmt.Printf("创建 socket 目录失败: %v\n", err)
+		// fmt.Printf("创建 socket 目录失败: %v\n", err)
 		return
 	}
 
@@ -53,16 +53,16 @@ func StartUpgradeListener(callback func()) {
 	var err error
 	listener, err = net.Listen("unix", socketPath)
 	if err != nil {
-		fmt.Printf("启动升级监听失败: %v\n", err)
+		// fmt.Printf("启动升级监听失败: %v\n", err)
 		return
 	}
 
-	fmt.Println("升级监听启动，socket:", socketPath)
+	// fmt.Println("升级监听启动，socket:", socketPath)
 
 	go func() {
 		defer func() {
 			listener.Close()
-			fmt.Println("升级监听已关闭")
+			// fmt.Println("升级监听已关闭")
 		}()
 		for {
 			conn, err := listener.Accept()
@@ -98,7 +98,7 @@ func StopUpgradeListener() {
 
 // RunUpgrader 平滑升级主函数
 func RunUpgrader(oldPath, newPath, configPath, tmpDir string) {
-	fmt.Printf("升级子进程启动: old=%s new=%s\n", oldPath, newPath)
+	// fmt.Printf("升级子进程启动: old=%s new=%s\n", oldPath, newPath)
 
 	// 关闭升级监听，释放 socket
 	StopUpgradeListener()
@@ -108,14 +108,14 @@ func RunUpgrader(oldPath, newPath, configPath, tmpDir string) {
 
 	// 复制新程序到旧程序位置
 	if err := copyFile(newPath, oldPath); err != nil {
-		fmt.Printf("复制新程序失败: %v\n", err)
+		// fmt.Printf("复制新程序失败: %v\n", err)
 		os.Exit(1)
 	}
 
 	// 临时文件复制完成后立即清理临时目录
 	if tmpDir != "" {
 		_ = os.RemoveAll(tmpDir)
-		fmt.Printf("临时升级目录已清理: %s\n", tmpDir)
+		// fmt.Printf("临时升级目录已清理: %s\n", tmpDir)
 	}
 
 	// 设置可执行权限
@@ -127,10 +127,10 @@ func RunUpgrader(oldPath, newPath, configPath, tmpDir string) {
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	if err := cmd.Start(); err != nil {
-		fmt.Printf("启动新程序失败: %v\n", err)
+		// fmt.Printf("启动新程序失败: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("新程序已启动, PID: %d\n", cmd.Process.Pid)
+	// fmt.Printf("新程序已启动, PID: %d\n", cmd.Process.Pid)
 
 	os.Exit(0)
 }
