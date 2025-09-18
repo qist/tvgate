@@ -2,20 +2,15 @@ package updater
 
 import (
 	"archive/zip"
-	// "context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
-	// "strconv"
-	// "strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/qist/tvgate/config"
@@ -212,34 +207,12 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 		_ = os.Chmod(newExecPath, 0755)
 	}
 
+	// 调用升级子进程处理替换和启动
+	// 注意：传给RunUpgrader的newExecPath应该是临时目录中的新可执行文件路径
+	 upgrade.RunUpgrader(execPath, newExecPath, *config.ConfigFilePath, tmpDestDir)
+
 	// 通知旧程序退出
 	_ = upgrade.NotifyUpgradeReady()
-	time.Sleep(2 * time.Second)
-
-	// 替换旧程序
-	if err := os.Rename(newExecPath, execPath); err != nil {
-		return err
-	}
-	if runtime.GOOS != "windows" {
-		_ = os.Chmod(execPath, 0755)
-	}
-
-	// 平滑启动新程序
-	if runtime.GOOS != "windows" {
-		args := make([]string, len(os.Args))
-		copy(args, os.Args)
-		args[0] = execPath
-		env := os.Environ()
-		if err := syscall.Exec(execPath, args, env); err != nil {
-			return err
-		}
-	} else {
-		cmd := exec.Command(execPath, os.Args[1:]...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Stdin = os.Stdin
-		_ = cmd.Start()
-	}
 
 	return nil
 }

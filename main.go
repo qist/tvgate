@@ -7,9 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -27,13 +25,13 @@ import (
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/server"
 	"github.com/qist/tvgate/stream"
-	"github.com/qist/tvgate/utils/upgrade"
 	httpclient "github.com/qist/tvgate/utils/http"
+	"github.com/qist/tvgate/utils/upgrade"
 	"github.com/qist/tvgate/web"
 )
 
 var shutdownMux sync.Mutex
-
+var shutdownOnce sync.Once
 func main() {
 	flag.Parse()
 	if *config.VersionFlag {
@@ -44,46 +42,64 @@ func main() {
 	// 获取用户传入的 -config 参数
 	userConfigPath := *config.ConfigFilePath
 
-	// 确保配置文件存在
+	// 使用 EnsureConfigFile 自动生成默认配置文件
+
 	configFilePath, err := web.EnsureConfigFile(userConfigPath)
 	if err != nil {
 		log.Fatalf("确保配置文件失败: %v", err)
 	}
+	
+	// 更新 ConfigFilePath 变量以指向实际的配置文件路径
 	*config.ConfigFilePath = configFilePath
+	
 	fmt.Println("使用配置文件:", configFilePath)
 
-	// 加载配置
+
 	if err := load.LoadConfig(configFilePath); err != nil {
 		log.Fatalf("加载配置文件失败: %v", err)
 	}
+
+	if *config.ConfigFilePath != "" {
+		err := load.LoadConfig(configFilePath)
+		if err != nil {
+			log.Fatalf("读取YAML配置文件失败: %v", err)
+		}
+	}
+	// 验证配置是否正确加载
+	// if len(cfg.ProxyGroups) == 0 {
+	// 	log.Fatal("警告: 未加载任何代理组配置")
+	// }
+	// 2️⃣ 设置默认值
 	config.Cfg.SetDefaults()
 
-	// 初始化 HTTP client
+	// 3️⃣ 初始化 HTTP client
 	client := httpclient.NewHTTPClient(&config.Cfg, nil)
 
 	// 初始化代理组统计信息
 	groupstats.InitProxyGroups()
+
+	// 初始化代理组统计信息
 	for _, group := range config.Cfg.ProxyGroups {
 		group.Stats = &config.GroupStats{
 			ProxyStats: make(map[string]*config.ProxyStats),
 		}
 	}
 
-	// 全局 token 管理器
+	// 初始化全局token管理器
 	if config.Cfg.GlobalAuth.TokensEnabled {
 		auth.GlobalTokenManager = auth.NewGlobalTokenManagerFromConfig(&config.Cfg.GlobalAuth)
 	} else {
 		auth.GlobalTokenManager = nil
 	}
 
-	// 定时清理 token
+
 	tm := &auth.TokenManager{
 		Enabled:       true,
 		StaticTokens:  make(map[string]*auth.SessionInfo),
 		DynamicTokens: make(map[string]*auth.SessionInfo),
 	}
 	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
+		ticker := time.NewTicker(1 * time.Minute) // 每分钟清理一次
 		defer ticker.Stop()
 		for range ticker.C {
 			tm.CleanupExpiredSessions()
@@ -91,17 +107,19 @@ func main() {
 	}()
 
 	go monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second)
+
 	go monitor.StartSystemStatsUpdater(10 * time.Second)
 
-	// 启动清理任务
+
 	stopCleaner := make(chan struct{})
 	go clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
+
 	stopAccessCleaner := make(chan struct{})
 	go clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
 	stopProxyStats := make(chan struct{})
 	go clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopProxyStats)
 
-	// 设置日志
+
 	logger.SetupLogger(logger.LogConfig{
 		Enabled:    config.Cfg.Log.Enabled,
 		File:       config.Cfg.Log.File,
@@ -111,22 +129,22 @@ func main() {
 		Compress:   config.Cfg.Log.Compress,
 	})
 
-	// 初始化 JX
+	// 初始化jx处理器
 	jxHandler := jx.NewJXHandler(&config.Cfg.JX)
 
 	mux := http.NewServeMux()
 
-	// 配置文件自动加载
+	// 启动配置文件自动加载
 	go watch.WatchConfigFile(*config.ConfigFilePath)
 
-	// 监控路径
+	// 添加监控路径处理
 	monitorPath := config.Cfg.Monitor.Path
 	if monitorPath == "" {
 		monitorPath = "/status"
 	}
 	mux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.HandleMonitor)))
 
-	// JX 路径
+	// jx 路径
 	jxPath := config.Cfg.JX.Path
 	if jxPath == "" {
 		jxPath = "/jx"
@@ -135,8 +153,11 @@ func main() {
 		jxHandler.Handle(w, r)
 	})))
 
-	// Web 管理界面
+	// 注册 Web 管理界面处理器
+	// 注册 Web 管理界面处理器
+	// 注册 Web 管理界面处理器
 	if config.Cfg.Web.Enabled {
+		// 将config.Cfg.Web转换为web.WebConfig类型
 		webConfig := web.WebConfig{
 			Username: config.Cfg.Web.Username,
 			Password: config.Cfg.Web.Password,
@@ -147,11 +168,12 @@ func main() {
 		configHandler.ServeMux(mux)
 	}
 
-	// 默认处理器
+	// 创建默认处理器
 	defaultHandler := server.SecurityHeaders(http.HandlerFunc(h.Handler(client)))
 
-	// 域名映射
+	// 检查是否配置了域名映射
 	if len(config.Cfg.DomainMap) > 0 {
+		// 创建域名映射处理器
 		mappings := make(auth.DomainMapList, len(config.Cfg.DomainMap))
 		for i, mapping := range config.Cfg.DomainMap {
 			mappings[i] = &auth.DomainMapConfig{
@@ -166,8 +188,10 @@ func main() {
 		}
 		localClient := &http.Client{Timeout: config.Cfg.HTTP.Timeout}
 		domainMapper := domainmap.NewDomainMapper(mappings, localClient, defaultHandler)
+		// mux.Handle("/", domainMapper)
 		mux.Handle("/", server.SecurityHeaders(domainMapper))
 	} else {
+		// 没有域名映射配置，直接使用默认处理器
 		mux.Handle("/", defaultHandler)
 	}
 
@@ -175,7 +199,7 @@ func main() {
 
 	// 升级监听
 	upgrade.StartUpgradeListener(func() {
-		fmt.Println("收到升级通知，优雅退出...")
+		fmt.Println("收到升级通知，开始优雅退出...")
 
 		// 关闭 StreamHub
 		stream.HubsMu.Lock()
@@ -185,29 +209,8 @@ func main() {
 		}
 		stream.HubsMu.Unlock()
 
-		// 取消上下文
-		if config.Cancel != nil {
-			config.Cancel()
-		}
-
-		// 当前程序路径
-		execPath, _ := os.Executable()
-		tmpDir := filepath.Join(filepath.Dir(execPath), ".tmp_upgrade")
-
-		args := []string{
-			"-old=" + execPath,
-			"-new=" + upgrade.NewExecPath(),
-			"-config=" + *config.ConfigFilePath,
-			"-tmp=" + tmpDir,
-		}
-		upgraderCmd := exec.Command(execPath, args...)
-		upgraderCmd.Stdout = os.Stdout
-		upgraderCmd.Stderr = os.Stderr
-		if err := upgraderCmd.Start(); err != nil {
-			log.Fatalf("启动升级子进程失败: %v", err)
-		}
-		fmt.Println("升级子进程启动, PID:", upgraderCmd.Process.Pid)
-		os.Exit(0)
+		// 关闭其他资源
+		config.Cancel()
 	})
 
 	// 启动 HTTP Server
@@ -227,19 +230,23 @@ func main() {
 	}()
 
 	<-config.ServerCtx.Done()
+	// 收到退出信号，通知清理任务退出
 	gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats)
 }
 
 func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats chan struct{}) {
-	shutdownMux.Lock()
-	defer shutdownMux.Unlock()
+	shutdownOnce.Do(func() {
+		shutdownMux.Lock()
+		defer shutdownMux.Unlock()
 
-	if config.Cancel != nil {
-		config.Cancel()
-	}
+		if config.Cancel != nil {
+			config.Cancel()
+		}
+
 	close(stopCleaner)
 	close(stopAccessCleaner)
-	close(stopProxyStats)
+		close(stopProxyStats)
 
-	fmt.Println("优雅退出完成")
+		fmt.Println("优雅退出完成")
+	})
 }
