@@ -1,7 +1,7 @@
 package upgrade
 
 import (
-	// "fmt"
+	"fmt"
 	"net"
 	"os"
 	"syscall"
@@ -46,6 +46,8 @@ func StartUpgradeListener(onUpgrade func()) {
 				return
 			}
 			go func(c net.Conn) {
+				// 发送确认信息
+				c.Write([]byte("OK"))
 				c.Close()
 				time.Sleep(500 * time.Millisecond) // 延迟退出，保证新程序绑定端口
 				if stopFunc != nil {
@@ -60,15 +62,37 @@ func StartUpgradeListener(onUpgrade func()) {
 func NotifyUpgradeReady() error {
 	var conn net.Conn
 	var err error
+	
+	// 设置连接超时
+	dialer := &net.Dialer{
+		Timeout: 5 * time.Second,
+	}
+	
 	if runtime.GOOS == "windows" {
-		conn, err = net.Dial("tcp", socketPath)
+		conn, err = dialer.Dial("tcp", socketPath)
 	} else {
-		conn, err = net.Dial("unix", socketPath)
+		conn, err = dialer.Dial("unix", socketPath)
 	}
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+	
+	// 设置读取超时
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	
+	// 读取确认信息
+	buf := make([]byte, 2)
+	_, err = conn.Read(buf)
+	if err != nil {
+		return err
+	}
+	
+	// 检查确认信息
+	if string(buf) != "OK" {
+		return fmt.Errorf("收到无效确认信息: %s", string(buf))
+	}
+	
 	return nil
 }
 

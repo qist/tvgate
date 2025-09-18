@@ -3,19 +3,16 @@ package updater
 import (
 	"archive/zip"
 	"encoding/json"
-	// "errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	// "os/exec"
 	"path/filepath"
 	"runtime"
-	// "syscall"
-	// "strings"
+	"time"
 	"sync"
-	// "time"
+
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/utils/upgrade"
 )
@@ -225,8 +222,16 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 			return err
 		}
 	}
+	
+	// 等待一段时间确保文件写入完成
+	time.Sleep(100 * time.Millisecond)
+	
 	// 通知旧程序退出
-	upgrade.NotifyUpgradeReady()
+	if err := upgrade.NotifyUpgradeReady(); err != nil {
+		// 如果通知失败，记录日志但继续执行重启
+		fmt.Printf("通知旧程序退出失败: %v\n", err)
+	}
+	
 	SetStatus("restarting", "启动新程序")
 	return upgrade.RestartProcess(execPath)
 }
