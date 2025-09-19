@@ -5,7 +5,7 @@ go 1.24.4
 require (
 	github.com/asticode/go-astits v1.13.0
 	github.com/bluenviron/gortsplib/v4 v4.16.2
-	github.com/bluenviron/mediacommon/v2 v2.4.2
+	github.com/bluenviron/mediacommon/v2 v2.4.3
 	github.com/cloudflare/tableflip v1.2.3
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/libp2p/go-reuseport v0.4.0
