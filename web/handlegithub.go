@@ -102,7 +102,12 @@ func (h *ConfigHandler) handleGithubConfigSave(w http.ResponseWriter, r *http.Re
 		http.Error(w, "序列化配置失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-
+	// 创建备份文件
+	backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
+	if err := os.WriteFile(backupPath, data, 0644); err != nil {
+		http.Error(w, "创建备份文件失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	// 写入配置文件
 	if err := os.WriteFile(configPath, updatedData, 0644); err != nil {
 		http.Error(w, "写入配置文件失败: "+err.Error(), http.StatusInternalServerError)
