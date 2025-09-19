@@ -183,7 +183,7 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	execPath, _ := os.Executable()
 	backupPath := execPath + ".bak"
 	_ = copyFile(execPath, backupPath)
-	_ = os.MkdirAll(backupPath, 0755)
+	_ = os.Chmod(backupPath, 0755)
 
 	SetStatus("unzipping", "解压新版本")
 	tmpDestDir := filepath.Join(filepath.Dir(execPath), ".tmp_upgrade")
