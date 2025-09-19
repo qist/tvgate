@@ -19,19 +19,19 @@ var (
 	once     sync.Once
 )
 
-// 简单的状态管理
-var (
-	statusMutex sync.RWMutex
-	statusMap   = map[string]string{"state": "idle", "message": ""}
-)
+// // 简单的状态管理
+// var (
+// 	statusMutex sync.RWMutex
+// 	statusMap   = map[string]string{"state": "idle", "message": ""}
+// )
 
-// SetStatus 设置升级状态
-func SetStatus(state, message string) {
-	statusMutex.Lock()
-	defer statusMutex.Unlock()
-	statusMap["state"] = state
-	statusMap["message"] = message
-}
+// // SetStatus 设置升级状态
+// func SetStatus(state, message string) {
+// 	statusMutex.Lock()
+// 	defer statusMutex.Unlock()
+// 	statusMap["state"] = state
+// 	statusMap["message"] = message
+// }
 
 // Get 全局唯一升级器
 func Get() *tableflip.Upgrader {
@@ -122,9 +122,7 @@ func UpgradeProcess(newExecPath, configPath, tmpDir string) {
 	
 	// 设置可执行权限
 	_ = os.Chmod(execPath, 0755)
-	
-	// 在退出前更新状态为成功
-	SetStatus("success", "升级成功，正在重启")
+
 	
 	// 启动新程序
 	cmd := exec.Command(execPath, "-config="+configPath)

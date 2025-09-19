@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"time"
 	"sync"
+	"time"
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/utils/upgrade"
@@ -183,8 +183,8 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	execPath, _ := os.Executable()
 	backupPath := execPath + ".bak"
 	_ = copyFile(execPath, backupPath)
-    _ = os.MkdirAll(backupPath, 0755)
-	
+	_ = os.MkdirAll(backupPath, 0755)
+
 	SetStatus("unzipping", "解压新版本")
 	tmpDestDir := filepath.Join(filepath.Dir(execPath), ".tmp_upgrade")
 	_ = os.RemoveAll(tmpDestDir)
@@ -200,6 +200,8 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 
 	SetStatus("restarting", "重启新版本")
 	// ⚡ 使用 tableflip 启动新进程，旧进程由 tableflip 接管
+	// 在退出前更新状态为成功
+	SetStatus("success", "升级成功，正在重启")
 	// 注意：这里我们不创建新的upgrader，而是使用已有的全局upgrader
 	upgrade.UpgradeProcess(newExecPath, *config.ConfigFilePath, tmpDestDir)
 
