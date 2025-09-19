@@ -5,15 +5,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/logger"
+
 	// "github.com/qist/tvgate/monitor"
-	"github.com/qist/tvgate/utils/buffer"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/qist/tvgate/utils/buffer"
 )
 
 // 统一处理响应（重定向、特殊类型、普通内容）
@@ -29,8 +32,7 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	contentType := resp.Header.Get("Content-Type")
 	bufSize := buffer.GetOptimalBufferSize(contentType, u.Path)
 
-	buf := buffer.GetBuffer(bufSize)
-	defer buffer.PutBuffer(bufSize, buf)
+	buf := NewStreamRingBuffer(bufSize)
 	switch resp.StatusCode {
 	case http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect:
 		handleRedirect(w, r, resp)
@@ -149,32 +151,32 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 }
 
 // CopyWithContext 流式复制 src -> dst，使用 buffer 池，bufio 内部缓存可控
-func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, updateActive func()) error {
+func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf *streamRingBuffer, updateActive func()) error {
+	tmp := make([]byte, buf.cap)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			n, readErr := src.Read(buf)
+			n, readErr := src.Read(tmp)
 			if n > 0 {
-				// 更新全局 App 流量统计（线程安全）
-				// monitor.AddAppInboundBytes(uint64(n))
-				written := 0
-				for written < n {
-					wn, writeErr := dst.Write(buf[written:n])
-					if writeErr != nil {
-						return fmt.Errorf("写入错误: %w", writeErr)
+				buf.Push(tmp[:n])
+				out := buf.Pop()
+				if out != nil {
+					written := 0
+					for written < len(out) {
+						wn, writeErr := dst.Write(out[written:])
+						if writeErr != nil {
+							return fmt.Errorf("写入错误: %w", writeErr)
+						}
+						written += wn
 					}
-					written += wn
-				}
-				// monitor.AddAppOutboundBytes(uint64(n))
-				// 强制刷新（流式传输时推荐）
-				if f, ok := dst.(http.Flusher); ok {
-					f.Flush()
-				}
-				// 成功写入后更新活跃时间
-				if updateActive != nil {
-					updateActive()
+					if f, ok := dst.(http.Flusher); ok {
+						f.Flush()
+					}
+					if updateActive != nil {
+						updateActive()
+					}
 				}
 			}
 			if readErr != nil {
@@ -299,10 +301,10 @@ func handleRedirect(w http.ResponseWriter, r *http.Request, proxyResp *http.Resp
 }
 
 // handleSpecialContent 处理 m3u8 文件内容
-func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *http.Response, buf []byte) {
+func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *http.Response, buf *streamRingBuffer) {
 	defer proxyResp.Body.Close()
 
-	bufSize := len(buf)
+	bufSize := buf.cap
 	reader := bufio.NewReaderSize(proxyResp.Body, bufSize)
 
 	scheme := getRequestScheme(r)

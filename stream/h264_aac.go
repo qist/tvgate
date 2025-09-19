@@ -116,7 +116,7 @@ func HandleH264AacStream(
 	updateActive func(),
 ) error {
 	// 创建客户端通道
-	clientChan := make(chan []byte, 1024)
+	clientChan := NewStreamRingBuffer(1024)
 	hub.AddClient(clientChan)
 
 	// 检查是否需要启动播放或者恢复播放
@@ -126,7 +126,7 @@ func HandleH264AacStream(
 	hub.mu.Lock()
 	if hub.isClosed {
 		hub.mu.Unlock()
-		close(clientChan)
+		clientChan.Close()
 		return nil
 	}
 
@@ -391,16 +391,17 @@ func HandleH264AacStream(
 
 	for buffering {
 		select {
-		case pkt, ok := <-clientChan:
-			if !ok {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			pkt := clientChan.Pop()
+			if pkt == nil {
 				return nil
 			}
 			preBuffer = append(preBuffer, pkt)
 			if time.Since(preBufferStart) > preBufferDuration {
 				buffering = false
 			}
-		case <-ctx.Done():
-			return ctx.Err()
 		}
 	}
 
@@ -422,8 +423,11 @@ func HandleH264AacStream(
 
 	for {
 		select {
-		case pkt, ok := <-clientChan:
-			if !ok {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			pkt := clientChan.Pop()
+			if pkt == nil {
 				return nil // 正常退出，不再推送数据
 			}
 			n := copy(buf, pkt)

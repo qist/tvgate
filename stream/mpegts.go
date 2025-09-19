@@ -24,7 +24,7 @@ func HandleMpegtsStream(
 	hub *StreamHubs,
 	updateActive func(),
 ) error {
-	clientChan := make(chan []byte, 1024)
+	clientChan := NewStreamRingBuffer(1024)
 	hub.AddClient(clientChan)
 
 	// 检查是否需要启动播放或者恢复播放
@@ -34,7 +34,7 @@ func HandleMpegtsStream(
 	hub.mu.Lock()
 	if hub.isClosed {
 		hub.mu.Unlock()
-		close(clientChan)
+		clientChan.Close()
 		return nil
 	}
 
@@ -74,9 +74,7 @@ func HandleMpegtsStream(
 				}
 				hub.mu.Unlock()
 			}
-
-			// 在关闭RTSP客户端后，确保只关闭一次clientChan
-			// 注意：clientChan已经在RemoveClient中被关闭了，这里不需要再次关闭
+			// clientChan 已在 RemoveClient 中关闭
 		}
 	}()
 
@@ -130,9 +128,11 @@ func HandleMpegtsStream(
 	flusher, _ := w.(http.Flusher)
 	for {
 		select {
-		case pkt, ok := <-clientChan:
-			if !ok {
-				// clientChan已经被关闭
+		case <-ctx.Done():
+			return nil
+		default:
+			pkt := clientChan.Pop()
+			if pkt == nil {
 				logger.LogPrintf("clientChan closed, ending connection")
 				return nil
 			}
@@ -141,17 +141,13 @@ func HandleMpegtsStream(
 				logger.LogPrintf("Write error: %v", err)
 				return err
 			}
-			// ⚡ 统计出流量
 			// monitor.AddAppOutboundBytes(uint64(len(pkt)))
 			if flusher != nil {
 				flusher.Flush()
 			}
-			// ⚡ 同步更新客户端活跃时间
 			if updateActive != nil {
 				updateActive()
 			}
-		case <-ctx.Done():
-			return nil
 		}
 	}
 }
