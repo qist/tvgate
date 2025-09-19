@@ -285,6 +285,15 @@ server:
   # 组播监听地址
   multicast_ifaces: [] # 可留空表示默认接口 [ "eth0", "eth1" ]
 
+# github 加速配置 更新可以用到
+github:
+    enabled: false
+    url: https://hk.gh-proxy.com
+    timeout: 10s
+    retry: 3
+    backup_urls:
+        - https://github.dpik.top
+        - https://gitproxy.127731.xyz
 
 # 监控配置
 monitor:
