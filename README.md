@@ -30,6 +30,15 @@
 
 ---
 changelog
+
+v2.0.9
+```
+1、添加Linux 版本的更新支持。
+2、用systemctl 启动的脚本需要添加 Restart=always 配置。 
+3、openwrt 启动脚本需要添加  procd_set_param respawn 配置。
+4、添加github接口加速配置。
+```
+
 v2.0.8
 ```
 1、不在需要自己创建配置文件，启动程序会自动生成配置文件。启动方式支持 ./TVGate-linux-arm64 -config=/usr/local/TVGate/config.yaml 也支持目录 ./TVGate-linux-arm64 -config=/usr/local/ 直接启动 ./TVGate-linux-arm64 当前目录生成配置文件。
