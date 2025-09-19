@@ -550,6 +550,7 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			"memoryTotal":            trafficStats.MemoryTotal,
 			"swapUsage":              swapUsage,
 			"swapTotal":              swapTotal,
+			"cpuTemp":                trafficStats.CPUTemperature, 
 			"swapUsagePercent":       swapUsagePercent,
 			"diskUsage":              diskUsage,
 			"diskTotal":              diskTotal,
