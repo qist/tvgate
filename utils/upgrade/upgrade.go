@@ -1,6 +1,7 @@
 package upgrade
 
 import (
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -63,6 +64,11 @@ func StartListener(onUpgrade func()) {
 	}()
 }
 
+// StopUpgradeListener 停止升级监听
+func StopUpgradeListener() {
+	signal.Stop(make(chan os.Signal, 1))
+}
+
 // Ready 标记子进程已准备好接管
 func Ready() {
 	Init()
@@ -78,6 +84,43 @@ func Exit() {
 	}
 }
 
+// UpgradeProcess 复制新文件、清理临时目录并启动新进程
+func UpgradeProcess(newExecPath, configPath, tmpDir string) {
+	execPath := os.Args[0]
+	
+	// 关闭升级监听，释放 socket
+	StopUpgradeListener()
+	
+	// 删除旧程序
+	_ = os.Remove(execPath)
+	
+	// 复制新程序到旧程序位置
+	if err := copyFile(newExecPath, execPath); err != nil {
+		log.Fatalf("复制新程序失败: %v", err)
+	}
+	
+	// 临时文件复制完成后立即清理临时目录
+	if tmpDir != "" {
+		_ = os.RemoveAll(tmpDir)
+		log.Printf("临时升级目录已清理: %s", tmpDir)
+	}
+	
+	// 设置可执行权限
+	_ = os.Chmod(execPath, 0755)
+	
+	// 启动新程序
+	cmd := exec.Command(execPath, "-config="+configPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Start(); err != nil {
+		log.Fatalf("启动新程序失败: %v", err)
+	}
+	log.Printf("新程序已启动, PID: %d", cmd.Process.Pid)
+	
+	os.Exit(0)
+}
+
 // RunNewProcess 启动新进程
 func RunNewProcess(configPath string) {
 	execPath := os.Args[0]
@@ -91,4 +134,22 @@ func RunNewProcess(configPath string) {
 	}
 
 	os.Exit(0)
+}
+
+// copyFile 复制文件
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	return err
 }

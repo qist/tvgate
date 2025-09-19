@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"time"
+	"sync"
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/utils/upgrade"
@@ -182,7 +182,8 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	execPath, _ := os.Executable()
 	backupPath := execPath + ".bak"
 	_ = copyFile(execPath, backupPath)
-
+    _ = os.MkdirAll(backupPath, 0755)
+	
 	tmpDestDir := filepath.Join(filepath.Dir(execPath), ".tmp_upgrade")
 	_ = os.RemoveAll(tmpDestDir)
 	_ = os.MkdirAll(tmpDestDir, 0755)
@@ -196,8 +197,8 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	}
 
 	// ⚡ 使用 tableflip 启动新进程，旧进程由 tableflip 接管
-	upgrade.Init()
-	upgrade.RunNewProcess(*config.ConfigFilePath)
+	// 注意：这里我们不创建新的upgrader，而是使用已有的全局upgrader
+	upgrade.UpgradeProcess(newExecPath, *config.ConfigFilePath, tmpDestDir)
 
 	return nil
 }
