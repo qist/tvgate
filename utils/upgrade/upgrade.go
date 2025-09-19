@@ -2,21 +2,25 @@ package upgrade
 
 import (
 	"io"
+	"runtime"
+
 	// "log"
-	"github.com/cloudflare/tableflip"
-	"github.com/qist/tvgate/logger"
-	"github.com/qist/tvgate/stream"
 	"os"
 	"os/exec"
 	"os/signal"
 	"strings"
 	"sync"
 	"syscall"
+
+	"github.com/cloudflare/tableflip"
+	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/stream"
 )
 
 var (
-	upgrader *tableflip.Upgrader
-	once     sync.Once
+	upgrader  *tableflip.Upgrader
+	once      sync.Once
+	isWindows = runtime.GOOS == "windows"
 )
 
 // var (
@@ -27,12 +31,20 @@ var (
 // Get 全局唯一升级器
 func Get() *tableflip.Upgrader {
 	Init()
+	if isWindows {
+		logger.LogPrintf("当前平台不支持 tableflip 热升级，采用普通重启")
+		return nil
+	}
 	return upgrader
 }
 
 // Init 初始化升级器，只会执行一次
 func Init() {
 	once.Do(func() {
+		if isWindows {
+			logger.LogPrintf("Windows 平台不初始化 tableflip，采用普通重启")
+			return
+		}
 		var err error
 		upgrader, err = tableflip.New(tableflip.Options{})
 		if err != nil {
@@ -44,6 +56,10 @@ func Init() {
 // StartListener 监听 SIGHUP 信号执行热更新
 func StartListener(onUpgrade func()) {
 	Init()
+	if isWindows {
+		logger.LogPrintf("Windows 平台不支持 SIGHUP 热升级监听，跳过 tableflip")
+		return
+	}
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGHUP)
 
@@ -78,6 +94,10 @@ func StopUpgradeListener() {
 // Ready 标记子进程已准备好接管
 func Ready() {
 	Init()
+	if isWindows {
+		logger.LogPrintf("Windows 平台无需 Ready() 热升级标记")
+		return
+	}
 	if err := upgrader.Ready(); err != nil {
 		logger.LogPrintf("升级器准备失败: %v", err)
 	}
@@ -85,6 +105,11 @@ func Ready() {
 
 // Exit 清理旧进程
 func Exit() {
+	if isWindows {
+		logger.LogPrintf("Windows 平台无需升级器 Exit()，直接退出")
+		os.Exit(0)
+		return
+	}
 	if err := upgrader.Exit(); err != nil {
 		logger.LogPrintf("旧进程退出失败: %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -40,13 +41,21 @@ func main() {
 	}
 
 	// -------------------------
-	// 初始化 tableflip Upgrader
+	// 初始化 tableflip Upgrader（仅非 Windows 平台）
 	// -------------------------
-	upg, err := tableflip.New(tableflip.Options{})
-	if err != nil {
-		log.Fatalf("无法创建升级器: %v", err)
+	var upg *tableflip.Upgrader
+	var err error
+	isWindows := runtime.GOOS == "windows"
+	if !isWindows {
+		upg, err = tableflip.New(tableflip.Options{})
+		if err != nil {
+			log.Fatalf("无法创建升级器: %v", err)
+		}
+		defer upg.Stop() // 确保退出时清理
+	} else {
+		upg = nil
+		fmt.Println("Windows 平台不支持 tableflip 热升级，采用普通重启")
 	}
-	defer upg.Stop() // 确保退出时清理
 
 	// -------------------------
 	// 配置文件加载
@@ -200,14 +209,20 @@ func main() {
 		<-sigChan
 		fmt.Println("收到退出信号，开始优雅退出")
 		gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats)
-		upg.Exit() // tableflip 清理旧进程
+		if !isWindows && upg != nil {
+			upg.Exit() // tableflip 清理旧进程
+		} else {
+			os.Exit(0)
+		}
 	}()
 
 	// -------------------------
-	// tableflip 准备完成
+	// tableflip 准备完成（仅非 Windows）
 	// -------------------------
-	if err := upg.Ready(); err != nil {
-		log.Fatalf("升级器准备失败: %v", err)
+	if !isWindows && upg != nil {
+		if err := upg.Ready(); err != nil {
+			log.Fatalf("升级器准备失败: %v", err)
+		}
 	}
 
 	<-config.ServerCtx.Done()
