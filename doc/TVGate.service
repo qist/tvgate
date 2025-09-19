@@ -7,6 +7,8 @@ LimitCORE=infinity
 LimitNOFILE=100000
 LimitNPROC=100000
 ExecStart=/usr/local/TVGate/TVGate-linux-amd64 -config=/usr/local/TVGate/config.yaml
+Restart=always
+RestartSec=2
 PrivateTmp=true
 ExecReload=/bin/kill -SIGHUP $MAINPID
 [Install]

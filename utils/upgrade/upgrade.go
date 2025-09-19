@@ -3,15 +3,15 @@ package upgrade
 import (
 	"io"
 	// "log"
+	"github.com/cloudflare/tableflip"
+	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/stream"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
-
-	"github.com/cloudflare/tableflip"
-	"github.com/qist/tvgate/stream"
-	"github.com/qist/tvgate/logger"
 )
 
 var (
@@ -19,19 +19,10 @@ var (
 	once     sync.Once
 )
 
-// // 简单的状态管理
 // var (
-// 	statusMutex sync.RWMutex
-// 	statusMap   = map[string]string{"state": "idle", "message": ""}
+// 	serviceMode     string
+// 	serviceModeOnce sync.Once
 // )
-
-// // SetStatus 设置升级状态
-// func SetStatus(state, message string) {
-// 	statusMutex.Lock()
-// 	defer statusMutex.Unlock()
-// 	statusMap["state"] = state
-// 	statusMap["message"] = message
-// }
 
 // Get 全局唯一升级器
 func Get() *tableflip.Upgrader {
@@ -102,39 +93,50 @@ func Exit() {
 // UpgradeProcess 复制新文件、清理临时目录并启动新进程
 func UpgradeProcess(newExecPath, configPath, tmpDir string) {
 	execPath := os.Args[0]
-	
+
 	// 关闭升级监听，释放 socket
 	StopUpgradeListener()
-	
+
 	// 删除旧程序
 	_ = os.Remove(execPath)
-	
+
 	// 复制新程序到旧程序位置
 	if err := copyFile(newExecPath, execPath); err != nil {
 		logger.LogPrintf("复制新程序失败: %v", err)
 	}
-	
+
 	// 临时文件复制完成后立即清理临时目录
 	if tmpDir != "" {
 		_ = os.RemoveAll(tmpDir)
 		logger.LogPrintf("临时升级目录已清理: %s", tmpDir)
 	}
-	
+
 	// 设置可执行权限
 	_ = os.Chmod(execPath, 0755)
 
-	
-	// 启动新程序
-	cmd := exec.Command(execPath, "-config="+configPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	if err := cmd.Start(); err != nil {
-		logger.LogPrintf("启动新程序失败: %v", err)
+	// 检查是否 systemd/procd 管理（可选，仅用于日志）
+	isManaged := false
+	if pName, err := getProcessName(os.Getppid()); err == nil {
+		if strings.Contains(pName, "systemd") || strings.Contains(pName, "procd") {
+			isManaged = true
+		}
 	}
-	logger.LogPrintf("新程序已启动, PID: %d", cmd.Process.Pid)
-	
-	os.Exit(0)
+
+	if isManaged {
+		logger.LogPrintf("检测到 systemd/procd 管理，旧进程退出，由管理器拉起新进程")
+		// 直接退出旧进程即可
+		os.Exit(0)
+	} else {
+		// 单进程模式 → 启动新程序
+		cmd := exec.Command(execPath, "-config="+configPath)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		if err := cmd.Start(); err != nil {
+			logger.LogPrintf("启动新程序失败: %v\n", err)
+		}
+		os.Exit(0)
+	}
 }
 
 // copyFile 复制文件
@@ -153,4 +155,36 @@ func copyFile(src, dst string) error {
 
 	_, err = io.Copy(destFile, sourceFile)
 	return err
+}
+
+// getProcessName 只在检测父进程时调用，Linux下从 /proc 读取进程名
+func getProcessName(pid int) (string, error) {
+	data, err := os.ReadFile("/proc/" + itoa(pid) + "/comm")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// 简单整型转字符串，避免 fmt.Sprintf 调用开销
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [20]byte
+	i := len(b)
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		b[i] = '-'
+	}
+	return string(b[i:])
 }
