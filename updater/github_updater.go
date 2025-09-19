@@ -55,38 +55,60 @@ func buildURL(base, target string) string {
 }
 
 func FetchGithubReleases(cfg config.GithubConfig) ([]Release, error) {
-	apiURL := "https://api.github.com/repos/qist/tvgate/releases"
-	if cfg.Enabled && cfg.URL != "" {
-		apiURL = buildURL(cfg.URL, apiURL)
+	var urls []string
+	apiPath := "https://api.github.com/repos/qist/tvgate/releases"
+
+	if cfg.Enabled {
+		if cfg.URL != "" {
+			urls = append(urls, buildURL(cfg.URL, apiPath))
+		}
+		for _, b := range cfg.BackupURLs {
+			if b != "" {
+				urls = append(urls, buildURL(b, apiPath))
+			}
+		}
 	}
 
-	client := &http.Client{Timeout: cfg.Timeout}
-	if cfg.Timeout == 0 {
-		client.Timeout = 30 * time.Second
+	// 官方 URL 兜底
+	urls = append(urls, apiPath)
+
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
+
+	var lastErr error
+	for _, url := range urls {
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("User-Agent", "TVGate-Updater")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			lastErr = fmt.Errorf("请求返回错误状态码 %d", resp.StatusCode)
+			continue
+		}
+
+		var releases []Release
+		if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+			lastErr = err
+			continue
+		}
+
+		return releases, nil
 	}
 
-	req, err := http.NewRequest("GET", apiURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "TVGate-Updater")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("请求返回错误状态码 %d", resp.StatusCode)
-	}
-
-	var releases []Release
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-		return nil, err
-	}
-
-	return releases, nil
+	return nil, lastErr
 }
 
 // --- 系统架构 ---
