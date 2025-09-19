@@ -2,7 +2,7 @@ package upgrade
 
 import (
 	"io"
-	"log"
+	// "log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/cloudflare/tableflip"
 	"github.com/qist/tvgate/stream"
+	"github.com/qist/tvgate/logger"
 )
 
 var (
@@ -30,7 +31,7 @@ func Init() {
 		var err error
 		upgrader, err = tableflip.New(tableflip.Options{})
 		if err != nil {
-			log.Fatalf("创建升级器失败: %v", err)
+			logger.LogPrintf("创建升级器失败: %v", err)
 		}
 	})
 }
@@ -43,7 +44,7 @@ func StartListener(onUpgrade func()) {
 
 	go func() {
 		for range sigChan {
-			log.Println("收到升级信号，开始优雅退出...")
+			logger.LogPrintf("收到升级信号，开始优雅退出...")
 
 			// 关闭 StreamHub
 			stream.HubsMu.Lock()
@@ -58,7 +59,7 @@ func StartListener(onUpgrade func()) {
 			}
 
 			if err := upgrader.Upgrade(); err != nil {
-				log.Printf("升级失败: %v", err)
+				logger.LogPrintf("升级失败: %v", err)
 			}
 		}
 	}()
@@ -73,14 +74,14 @@ func StopUpgradeListener() {
 func Ready() {
 	Init()
 	if err := upgrader.Ready(); err != nil {
-		log.Fatalf("升级器准备失败: %v", err)
+		logger.LogPrintf("升级器准备失败: %v", err)
 	}
 }
 
 // Exit 清理旧进程
 func Exit() {
 	if err := upgrader.Exit(); err != nil {
-		log.Printf("旧进程退出失败: %v", err)
+		logger.LogPrintf("旧进程退出失败: %v", err)
 	}
 }
 
@@ -96,13 +97,13 @@ func UpgradeProcess(newExecPath, configPath, tmpDir string) {
 	
 	// 复制新程序到旧程序位置
 	if err := copyFile(newExecPath, execPath); err != nil {
-		log.Fatalf("复制新程序失败: %v", err)
+		logger.LogPrintf("复制新程序失败: %v", err)
 	}
 	
 	// 临时文件复制完成后立即清理临时目录
 	if tmpDir != "" {
 		_ = os.RemoveAll(tmpDir)
-		log.Printf("临时升级目录已清理: %s", tmpDir)
+		logger.LogPrintf("临时升级目录已清理: %s", tmpDir)
 	}
 	
 	// 设置可执行权限
@@ -114,25 +115,10 @@ func UpgradeProcess(newExecPath, configPath, tmpDir string) {
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	if err := cmd.Start(); err != nil {
-		log.Fatalf("启动新程序失败: %v", err)
+		logger.LogPrintf("启动新程序失败: %v", err)
 	}
-	log.Printf("新程序已启动, PID: %d", cmd.Process.Pid)
+	logger.LogPrintf("新程序已启动, PID: %d", cmd.Process.Pid)
 	
-	os.Exit(0)
-}
-
-// RunNewProcess 启动新进程
-func RunNewProcess(configPath string) {
-	execPath := os.Args[0]
-	cmd := exec.Command(execPath, "-config="+configPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-
-	if err := cmd.Start(); err != nil {
-		log.Fatalf("启动新程序失败: %v", err)
-	}
-
 	os.Exit(0)
 }
 
