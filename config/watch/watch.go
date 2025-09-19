@@ -158,7 +158,7 @@ func WatchConfigFile(configPath string) {
 					Path:     config.Cfg.Web.Path,
 				}
 				configHandler := web.NewConfigHandler(webConfig)
-				configHandler.ServeMux(newMux)
+				configHandler.RegisterRoutes(newMux)
 			}
 
 			// 创建默认处理器

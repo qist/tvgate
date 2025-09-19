@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub 配置编辑器 - TVGate Web管理</title>
+    <link rel="stylesheet" href="{{.webPath}}static/common.css">
+    <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+    <style>
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--win11-bg);
+            color: var(--win11-text-primary);
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: var(--win11-surface);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px var(--win11-shadow);
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, box-shadow 0.3s;
+        }
+
+        h1 {
+            color: var(--win11-text-primary);
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .auth-section {
+            text-align: right;
+            margin-bottom: 20px;
+        }
+
+        .auth-section a {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: var(--win11-success);
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+
+        .auth-section a.logout {
+            background-color: var(--win11-danger);
+        }
+
+        .auth-section a:hover {
+            opacity: 0.9;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--win11-text-secondary);
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--win11-card);
+            border: 1px solid var(--win11-border);
+            border-radius: 4px;
+            color: var(--win11-text-primary);
+            box-sizing: border-box;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--win11-accent);
+            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            margin-right: 10px;
+            transform: scale(1.5);
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: var(--win11-accent);
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .btn:hover {
+            background-color: var(--win11-accent-hover);
+        }
+
+        .btn:disabled {
+            background-color: var(--win11-disabled);
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background-color: var(--win11-secondary);
+        }
+
+        .btn-secondary:hover {
+            background-color: var(--win11-secondary-hover);
+        }
+
+        .form-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .form-col {
+            flex: 1;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                flex-direction: column;
+                gap: 0;
+            }
+        }
+
+        .backup-urls-container {
+            margin-top: 10px;
+        }
+
+        .backup-url-item {
+            display: flex;
+            margin-bottom: 10px;
+        }
+
+        .backup-url-item input {
+            flex: 1;
+            margin-right: 10px;
+        }
+
+        .backup-url-item button {
+            background-color: var(--win11-danger);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 0 10px;
+        }
+
+        .add-backup-url {
+            background-color: var(--win11-success);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 8px 12px;
+            margin-top: 5px;
+        }
+
+        .notification {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .notification.success {
+            background-color: var(--win11-success);
+            color: white;
+            display: block;
+        }
+
+        .notification.error {
+            background-color: var(--win11-danger);
+            color: white;
+            display: block;
+        }
+
+        .loading {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>GitHub 配置编辑器</h1>
+
+        <div class="auth-section">
+            <a href="{{.webPath}}" class="btn btn-secondary">返回主界面</a>
+            <a href="{{.webPath}}logout" class="btn logout">退出登录</a>
+        </div>
+
+        <div id="notification" class="notification"></div>
+
+        <form id="githubConfigForm">
+            <div class="form-group checkbox-group">
+                <label for="enabled">启用 GitHub 加速</label>
+                <input type="checkbox" id="enabled" class="form-control">
+            </div>
+
+            <div class="form-group">
+                <label for="url">主加速地址</label>
+                <input type="text" id="url" class="form-control" placeholder="例如: https://hk.gh-proxy.com">
+            </div>
+
+            <div class="form-group">
+                <label>备用加速地址</label>
+                <div class="backup-urls-container" id="backupUrlsContainer">
+                    <!-- 备用地址项将通过 JavaScript 动态添加 -->
+                </div>
+                <button type="button" class="add-backup-url" id="addBackupUrl">添加备用地址</button>
+            </div>
+
+            <div class="form-row">
+                <div class="form-col">
+                    <div class="form-group">
+                        <label for="timeout">超时时间</label>
+                        <input type="text" id="timeout" class="form-control" placeholder="例如: 15s">
+                    </div>
+                </div>
+                <div class="form-col">
+                    <div class="form-group">
+                        <label for="retry">重试次数</label>
+                        <input type="number" id="retry" class="form-control" min="0" max="10" placeholder="例如: 3">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <button type="submit" class="btn" id="saveBtn">保存配置</button>
+                <button type="button" class="btn btn-secondary" id="resetBtn">重置</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // 全局变量
+        let backupUrls = [];
+
+        // 页面加载完成后获取配置
+        document.addEventListener('DOMContentLoaded', function () {
+            loadConfig();
+            setupEventListeners();
+        });
+
+        // 设置事件监听器
+        function setupEventListeners() {
+            document.getElementById('githubConfigForm').addEventListener('submit', saveConfig);
+            document.getElementById('resetBtn').addEventListener('click', loadConfig);
+            document.getElementById('addBackupUrl').addEventListener('click', addBackupUrlField);
+        }
+
+        // 加载配置
+        function loadConfig() {
+            fetch('{{.webPath}}api/github/config')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('enabled').checked = data.enabled || false;
+                    document.getElementById('url').value = data.url || '';
+                    document.getElementById('timeout').value = data.timeout || '';
+                    document.getElementById('retry').value = data.retry || 0;
+
+                    backupUrls = data.backup_urls || [];
+                    renderBackupUrls();
+                })
+                .catch(error => {
+                    showNotification('加载配置失败: ' + error.message, 'error');
+                });
+        }
+
+        // 渲染备用地址字段
+        function renderBackupUrls() {
+            const container = document.getElementById('backupUrlsContainer');
+            container.innerHTML = '';
+
+            backupUrls.forEach((url, index) => {
+                const urlItem = document.createElement('div');
+                urlItem.className = 'backup-url-item';
+                urlItem.innerHTML = `
+                    <input type="text" class="form-control backup-url-input" value="${url}" data-index="${index}">
+                    <button type="button" class="remove-backup-url" data-index="${index}">删除</button>
+                `;
+                container.appendChild(urlItem);
+            });
+
+            // 为删除按钮添加事件监听器
+            document.querySelectorAll('.remove-backup-url').forEach(button => {
+                button.addEventListener('click', function () {
+                    const index = parseInt(this.getAttribute('data-index'));
+                    removeBackupUrl(index);
+                });
+            });
+
+            // 为输入框添加事件监听器
+            document.querySelectorAll('.backup-url-input').forEach(input => {
+                input.addEventListener('change', function () {
+                    const index = parseInt(this.getAttribute('data-index'));
+                    backupUrls[index] = this.value;
+                });
+            });
+        }
+
+        // 添加备用地址字段
+        function addBackupUrlField() {
+            backupUrls.push('');
+            renderBackupUrls();
+        }
+
+        // 删除备用地址
+        function removeBackupUrl(index) {
+            backupUrls.splice(index, 1);
+            renderBackupUrls();
+        }
+
+        // 保存配置
+        function saveConfig(event) {
+            event.preventDefault();
+
+            // 收集表单数据
+            const configData = {
+                enabled: document.getElementById('enabled').checked,
+                url: document.getElementById('url').value,
+                backup_urls: backupUrls.filter(url => url.trim() !== ''),
+                timeout: document.getElementById('timeout').value,
+                retry: parseInt(document.getElementById('retry').value) || 0
+            };
+
+            // 显示加载状态
+            const saveBtn = document.getElementById('saveBtn');
+            const originalText = saveBtn.textContent;
+            saveBtn.textContent = '保存中...';
+            saveBtn.disabled = true;
+
+            // 发送保存请求
+            fetch('{{.webPath}}api/github/config/save', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(configData)
+            })
+                .then(response => {
+                    if (response.ok) {
+                        return response.json();
+                    }
+                    throw new Error('保存失败');
+                })
+                .then(data => {
+                    showNotification('配置保存成功', 'success');
+                })
+                .catch(error => {
+                    showNotification('保存配置失败: ' + error.message, 'error');
+                })
+                .finally(() => {
+                    // 恢复按钮状态
+                    saveBtn.textContent = originalText;
+                    saveBtn.disabled = false;
+                });
+        }
+
+        // 显示通知
+        function showNotification(message, type) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = 'notification ' + type;
+
+            // 3秒后自动隐藏通知
+            setTimeout(() => {
+                notification.className = 'notification';
+            }, 3000);
+        }
+    </script>
+</body>
+
+</html>

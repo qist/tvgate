@@ -139,23 +139,24 @@ func (h *ConfigHandler) renderTemplate(w http.ResponseWriter, r *http.Request, t
 	return tmpl.Execute(w, data)
 }
 
-// ServeMux 注册配置管理路由
-func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
-	// 注册主题同步路由
-	mux.HandleFunc(h.getWebPath()+"sync-theme", h.handleSyncTheme)
+// RegisterRoutes 注册所有Web管理路由
+func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	// 获取配置的Web路径，默认为/web/
 	webPath := h.webConfig.Path
 	if webPath == "" {
 		webPath = "/web/"
 	}
 
-	// 确保路径以/开头和结尾
+	// 确保webPath以/开头和结尾
 	if !strings.HasPrefix(webPath, "/") {
 		webPath = "/" + webPath
 	}
 	if !strings.HasSuffix(webPath, "/") {
 		webPath = webPath + "/"
 	}
+
+	// 注册主题同步路由
+	mux.HandleFunc(webPath+"sync-theme", h.handleSyncTheme)
 
 	// --- 静态文件 ---
 	subFS, _ := fs.Sub(staticFS, "static")
@@ -168,23 +169,14 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"logout", h.handleLogout)
 	mux.HandleFunc(webPath+"auth-status", h.handleAuthStatus)
 
-	// // 注册静态文件服务路由
-	// mux.HandleFunc("/static/", h.serveStaticFiles)
-	RegisterGithubRoutes(mux, h.webConfig.Path, h.cookieAuth)
+	// 注册GitHub升级相关路由
+	RegisterGithubRoutes(mux, webPath, h.cookieAuth)
 
-	// 页面渲染
-	mux.HandleFunc(webPath+"config/backup", h.cookieAuth(h.handleConfigBackupPage))
-
-	// JSON 接口
-	backupHandler := &ConfigBackupHandler{}
-	mux.HandleFunc(webPath+"config/backup/list", h.cookieAuth(backupHandler.handleListBackups))
-	mux.HandleFunc(webPath+"config/backup/delete", h.cookieAuth(backupHandler.handleDeleteBackup))
-	mux.HandleFunc(webPath+"config/backup/restore", h.cookieAuth(backupHandler.handleRestoreBackup))
-	mux.HandleFunc(webPath+"config/backup/download", h.cookieAuth(backupHandler.handleDownloadBackup))
-	// 注册需要认证的路由，使用基于Cookie的认证中间件
-	mux.HandleFunc(webPath+"node", h.cookieAuth(h.handleNode))
+	// 基础编辑器页面路由
 	mux.HandleFunc(webPath+"editor", h.cookieAuth(h.handleEditor))
-	// mux.HandleFunc(webPath+"node-editor", h.cookieAuth(h.handleNodeEditor))
+	mux.HandleFunc(webPath+"node", h.cookieAuth(h.handleNode))
+
+	// 特定配置编辑器页面路由
 	mux.HandleFunc(webPath+"group-editor", h.cookieAuth(h.handleGroupEditor))
 	mux.HandleFunc(webPath+"domainmap-editor", h.cookieAuth(h.handleDomainMapEditor))
 	mux.HandleFunc(webPath+"proxygroups-editor", h.cookieAuth(h.handleProxyGroupsEditor))
@@ -196,35 +188,50 @@ func (h *ConfigHandler) ServeMux(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"reload-editor", h.cookieAuth(h.handleReloadEditor))
 	mux.HandleFunc(webPath+"http-editor", h.cookieAuth(h.handleHTTPEditor))
 	mux.HandleFunc(webPath+"log-editor", h.cookieAuth(http.HandlerFunc(h.handleLogEditor)))
+	mux.HandleFunc(webPath+"github-editor", h.cookieAuth(h.handleGithubEditor))
 
+	// 配置查看与保存路由
 	mux.HandleFunc(webPath+"config", h.cookieAuth(h.handleConfig))
 	mux.HandleFunc(webPath+"config/save", h.cookieAuth(h.handleConfigSave))
-	// mux.HandleFunc(webPath+"config/save-node", h.cookieAuth(h.handleConfigSaveNode))
+	mux.HandleFunc(webPath+"config/validate", h.cookieAuth(h.handleConfigValidate))
+
+	// 组配置相关路由
+	mux.HandleFunc(webPath+"config/group", h.cookieAuth(h.handleGroupConfig))
 	mux.HandleFunc(webPath+"config/save-group", h.cookieAuth(h.handleConfigSaveGroup))
+
+	// 其他节点配置路由
+	mux.HandleFunc(webPath+"config/domainmap", h.cookieAuth(h.handleDomainMapConfig))
 	mux.HandleFunc(webPath+"config/save-domainmap", h.cookieAuth(h.handleDomainMapConfigSave))
+	mux.HandleFunc(webPath+"config/proxygroups", h.cookieAuth(h.handleProxyGroupsConfig))
 	mux.HandleFunc(webPath+"config/save-proxygroups", h.cookieAuth(h.handleProxyGroupsConfigSave))
+	mux.HandleFunc(webPath+"config/global-auth", h.cookieAuth(h.handleGlobalAuthConfig))
 	mux.HandleFunc(webPath+"config/save-global-auth", h.cookieAuth(h.handleGlobalAuthConfigSave))
+	mux.HandleFunc(webPath+"config/jx", h.cookieAuth(h.handleJXConfig))
 	mux.HandleFunc(webPath+"config/save-jx", h.cookieAuth(h.handleJXConfigSave))
+	mux.HandleFunc(webPath+"config/server-monitor", h.cookieAuth(h.handleServerMonitorConfig))
 	mux.HandleFunc(webPath+"config/save-server-monitor", h.cookieAuth(h.handleServerMonitorConfigSave))
+	mux.HandleFunc(webPath+"config/server", h.cookieAuth(h.handleServerConfig))
 	mux.HandleFunc(webPath+"config/save-server", h.cookieAuth(h.handleServerConfigSave))
+	mux.HandleFunc(webPath+"config/web", h.cookieAuth(h.handleWebConfig))
 	mux.HandleFunc(webPath+"config/save-web", h.cookieAuth(h.handleWebConfigSave))
+	mux.HandleFunc(webPath+"config/reload", h.cookieAuth(h.handleReloadConfig))
 	mux.HandleFunc(webPath+"config/save-reload", h.cookieAuth(h.handleReloadConfigSave))
+	mux.HandleFunc(webPath+"config/http", h.cookieAuth(h.handleHTTPConfig))
 	mux.HandleFunc(webPath+"config/save-http", h.cookieAuth(h.handleHTTPConfigSave))
+	mux.HandleFunc(webPath+"config/log", h.cookieAuth(http.HandlerFunc(h.handleGetLogConfig)))
 	mux.HandleFunc(webPath+"config/save-log", h.cookieAuth(http.HandlerFunc(h.handleSaveLogConfig)))
 
-	mux.HandleFunc(webPath+"config/validate", h.cookieAuth(h.handleConfigValidate))
-	// mux.HandleFunc(webPath+"config/node", h.cookieAuth(h.handleNodeConfig))
-	mux.HandleFunc(webPath+"config/group", h.cookieAuth(h.handleGroupConfig))
-	mux.HandleFunc(webPath+"config/domainmap", h.cookieAuth(h.handleDomainMapConfig))
-	mux.HandleFunc(webPath+"config/proxygroups", h.cookieAuth(h.handleProxyGroupsConfig))
-	mux.HandleFunc(webPath+"config/global-auth", h.cookieAuth(h.handleGlobalAuthConfig))
-	mux.HandleFunc(webPath+"config/jx", h.cookieAuth(h.handleJXConfig))
-	mux.HandleFunc(webPath+"config/server-monitor", h.cookieAuth(h.handleServerMonitorConfig))
-	mux.HandleFunc(webPath+"config/server", h.cookieAuth(h.handleServerConfig))
-	mux.HandleFunc(webPath+"config/web", h.cookieAuth(h.handleWebConfig))
-	mux.HandleFunc(webPath+"config/reload", h.cookieAuth(h.handleReloadConfig))
-	mux.HandleFunc(webPath+"config/http", h.cookieAuth(h.handleHTTPConfig))
-	mux.HandleFunc(webPath+"config/log", h.cookieAuth(http.HandlerFunc(h.handleGetLogConfig)))
+	// 备份相关路由
+	mux.HandleFunc(webPath+"config/backup", h.cookieAuth(h.handleConfigBackupPage))
+	backupHandler := &ConfigBackupHandler{}
+	mux.HandleFunc(webPath+"config/backup/list", h.cookieAuth(backupHandler.handleListBackups))
+	mux.HandleFunc(webPath+"config/backup/delete", h.cookieAuth(backupHandler.handleDeleteBackup))
+	mux.HandleFunc(webPath+"config/backup/restore", h.cookieAuth(backupHandler.handleRestoreBackup))
+	mux.HandleFunc(webPath+"config/backup/download", h.cookieAuth(backupHandler.handleDownloadBackup))
+
+	// GitHub配置相关API路由
+	mux.HandleFunc(webPath+"api/github/config", h.cookieAuth(h.handleGithubConfig))
+	mux.HandleFunc(webPath+"api/github/config/save", h.cookieAuth(h.handleGithubConfigSave))
 
 }
 

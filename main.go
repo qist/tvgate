@@ -152,7 +152,7 @@ func main() {
 			Path:     config.Cfg.Web.Path,
 		}
 		configHandler := web.NewConfigHandler(webConfig)
-		configHandler.ServeMux(mux)
+		configHandler.RegisterRoutes(mux)
 	}
 
 	defaultHandler := server.SecurityHeaders(http.HandlerFunc(h.Handler(client)))
