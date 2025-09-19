@@ -33,7 +33,7 @@ changelog
 
 v2.0.9
 ```
-1、添加Linux 版本的更新支持。
+1、添加Linux 版本的更新支持,win 版本需要手动更新。
 2、用systemctl 启动的脚本需要添加 Restart=always 配置。 
 3、openwrt 启动脚本需要添加  procd_set_param respawn 配置。
 4、添加github接口加速配置。
