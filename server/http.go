@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cloudflare/tableflip"
 	"github.com/libp2p/go-reuseport"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
@@ -23,7 +24,8 @@ var (
 	currentMu  sync.Mutex
 )
 
-func StartHTTPServer(ctx context.Context, handler http.Handler) error {
+// StartHTTPServer 启动 HTTP/1.x、HTTP/2 和 HTTP/3，支持 tableflip 热更
+func StartHTTPServer(ctx context.Context, handler http.Handler, upgrader *tableflip.Upgrader) error {
 	addr := fmt.Sprintf(":%d", config.Cfg.Server.Port)
 	certFile := config.Cfg.Server.CertFile
 	keyFile := config.Cfg.Server.KeyFile
@@ -37,7 +39,7 @@ func StartHTTPServer(ctx context.Context, handler http.Handler) error {
 		tlsConfig = makeTLSConfig(certFile, keyFile, minVersion, maxVersion, cipherSuites, curves)
 	}
 
-	// HTTP/1.x + HTTP/2 server
+	// 创建 HTTP server
 	srv := &http.Server{
 		Handler:           handler,
 		ReadTimeout:       0,
@@ -48,13 +50,34 @@ func StartHTTPServer(ctx context.Context, handler http.Handler) error {
 		TLSConfig:         tlsConfig,
 	}
 
-	// HTTP/3 server
+	// TCP listener
+	var ln net.Listener
+	var err error
+	if upgrader != nil {
+		ln, err = upgrader.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("❌ upgrader 创建 TCP listener 失败: %w", err)
+		}
+	} else {
+		ln, err = reuseport.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("❌ 创建 TCP listener 失败: %w", err)
+		}
+	}
+
+	// UDP listener（HTTP/3）
+	var udpLn net.PacketConn
 	var h3srv *http3.Server
-	if tlsConfig != nil {
+	if tlsConfig != nil && upgrader != nil {
+		udpLn, err = upgrader.ListenPacket("udp", addr)
+		if err != nil {
+			return fmt.Errorf("❌ upgrader 创建 UDP listener 失败: %w", err)
+		}
+
 		h3srv = &http3.Server{
-			Addr:        addr,
-			Handler:     handler,
-			TLSConfig:   tlsConfig,
+			Addr:      addr,
+			Handler:   handler,
+			TLSConfig: tlsConfig,
 			IdleTimeout: 60 * time.Second,
 			QUICConfig: &quic.Config{
 				Allow0RTT:          true,
@@ -64,9 +87,16 @@ func StartHTTPServer(ctx context.Context, handler http.Handler) error {
 				EnableDatagrams:    true,
 			},
 		}
+
+		go func() {
+			logger.LogPrintf("🚀 启动 HTTP/3 %s", addr)
+			if err := h3srv.Serve(udpLn); err != nil && err != http.ErrServerClosed {
+				logger.LogPrintf("❌ HTTP/3 错误: %v", err)
+			}
+		}()
 	}
 
-	// 锁定旧 server 并替换为新 server
+	// 替换全局 server
 	currentMu.Lock()
 	oldSrv := currentSrv
 	oldH3 := currentH3
@@ -74,53 +104,34 @@ func StartHTTPServer(ctx context.Context, handler http.Handler) error {
 	currentH3 = h3srv
 	currentMu.Unlock()
 
-	// 关闭旧 HTTP/1.x/2 顺序化
+	// 优雅关闭旧 HTTP/1.x/2
 	if oldSrv != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := oldSrv.Shutdown(shutdownCtx); err != nil {
-			// logger.LogPrintf("❌ 关闭旧 HTTP/1.x/2 失败: %v", err)
-		} else {
+		if err := oldSrv.Shutdown(shutdownCtx); err == nil {
 			logger.LogPrintf("✅ 旧 HTTP/1.x/2 已关闭")
 		}
 	}
 
-	// 关闭旧 HTTP/3，顺序化
+	// 优雅关闭旧 HTTP/3
 	if oldH3 != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := oldH3.Shutdown(shutdownCtx); err != nil {
-			logger.LogPrintf("⚠️ 关闭旧 HTTP/3 出现问题: %v", err)
-			// 强制等待一段时间，确保端口释放
-			time.Sleep(time.Second * 2)
-		} else {
+		if err := oldH3.Shutdown(shutdownCtx); err == nil {
 			logger.LogPrintf("✅ 旧 HTTP/3 已关闭")
 		}
-		// 额外等待时间，确保 QUIC 连接完全清理
 		time.Sleep(time.Second)
 	}
 
-	// 启动 HTTP/1.x (SO_REUSEPORT)
+	// 启动 HTTP/1.x + HTTP/2
 	go func() {
-		var ln net.Listener
-		var err error
 		if tlsConfig != nil {
-			ln, err = reuseport.Listen("tcp", addr)
-			if err != nil {
-				logger.LogPrintf("❌ 创建 H1 Listener 失败: %v", err)
-				return
-			}
 			_ = http2.ConfigureServer(srv, &http2.Server{})
 			logger.LogPrintf("🚀 启动 HTTPS H1/H2 %s", addr)
 			if err := srv.ServeTLS(ln, certFile, keyFile); err != nil && err != http.ErrServerClosed {
 				logger.LogPrintf("❌ HTTP/1.x/2 错误: %v", err)
 			}
 		} else {
-			ln, err = reuseport.Listen("tcp", addr)
-			if err != nil {
-				logger.LogPrintf("❌ 创建 H1 Listener 失败: %v", err)
-				return
-			}
 			logger.LogPrintf("🚀 启动 HTTP/1.1 %s", addr)
 			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 				logger.LogPrintf("❌ HTTP/1.x 错误: %v", err)
@@ -128,50 +139,9 @@ func StartHTTPServer(ctx context.Context, handler http.Handler) error {
 		}
 	}()
 
-	// 启动 HTTP/3 并行
-	if h3srv != nil {
-		go func(h3 *http3.Server) {
-			maxRetries := 5
-			retryDelay := time.Second * 3
-
-			for retry := 0; retry < maxRetries; retry++ {
-				if retry > 0 {
-					logger.LogPrintf("⚠️ 正在重试启动 HTTP/3 (第 %d 次)", retry)
-					time.Sleep(retryDelay)
-				}
-
-				// 尝试启动前先检查端口是否可用
-				conn, err := net.ListenPacket("udp", addr)
-				if err != nil {
-					logger.LogPrintf("⚠️ HTTP/3 端口检查失败: %v, 等待重试...", err)
-					continue
-				}
-				conn.Close()
-
-				// 清理旧连接
-				if retry > 0 {
-					logger.LogPrintf("🧹 清理 QUIC 旧连接...")
-					time.Sleep(time.Second)
-				}
-
-				logger.LogPrintf("🚀 启动 HTTP/3 %s", addr)
-				err = h3.ListenAndServe()
-				if err == nil || err == http.ErrServerClosed {
-					return
-				}
-
-				logger.LogPrintf("❌ HTTP/3 启动失败: %v", err)
-				if retry == maxRetries-1 {
-					logger.LogPrintf("❌ HTTP/3 重试次数已达上限，放弃启动")
-				}
-			}
-		}(h3srv)
-	}
-
 	// 等待退出
 	<-ctx.Done()
 
-	// 优雅关闭
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -185,4 +155,18 @@ func StartHTTPServer(ctx context.Context, handler http.Handler) error {
 
 	logger.LogPrintf("✅ 所有服务器已关闭")
 	return nil
+}
+
+// SetHTTPHandler 平滑替换当前 HTTP Handler
+func SetHTTPHandler(h http.Handler) {
+	currentMu.Lock()
+	defer currentMu.Unlock()
+
+	if currentSrv != nil {
+		currentSrv.Handler = h
+	}
+	if currentH3 != nil {
+		currentH3.Handler = h
+	}
+	logger.LogPrintf("🔄 HTTP Handler 已平滑替换")
 }

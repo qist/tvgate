@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cloudflare/tableflip"
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/clear"
 	"github.com/qist/tvgate/config"
@@ -24,14 +25,13 @@ import (
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/server"
-	"github.com/qist/tvgate/stream"
 	httpclient "github.com/qist/tvgate/utils/http"
-	"github.com/qist/tvgate/utils/upgrade"
 	"github.com/qist/tvgate/web"
 )
 
 var shutdownMux sync.Mutex
 var shutdownOnce sync.Once
+
 func main() {
 	flag.Parse()
 	if *config.VersionFlag {
@@ -39,87 +39,81 @@ func main() {
 		return
 	}
 
-	// 获取用户传入的 -config 参数
+	// -------------------------
+	// 初始化 tableflip Upgrader
+	// -------------------------
+	upg, err := tableflip.New(tableflip.Options{})
+	if err != nil {
+		log.Fatalf("无法创建升级器: %v", err)
+	}
+	defer upg.Stop() // 确保退出时清理
+
+	// -------------------------
+	// 配置文件加载
+	// -------------------------
 	userConfigPath := *config.ConfigFilePath
-
-	// 使用 EnsureConfigFile 自动生成默认配置文件
-
 	configFilePath, err := web.EnsureConfigFile(userConfigPath)
 	if err != nil {
 		log.Fatalf("确保配置文件失败: %v", err)
 	}
-	
-	// 更新 ConfigFilePath 变量以指向实际的配置文件路径
 	*config.ConfigFilePath = configFilePath
-	
 	fmt.Println("使用配置文件:", configFilePath)
-
 
 	if err := load.LoadConfig(configFilePath); err != nil {
 		log.Fatalf("加载配置文件失败: %v", err)
 	}
-
-	if *config.ConfigFilePath != "" {
-		err := load.LoadConfig(configFilePath)
-		if err != nil {
-			log.Fatalf("读取YAML配置文件失败: %v", err)
-		}
-	}
-	// 验证配置是否正确加载
-	// if len(cfg.ProxyGroups) == 0 {
-	// 	log.Fatal("警告: 未加载任何代理组配置")
-	// }
-	// 2️⃣ 设置默认值
 	config.Cfg.SetDefaults()
 
-	// 3️⃣ 初始化 HTTP client
 	client := httpclient.NewHTTPClient(&config.Cfg, nil)
 
-	// 初始化代理组统计信息
+	// -------------------------
+	// 初始化代理组统计
+	// -------------------------
 	groupstats.InitProxyGroups()
-
-	// 初始化代理组统计信息
 	for _, group := range config.Cfg.ProxyGroups {
 		group.Stats = &config.GroupStats{
 			ProxyStats: make(map[string]*config.ProxyStats),
 		}
 	}
 
-	// 初始化全局token管理器
+	// -------------------------
+	// 初始化全局 token 管理器
+	// -------------------------
 	if config.Cfg.GlobalAuth.TokensEnabled {
 		auth.GlobalTokenManager = auth.NewGlobalTokenManagerFromConfig(&config.Cfg.GlobalAuth)
 	} else {
 		auth.GlobalTokenManager = nil
 	}
-
-
 	tm := &auth.TokenManager{
 		Enabled:       true,
 		StaticTokens:  make(map[string]*auth.SessionInfo),
 		DynamicTokens: make(map[string]*auth.SessionInfo),
 	}
 	go func() {
-		ticker := time.NewTicker(1 * time.Minute) // 每分钟清理一次
+		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
 			tm.CleanupExpiredSessions()
 		}
 	}()
 
+	// -------------------------
+	// 启动监控 & 清理任务
+	// -------------------------
 	go monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second)
-
 	go monitor.StartSystemStatsUpdater(10 * time.Second)
 
-
 	stopCleaner := make(chan struct{})
-	go clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
-
 	stopAccessCleaner := make(chan struct{})
-	go clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
 	stopProxyStats := make(chan struct{})
+
+	go clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
+	go clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
 	go clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopProxyStats)
 
-
+	// -------------------------
+	// 日志
+	// -------------------------
 	logger.SetupLogger(logger.LogConfig{
 		Enabled:    config.Cfg.Log.Enabled,
 		File:       config.Cfg.Log.File,
@@ -129,22 +123,19 @@ func main() {
 		Compress:   config.Cfg.Log.Compress,
 	})
 
-	// 初始化jx处理器
+	// -------------------------
+	// HTTP 路由
+	// -------------------------
 	jxHandler := jx.NewJXHandler(&config.Cfg.JX)
-
 	mux := http.NewServeMux()
-
-	// 启动配置文件自动加载
 	go watch.WatchConfigFile(*config.ConfigFilePath)
 
-	// 添加监控路径处理
 	monitorPath := config.Cfg.Monitor.Path
 	if monitorPath == "" {
 		monitorPath = "/status"
 	}
 	mux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.HandleMonitor)))
 
-	// jx 路径
 	jxPath := config.Cfg.JX.Path
 	if jxPath == "" {
 		jxPath = "/jx"
@@ -153,11 +144,7 @@ func main() {
 		jxHandler.Handle(w, r)
 	})))
 
-	// 注册 Web 管理界面处理器
-	// 注册 Web 管理界面处理器
-	// 注册 Web 管理界面处理器
 	if config.Cfg.Web.Enabled {
-		// 将config.Cfg.Web转换为web.WebConfig类型
 		webConfig := web.WebConfig{
 			Username: config.Cfg.Web.Username,
 			Password: config.Cfg.Web.Password,
@@ -168,12 +155,9 @@ func main() {
 		configHandler.ServeMux(mux)
 	}
 
-	// 创建默认处理器
 	defaultHandler := server.SecurityHeaders(http.HandlerFunc(h.Handler(client)))
 
-	// 检查是否配置了域名映射
 	if len(config.Cfg.DomainMap) > 0 {
-		// 创建域名映射处理器
 		mappings := make(auth.DomainMapList, len(config.Cfg.DomainMap))
 		for i, mapping := range config.Cfg.DomainMap {
 			mappings[i] = &auth.DomainMapConfig{
@@ -188,49 +172,45 @@ func main() {
 		}
 		localClient := &http.Client{Timeout: config.Cfg.HTTP.Timeout}
 		domainMapper := domainmap.NewDomainMapper(mappings, localClient, defaultHandler)
-		// mux.Handle("/", domainMapper)
 		mux.Handle("/", server.SecurityHeaders(domainMapper))
 	} else {
-		// 没有域名映射配置，直接使用默认处理器
 		mux.Handle("/", defaultHandler)
 	}
 
+	// -------------------------
+	// context 管理
+	// -------------------------
 	config.ServerCtx, config.Cancel = context.WithCancel(context.Background())
 
-	// 升级监听
-	upgrade.StartUpgradeListener(func() {
-		fmt.Println("收到升级通知，开始优雅退出...")
-
-		// 关闭 StreamHub
-		stream.HubsMu.Lock()
-		for key, hub := range stream.Hubs {
-			hub.Close()
-			delete(stream.Hubs, key)
-		}
-		stream.HubsMu.Unlock()
-
-		// 关闭其他资源
-		config.Cancel()
-	})
-
-	// 启动 HTTP Server
+	// -------------------------
+	// 启动 HTTP Server（支持 tableflip 热更）
+	// -------------------------
 	go func() {
-		if err := server.StartHTTPServer(config.ServerCtx, mux); err != nil {
+		if err := server.StartHTTPServer(config.ServerCtx, mux, upg); err != nil {
 			log.Fatalf("启动HTTP服务器失败: %v", err)
 		}
 	}()
 
-	// 捕获系统信号
+	// -------------------------
+	// 捕获系统退出信号
+	// -------------------------
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 		fmt.Println("收到退出信号，开始优雅退出")
 		gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats)
+		upg.Exit() // tableflip 清理旧进程
 	}()
 
+	// -------------------------
+	// tableflip 准备完成
+	// -------------------------
+	if err := upg.Ready(); err != nil {
+		log.Fatalf("升级器准备失败: %v", err)
+	}
+
 	<-config.ServerCtx.Done()
-	// 收到退出信号，通知清理任务退出
 	gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats)
 }
 
@@ -243,8 +223,8 @@ func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats chan struct
 			config.Cancel()
 		}
 
-	close(stopCleaner)
-	close(stopAccessCleaner)
+		close(stopCleaner)
+		close(stopAccessCleaner)
 		close(stopProxyStats)
 
 		fmt.Println("优雅退出完成")

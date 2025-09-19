@@ -45,17 +45,12 @@ type Release struct {
 }
 
 func buildURL(base, target string) string {
-	// 确保基础URL不以/结尾
 	if len(base) > 0 && base[len(base)-1] == '/' {
 		base = base[:len(base)-1]
 	}
-	
-	// 确保目标URL不以/开头，以便正确构建代理URL
 	if len(target) > 0 && target[0] == '/' {
 		target = target[1:]
 	}
-	
-	// 构建代理URL格式: base/target
 	return base + "/" + target
 }
 
@@ -63,7 +58,6 @@ func FetchGithubReleases(cfg config.GithubConfig) ([]Release, error) {
 	apiURL := "https://api.github.com/repos/qist/tvgate/releases"
 	if cfg.Enabled && cfg.URL != "" {
 		apiURL = buildURL(cfg.URL, apiURL)
-		// fmt.Println("代理URL:", apiURL)
 	}
 
 	client := &http.Client{Timeout: cfg.Timeout}
@@ -142,7 +136,6 @@ func getDownloadURLs(cfg config.GithubConfig, version, zipFileName string) []str
 	if cfg.Enabled {
 		if cfg.URL != "" {
 			urls = append(urls, buildURL(cfg.URL, origURL))
-			// fmt.Println("代理URL:", urls[0])
 		}
 		for _, b := range cfg.BackupURLs {
 			if b != "" {
@@ -159,7 +152,6 @@ func getDownloadURLs(cfg config.GithubConfig, version, zipFileName string) []str
 // --------------------
 func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	SetStatus("starting", "开始升级流程")
-	// fmt.Println("开始升级到版本:", version)
 
 	arch, err := GetArchInfo()
 	if err != nil {
@@ -175,9 +167,7 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	success := false
 	var lastErr error
 	for _, u := range urls {
-		// fmt.Printf("下载源 #%d: %s\n", i+1, u)
 		if err := downloadFile(u, tmpFile); err != nil {
-			// fmt.Printf("下载失败: %v\n", err)
 			lastErr = err
 			continue
 		}
@@ -192,7 +182,6 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	execPath, _ := os.Executable()
 	backupPath := execPath + ".bak"
 	_ = copyFile(execPath, backupPath)
-	// fmt.Println("备份完成:", backupPath)
 
 	tmpDestDir := filepath.Join(filepath.Dir(execPath), ".tmp_upgrade")
 	_ = os.RemoveAll(tmpDestDir)
@@ -206,12 +195,9 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 		_ = os.Chmod(newExecPath, 0755)
 	}
 
-	// 调用升级子进程处理替换和启动
-	// 注意：传给RunUpgrader的newExecPath应该是临时目录中的新可执行文件路径
-	upgrade.RunUpgrader(execPath, newExecPath, *config.ConfigFilePath, tmpDestDir)
-
-	// 通知旧程序退出
-	_ = upgrade.NotifyUpgradeReady()
+	// ⚡ 使用 tableflip 启动新进程，旧进程由 tableflip 接管
+	upgrade.Init()
+	upgrade.RunNewProcess(*config.ConfigFilePath)
 
 	return nil
 }

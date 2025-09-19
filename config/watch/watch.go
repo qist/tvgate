@@ -191,7 +191,7 @@ func WatchConfigFile(configPath string) {
 				newMux.Handle("/", defaultHandler)
 			}
 
-			ctx, cancel := context.WithCancel(context.Background())
+			_, cancel := context.WithCancel(context.Background())
 			httpCancel = cancel
 			// 启动新 HTTP 服务（startHTTPServer 内部会处理平滑替换）
 			go func() {
@@ -200,9 +200,10 @@ func WatchConfigFile(configPath string) {
 						logger.LogPrintf("🔥 启动 HTTP 服务过程中发生 panic: %v", r)
 					}
 				}()
-				if err := server.StartHTTPServer(ctx, newMux); err != nil && err != context.Canceled {
-					logger.LogPrintf("❌ 启动 HTTP 服务失败: %v", err)
-				}
+				// if err := server.StartHTTPServer(ctx, newMux); err != nil && err != context.Canceled {
+				// 	logger.LogPrintf("❌ 启动 HTTP 服务失败: %v", err)
+				// }
+				server.SetHTTPHandler(newMux)
 			}()
 		}
 	}
