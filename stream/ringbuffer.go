@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/qist/tvgate/utils/buffer"
+	// "github.com/qist/tvgate/utils/buffer"
 	"github.com/qist/tvgate/logger"
 )
 
@@ -136,48 +136,30 @@ func (rb *StreamRingBuffer) IsClosed() bool {
 
 // NewOptimalStreamRingBuffer 根据内容类型和URL创建最优大小的环形缓冲区
 func NewOptimalStreamRingBuffer(contentType string, u *url.URL) *StreamRingBuffer {
-	chunkSize := buffer.GetOptimalBufferSize(contentType, u.Path)
+	var ringCapacity int
+	var maxBytes int64
 
-	// 默认缓存倍数
-	multiplier := 16
 	switch {
 	case strings.Contains(contentType, "video/mp2t"):
-		multiplier = 32 // TS 流多缓存一点
-	case chunkSize >= 512*1024: // 高码率视频
-		multiplier = 32
-	case chunkSize <= 64*1024: // 小文件/音频
-		multiplier = 8
+		// TS 视频，缓存大一点
+		ringCapacity = 512       // 最大 512 个 chunk
+		maxBytes = 512 * 1024 * 1024
+	case strings.Contains(contentType, "audio/"):
+		// 音频，缓存少一点
+		ringCapacity = 128
+		maxBytes = 128 * 1024 * 1024
+	case strings.Contains(contentType, "mpegurl"):
+		// m3u8 playlist，缓存小
+		ringCapacity = 64
+		maxBytes = 32 * 1024 * 1024
+	default:
+		// 默认值
+		ringCapacity = 128
+		maxBytes = 64 * 1024 * 1024
 	}
 
-	// 内存上限
-	var maxBytes int64 = 256 * 1024 * 1024 // 256MB
-	if strings.Contains(contentType, "video/mp2t") {
-		maxBytes = 512 * 1024 * 1024 // TS 特殊放大到 512MB
-	}
-
-	// 最大块数限制，避免 chunk 太小时爆炸
-	const maxChunks = 4096
-
-	// ---- 计算容量 ----
-	// 基础容量
-	ringCapacity := multiplier
-
-	// 期望容量 = (maxBytes / chunkSize) * multiplier
-	if chunkSize > 0 {
-		expected := (int(maxBytes) / chunkSize) * multiplier
-		if expected > ringCapacity {
-			ringCapacity = expected
-		}
-	}
-
-	// 限制最大块数
-	if ringCapacity > maxChunks {
-		ringCapacity = maxChunks
-	}
-
-	// 日志打印
-	logger.LogPrintf("[RingBuffer] contentType=%s chunk=%dB cap=%d maxBytes=%.2fMB",
-		contentType, chunkSize, ringCapacity, float64(maxBytes)/(1024*1024))
+	logger.LogPrintf("[RingBuffer] contentType=%s cap=%d maxBytes=%.2fMB",
+		contentType, ringCapacity, float64(maxBytes)/(1024*1024))
 
 	return NewStreamRingBuffer(ringCapacity, maxBytes)
 }
