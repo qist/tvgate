@@ -25,7 +25,7 @@ import (
 	"github.com/qist/tvgate/proxy"
 	"github.com/qist/tvgate/rules"
 	"github.com/qist/tvgate/stream"
-	"github.com/qist/tvgate/utils/buffer"
+	// "github.com/qist/tvgate/utils/buffer"
 )
 
 // ---------------------------
@@ -772,7 +772,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 
 	contentType := resp.Header.Get("Content-Type")
-	bufSize := buffer.GetOptimalBufferSize(contentType, targetReqURL.Path)
+	// bufSize := buffer.GetOptimalBufferSize(contentType, targetReqURL.Path)
 	isM3U8 := strings.Contains(contentType, "mpegurl")
 
 	if isM3U8 {
@@ -799,7 +799,8 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		buf := stream.NewStreamRingBuffer(bufSize)
+		u, _ := url.Parse(targetReqURL.String())
+		buf := stream.NewOptimalStreamRingBuffer(contentType, u)
 		stream.CopyWithContext(r.Context(), w, resp.Body, buf, updateActive)
 	}
 

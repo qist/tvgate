@@ -57,8 +57,14 @@ func (hub *StreamHubs) RemoveClient(ch *StreamRingBuffer) {
 func (hub *StreamHubs) Broadcast(data []byte) {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
+	
+	// 创建一个副本以避免数据被多个客户端共享修改
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
+	
 	for ch := range hub.clients {
-		ch.Push(data)
+		// 直接推送数据到客户端缓冲区
+		ch.Push(dataCopy)
 	}
 }
 

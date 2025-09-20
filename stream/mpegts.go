@@ -10,9 +10,9 @@ import (
 	"github.com/pion/rtp"
 
 	"github.com/qist/tvgate/logger"
-	// "github.com/qist/tvgate/monitor"
 )
 
+// HandleMpegtsStream 处理 MPEG-TS HTTP 推流客户端
 func HandleMpegtsStream(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -24,13 +24,14 @@ func HandleMpegtsStream(
 	hub *StreamHubs,
 	updateActive func(),
 ) error {
-	clientChan := NewStreamRingBuffer(2048)
+
+	// 创建客户端 ring buffer
+	clientChan := NewOptimalStreamRingBuffer("video/mp2t", r.URL)
 	hub.AddClient(clientChan)
+	defer hub.RemoveClient(clientChan)
 
-	// 检查是否需要启动播放或者恢复播放
+	// 决定是否需要启动播放
 	shouldPlay := false
-
-	// 等待获取锁以检查当前状态
 	hub.mu.Lock()
 	if hub.isClosed {
 		hub.mu.Unlock()
@@ -38,115 +39,94 @@ func HandleMpegtsStream(
 		return nil
 	}
 
-	// 判断是否需要启动播放
-	if hub.state == 0 { // stopped state
+	if hub.state == 0 || hub.state == 2 {
 		shouldPlay = true
-		hub.state = 1 // mark as playing to prevent duplicate starts
-		// 设置RTSP客户端
-		hub.rtspClient = client
-	} else if hub.state == 2 { // error state
-		shouldPlay = true
-		hub.state = 1       // mark as playing to prevent duplicate starts
-		hub.lastError = nil // clear last error
-		// 设置新的RTSP客户端
+		hub.state = 1
 		hub.rtspClient = client
 	}
 	hub.mu.Unlock()
 
-	defer func() {
-		hub.RemoveClient(clientChan)
-
-		// 检查是否是最后一个客户端
-		hub.mu.Lock()
-		clientCount := len(hub.clients)
-		currentClient := hub.rtspClient
-		hub.mu.Unlock()
-
-		if clientCount == 0 {
-			hub.SetStopped()
-			// 关闭RTSP客户端
-			if currentClient != nil && currentClient == client {
-				currentClient.Close()
-				hub.mu.Lock()
-				// 清除RTSP客户端引用
-				if hub.rtspClient == currentClient {
-					hub.rtspClient = nil
-				}
-				hub.mu.Unlock()
-			}
-			// clientChan 已在 RemoveClient 中关闭
-		}
-	}()
-
-	// 如果需要启动播放
+	// 异步启动 RTSP 播放
 	if shouldPlay {
 		go func() {
-			var packetLossCount int64 // 添加丢包计数器
+			var packetLossCount int64
 			client.OnPacketRTP(videoMedia, mpegtsFormat, func(pkt *rtp.Packet) {
-				// 检查是否有丢包
+				// 丢包统计
 				if pkt.Header.Marker {
-					// 如果有丢包记录，输出日志
 					if packetLossCount > 0 {
 						logger.LogPrintf("%d RTP packets lost", packetLossCount)
-						packetLossCount = 0 // 重置计数
+						packetLossCount = 0
 					}
 				} else {
-					// 增加丢包计数
 					packetLossCount++
 				}
 
 				hub.Broadcast(pkt.Payload)
-				// ⚡ 每次收到 RTP 包时更新活跃时间
+
 				if updateActive != nil {
 					updateActive()
 				}
-				// ⚡ 统计入流量
-				// monitor.AddAppInboundBytes(uint64(len(pkt.Payload)))
 			})
 
 			_, err := client.Play(nil)
 			if err != nil {
 				logger.LogPrintf("RTSP play error: %v", err)
-				// 不再关闭整个hub，而是设置流状态为错误
 				hub.SetError(err)
 				return
 			}
 
-			// 标记流为正在播放状态
 			hub.SetPlaying()
 		}()
 	} else {
-		// 等待流状态变为播放中
 		if !hub.WaitForPlaying(ctx) {
 			return nil
 		}
 	}
 
-	// 向客户端推送数据
-	logger.LogRequestAndResponse(r, rtspURL, &http.Response{StatusCode: http.StatusOK})
+	// 设置 HTTP 响应头
 	w.Header().Set("Content-Type", "video/mp2t")
-	flusher, _ := w.(http.Flusher)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-			pkt := clientChan.Pop()
-			if pkt == nil {
-				logger.LogPrintf("clientChan closed, ending connection")
+	if flusher, ok := w.(http.Flusher); ok {
+		for {
+			select {
+			case <-ctx.Done():
 				return nil
-			}
-			_, err := w.Write(pkt)
-			if err != nil {
-				logger.LogPrintf("Write error: %v", err)
-				return err
-			}
-			// monitor.AddAppOutboundBytes(uint64(len(pkt)))
-			if flusher != nil {
+			default:
+				pkt := clientChan.Pop()
+				if pkt == nil {
+					logger.LogPrintf("clientChan closed, ending connection")
+					return nil
+				}
+				_, err := w.Write(pkt)
+				if err != nil {
+					logger.LogPrintf("Write error: %v", err)
+					return err
+				}
 				flusher.Flush()
+				if updateActive != nil {
+					updateActive()
+				}
 			}
-			if updateActive != nil {
-				updateActive()
+		}
+	} else {
+		// 如果不支持 Flusher
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				pkt := clientChan.Pop()
+				if pkt == nil {
+					logger.LogPrintf("clientChan closed, ending connection")
+					return nil
+				}
+				_, err := w.Write(pkt)
+				if err != nil {
+					logger.LogPrintf("Write error: %v", err)
+					return err
+				}
+				if updateActive != nil {
+					updateActive()
+				}
 			}
 		}
 	}

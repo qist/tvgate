@@ -30,9 +30,9 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	logger.LogRequestAndResponse(r, targetURL, resp) // 日志记录
 	u, _ := url.Parse(targetURL)
 	contentType := resp.Header.Get("Content-Type")
-	bufSize := buffer.GetOptimalBufferSize(contentType, u.Path)
+	// bufSize := buffer.GetOptimalBufferSize(contentType, u.Path)
 
-	buf := NewStreamRingBuffer(bufSize)
+	buf := NewOptimalStreamRingBuffer(contentType, u)
 	switch resp.StatusCode {
 	case http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect:
 		handleRedirect(w, r, resp)
@@ -40,7 +40,7 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 
 	if IsSupportedContentType(resp.Header.Get("Content-Type")) {
-		handleSpecialContent(w, r, resp, buf)
+		handleSpecialContent(w, r, resp)
 		return
 	}
 
@@ -152,7 +152,10 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 
 // CopyWithContext 流式复制 src -> dst，使用 buffer 池，bufio 内部缓存可控
 func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf *StreamRingBuffer, updateActive func()) error {
-	tmp := make([]byte, buf.capacity)
+	bufSize := 32 * 1024 // 使用固定32KB缓冲区
+	tmp := buffer.GetBuffer(bufSize)
+	defer buffer.PutBuffer(bufSize, tmp) // 确保函数退出时释放缓冲区
+	
 	for {
 		select {
 		case <-ctx.Done():
@@ -160,7 +163,10 @@ func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf *Str
 		default:
 			n, readErr := src.Read(tmp)
 			if n > 0 {
-				buf.Push(tmp[:n])
+				// 创建数据副本以避免引用问题
+				data := make([]byte, n)
+				copy(data, tmp[:n])
+				buf.Push(data)
 				out := buf.Pop()
 				if out != nil {
 					written := 0
@@ -301,10 +307,11 @@ func handleRedirect(w http.ResponseWriter, r *http.Request, proxyResp *http.Resp
 }
 
 // handleSpecialContent 处理 m3u8 文件内容
-func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *http.Response, buf *StreamRingBuffer) {
-	defer proxyResp.Body.Close()
+func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *http.Response) {
+	// 注意：响应体的关闭在调用方HandleProxyResponse函数中处理
+	// 不要在这里重复关闭proxyResp.Body
 
-	bufSize := buf.capacity
+	bufSize := 32 * 1024 // 使用固定32KB缓冲区
 	reader := bufio.NewReaderSize(proxyResp.Body, bufSize)
 
 	scheme := getRequestScheme(r)

@@ -1,8 +1,9 @@
 package buffer
 
 import (
-	"github.com/qist/tvgate/config"
 	"strings"
+
+	"github.com/qist/tvgate/config"
 )
 
 func GetBuffer(size int) []byte {
