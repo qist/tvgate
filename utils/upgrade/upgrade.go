@@ -32,7 +32,7 @@ var (
 func Get() *tableflip.Upgrader {
 	Init()
 	if isWindows {
-		logger.LogPrintf("当前平台不支持 tableflip 热升级，采用普通重启")
+		// logger.LogPrintf("当前平台不支持 tableflip 热升级，采用普通重启")
 		return nil
 	}
 	return upgrader
@@ -42,7 +42,7 @@ func Get() *tableflip.Upgrader {
 func Init() {
 	once.Do(func() {
 		if isWindows {
-			logger.LogPrintf("Windows 平台不初始化 tableflip，采用普通重启")
+			// logger.LogPrintf("Windows 平台不初始化 tableflip，采用普通重启")
 			return
 		}
 		var err error
@@ -57,7 +57,7 @@ func Init() {
 func StartListener(onUpgrade func()) {
 	Init()
 	if isWindows {
-		logger.LogPrintf("Windows 平台不支持 SIGHUP 热升级监听，跳过 tableflip")
+		// logger.LogPrintf("Windows 平台不支持 SIGHUP 热升级监听，跳过 tableflip")
 		return
 	}
 	sigChan := make(chan os.Signal, 1)
@@ -95,7 +95,7 @@ func StopUpgradeListener() {
 func Ready() {
 	Init()
 	if isWindows {
-		logger.LogPrintf("Windows 平台无需 Ready() 热升级标记")
+		// logger.LogPrintf("Windows 平台无需 Ready() 热升级标记")
 		return
 	}
 	if err := upgrader.Ready(); err != nil {
@@ -106,7 +106,7 @@ func Ready() {
 // Exit 清理旧进程
 func Exit() {
 	if isWindows {
-		logger.LogPrintf("Windows 平台无需升级器 Exit()，直接退出")
+		// logger.LogPrintf("Windows 平台无需升级器 Exit()，直接退出")
 		os.Exit(0)
 		return
 	}

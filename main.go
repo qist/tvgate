@@ -54,7 +54,7 @@ func main() {
 		defer upg.Stop() // 确保退出时清理
 	} else {
 		upg = nil
-		fmt.Println("Windows 平台不支持 tableflip 热升级，采用普通重启")
+		// fmt.Println("Windows 平台不支持 tableflip 热升级，采用普通重启")
 	}
 
 	// -------------------------
