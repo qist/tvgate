@@ -12,7 +12,7 @@ import (
 // StreamHubs manages client connections for a specific stream
 type StreamHubs struct {
 	mu       sync.Mutex
-	clients  map[*streamRingBuffer]struct{}
+	clients  map[*StreamRingBuffer]struct{}
 	isClosed bool
 	// 添加流状态管理
 	state     int // 0: stopped, 1: playing, 2: error
@@ -28,14 +28,14 @@ type StreamHubs struct {
 
 func NewStreamHubs() *StreamHubs {
 	hub := &StreamHubs{
-		clients: make(map[*streamRingBuffer]struct{}),
+		clients: make(map[*StreamRingBuffer]struct{}),
 		state:   0,
 	}
 	hub.stateCond = sync.NewCond(&hub.mu)
 	return hub
 }
 
-func (hub *StreamHubs) AddClient(ch *streamRingBuffer) {
+func (hub *StreamHubs) AddClient(ch *StreamRingBuffer) {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	if hub.isClosed {
@@ -45,7 +45,7 @@ func (hub *StreamHubs) AddClient(ch *streamRingBuffer) {
 	hub.clients[ch] = struct{}{}
 }
 
-func (hub *StreamHubs) RemoveClient(ch *streamRingBuffer) {
+func (hub *StreamHubs) RemoveClient(ch *StreamRingBuffer) {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	if _, exists := hub.clients[ch]; exists {

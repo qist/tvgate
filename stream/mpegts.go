@@ -24,7 +24,7 @@ func HandleMpegtsStream(
 	hub *StreamHubs,
 	updateActive func(),
 ) error {
-	clientChan := NewStreamRingBuffer(1024)
+	clientChan := NewStreamRingBuffer(2048)
 	hub.AddClient(clientChan)
 
 	// 检查是否需要启动播放或者恢复播放

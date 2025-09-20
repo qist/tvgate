@@ -151,8 +151,8 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 }
 
 // CopyWithContext 流式复制 src -> dst，使用 buffer 池，bufio 内部缓存可控
-func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf *streamRingBuffer, updateActive func()) error {
-	tmp := make([]byte, buf.cap)
+func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf *StreamRingBuffer, updateActive func()) error {
+	tmp := make([]byte, buf.capacity)
 	for {
 		select {
 		case <-ctx.Done():
@@ -301,10 +301,10 @@ func handleRedirect(w http.ResponseWriter, r *http.Request, proxyResp *http.Resp
 }
 
 // handleSpecialContent 处理 m3u8 文件内容
-func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *http.Response, buf *streamRingBuffer) {
+func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *http.Response, buf *StreamRingBuffer) {
 	defer proxyResp.Body.Close()
 
-	bufSize := buf.cap
+	bufSize := buf.capacity
 	reader := bufio.NewReaderSize(proxyResp.Body, bufSize)
 
 	scheme := getRequestScheme(r)
