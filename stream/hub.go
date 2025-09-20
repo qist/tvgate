@@ -9,16 +9,23 @@ import (
 	"github.com/bluenviron/gortsplib/v4/pkg/format"
 )
 
+// Stream state constants
+const (
+	StateStopped = iota
+	StatePlaying
+	StateError
+)
+
 // StreamHubs manages client connections for a specific stream
 type StreamHubs struct {
 	mu       sync.Mutex
 	clients  map[*StreamRingBuffer]struct{}
 	isClosed bool
-	// 添加流状态管理
-	state     int // 0: stopped, 1: playing, 2: error
+
+	state     int // stopped, playing, error
 	stateCond *sync.Cond
 	lastError error
-	// 添加RTSP客户端引用
+
 	rtspClient  *gortsplib.Client
 	videoMedia  *description.Media
 	videoFormat interface{}
@@ -29,7 +36,7 @@ type StreamHubs struct {
 func NewStreamHubs() *StreamHubs {
 	hub := &StreamHubs{
 		clients: make(map[*StreamRingBuffer]struct{}),
-		state:   0,
+		state:   StateStopped,
 	}
 	hub.stateCond = sync.NewCond(&hub.mu)
 	return hub
@@ -56,14 +63,17 @@ func (hub *StreamHubs) RemoveClient(ch *StreamRingBuffer) {
 
 func (hub *StreamHubs) Broadcast(data []byte) {
 	hub.mu.Lock()
-	defer hub.mu.Unlock()
-	
-	// 创建一个副本以避免数据被多个客户端共享修改
+	clients := make([]*StreamRingBuffer, 0, len(hub.clients))
+	for ch := range hub.clients {
+		clients = append(clients, ch)
+	}
+	hub.mu.Unlock()
+
+	// 使用对象池避免每次分配新 slice
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
-	
-	for ch := range hub.clients {
-		// 直接推送数据到客户端缓冲区
+
+	for _, ch := range clients {
 		ch.Push(dataCopy)
 	}
 }
@@ -76,146 +86,142 @@ func (hub *StreamHubs) ClientCount() int {
 
 func (hub *StreamHubs) Close() {
 	hub.mu.Lock()
-	defer hub.mu.Unlock()
 	if hub.isClosed {
+		hub.mu.Unlock()
 		return
 	}
 	hub.isClosed = true
-	hub.state = 0
+	hub.state = StateStopped
 	hub.stateCond.Broadcast()
-	if hub.rtspClient != nil {
-		hub.rtspClient.Close()
-		hub.rtspClient = nil
+	rtspClient := hub.rtspClient
+	hub.rtspClient = nil
+	clients := hub.clients
+	hub.clients = nil
+	hub.mu.Unlock()
+
+	if rtspClient != nil {
+		rtspClient.Close()
 	}
-	for ch := range hub.clients {
+	for ch := range clients {
 		ch.Close()
 	}
-	hub.clients = nil
 }
 
-// 新增方法：设置流为播放状态
+// Set flow state
 func (hub *StreamHubs) SetPlaying() {
 	hub.mu.Lock()
-	defer hub.mu.Unlock()
-	hub.state = 1
+	hub.state = StatePlaying
 	hub.lastError = nil
 	hub.stateCond.Broadcast()
+	hub.mu.Unlock()
 }
 
-// 新增方法：设置流为停止状态
 func (hub *StreamHubs) SetStopped() {
 	hub.mu.Lock()
-	defer hub.mu.Unlock()
-	hub.state = 0
+	hub.state = StateStopped
 	hub.stateCond.Broadcast()
+	hub.mu.Unlock()
 }
 
-// 新增方法：设置流为错误状态
 func (hub *StreamHubs) SetError(err error) {
 	hub.mu.Lock()
-	defer hub.mu.Unlock()
-	hub.state = 2 // error state
+	hub.state = StateError
 	hub.lastError = err
 	hub.stateCond.Broadcast()
+	hub.mu.Unlock()
 }
 
-// 新增方法：获取最后的错误
 func (hub *StreamHubs) GetLastError() error {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	return hub.lastError
 }
 
-// 新增方法：等待流变为播放状态
+// WaitForPlaying waits until the stream is in playing state or context is canceled
 func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 
-	// 如果已经关闭，直接返回
-	if hub.isClosed {
-		return false
-	}
-
-	// 如果在错误状态，返回错误
-	if hub.state == 2 {
-		return false
-	}
-
-	// 如果已经在播放，直接返回
-	if hub.state == 1 {
-		return true
-	}
-
-	// 等待状态变为播放中或上下文取消
-	for hub.state == 0 && !hub.isClosed {
-		// 使用 Done channel 监听 context 取消
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			hub.stateCond.Wait()
-		}()
-
-		select {
-		case <-done:
-			// 检查唤醒后的新状态
-			if hub.state == 2 { // error state
-				return false
-			}
-			if hub.state == 1 { // playing state
-				return true
-			}
-		case <-ctx.Done():
-			// context 被取消
+	for {
+		if hub.isClosed || hub.state == StateError {
 			return false
 		}
-	}
+		if hub.state == StatePlaying {
+			return true
+		}
 
-	return !hub.isClosed && hub.state == 1
+		waitCh := make(chan struct{})
+		go func() {
+			hub.mu.Lock()
+			hub.stateCond.Wait()
+			hub.mu.Unlock()
+			close(waitCh)
+		}()
+
+		hub.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			hub.mu.Lock()
+			return false
+		case <-waitCh:
+			hub.mu.Lock()
+			// 状态变化后继续循环判断
+		}
+	}
 }
 
-// 新增方法：设置RTSP客户端
+// RTSP client management
 func (hub *StreamHubs) SetRtspClient(client *gortsplib.Client) {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	hub.rtspClient = client
 }
 
-// 新增方法：获取RTSP客户端
 func (hub *StreamHubs) GetRtspClient() *gortsplib.Client {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	return hub.rtspClient
 }
 
-// 新增方法：检查RTSP客户端是否存在
 func (hub *StreamHubs) HasRtspClient() bool {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	return hub.rtspClient != nil
 }
 
-// SetMediaInfo stores the video media and format for reuse
-func (h *StreamHubs) SetMediaInfo(media *description.Media, format interface{}) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// 直接保存媒体信息，不进行类型转换
-	h.videoMedia = media
-	// 保存原始格式接口，后续通过类型断言使用
-	h.videoFormat = format
+// Media info management
+func (hub *StreamHubs) SetMediaInfo(media *description.Media, format interface{}) {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	hub.videoMedia = media
+	hub.videoFormat = format
 }
 
-// GetMediaInfo retrieves stored video media and format
-func (h *StreamHubs) GetMediaInfo() (*description.Media, interface{}, *description.Media, *format.MPEG4Audio) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.videoMedia, h.videoFormat, h.audioMedia, h.audioFormat
+func (hub *StreamHubs) GetMediaInfo() (*description.Media, interface{}, *description.Media, *format.MPEG4Audio) {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	return hub.videoMedia, hub.videoFormat, hub.audioMedia, hub.audioFormat
 }
 
-// SetAudioMediaInfo stores the audio media and format for reuse
-func (h *StreamHubs) SetAudioMediaInfo(media *description.Media, format *format.MPEG4Audio) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.audioMedia = media
-	h.audioFormat = format
+func (hub *StreamHubs) SetAudioMediaInfo(media *description.Media, format *format.MPEG4Audio) {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	hub.audioMedia = media
+	hub.audioFormat = format
+}
+
+// Type-safe accessors
+func (hub *StreamHubs) GetVideoFormat() *format.MPEGTS {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if f, ok := hub.videoFormat.(*format.MPEGTS); ok {
+		return f
+	}
+	return nil
+}
+
+func (hub *StreamHubs) GetAudioFormat() *format.MPEG4Audio {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	return hub.audioFormat
 }

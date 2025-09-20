@@ -111,8 +111,8 @@ func HandleH264AacStream(
 		hub.lastError = nil
 	}
 	hub.mu.Unlock()
-
 	defer hub.RemoveClient(clientChan)
+
 
 	if shouldPlay {
 		go func() {

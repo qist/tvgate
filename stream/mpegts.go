@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"net/http"
+	// "time"
 
 	"github.com/bluenviron/gortsplib/v4"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
@@ -12,7 +13,7 @@ import (
 	"github.com/qist/tvgate/logger"
 )
 
-// HandleMpegtsStream 处理 MPEG-TS HTTP 推流客户端
+// HandleMpegtsStream 高并发优化版
 func HandleMpegtsStream(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -25,12 +26,12 @@ func HandleMpegtsStream(
 	updateActive func(),
 ) error {
 
-	// 创建客户端 ring buffer
+	// 创建客户端 ring buffer，支持自动扩容
 	clientChan := NewOptimalStreamRingBuffer("video/mp2t", r.URL)
 	hub.AddClient(clientChan)
 	defer hub.RemoveClient(clientChan)
 
-	// 决定是否需要启动播放
+	// 决定是否启动 RTSP 播放
 	shouldPlay := false
 	hub.mu.Lock()
 	if hub.isClosed {
@@ -38,10 +39,9 @@ func HandleMpegtsStream(
 		clientChan.Close()
 		return nil
 	}
-
-	if hub.state == 0 || hub.state == 2 {
+	if hub.state == StateStopped || hub.state == StateError {
 		shouldPlay = true
-		hub.state = 1
+		hub.state = StatePlaying
 		hub.rtspClient = client
 	}
 	hub.mu.Unlock()
@@ -61,6 +61,7 @@ func HandleMpegtsStream(
 					packetLossCount++
 				}
 
+				// 批量广播，Hub 内部对象池复用 byte slice
 				hub.Broadcast(pkt.Payload)
 
 				if updateActive != nil {
@@ -78,6 +79,7 @@ func HandleMpegtsStream(
 			hub.SetPlaying()
 		}()
 	} else {
+		// 等待 hub 播放状态
 		if !hub.WaitForPlaying(ctx) {
 			return nil
 		}
@@ -85,48 +87,36 @@ func HandleMpegtsStream(
 
 	// 设置 HTTP 响应头
 	w.Header().Set("Content-Type", "video/mp2t")
-	if flusher, ok := w.(http.Flusher); ok {
-		for {
-			select {
-			case <-ctx.Done():
+	flusher, hasFlusher := w.(http.Flusher)
+
+	// 推流循环，支持高并发客户端
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+			// 获取数据
+			pkt := clientChan.Pop()
+			if pkt == nil {
+				logger.LogPrintf("clientChan closed, ending connection")
 				return nil
-			default:
-				pkt := clientChan.Pop()
-				if pkt == nil {
-					logger.LogPrintf("clientChan closed, ending connection")
-					return nil
-				}
-				_, err := w.Write(pkt)
-				if err != nil {
-					logger.LogPrintf("Write error: %v", err)
-					return err
-				}
-				flusher.Flush()
-				if updateActive != nil {
-					updateActive()
-				}
 			}
-		}
-	} else {
-		// 如果不支持 Flusher
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-				pkt := clientChan.Pop()
-				if pkt == nil {
-					logger.LogPrintf("clientChan closed, ending connection")
-					return nil
-				}
-				_, err := w.Write(pkt)
-				if err != nil {
-					logger.LogPrintf("Write error: %v", err)
-					return err
-				}
-				if updateActive != nil {
-					updateActive()
-				}
+
+			// 写入 HTTP 响应
+			_, err := w.Write(pkt)
+			if err != nil {
+				logger.LogPrintf("Write error: %v", err)
+				return err
+			}
+
+			// 如果支持 Flusher，立即 flush
+			if hasFlusher {
+				flusher.Flush()
+			}
+
+			// 更新客户端活跃状态
+			if updateActive != nil {
+				updateActive()
 			}
 		}
 	}

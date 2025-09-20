@@ -138,42 +138,46 @@ func (rb *StreamRingBuffer) IsClosed() bool {
 func NewOptimalStreamRingBuffer(contentType string, u *url.URL) *StreamRingBuffer {
 	chunkSize := buffer.GetOptimalBufferSize(contentType, u.Path)
 
-	// 默认缓存秒数
-	cacheSeconds := 3
-	if strings.Contains(contentType, "video/mp2t") {
-		cacheSeconds = 5
-	} else if strings.Contains(contentType, "audio/") || strings.Contains(contentType, "mpegurl") {
-		cacheSeconds = 4
+	// 默认缓存倍数
+	multiplier := 16
+	switch {
+	case strings.Contains(contentType, "video/mp2t"):
+		multiplier = 32 // TS 流多缓存一点
+	case chunkSize >= 512*1024: // 高码率视频
+		multiplier = 32
+	case chunkSize <= 64*1024: // 小文件/音频
+		multiplier = 8
 	}
 
-	// 每秒 chunk 数估算
-	chunksPerSecond := 10
+	// 内存上限
+	var maxBytes int64 = 256 * 1024 * 1024 // 256MB
 	if strings.Contains(contentType, "video/mp2t") {
-		chunksPerSecond = 50
-	} else if strings.Contains(contentType, "audio/") || strings.Contains(contentType, "mpegurl") {
-		chunksPerSecond = 20
+		maxBytes = 512 * 1024 * 1024 // TS 特殊放大到 512MB
 	}
 
-	// 目标容量
-	ringCapacity := chunksPerSecond * cacheSeconds
-
-	// 最大内存限制
-	var maxBytes int64 = 256 * 1024 * 1024
-	if strings.Contains(contentType, "video/mp2t") {
-		maxBytes = 512 * 1024 * 1024
-	}
-
-	// 容量上限
+	// 最大块数限制，避免 chunk 太小时爆炸
 	const maxChunks = 4096
+
+	// ---- 计算容量 ----
+	// 基础容量
+	ringCapacity := multiplier
+
+	// 期望容量 = (maxBytes / chunkSize) * multiplier
+	if chunkSize > 0 {
+		expected := (int(maxBytes) / chunkSize) * multiplier
+		if expected > ringCapacity {
+			ringCapacity = expected
+		}
+	}
+
+	// 限制最大块数
 	if ringCapacity > maxChunks {
 		ringCapacity = maxChunks
 	}
-	if ringCapacity < 1 {
-		ringCapacity = 1
-	}
 
-	logger.LogPrintf("[RingBuffer] contentType=%s chunk=%dB cap=%d maxBytes=%.2fMB (cache ~%ds)",
-		contentType, chunkSize, ringCapacity, float64(maxBytes)/(1024*1024), cacheSeconds)
+	// 日志打印
+	logger.LogPrintf("[RingBuffer] contentType=%s chunk=%dB cap=%d maxBytes=%.2fMB",
+		contentType, chunkSize, ringCapacity, float64(maxBytes)/(1024*1024))
 
 	return NewStreamRingBuffer(ringCapacity, maxBytes)
 }
