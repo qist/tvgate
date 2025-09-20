@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+
 	// "fmt"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -104,8 +105,8 @@ type TrafficStats struct {
 	CPUCount        int
 	MemoryUsage     uint64
 	MemoryTotal     uint64
-	SwapUsage       uint64  // SWAP使用量
-	SwapTotal       uint64  // SWAP总量
+	SwapUsage       uint64 // SWAP使用量
+	SwapTotal       uint64 // SWAP总量
 	DiskUsage       uint64
 	DiskTotal       uint64
 	DiskUsedPercent float64
@@ -136,7 +137,6 @@ var GlobalTrafficStats = &TrafficStats{
 }
 
 // -------------------- 深拷贝方法 --------------------
-
 
 // GetTrafficStats 获取流量统计信息的深拷贝
 func (ts *TrafficStats) GetTrafficStats() *TrafficStats {
@@ -205,6 +205,17 @@ var (
 	cpuUsageCache      float64
 	cpuCountCache      int
 	lastCPUCountUpdate time.Time
+
+	lastDiskScan    time.Time
+	diskPartitions  []DiskPartitionInfo
+	diskUsage       uint64
+	diskTotal       uint64
+	diskUsedPercent float64
+
+	lastNetSample     time.Time
+	networkInterfaces []NetworkInterfaceInfo
+	totalIn           uint64
+	totalOut          uint64
 )
 
 // 获取CPU温度（如果支持）
@@ -282,7 +293,7 @@ func updateSystemStats() {
 	var cpuUsage float64
 	if now.Sub(lastCPUSample) > 5*time.Second {
 		// 使用更短的采样时间(300ms)降低开销
-		cpuPercent, _ := cpu.Percent(300*time.Millisecond, false)
+		cpuPercent, _ := cpu.Percent(500*time.Millisecond, false)
 		if len(cpuPercent) > 0 {
 			rawUsage := cpuPercent[0]
 			// 简化计算逻辑
@@ -314,20 +325,14 @@ func updateSystemStats() {
 	}
 
 	// 磁盘 - 使用缓存减少频繁扫描
-	var (
-		lastDiskScan    = time.Now().Add(-time.Hour) // 初始化为一小时前
-		diskPartitions  []DiskPartitionInfo
-		diskUsage       uint64
-		diskTotal       uint64
-		diskUsedPercent float64
-	)
-
+	if lastDiskScan.IsZero() {
+		lastDiskScan = now.Add(-time.Hour)
+	}
 	if now.Sub(lastDiskScan) > 30*time.Second {
 		parts, _ := disk.Partitions(true)
 		tempPartitions := make([]DiskPartitionInfo, 0)
 		var tempUsage, tempTotal uint64
 		var tempUsedPercent float64
-
 		for _, part := range parts {
 			if runtime.GOOS != "windows" {
 				if strings.HasPrefix(part.Mountpoint, "/proc") ||
@@ -394,21 +399,16 @@ func updateSystemStats() {
 	}
 
 	// 网络流量 - 使用缓存减少频繁采样
-	var (
-		lastNetSample     = time.Now().Add(-time.Hour) // 初始化为一小时前
-		networkInterfaces []NetworkInterfaceInfo
-		totalIn, totalOut uint64
-	)
-
+	if lastNetSample.IsZero() {
+		lastNetSample = now.Add(-time.Hour)
+	}
 	if now.Sub(lastNetSample) > 1*time.Second {
 		counters, _ := net.IOCounters(true)
 		tempInterfaces := make([]NetworkInterfaceInfo, 0, len(counters))
 		var tempIn, tempOut uint64
-
 		for _, c := range counters {
 			tempIn += c.BytesRecv
 			tempOut += c.BytesSent
-
 			info := NetworkInterfaceInfo{
 				Name:        c.Name,
 				BytesRecv:   c.BytesRecv,
@@ -425,12 +425,10 @@ func updateSystemStats() {
 			}
 			tempInterfaces = append(tempInterfaces, info)
 		}
-
 		networkInterfaces = tempInterfaces
 		totalIn = tempIn
 		totalOut = tempOut
 		lastNetSample = now
-
 		// 带宽计算
 		GlobalTrafficStats.mu.Lock()
 		oldTotalIn := GlobalTrafficStats.InboundBytes
@@ -440,7 +438,6 @@ func updateSystemStats() {
 			GlobalTrafficStats.InboundBandwidth = uint64(float64(totalIn-oldTotalIn) / timeDiff)
 			GlobalTrafficStats.OutboundBandwidth = uint64(float64(totalOut-oldTotalOut) / timeDiff)
 		}
-
 		prevCounters := make(map[string]net.IOCountersStat)
 		for _, c := range counters {
 			prevCounters[c.Name] = c
@@ -486,10 +483,12 @@ func updateAppStats(ts *TrafficStats) {
 	cpuUsage := ts.App.CPUPercent
 	cpuTimes, err := p.Times()
 	if err == nil {
+		// 推荐用 User+System 字段代替 Total()
+		currentCPUTime := cpuTimes.User + cpuTimes.System
 		if !ts.App.LastUpdate.IsZero() && ts.App.PrevCPUTime > 0 {
 			duration := now.Sub(ts.App.LastUpdate).Seconds()
 			if duration > 0 {
-				usage := (cpuTimes.Total() - ts.App.PrevCPUTime) / duration * 100
+				usage := (currentCPUTime - ts.App.PrevCPUTime) / duration * 100
 				if usage < 0 {
 					usage = 0
 				}
@@ -499,7 +498,7 @@ func updateAppStats(ts *TrafficStats) {
 				cpuUsage = usage
 			}
 		}
-		ts.App.PrevCPUTime = cpuTimes.Total()
+		ts.App.PrevCPUTime = currentCPUTime
 	}
 
 	// ---------------- 内存 ----------------
@@ -540,8 +539,8 @@ func updateAppStats(ts *TrafficStats) {
 	// ts.App.OutboundBandwidth = outBW
 	ts.App.LastUpdate = now
 	// ts.App.PrevIOCounters = &process.IOCountersStat{
-		// ReadBytes:  inBytes,
-		// WriteBytes: outBytes,
+	// ReadBytes:  inBytes,
+	// WriteBytes: outBytes,
 	// }
 
 	// ---------------- 累加总流量 ----------------

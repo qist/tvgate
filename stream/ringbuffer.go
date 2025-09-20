@@ -140,9 +140,9 @@ func NewOptimalStreamRingBuffer(contentType string, u *url.URL) *StreamRingBuffe
 	var maxBytes int64
 
 	switch {
-	case strings.Contains(contentType, "video/mp2t"):
+	case strings.Contains(contentType, "video/"):
 		// TS 视频，缓存大一点
-		ringCapacity = 512       // 最大 512 个 chunk
+		ringCapacity = 4096       // 最大 4096 个 chunk
 		maxBytes = 512 * 1024 * 1024
 	case strings.Contains(contentType, "audio/"):
 		// 音频，缓存少一点

@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-
+	"io"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
+
 	"golang.org/x/net/proxy"
 )
 
@@ -22,22 +24,20 @@ func (d *DialContextWrapper) Dial(network, addr string) (net.Conn, error) {
 }
 
 func (d *DialContextWrapper) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	type dialResult struct {
-		conn net.Conn
-		err  error
-	}
-	resultChan := make(chan dialResult, 1)
+	done := make(chan struct{})
+	var conn net.Conn
+	var err error
 
 	go func() {
-		conn, err := d.Base.Dial(network, addr)
-		resultChan <- dialResult{conn, err}
+		conn, err = d.Base.Dial(network, addr)
+		close(done)
 	}()
 
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case res := <-resultChan:
-		return res.conn, res.err
+	case <-done:
+		return conn, err
 	}
 }
 
@@ -94,8 +94,49 @@ func (d *HttpProxyDialer) Dial(network, addr string) (net.Conn, error) {
 
 type SocksDialerWrapper struct {
 	DialFn func(network, addr string) (net.Conn, error)
+	pool   map[string][]net.Conn // 按 addr 维护连接池
+	mu     sync.Mutex
 }
 
 func (w *SocksDialerWrapper) Dial(network, addr string) (net.Conn, error) {
-	return w.DialFn(network, addr)
+	w.mu.Lock()
+	conns := w.pool[addr]
+	var conn net.Conn
+	if len(conns) > 0 {
+		conn = conns[len(conns)-1]
+		w.pool[addr] = conns[:len(conns)-1]
+		w.mu.Unlock()
+		// 检查连接是否可用
+		one := []byte{}
+		conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+		if _, err := conn.Read(one); err == nil || err == io.EOF {
+			// 连接已关闭或异常，丢弃
+			conn.Close()
+			conn = nil
+		}
+		conn.SetReadDeadline(time.Time{})
+	} else {
+		w.mu.Unlock()
+	}
+	if conn != nil {
+		return conn, nil
+	}
+	// 新建连接
+	c, err := w.DialFn(network, addr)
+	return c, err
+}
+
+// 归还连接到池
+func (w *SocksDialerWrapper) PutConn(addr string, conn net.Conn) {
+	w.mu.Lock()
+	w.pool[addr] = append(w.pool[addr], conn)
+	w.mu.Unlock()
+}
+
+// 初始化池
+func NewSocksDialerWrapper(fn func(network, addr string) (net.Conn, error)) *SocksDialerWrapper {
+	return &SocksDialerWrapper{
+		DialFn: fn,
+		pool:   make(map[string][]net.Conn),
+	}
 }

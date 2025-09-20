@@ -760,7 +760,8 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	defer resp.Body.Close()
+	// 注意：响应体的关闭在doWithRedirect函数或HandleProxyResponse函数中处理
+	// 不要在这里重复关闭resp.Body
 
 	// ---------- 返回响应 ----------
 	for k, vv := range resp.Header {
