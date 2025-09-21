@@ -15,7 +15,7 @@ import (
 
 	"github.com/cloudflare/tableflip"
 	"github.com/qist/tvgate/auth"
-	// "github.com/qist/tvgate/clear"
+	"github.com/qist/tvgate/clear"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/watch"
@@ -100,32 +100,35 @@ func main() {
 	} else {
 		auth.GlobalTokenManager = nil
 	}
-	// tm := &auth.TokenManager{
-	// 	Enabled:       true,
-	// 	StaticTokens:  make(map[string]*auth.SessionInfo),
-	// 	DynamicTokens: make(map[string]*auth.SessionInfo),
-	// }
-	// go func() {
-	// 	ticker := time.NewTicker(time.Minute)
-	// 	defer ticker.Stop()
-	// 	for range ticker.C {
-	// 		tm.CleanupExpiredSessions()
-	// 	}
-	// }()
+	tm := &auth.TokenManager{
+		Enabled:       true,
+		StaticTokens:  make(map[string]*auth.SessionInfo),
+		DynamicTokens: make(map[string]*auth.SessionInfo),
+	}
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			tm.CleanupExpiredSessions()
+		}
+	}()
 
 	// -------------------------
 	// 启动监控 & 清理任务
 	// -------------------------
-	// go monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second)
-	go monitor.StartSystemStatsUpdater(10 * time.Second)
+	stopActiveClients := make(chan struct{})
+	stopStartSystemStatsUpdater := make(chan struct{})
 
 	stopCleaner := make(chan struct{})
 	stopAccessCleaner := make(chan struct{})
 	stopProxyStats := make(chan struct{})
 
-	// go clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
-	// go clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
-	// go clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopProxyStats)
+	go monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second, stopActiveClients)
+	go monitor.StartSystemStatsUpdater(10*time.Second, stopStartSystemStatsUpdater)
+
+	go clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
+	go clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
+	go clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopProxyStats)
 
 	// -------------------------
 	// 日志
@@ -215,7 +218,7 @@ func main() {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 		fmt.Println("收到退出信号，开始优雅退出")
-		gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats)
+		gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater)
 		if !isWindows && upg != nil {
 			upg.Exit() // tableflip 清理旧进程
 		} else {
@@ -233,10 +236,10 @@ func main() {
 	}
 
 	<-config.ServerCtx.Done()
-	gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats)
+	gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater)
 }
 
-func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats chan struct{}) {
+func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater chan struct{}) {
 	shutdownOnce.Do(func() {
 		shutdownMux.Lock()
 		defer shutdownMux.Unlock()
@@ -248,6 +251,8 @@ func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats chan struct
 		close(stopCleaner)
 		close(stopAccessCleaner)
 		close(stopProxyStats)
+		close(stopActiveClients)
+		close(stopStartSystemStatsUpdater)
 
 		fmt.Println("优雅退出完成")
 	})
