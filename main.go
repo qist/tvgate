@@ -136,12 +136,15 @@ func main() {
 		}
 	}
 	
-	// 执行任务
-	go cleanupTask.f()
-	
-	// 清空任务并放回池中
-	cleanupTask.f = nil
-	taskPool.Put(cleanupTask)
+	// 在goroutine内部执行任务并确保完成后放回池中
+	go func() {
+		defer func() {
+			// 清空任务并放回池中
+			cleanupTask.f = nil
+			taskPool.Put(cleanupTask)
+		}()
+		cleanupTask.f()
+	}()
 
 	// -------------------------
 	// 启动监控 & 清理任务
@@ -159,12 +162,15 @@ func main() {
 		monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second, stopActiveClients)
 	}
 	
-	// 执行任务
-	go monitorTask.f()
-	
-	// 清空任务并放回池中
-	monitorTask.f = nil
-	taskPool.Put(monitorTask)
+	// 在goroutine内部执行任务并确保完成后放回池中
+	go func() {
+		defer func() {
+			// 清空任务并放回池中
+			monitorTask.f = nil
+			taskPool.Put(monitorTask)
+		}()
+		monitorTask.f()
+	}()
 
 	// 从池中获取任务对象
 	statsTask := taskPool.Get().(*mainTask)
@@ -172,12 +178,15 @@ func main() {
 		monitor.StartSystemStatsUpdater(30*time.Second, stopStartSystemStatsUpdater)
 	}
 	
-	// 执行任务
-	go statsTask.f()
-	
-	// 清空任务并放回池中
-	statsTask.f = nil
-	taskPool.Put(statsTask)
+	// 在goroutine内部执行任务并确保完成后放回池中
+	go func() {
+		defer func() {
+			// 清空任务并放回池中
+			statsTask.f = nil
+			taskPool.Put(statsTask)
+		}()
+		statsTask.f()
+	}()
 
 	// 从池中获取任务对象
 	clearTask1 := taskPool.Get().(*mainTask)
@@ -185,12 +194,15 @@ func main() {
 		clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
 	}
 	
-	// 执行任务
-	go clearTask1.f()
-	
-	// 清空任务并放回池中
-	clearTask1.f = nil
-	taskPool.Put(clearTask1)
+	// 在goroutine内部执行任务并确保完成后放回池中
+	go func() {
+		defer func() {
+			// 清空任务并放回池中
+			clearTask1.f = nil
+			taskPool.Put(clearTask1)
+		}()
+		clearTask1.f()
+	}()
 
 	// 从池中获取任务对象
 	clearTask2 := taskPool.Get().(*mainTask)
@@ -198,12 +210,15 @@ func main() {
 		clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
 	}
 	
-	// 执行任务
-	go clearTask2.f()
-	
-	// 清空任务并放回池中
-	clearTask2.f = nil
-	taskPool.Put(clearTask2)
+	// 在goroutine内部执行任务并确保完成后放回池中
+	go func() {
+		defer func() {
+			// 清空任务并放回池中
+			clearTask2.f = nil
+			taskPool.Put(clearTask2)
+		}()
+		clearTask2.f()
+	}()
 
 	// 从池中获取任务对象
 	clearTask3 := taskPool.Get().(*mainTask)
@@ -211,12 +226,15 @@ func main() {
 		clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopProxyStats)
 	}
 	
-	// 执行任务
-	go clearTask3.f()
-	
-	// 清空任务并放回池中
-	clearTask3.f = nil
-	taskPool.Put(clearTask3)
+	// 在goroutine内部执行任务并确保完成后放回池中
+	go func() {
+		defer func() {
+			// 清空任务并放回池中
+			clearTask3.f = nil
+			taskPool.Put(clearTask3)
+		}()
+		clearTask3.f()
+	}()
 
 	// -------------------------
 	// 日志

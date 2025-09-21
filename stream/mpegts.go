@@ -114,9 +114,9 @@ func HandleMpegtsStream(
 
 				hub.Broadcast(pkt.Payload)
 				// ⚡ 每次收到 RTP 包时更新活跃时间
-				if updateActive != nil {
-					updateActive()
-				}
+				// if updateActive != nil {
+				// 	updateActive()
+				// }
 				// ⚡ 统计入流量
 				// monitor.AddAppInboundBytes(uint64(len(pkt.Payload)))
 			})
@@ -132,13 +132,16 @@ func HandleMpegtsStream(
 			// 标记流为正在播放状态
 			hub.SetPlaying()
 		}
-		
-		// 执行任务
-		go task.f()
-		
-		// 清空任务并放回池中
-		task.f = nil
-		mpegtsTaskPool.Put(task)
+
+		// 在goroutine内部执行任务并确保完成后放回池中
+		go func() {
+			defer func() {
+				// 清空任务并放回池中
+				task.f = nil
+				mpegtsTaskPool.Put(task)
+			}()
+			task.f()
+		}()
 	} else {
 		// 等待流状态变为播放中
 		if !hub.WaitForPlaying(ctx) {

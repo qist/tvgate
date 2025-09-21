@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 // 定义任务结构体用于sync.Pool
@@ -70,12 +71,15 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 		}
 	}
 	
-	// 执行任务
-	go task.f()
-	
-	// 清空任务并放回池中
-	task.f = nil
-	handleTaskPool.Put(task)
+	// 在goroutine内部执行任务并确保完成后放回池中
+	go func() {
+		defer func() {
+			// 清空任务并放回池中
+			task.f = nil
+			handleTaskPool.Put(task)
+		}()
+		task.f()
+	}()
 
 	select {
 	case <-ctx.Done():
@@ -173,10 +177,28 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 
 // CopyWithContext 流式复制 src -> dst，使用 buffer 池，bufio 内部缓存可控
 func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, updateActive func()) error {
+	// 使用ticker控制活跃时间更新频率，避免频繁调用
+	var activeTicker *time.Ticker
+	var activeChan <-chan time.Time
+	if updateActive != nil {
+		activeTicker = time.NewTicker(5 * time.Second) // 每5秒更新一次活跃时间
+		defer activeTicker.Stop()
+		activeChan = activeTicker.C
+		defer updateActive() // 确保最后更新一次
+	}
+	
+	// 判断是否支持Flush
+	flusher, canFlush := dst.(http.Flusher)
+	
+	// 统计写入字节数，定期flush
+	bytesWritten := 0
+	
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-activeChan:
+			updateActive()
 		default:
 			n, readErr := src.Read(buf)
 			if n > 0 {
@@ -189,18 +211,21 @@ func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []by
 						return fmt.Errorf("写入错误: %w", writeErr)
 					}
 					written += wn
+					bytesWritten += wn
 				}
 				// monitor.AddAppOutboundBytes(uint64(n))
-				// 强制刷新（流式传输时推荐）
-				if f, ok := dst.(http.Flusher); ok {
-					f.Flush()
-				}
-				// 成功写入后更新活跃时间
-				if updateActive != nil {
-					updateActive()
+				
+				// 每写入一定数据量后才flush，避免频繁flush
+				if canFlush && bytesWritten >= 32*1024 { // 每32KB flush一次
+					flusher.Flush()
+					bytesWritten = 0
 				}
 			}
 			if readErr != nil {
+				// 最后flush一次确保数据发送完毕
+				if canFlush && bytesWritten > 0 {
+					flusher.Flush()
+				}
 				if errors.Is(readErr, io.EOF) {
 					return nil
 				}

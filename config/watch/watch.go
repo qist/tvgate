@@ -114,12 +114,15 @@ func WatchConfigFile(configPath string) {
 				}
 			}
 			
-			// 执行任务
-			task.f()
-			
-			// 清空任务并放回池中
-			task.f = nil
-			taskPool.Put(task)
+			// 在goroutine内部执行任务并确保完成后放回池中
+			go func() {
+				defer func() {
+					// 清空任务并放回池中
+					task.f = nil
+					taskPool.Put(task)
+				}()
+				task.f()
+			}()
 		}
 	}()
 

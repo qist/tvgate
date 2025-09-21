@@ -232,14 +232,22 @@ func HandleH264AacStream(
 					}
 				}
 			}
-			
-			// 执行任务
-			go task.f()
-			
-			// 清空任务并放回池中
-			task.f = nil
-			taskPool.Put(task)
 
+			// 执行任务
+			// go task.f()
+
+			// 清空任务并放回池中
+			// task.f = nil
+			// taskPool.Put(task)
+			// 在goroutine内部执行任务并确保完成后放回池中
+			go func() {
+				defer func() {
+					// 清空任务并放回池中
+					task.f = nil
+					taskPool.Put(task)
+				}()
+				task.f()
+			}()
 			var videoPTS int64
 			var audioPTS float64
 			var audioInit bool
@@ -295,9 +303,9 @@ func HandleH264AacStream(
 					},
 				})
 				// 更新活跃时间
-				if updateActive != nil {
-					updateActive()
-				}
+				// if updateActive != nil {
+				// 	updateActive()
+				// }
 			})
 
 			// 从池中获取任务对象
@@ -313,14 +321,21 @@ func HandleH264AacStream(
 					}
 				}
 			}
-			
-			// 执行任务
-			go videoTask.f()
-			
-			// 清空任务并放回池中
-			videoTask.f = nil
-			taskPool.Put(videoTask)
 
+			// // 执行任务
+			// go videoTask.f()
+
+			// // 清空任务并放回池中
+			// videoTask.f = nil
+			// taskPool.Put(videoTask)
+			go func() {
+				defer func() {
+					// 清空任务并放回池中
+					videoTask.f = nil
+					taskPool.Put(videoTask)
+				}()
+				videoTask.f()
+			}()
 			// 音频
 			if audioFormat != nil {
 				aDecoder, _ := audioFormat.CreateDecoder()
@@ -372,9 +387,9 @@ func HandleH264AacStream(
 						}
 					}
 					// 更新活跃时间
-					if updateActive != nil {
-						updateActive()
-					}
+					// if updateActive != nil {
+					// 	updateActive()
+					// }
 				})
 
 			}
@@ -396,9 +411,9 @@ func HandleH264AacStream(
 				// ⚡ 出流量统计
 				// monitor.AddAppOutboundBytes(uint64(len(pkt)))
 				// 更新活跃时间
-				if updateActive != nil {
-					updateActive()
-				}
+				// if updateActive != nil {
+				// 	updateActive()
+				// }
 			}
 		}()
 	} else {
