@@ -14,12 +14,22 @@ func GetOrCreateHubs(streamURL string) *StreamHubs {
 	hubMu.Lock()
 	defer hubMu.Unlock()
 
-	// 如果 hub 已存在，直接返回
+	// 如果 hub 已存在，检查是否可用
 	if hub, exists := hubManager[streamURL]; exists {
-		return hub
+		// 检查hub是否已经关闭
+		hub.mu.Lock()
+		isClosed := hub.isClosed
+		hub.mu.Unlock()
+		
+		// 如果已关闭，移除旧的hub并创建新的
+		if isClosed {
+			delete(hubManager, streamURL)
+		} else {
+			return hub
+		}
 	}
 
-	// 否则创建一个新的 hub
+	// 创建一个新的 hub
 	hub := NewStreamHubs()
 	hubManager[streamURL] = hub
 	return hub
