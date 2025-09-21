@@ -9,6 +9,20 @@ import (
 	"github.com/bluenviron/gortsplib/v4/pkg/format"
 )
 
+// 定义waitDone结构体用于sync.Pool
+type waitDone struct {
+	done chan struct{}
+}
+
+// 创建sync.Pool用于复用waitDone对象
+var waitDonePool = sync.Pool{
+	New: func() interface{} {
+		return &waitDone{
+			done: make(chan struct{}),
+		}
+	},
+}
+
 // StreamHubs manages client connections for a specific stream
 type StreamHubs struct {
 	mu       sync.Mutex
@@ -155,14 +169,20 @@ func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 	// 等待状态变为播放中或上下文取消
 	for hub.state == 0 && !hub.isClosed {
 		// 使用 Done channel 监听 context 取消
-		done := make(chan struct{})
+		// 从池中获取waitDone对象
+		wd := waitDonePool.Get().(*waitDone)
+		
 		go func() {
-			defer close(done)
+			defer func() {
+				// 关闭通道并放回池中
+				close(wd.done)
+				waitDonePool.Put(wd)
+			}()
 			hub.stateCond.Wait()
 		}()
 		
 		select {
-		case <-done:
+		case <-wd.done:
 			// 检查唤醒后的新状态
 			if hub.state == 2 { // error state
 				return false
@@ -172,6 +192,13 @@ func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 			}
 		case <-ctx.Done():
 			// context 被取消
+			// 确保通道被关闭并放回池中
+			select {
+			case <-wd.done:
+			default:
+				close(wd.done)
+			}
+			waitDonePool.Put(wd)
 			return false
 		}
 	}

@@ -4,13 +4,26 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"golang.org/x/net/proxy"
 )
+
+// 定义dialResult结构体用于sync.Pool
+type dialResult struct {
+	conn net.Conn
+	err  error
+}
+
+// 创建sync.Pool用于复用dialResult对象
+var dialResultPool = sync.Pool{
+	New: func() interface{} {
+		return &dialResult{}
+	},
+}
 
 type DialContextWrapper struct {
 	Base proxy.Dialer
@@ -22,22 +35,31 @@ func (d *DialContextWrapper) Dial(network, addr string) (net.Conn, error) {
 }
 
 func (d *DialContextWrapper) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	type dialResult struct {
-		conn net.Conn
-		err  error
-	}
-	resultChan := make(chan dialResult, 1)
+	// 从池中获取dialResult对象
+	res := dialResultPool.Get().(*dialResult)
+	resultChan := make(chan *dialResult, 1)
 
 	go func() {
-		conn, err := d.Base.Dial(network, addr)
-		resultChan <- dialResult{conn, err}
+		res.conn, res.err = d.Base.Dial(network, addr)
+		resultChan <- res
 	}()
 
 	select {
 	case <-ctx.Done():
+		// context取消时，将对象放回池中
+		res.conn = nil
+		res.err = ctx.Err()
+		dialResultPool.Put(res)
 		return nil, ctx.Err()
 	case res := <-resultChan:
-		return res.conn, res.err
+		// 正常返回结果，将连接和错误返回
+		conn := res.conn
+		err := res.err
+		// 将对象放回池中
+		res.conn = nil
+		res.err = nil
+		dialResultPool.Put(res)
+		return conn, err
 	}
 }
 

@@ -31,6 +31,18 @@ import (
 	_ "net/http/pprof"
 )
 
+// 定义任务结构体用于sync.Pool
+type mainTask struct {
+	f func()
+}
+
+// 创建sync.Pool用于复用任务对象
+var taskPool = sync.Pool{
+	New: func() interface{} {
+		return &mainTask{}
+	},
+}
+
 var shutdownMux sync.Mutex
 var shutdownOnce sync.Once
 
@@ -38,10 +50,19 @@ func main() {
 	flag.Parse()
 
 	// 启动 pprof 性能分析接口（默认 6060 端口）
-	go func() {
+	// 从池中获取任务对象
+	task := taskPool.Get().(*mainTask)
+	task.f = func() {
 		log.Println("pprof 性能分析接口已启动: http://0.0.0.0:6060/debug/pprof/ 可远程访问")
 		http.ListenAndServe("0.0.0.0:6060", nil)
-	}()
+	}
+	
+	// 执行任务
+	go task.f()
+	
+	// 清空任务并放回池中
+	task.f = nil
+	taskPool.Put(task)
 	if *config.VersionFlag {
 		fmt.Println("程序版本:", config.Version)
 		return
@@ -105,13 +126,22 @@ func main() {
 		StaticTokens:  make(map[string]*auth.SessionInfo),
 		DynamicTokens: make(map[string]*auth.SessionInfo),
 	}
-	go func() {
+	// 从池中获取任务对象
+	cleanupTask := taskPool.Get().(*mainTask)
+	cleanupTask.f = func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
 			tm.CleanupExpiredSessions()
 		}
-	}()
+	}
+	
+	// 执行任务
+	go cleanupTask.f()
+	
+	// 清空任务并放回池中
+	cleanupTask.f = nil
+	taskPool.Put(cleanupTask)
 
 	// -------------------------
 	// 启动监控 & 清理任务
@@ -123,12 +153,70 @@ func main() {
 	stopAccessCleaner := make(chan struct{})
 	stopProxyStats := make(chan struct{})
 
-	go monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second, stopActiveClients)
-	go monitor.StartSystemStatsUpdater(30*time.Second, stopStartSystemStatsUpdater)
+	// 从池中获取任务对象
+	monitorTask := taskPool.Get().(*mainTask)
+	monitorTask.f = func() {
+		monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second, stopActiveClients)
+	}
+	
+	// 执行任务
+	go monitorTask.f()
+	
+	// 清空任务并放回池中
+	monitorTask.f = nil
+	taskPool.Put(monitorTask)
 
-	go clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
-	go clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
-	go clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopProxyStats)
+	// 从池中获取任务对象
+	statsTask := taskPool.Get().(*mainTask)
+	statsTask.f = func() {
+		monitor.StartSystemStatsUpdater(30*time.Second, stopStartSystemStatsUpdater)
+	}
+	
+	// 执行任务
+	go statsTask.f()
+	
+	// 清空任务并放回池中
+	statsTask.f = nil
+	taskPool.Put(statsTask)
+
+	// 从池中获取任务对象
+	clearTask1 := taskPool.Get().(*mainTask)
+	clearTask1.f = func() {
+		clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
+	}
+	
+	// 执行任务
+	go clearTask1.f()
+	
+	// 清空任务并放回池中
+	clearTask1.f = nil
+	taskPool.Put(clearTask1)
+
+	// 从池中获取任务对象
+	clearTask2 := taskPool.Get().(*mainTask)
+	clearTask2.f = func() {
+		clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
+	}
+	
+	// 执行任务
+	go clearTask2.f()
+	
+	// 清空任务并放回池中
+	clearTask2.f = nil
+	taskPool.Put(clearTask2)
+
+	// 从池中获取任务对象
+	clearTask3 := taskPool.Get().(*mainTask)
+	clearTask3.f = func() {
+		clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopProxyStats)
+	}
+	
+	// 执行任务
+	go clearTask3.f()
+	
+	// 清空任务并放回池中
+	clearTask3.f = nil
+	taskPool.Put(clearTask3)
 
 	// -------------------------
 	// 日志
@@ -147,7 +235,18 @@ func main() {
 	// -------------------------
 	jxHandler := jx.NewJXHandler(&config.Cfg.JX)
 	mux := http.NewServeMux()
-	go watch.WatchConfigFile(*config.ConfigFilePath)
+	// 从池中获取任务对象
+	watchTask := taskPool.Get().(*mainTask)
+	watchTask.f = func() {
+		watch.WatchConfigFile(*config.ConfigFilePath)
+	}
+	
+	// 执行任务
+	go watchTask.f()
+	
+	// 清空任务并放回池中
+	watchTask.f = nil
+	taskPool.Put(watchTask)
 
 	monitorPath := config.Cfg.Monitor.Path
 	if monitorPath == "" {
@@ -204,16 +303,27 @@ func main() {
 	// -------------------------
 	// 启动 HTTP Server（支持 tableflip 热更）
 	// -------------------------
-	go func() {
+	// 从池中获取任务对象
+	serverTask := taskPool.Get().(*mainTask)
+	serverTask.f = func() {
 		if err := server.StartHTTPServer(config.ServerCtx, mux, upg); err != nil {
 			log.Fatalf("启动HTTP服务器失败: %v", err)
 		}
-	}()
+	}
+	
+	// 执行任务
+	go serverTask.f()
+	
+	// 清空任务并放回池中
+	serverTask.f = nil
+	taskPool.Put(serverTask)
 
 	// -------------------------
 	// 捕获系统退出信号
 	// -------------------------
-	go func() {
+	// 从池中获取任务对象
+	signalTask := taskPool.Get().(*mainTask)
+	signalTask.f = func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
@@ -224,7 +334,14 @@ func main() {
 		} else {
 			os.Exit(0)
 		}
-	}()
+	}
+	
+	// 执行任务
+	go signalTask.f()
+	
+	// 清空任务并放回池中
+	signalTask.f = nil
+	taskPool.Put(signalTask)
 
 	// -------------------------
 	// tableflip 准备完成（仅非 Windows）

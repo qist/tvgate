@@ -26,6 +26,18 @@ const (
 	// videoStep = 90000 / 25 // 25fps，步进3600
 )
 
+// 定义任务结构体用于sync.Pool
+type streamTask struct {
+	f func()
+}
+
+// 创建sync.Pool用于复用任务对象
+var taskPool = sync.Pool{
+	New: func() interface{} {
+		return &streamTask{}
+	},
+}
+
 var dropCount int64
 
 var bufPool = sync.Pool{
@@ -203,7 +215,9 @@ func HandleH264AacStream(
 				}
 			}()
 
-			go func() {
+			// 从池中获取任务对象
+			task := taskPool.Get().(*streamTask)
+			task.f = func() {
 				ticker := time.NewTicker(5 * time.Second)
 				defer ticker.Stop()
 				for {
@@ -217,7 +231,14 @@ func HandleH264AacStream(
 						}
 					}
 				}
-			}()
+			}
+			
+			// 执行任务
+			go task.f()
+			
+			// 清空任务并放回池中
+			task.f = nil
+			taskPool.Put(task)
 
 			var videoPTS int64
 			var audioPTS float64
@@ -279,7 +300,9 @@ func HandleH264AacStream(
 				}
 			})
 
-			go func() {
+			// 从池中获取任务对象
+			videoTask := taskPool.Get().(*streamTask)
+			videoTask.f = func() {
 				ticker := time.NewTicker(5 * time.Second)
 				defer ticker.Stop()
 				for {
@@ -289,7 +312,14 @@ func HandleH264AacStream(
 						// logger.LogPrintf("⚠️ Video frame decode failed: %d in last 5s", dc)
 					}
 				}
-			}()
+			}
+			
+			// 执行任务
+			go videoTask.f()
+			
+			// 清空任务并放回池中
+			videoTask.f = nil
+			taskPool.Put(videoTask)
 
 			// 音频
 			if audioFormat != nil {

@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"net/http"
+	"sync"
 
 	"github.com/bluenviron/gortsplib/v4"
 	"github.com/bluenviron/gortsplib/v4/pkg/description"
@@ -12,6 +13,18 @@ import (
 	"github.com/qist/tvgate/logger"
 	// "github.com/qist/tvgate/monitor"
 )
+
+// 定义任务结构体用于sync.Pool
+type mpegtsTask struct {
+	f func()
+}
+
+// 创建sync.Pool用于复用任务对象
+var mpegtsTaskPool = sync.Pool{
+	New: func() interface{} {
+		return &mpegtsTask{}
+	},
+}
 
 func HandleMpegtsStream(
 	ctx context.Context,
@@ -82,7 +95,9 @@ func HandleMpegtsStream(
 
 	// 如果需要启动播放
 	if shouldPlay {
-		go func() {
+		// 从池中获取任务对象
+		task := mpegtsTaskPool.Get().(*mpegtsTask)
+		task.f = func() {
 			var packetLossCount int64 // 添加丢包计数器
 			client.OnPacketRTP(videoMedia, mpegtsFormat, func(pkt *rtp.Packet) {
 				// 检查是否有丢包
@@ -116,7 +131,14 @@ func HandleMpegtsStream(
 
 			// 标记流为正在播放状态
 			hub.SetPlaying()
-		}()
+		}
+		
+		// 执行任务
+		go task.f()
+		
+		// 清空任务并放回池中
+		task.f = nil
+		mpegtsTaskPool.Put(task)
 	} else {
 		// 等待流状态变为播放中
 		if !hub.WaitForPlaying(ctx) {

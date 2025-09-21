@@ -14,7 +14,20 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 )
+
+// 定义任务结构体用于sync.Pool
+type handleTask struct {
+	f func()
+}
+
+// 创建sync.Pool用于复用任务对象
+var handleTaskPool = sync.Pool{
+	New: func() interface{} {
+		return &handleTask{}
+	},
+}
 
 // 统一处理响应（重定向、特殊类型、普通内容）
 func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, targetURL string, resp *http.Response, updateActive func()) {
@@ -47,12 +60,22 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	w.WriteHeader(resp.StatusCode)
 
 	done := make(chan struct{})
-	go func() {
+	
+	// 从池中获取任务对象
+	task := handleTaskPool.Get().(*handleTask)
+	task.f = func() {
 		defer close(done)
 		if err := CopyWithContext(ctx, w, resp.Body, buf, updateActive); err != nil {
 			HandleCopyError(r, err, resp)
 		}
-	}()
+	}
+	
+	// 执行任务
+	go task.f()
+	
+	// 清空任务并放回池中
+	task.f = nil
+	handleTaskPool.Put(task)
 
 	select {
 	case <-ctx.Done():

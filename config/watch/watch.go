@@ -24,6 +24,18 @@ import (
 	"github.com/qist/tvgate/web"
 )
 
+// 定义任务结构体用于sync.Pool
+type watchTask struct {
+	f func()
+}
+
+// 创建sync.Pool用于复用任务对象
+var taskPool = sync.Pool{
+	New: func() interface{} {
+		return &watchTask{}
+	},
+}
+
 func WatchConfigFile(configPath string) {
 	var httpCancel context.CancelFunc
 	var muxMu sync.Mutex
@@ -87,15 +99,27 @@ func WatchConfigFile(configPath string) {
 	debounceDelay := time.Duration(config.Cfg.Reload) * time.Second
 
 	// 定期检查监控状态
+	// 使用sync.Pool优化goroutine创建
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 
 		for range ticker.C {
-			if _, err := os.Stat(absPath); err != nil {
-				logger.LogPrintf("⚠️ 配置文件状态异常，尝试重新建立监控: %v", err)
-				setupWatcher()
+			// 从池中获取任务对象
+			task := taskPool.Get().(*watchTask)
+			task.f = func() {
+				if _, err := os.Stat(absPath); err != nil {
+					logger.LogPrintf("⚠️ 配置文件状态异常，尝试重新建立监控: %v", err)
+					setupWatcher()
+				}
 			}
+			
+			// 执行任务
+			task.f()
+			
+			// 清空任务并放回池中
+			task.f = nil
+			taskPool.Put(task)
 		}
 	}()
 
@@ -194,7 +218,9 @@ func WatchConfigFile(configPath string) {
 			_, cancel := context.WithCancel(context.Background())
 			httpCancel = cancel
 			// 启动新 HTTP 服务（startHTTPServer 内部会处理平滑替换）
-			go func() {
+			// 使用sync.Pool优化goroutine创建
+			task := taskPool.Get().(*watchTask)
+			task.f = func() {
 				defer func() {
 					if r := recover(); r != nil {
 						logger.LogPrintf("🔥 启动 HTTP 服务过程中发生 panic: %v", r)
@@ -204,7 +230,13 @@ func WatchConfigFile(configPath string) {
 				// 	logger.LogPrintf("❌ 启动 HTTP 服务失败: %v", err)
 				// }
 				server.SetHTTPHandler(newMux)
-			}()
+			}
+			
+			go task.f()
+			
+			// 清空任务并放回池中
+			task.f = nil
+			taskPool.Put(task)
 		}
 	}
 
