@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qist/tvgate/auth"
@@ -25,27 +26,85 @@ import (
 // 读超时包装器，给响应体读加超时控制，避免代理响应体卡死
 type timeoutReadCloser struct {
 	io.ReadCloser
-	timeout time.Duration
+	timeout   time.Duration
+	timer     *time.Timer
+	mu        sync.Mutex
+	isClosed  bool
+	err       error
+	resetChan chan struct{}
+	doneChan  chan struct{}
+}
+
+// NewTimeoutReadCloser 创建一个带超时控制的ReadCloser
+func NewTimeoutReadCloser(rc io.ReadCloser, timeout time.Duration) *timeoutReadCloser {
+	t := &timeoutReadCloser{
+		ReadCloser: rc,
+		timeout:    timeout,
+		resetChan:  make(chan struct{}, 1),
+		doneChan:   make(chan struct{}),
+	}
+	t.timer = time.NewTimer(timeout)
+	go t.timeoutWatcher()
+	return t
+}
+
+func (t *timeoutReadCloser) timeoutWatcher() {
+	for {
+		select {
+		case <-t.timer.C:
+			t.mu.Lock()
+			if !t.isClosed {
+				t.isClosed = true
+				t.err = fmt.Errorf("读取响应体超时，强制关闭连接")
+				t.ReadCloser.Close()
+			}
+			t.mu.Unlock()
+			return
+		case <-t.resetChan:
+			if !t.timer.Stop() {
+				<-t.timer.C
+			}
+			t.timer.Reset(t.timeout)
+		case <-t.doneChan:
+			return
+		}
+	}
 }
 
 func (t *timeoutReadCloser) Read(p []byte) (int, error) {
-	type readResult struct {
-		n   int
-		err error
-	}
-	resultChan := make(chan readResult, 1)
-
-	go func() {
-		n, err := t.ReadCloser.Read(p)
-		resultChan <- readResult{n, err}
-	}()
-
+	// 每次读尝试重置超时
 	select {
-	case res := <-resultChan:
-		return res.n, res.err
-	case <-time.After(t.timeout):
-		return 0, fmt.Errorf("读取响应体超时，强制关闭连接")
+	case t.resetChan <- struct{}{}:
+	default:
 	}
+
+	n, err := t.ReadCloser.Read(p)
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.err != nil {
+		return 0, t.err
+	}
+	return n, err
+}
+
+func (t *timeoutReadCloser) Close() error {
+	t.mu.Lock()
+	if t.isClosed {
+		t.mu.Unlock()
+		return nil
+	}
+	t.isClosed = true
+	close(t.doneChan) // 通知 watcher 停止
+	if !t.timer.Stop() {
+		select {
+		case <-t.timer.C:
+		default:
+		}
+	}
+	err := t.ReadCloser.Close()
+	t.mu.Unlock()
+	return err
 }
 
 // handler 函数，整合读超时处理
@@ -293,10 +352,11 @@ func Handler(client *http.Client) http.HandlerFunc {
 					continue
 				}
 
-				proxyResp.Body = &timeoutReadCloser{
-					ReadCloser: proxyResp.Body,
-					timeout:    readTimeout,
-				}
+				// proxyResp.Body = &timeoutReadCloser{
+				// 	ReadCloser: proxyResp.Body,
+				// 	timeout:    readTimeout,
+				// }
+				proxyResp.Body = NewTimeoutReadCloser(proxyResp.Body, readTimeout)
 
 				if proxyResp.StatusCode >= 500 {
 					logger.LogPrintf("⚠️ 代理服务器错误状态码 %d（第 %d 次）", proxyResp.StatusCode, attempt+1)

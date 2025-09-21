@@ -15,7 +15,7 @@ import (
 
 	"github.com/cloudflare/tableflip"
 	"github.com/qist/tvgate/auth"
-	"github.com/qist/tvgate/clear"
+	// "github.com/qist/tvgate/clear"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/watch"
@@ -28,6 +28,7 @@ import (
 	"github.com/qist/tvgate/server"
 	httpclient "github.com/qist/tvgate/utils/http"
 	"github.com/qist/tvgate/web"
+	_ "net/http/pprof"
 )
 
 var shutdownMux sync.Mutex
@@ -35,6 +36,12 @@ var shutdownOnce sync.Once
 
 func main() {
 	flag.Parse()
+
+	// 启动 pprof 性能分析接口（默认 6060 端口）
+	go func() {
+		log.Println("pprof 性能分析接口已启动: http://0.0.0.0:6060/debug/pprof/ 可远程访问")
+		http.ListenAndServe("0.0.0.0:6060", nil)
+	}()
 	if *config.VersionFlag {
 		fmt.Println("程序版本:", config.Version)
 		return
@@ -93,32 +100,32 @@ func main() {
 	} else {
 		auth.GlobalTokenManager = nil
 	}
-	tm := &auth.TokenManager{
-		Enabled:       true,
-		StaticTokens:  make(map[string]*auth.SessionInfo),
-		DynamicTokens: make(map[string]*auth.SessionInfo),
-	}
-	go func() {
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		for range ticker.C {
-			tm.CleanupExpiredSessions()
-		}
-	}()
+	// tm := &auth.TokenManager{
+	// 	Enabled:       true,
+	// 	StaticTokens:  make(map[string]*auth.SessionInfo),
+	// 	DynamicTokens: make(map[string]*auth.SessionInfo),
+	// }
+	// go func() {
+	// 	ticker := time.NewTicker(time.Minute)
+	// 	defer ticker.Stop()
+	// 	for range ticker.C {
+	// 		tm.CleanupExpiredSessions()
+	// 	}
+	// }()
 
 	// -------------------------
 	// 启动监控 & 清理任务
 	// -------------------------
-	go monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second)
+	// go monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second)
 	go monitor.StartSystemStatsUpdater(10 * time.Second)
 
 	stopCleaner := make(chan struct{})
 	stopAccessCleaner := make(chan struct{})
 	stopProxyStats := make(chan struct{})
 
-	go clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
-	go clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
-	go clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopProxyStats)
+	// go clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
+	// go clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
+	// go clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopProxyStats)
 
 	// -------------------------
 	// 日志
