@@ -146,24 +146,24 @@ func (hub *StreamHubs) GetLastError() error {
 	return hub.lastError
 }
 
-// 新增方法：等待流变为播放状态
+// WaitForPlaying 等待流变为播放状态或上下文取消
 func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	
-	// 如果已经关闭，直接返回
+	// 如果已经关闭，直接返回false
 	if hub.isClosed {
-		return false
-	}
-	
-	// 如果在错误状态，返回错误
-	if hub.state == 2 {
 		return false
 	}
 	
 	// 如果已经在播放，直接返回
 	if hub.state == 1 {
 		return true
+	}
+	
+	// 如果处于错误状态，直接返回false
+	if hub.state == 2 {
+		return false
 	}
 	
 	// 等待状态变为播放中或上下文取消
@@ -175,7 +175,11 @@ func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 		go func() {
 			defer func() {
 				// 关闭通道并放回池中
-				close(wd.done)
+				select {
+				case <-wd.done:
+				default:
+					close(wd.done)
+				}
 				waitDonePool.Put(wd)
 			}()
 			hub.stateCond.Wait()

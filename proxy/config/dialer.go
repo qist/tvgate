@@ -35,6 +35,10 @@ func (d *DialContextWrapper) Dial(network, addr string) (net.Conn, error) {
 }
 
 func (d *DialContextWrapper) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	// 创建带超时的context，避免连接永远挂起
+	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	
 	// 从池中获取dialResult对象
 	res := dialResultPool.Get().(*dialResult)
 	resultChan := make(chan *dialResult, 1)
@@ -45,12 +49,12 @@ func (d *DialContextWrapper) DialContext(ctx context.Context, network, addr stri
 	}()
 
 	select {
-	case <-ctx.Done():
+	case <-dialCtx.Done():
 		// context取消时，将对象放回池中
 		res.conn = nil
-		res.err = ctx.Err()
+		res.err = dialCtx.Err()
 		dialResultPool.Put(res)
-		return nil, ctx.Err()
+		return nil, dialCtx.Err()
 	case res := <-resultChan:
 		// 正常返回结果，将连接和错误返回
 		conn := res.conn
