@@ -172,7 +172,7 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		// 	Path:     parsedURL.Path,
 		// 	RawQuery: parsedURL.RawQuery,
 		// }
-		parsedURL, err := base.ParseURL(rtspURL)
+		parsedURL, _:= base.ParseURL(rtspURL)
 		_, err = client.Options(parsedURL)
 		if err != nil {
 			http.Error(w, "RTSP OPTIONS error: "+err.Error(), 500)

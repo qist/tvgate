@@ -1,9 +1,9 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"net/http"
-	// "net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,7 +16,8 @@ import (
 	"github.com/pion/rtp"
 
 	"github.com/qist/tvgate/logger"
-	"github.com/qist/tvgate/utils/buffer/ringbuffer"
+	// "github.com/qist/tvgate/monitor"
+	"github.com/qist/tvgate/utils/buffer"
 )
 
 const (
@@ -34,7 +35,7 @@ var bufPool = sync.Pool{
 }
 
 type channelWriter struct {
-	rb *ringbuffer.RingBuffer
+	ch chan []byte
 }
 
 func (w *channelWriter) Write(p []byte) (n int, err error) {
@@ -44,20 +45,21 @@ func (w *channelWriter) Write(p []byte) (n int, err error) {
 	}
 	buf = buf[:len(p)]
 	copy(buf, p)
-
-	if !w.rb.Push(buf) {
+	select {
+	case w.ch <- buf:
+		return len(p), nil
+	default:
 		atomic.AddInt64(&dropCount, 1)
 		bufPool.Put(buf) // 回收
 		// 添加日志记录，当缓冲区满时记录详细信息
 		if atomic.LoadInt64(&dropCount)%10000 == 0 { // 每10000次记录一次，避免日志过多
-			logger.LogPrintf("⚠️ TS packet dropped due to full buffer.")
+			logger.LogPrintf("⚠️ TS packet dropped due to full buffer. Channel len: %d", len(w.ch))
 		}
 		return 0, nil
 	}
-	return len(p), nil
 }
 
-func buildADTSHeader(cfg mpeg4audio.Config, aacLen int) []byte {
+func buildADTSHeader(cfg *mpeg4audio.Config, aacLen int) []byte {
 	profile := byte(cfg.Type - 1)
 	sampleRateIndex := byte(4)
 	switch cfg.SampleRate {
@@ -89,7 +91,7 @@ func buildADTSHeader(cfg mpeg4audio.Config, aacLen int) []byte {
 		sampleRateIndex = 12
 	}
 	channels := byte(cfg.ChannelCount)
-	adtsLen := aacLen + 7
+	adtsLen := aacLen + 7 // aacLen为AAC帧数据长度
 	return []byte{
 		0xFF, 0xF1,
 		((profile & 0x3) << 6) | ((sampleRateIndex & 0xF) << 2) | ((channels >> 2) & 0x1),
@@ -100,7 +102,6 @@ func buildADTSHeader(cfg mpeg4audio.Config, aacLen int) []byte {
 	}
 }
 
-// HandleH264AacStream 处理 H264+AAC HTTP 推流客户端
 func HandleH264AacStream(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -114,263 +115,337 @@ func HandleH264AacStream(
 	hub *StreamHubs,
 	updateActive func(),
 ) error {
-	// logger.LogPrintf("DEBUG: HandleH264AacStream started for URL: %s", rtspURL)
-
-	// 创建客户端 ring buffer
-	clientChan, err := ringbuffer.New(8 * 1024 * 1024)
-	if err != nil {
-		return err
-	}
+	// 创建客户端通道
+	clientChan := make(chan []byte, 1024)
 	hub.AddClient(clientChan)
-	defer func() {
-		hub.RemoveClient(clientChan)
-	}()
 
-	// 检查是否需要启动播放
+	// 检查是否需要启动播放或者恢复播放
 	shouldPlay := false
+
+	// 等待获取锁以检查当前状态
 	hub.mu.Lock()
 	if hub.isClosed {
 		hub.mu.Unlock()
+		close(clientChan)
 		return nil
 	}
 
 	// 判断是否需要启动播放
-	if hub.state == StateStopped {
+	if hub.state == 0 { // stopped state
 		shouldPlay = true
-		hub.state = StatePlaying // 标记为播放中以防止重复启动
+		hub.state = 1 // mark as playing to prevent duplicate starts
 		// 设置RTSP客户端
 		hub.rtspClient = client
-		hub.lastError = nil
-	} else if hub.state == StateError {
+	} else if hub.state == 2 { // error state
 		shouldPlay = true
-		hub.state = StatePlaying // 标记为播放中以防止重复启动
-		hub.lastError = nil      // 清除最后的错误
+		hub.state = 1       // mark as playing to prevent duplicate starts
+		hub.lastError = nil // clear last error
 		// 设置新的RTSP客户端
 		hub.rtspClient = client
 	}
 	hub.mu.Unlock()
 
+	defer func() {
+		hub.RemoveClient(clientChan)
+
+		// 检查是否是最后一个客户端
+		hub.mu.Lock()
+		clientCount := len(hub.clients)
+		currentClient := hub.rtspClient
+		hub.mu.Unlock()
+
+		if clientCount == 0 {
+			hub.SetStopped()
+			// 关闭RTSP客户端
+			if currentClient != nil {
+				// 仅在客户端匹配时才关闭
+				if currentClient == client {
+					currentClient.Close()
+					hub.mu.Lock()
+					// 清除RTSP客户端引用
+					if hub.rtspClient == currentClient {
+						hub.rtspClient = nil
+					}
+					hub.mu.Unlock()
+				}
+			}
+		}
+	}()
+
 	// 如果需要启动播放
 	if shouldPlay {
-		mux := astits.NewMuxer(context.Background(), &channelWriter{rb: clientChan})
-		mux.SetPCRPID(videoPID)
-		mux.AddElementaryStream(astits.PMTElementaryStream{
-			ElementaryPID: videoPID,
-			StreamType:    astits.StreamTypeH264Video,
-		})
-		if audioFormat != nil {
-			mux.AddElementaryStream(astits.PMTElementaryStream{
-				ElementaryPID: audioPID,
-				StreamType:    astits.StreamTypeAACAudio,
-			})
-		}
-
 		go func() {
-			ticker := time.NewTicker(300 * time.Millisecond)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					mux.WriteTables()
-				}
-			}
-		}()
-
-		var videoFrame []byte
-		var videoPTS time.Duration
-		var audioPTS time.Duration
-		var lastVideoSeq uint16
-		var videoLossCount int64
-		var videoInitialized bool
-
-		// 处理视频数据
-		client.OnPacketRTP(videoMedia, videoFormat, func(pkt *rtp.Packet) {
-			// 检查RTP负载是否为空
-			if len(pkt.Payload) == 0 {
-				// logger.LogPrintf("DEBUG: Empty video RTP payload received")
-				return
+			// 增加TS通道缓冲区大小，从262144增加到1048576
+			tsChan := make(chan []byte, 1048576)
+			mux := astits.NewMuxer(context.Background(), &channelWriter{ch: tsChan})
+			mux.SetPCRPID(videoPID)
+			mux.AddElementaryStream(astits.PMTElementaryStream{
+				ElementaryPID: videoPID,
+				StreamType:    astits.StreamTypeH264Video,
+			})
+			if audioFormat != nil {
+				mux.AddElementaryStream(astits.PMTElementaryStream{
+					ElementaryPID: audioPID,
+					StreamType:    astits.StreamTypeAACAudio,
+				})
 			}
 
-			// 更准确的视频RTP包丢失检测
-			if videoInitialized {
-				expectedSeq := lastVideoSeq + 1
-				if pkt.Header.SequenceNumber < lastVideoSeq {
-					// 序列号回绕
-					if lastVideoSeq > 0xFF00 && pkt.Header.SequenceNumber < 0x100 {
-						// 正常回绕
-					} else {
-						// 异常情况，重置并丢弃当前累积的帧数据
-						videoInitialized = false
-						videoFrame = nil // 丢弃不完整的帧
+			go func() {
+				ticker := time.NewTicker(500 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						mux.WriteTables()
 					}
+				}
+			}()
+
+			go func() {
+				ticker := time.NewTicker(5 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						dc := atomic.SwapInt64(&dropCount, 0)
+						if dc > 0 {
+							logger.LogPrintf("⚠️ TS packet dropped (buffer full): %d in last 5s\n", dc)
+						}
+					}
+				}
+			}()
+
+			var videoPTS int64
+			var audioPTS float64
+			var audioInit bool
+
+			// 视频
+			vDecoder, _ := videoFormat.CreateDecoder()
+			var videoDropCount int64
+			var (
+				lastVideoTS   uint32
+				firstVideoPkt = true
+			)
+			naluWaitCount := 0
+			client.OnPacketRTP(videoMedia, videoFormat, func(pkt *rtp.Packet) {
+				// monitor.AddAppInboundBytes(uint64(len(pkt.Payload)))
+				nalus, err := vDecoder.Decode(pkt)
+				if err != nil || len(nalus) == 0 {
+					naluWaitCount++
+					atomic.AddInt64(&videoDropCount, 1)
+					// 添加日志记录，每100次丢包记录一次
+					if naluWaitCount%100 == 0 {
+						logger.LogPrintf("%d RTP packets lost", naluWaitCount)
+						naluWaitCount = 0 // 重置计数
+					}
+					return
+				}
+				naluWaitCount = 0 // 解码成功，重置计数
+				if firstVideoPkt {
+					lastVideoTS = pkt.Timestamp
+					videoPTS = 0
+					firstVideoPkt = false
 				} else {
-					if pkt.Header.SequenceNumber > expectedSeq {
-						lost := int64(pkt.Header.SequenceNumber - expectedSeq)
-						videoLossCount += lost
-						if lost > 10 {
-							logger.LogPrintf("Video RTP packets lost: %d, expected: %d, got: %d",
-								lost, expectedSeq, pkt.Header.SequenceNumber)
-						}
-						// 如果丢包严重，丢弃当前累积的帧数据
-						if lost > 100 {
-							videoFrame = nil // 丢弃不完整的帧
-						}
-					}
+					step := int64(pkt.Timestamp - lastVideoTS)
+					videoPTS += step
+					lastVideoTS = pkt.Timestamp
 				}
-			} else {
-				videoInitialized = true
-				videoFrame = nil // 确保从一个干净的状态开始
-			}
-			lastVideoSeq = pkt.Header.SequenceNumber
-
-			// 更新PTS
-			videoPTS = time.Duration(pkt.Timestamp) * time.Second / 90000 // H264通常使用90kHz时钟
-
-			// 累积视频帧
-			videoFrame = append(videoFrame, pkt.Payload...)
-
-			// 检查是否是帧结束标记
-			if pkt.Marker {
-				if len(videoFrame) == 0 {
-					// logger.LogPrintf("DEBUG: Empty video frame to write")
-					return
+				buf := &bytes.Buffer{}
+				for _, nalu := range nalus {
+					buf.Write([]byte{0x00, 0x00, 0x00, 0x01})
+					buf.Write(nalu)
 				}
-
-				// 写入完整帧到MPEG-TS复用器
-				_, err := mux.WriteData(&astits.MuxerData{
+				mux.WriteData(&astits.MuxerData{
 					PID: videoPID,
 					PES: &astits.PESData{
 						Header: &astits.PESHeader{
 							OptionalHeader: &astits.PESOptionalHeader{
-								PTS: &astits.ClockReference{
-									Base:      int64(videoPTS) * 90, // 转换为90kHz时钟
-									Extension: 0,
-								},
+								MarkerBits:             2,
+								PTSDTSIndicator:        astits.PTSDTSIndicatorOnlyPTS,
+								PTS:                    &astits.ClockReference{Base: videoPTS},
+								DataAlignmentIndicator: true,
 							},
-							StreamID: 224, // 视频流ID
 						},
-						Data: videoFrame,
+						Data: buf.Bytes(),
 					},
 				})
-				if err != nil {
-					logger.LogPrintf("Muxer write video error: %v", err)
-				}
-
-				// 重置视频帧缓冲区
-				videoFrame = nil
-			}
-		})
-
-		// 处理音频数据
-		if audioFormat != nil && audioMedia != nil {
-			client.OnPacketRTP(audioMedia, audioFormat, func(pkt *rtp.Packet) {
-				// AAC数据通常直接在RTP包中
-				aacData := pkt.Payload
-				if len(aacData) == 0 {
-					// logger.LogPrintf("DEBUG: Empty audio RTP payload received")
-					return
-				}
-
-				// 更新PTS
-				audioPTS = time.Duration(pkt.Timestamp) * time.Second / time.Duration(audioFormat.ClockRate())
-
-				// 构建ADTS头
-				adtsHeader := buildADTSHeader(*audioFormat.Config, len(aacData))
-
-				// 合并ADTS头和AAC数据
-				frameWithADTS := make([]byte, len(adtsHeader)+len(aacData))
-				copy(frameWithADTS, adtsHeader)
-				copy(frameWithADTS[len(adtsHeader):], aacData)
-
-				// 写入完整帧到MPEG-TS复用器
-				_, err := mux.WriteData(&astits.MuxerData{
-					PID: audioPID,
-					PES: &astits.PESData{
-						Header: &astits.PESHeader{
-							OptionalHeader: &astits.PESOptionalHeader{
-								PTS: &astits.ClockReference{
-									Base:      int64(audioPTS) * 90, // 转换为90kHz时钟
-									Extension: 0,
-								},
-							},
-							StreamID: 192, // 音频流ID
-						},
-						Data: frameWithADTS,
-					},
-				})
-				if err != nil {
-					logger.LogPrintf("Muxer write audio error: %v", err)
-				}
+				// 更新活跃时间
+				// if updateActive != nil {
+				// 	updateActive()
+				// }
 			})
-		}
 
-		// 开始播放
-		_, err := client.Play(nil)
-		if err != nil {
-			logger.LogPrintf("RTSP play error: %v", err)
-			hub.SetError(err)
-			return err
-		}
+			go func() {
+				ticker := time.NewTicker(5 * time.Second)
+				defer ticker.Stop()
+				for {
+					<-ticker.C
+					dc := atomic.SwapInt64(&videoDropCount, 0)
+					if dc > 0 {
+						// logger.LogPrintf("⚠️ Video frame decode failed: %d in last 5s", dc)
+					}
+				}
+			}()
 
-		hub.SetPlaying()
+			// 音频
+			if audioFormat != nil {
+				aDecoder, _ := audioFormat.CreateDecoder()
+				var audioDropCount int64 // 添加音频丢包计数器
+				client.OnPacketRTP(audioMedia, audioFormat, func(pkt *rtp.Packet) {
+					// ⚡ 入流量统计
+					// monitor.AddAppInboundBytes(uint64(len(pkt.Payload)))
+					aus, err := aDecoder.Decode(pkt)
+					if err != nil || len(aus) == 0 {
+						audioDropCount++
+						// 添加日志记录，每10次丢包记录一次
+						if audioDropCount%10 == 0 {
+							logger.LogPrintf("%d RTP packets lost", audioDropCount)
+							audioDropCount = 0 // 重置计数
+						}
+						return
+					}
+					// 重置计数
+					if audioDropCount > 0 {
+						audioDropCount = 0
+					}
+					for _, au := range aus {
+						if len(au) == 0 {
+							logger.LogPrintf("⚠️ Skip empty AU")
+							continue
+						}
+						adts := buildADTSHeader(audioFormat.Config, len(au))
+						data := append(adts, au...)
+						if !audioInit {
+							audioPTS = float64(videoPTS)
+							audioInit = true
+						}
+						_, err := mux.WriteData(&astits.MuxerData{
+							PID: audioPID,
+							PES: &astits.PESData{
+								Header: &astits.PESHeader{
+									OptionalHeader: &astits.PESOptionalHeader{
+										MarkerBits:             2,
+										PTSDTSIndicator:        astits.PTSDTSIndicatorOnlyPTS,
+										PTS:                    &astits.ClockReference{Base: int64(audioPTS)},
+										DataAlignmentIndicator: true,
+									},
+								},
+								Data: data,
+							},
+						})
+						if err == nil {
+							audioPTS += float64(1024*90000) / float64(audioFormat.Config.SampleRate)
+						}
+					}
+					// 更新活跃时间
+					// if updateActive != nil {
+					// 	updateActive()
+					// }
+				})
+
+			}
+
+			_, err := client.Play(nil)
+			if err != nil {
+				logger.LogPrintf("RTSP play error: %v", err)
+				// 不再关闭整个hub，而是设置流状态为错误
+				hub.SetError(err)
+				return
+			}
+
+			// 标记流为正在播放状态
+			hub.SetPlaying()
+
+			// 向所有客户端广播数据
+			for pkt := range tsChan {
+				hub.Broadcast(pkt)
+				// ⚡ 出流量统计
+				// monitor.AddAppOutboundBytes(uint64(len(pkt)))
+				// 更新活跃时间
+				// if updateActive != nil {
+				// 	updateActive()
+				// }
+			}
+		}()
 	} else {
-		// 等待播放启动完成
+		// 等待流状态变为播放中
 		if !hub.WaitForPlaying(ctx) {
 			return nil
 		}
 	}
+
+	// 向客户端推送数据
 	logger.LogRequestAndResponse(r, rtspURL, &http.Response{StatusCode: http.StatusOK})
-	// 设置 HTTP 响应头
 	w.Header().Set("Content-Type", "video/mp2t")
 	flusher, _ := w.(http.Flusher)
 
-	// 写入 HTTP 流
-	for {
+	// 预缓冲处理
+	preBuffer := make([][]byte, 0, 4096)
+	preBufferDuration := 1 * time.Second
+	preBufferStart := time.Now()
+	buffering := true
+
+	for buffering {
 		select {
-		case <-ctx.Done():
-			// logger.LogPrintf("DEBUG: Context done, ending H264+AAC stream for URL: %s", rtspURL)
-			return nil
-		default:
-			data, ok := clientChan.Pull()
+		case pkt, ok := <-clientChan:
 			if !ok {
-				logger.LogPrintf("clientChan closed, ending connection")
 				return nil
 			}
-
-			payload := data.([]byte)
-			if len(payload) == 0 {
-				// logger.LogPrintf("DEBUG: Empty payload pulled from ringbuffer for H264+AAC")
-				bufPool.Put(payload[:cap(payload)])
-				continue
+			preBuffer = append(preBuffer, pkt)
+			if time.Since(preBufferStart) > preBufferDuration {
+				buffering = false
 			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 
-			n, err := w.Write(payload)
-			if err != nil {
-				logger.LogPrintf("Write error: %v", err)
-				// 确保在返回前归还缓冲区到池中
-				bufPool.Put(payload[:cap(payload)])
-				return err
+	// 先推送预缓冲内容
+	for _, pkt := range preBuffer {
+		_, err := w.Write(pkt)
+		if err != nil {
+			logger.LogPrintf("Write error: %v", err)
+			return err
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	bufSize := buffer.GetOptimalBufferSize("video/mp2t", r.URL.Path)
+	buf := buffer.GetBuffer(bufSize)
+	defer buffer.PutBuffer(bufSize, buf)
+
+	for {
+		select {
+		case pkt, ok := <-clientChan:
+			if !ok {
+				return nil // 正常退出，不再推送数据
 			}
-
-			if n != len(payload) {
-				// logger.LogPrintf("DEBUG: Incomplete write for H264+AAC. Expected: %d, Written: %d", len(payload), n)
-				// 即使写入不完整，也应回收缓冲区，避免内存泄漏
-				bufPool.Put(payload[:cap(payload)])
-				continue
+			n := copy(buf, pkt)
+			if n > 0 {
+				_, err := w.Write(buf[:n])
+				if err != nil {
+					logger.LogPrintf("Write error: %v", err)
+					return err
+				}
+				// ⚡ 出流量统计
+				// monitor.AddAppOutboundBytes(uint64(n))
+				if flusher != nil {
+					flusher.Flush()
+				}
 			}
-
-			if flusher != nil {
-				flusher.Flush()
-			}
-
+			// 更新活跃时间
 			if updateActive != nil {
 				updateActive()
 			}
-
-			// 成功写入后回收缓冲区
-			bufPool.Put(payload[:cap(payload)])
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
+
 }
