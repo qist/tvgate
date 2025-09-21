@@ -4,16 +4,15 @@ import (
 	"context"
 	"net/http"
 
-
 	"github.com/bluenviron/gortsplib/v5"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/pion/rtp"
 
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/utils/buffer/ringbuffer"
 	// "github.com/qist/tvgate/monitor"
 )
-
 
 func HandleMpegtsStream(
 	ctx context.Context,
@@ -27,14 +26,12 @@ func HandleMpegtsStream(
 	updateActive func(),
 ) error {
 
-	clientChan := make(chan []byte, 1024)
-
-
+	clientChan, err := ringbuffer.New(1024)
+	if err != nil {
+		return err
+	}
 
 	hub.AddClient(clientChan)
-
-
-
 
 	// 检查是否需要启动播放或者恢复播放
 	shouldPlay := false
@@ -43,7 +40,7 @@ func HandleMpegtsStream(
 	hub.mu.Lock()
 	if hub.isClosed {
 		hub.mu.Unlock()
-		close(clientChan)
+		clientChan.Close()
 		return nil
 	}
 
@@ -143,30 +140,30 @@ func HandleMpegtsStream(
 
 	for {
 		select {
-
-		case pkt, ok := <-clientChan:
+		case <-ctx.Done():
+			return nil
+		default:
+			data, ok := clientChan.Pull()
 			if !ok {
-				// clientChan已经被关闭
-				logger.LogPrintf("clientChan closed, ending connection")
 				return nil
 			}
 
-			_, err := w.Write(pkt)
+			payload, ok := data.([]byte)
+			if !ok || len(payload) == 0 {
+				continue
+			}
+
+			_, err := w.Write(payload)
 			if err != nil {
 				logger.LogPrintf("Write error: %v", err)
 				return err
 			}
-			// ⚡ 统计出流量
-			// monitor.AddAppOutboundBytes(uint64(len(pkt)))
 			if flusher != nil {
 				flusher.Flush()
 			}
-			// ⚡ 同步更新客户端活跃时间
 			if updateActive != nil {
 				updateActive()
 			}
-		case <-ctx.Done():
-			return nil
 		}
 	}
 }

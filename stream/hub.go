@@ -7,12 +7,18 @@ import (
 	"github.com/bluenviron/gortsplib/v5"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
+	"github.com/qist/tvgate/utils/buffer/ringbuffer"
 )
 
-// StreamHubs manages client connections for a specific stream
+const (
+	StateStopped = iota
+	StatePlaying
+	StateError
+)
+
 type StreamHubs struct {
 	mu       sync.Mutex
-	clients  map[chan []byte]struct{}
+	clients  map[*ringbuffer.RingBuffer]struct{}
 	isClosed bool
 	// 添加流状态管理
 	state       int // 0: stopped, 1: playing, 2: error
@@ -28,47 +34,50 @@ type StreamHubs struct {
 
 func NewStreamHubs() *StreamHubs {
 	hub := &StreamHubs{
-		clients: make(map[chan []byte]struct{}),
-		state:   0,
+		clients: make(map[*ringbuffer.RingBuffer]struct{}),
+		state:   StateStopped,
 	}
 	hub.stateCond = sync.NewCond(&hub.mu)
 	return hub
 }
 
-func (hub *StreamHubs) AddClient(ch chan []byte) {
+func (hub *StreamHubs) AddClient(ch *ringbuffer.RingBuffer) {
+
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	if hub.isClosed {
-		close(ch)
+		ch.Close()
 		return
 	}
 	hub.clients[ch] = struct{}{}
 }
 
-func (hub *StreamHubs) RemoveClient(ch chan []byte) {
+func (hub *StreamHubs) RemoveClient(ch *ringbuffer.RingBuffer) {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	
 	// 检查channel是否还在clients映射中
 	if _, exists := hub.clients[ch]; exists {
 		delete(hub.clients, ch)
-		close(ch)
+		ch.Close()
 	}
 	// 如果channel不存在于clients映射中，说明已经被Broadcast方法移除并关闭了
 }
 
 func (hub *StreamHubs) Broadcast(data []byte) {
 	hub.mu.Lock()
-	defer hub.mu.Unlock()
+	clients := make([]*ringbuffer.RingBuffer, 0, len(hub.clients))
 	for ch := range hub.clients {
-		select {
-		case ch <- data:
-		default:
-			// 如果客户端缓冲区满了，移除客户端
-			delete(hub.clients, ch)
-			close(ch)
-		}
+		clients = append(clients, ch)
 	}
+	hub.mu.Unlock()
+
+	for _, ch := range clients {
+		buf := make([]byte, len(data))
+		copy(buf, data)
+		ch.Push(buf)
+		}
+	// logger.LogPrintf("DEBUG: Broadcasted %d bytes to %d clients", len(data), len(clients))
 }
 
 func (hub *StreamHubs) ClientCount() int {
@@ -94,7 +103,7 @@ func (hub *StreamHubs) Close() {
 	}
 	
 	for ch := range hub.clients {
-		close(ch)
+		ch.Close()
 	}
 	hub.clients = nil
 }

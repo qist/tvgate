@@ -16,8 +16,7 @@ import (
 	"github.com/pion/rtp"
 
 	"github.com/qist/tvgate/logger"
-	// "github.com/qist/tvgate/monitor"
-	"github.com/qist/tvgate/utils/buffer"
+	"github.com/qist/tvgate/utils/buffer/ringbuffer"
 )
 
 const (
@@ -35,7 +34,7 @@ var bufPool = sync.Pool{
 }
 
 type channelWriter struct {
-	ch chan []byte
+	rb *ringbuffer.RingBuffer
 }
 
 func (w *channelWriter) Write(p []byte) (n int, err error) {
@@ -45,18 +44,16 @@ func (w *channelWriter) Write(p []byte) (n int, err error) {
 	}
 	buf = buf[:len(p)]
 	copy(buf, p)
-	select {
-	case w.ch <- buf:
-		return len(p), nil
-	default:
+
+	if !w.rb.Push(buf) {
 		atomic.AddInt64(&dropCount, 1)
-		bufPool.Put(buf) // 回收
-		// 添加日志记录，当缓冲区满时记录详细信息
-		if atomic.LoadInt64(&dropCount)%10000 == 0 { // 每10000次记录一次，避免日志过多
-			logger.LogPrintf("⚠️ TS packet dropped due to full buffer. Channel len: %d", len(w.ch))
+		bufPool.Put(buf)
+		if atomic.LoadInt64(&dropCount)%10000 == 0 {
+			logger.LogPrintf("⚠️ TS packet dropped due to full buffer.")
 		}
 		return 0, nil
 	}
+	return len(p), nil
 }
 
 func buildADTSHeader(cfg *mpeg4audio.Config, aacLen int) []byte {
@@ -116,7 +113,10 @@ func HandleH264AacStream(
 	updateActive func(),
 ) error {
 	// 创建客户端通道
-	clientChan := make(chan []byte, 1024)
+	clientChan, err := ringbuffer.New(8 * 1024 * 1024)
+	if err != nil {
+		return err
+	}
 	hub.AddClient(clientChan)
 
 	// 检查是否需要启动播放或者恢复播放
@@ -126,7 +126,7 @@ func HandleH264AacStream(
 	hub.mu.Lock()
 	if hub.isClosed {
 		hub.mu.Unlock()
-		close(clientChan)
+		clientChan.Close()
 		return nil
 	}
 
@@ -177,7 +177,7 @@ func HandleH264AacStream(
 		go func() {
 			// 增加TS通道缓冲区大小，从262144增加到1048576
 			tsChan := make(chan []byte, 1048576)
-			mux := astits.NewMuxer(context.Background(), &channelWriter{ch: tsChan})
+			mux := astits.NewMuxer(context.Background(), &channelWriter{rb: clientChan})
 			mux.SetPCRPID(videoPID)
 			mux.AddElementaryStream(astits.PMTElementaryStream{
 				ElementaryPID: videoPID,
@@ -383,69 +383,37 @@ func HandleH264AacStream(
 	w.Header().Set("Content-Type", "video/mp2t")
 	flusher, _ := w.(http.Flusher)
 
-	// 预缓冲处理
-	preBuffer := make([][]byte, 0, 4096)
-	preBufferDuration := 1 * time.Second
-	preBufferStart := time.Now()
-	buffering := true
-
-	for buffering {
+	for {
 		select {
-		case pkt, ok := <-clientChan:
+		case <-ctx.Done():
+			return nil
+		default:
+			data, ok := clientChan.Pull()
 			if !ok {
 				return nil
 			}
-			preBuffer = append(preBuffer, pkt)
-			if time.Since(preBufferStart) > preBufferDuration {
-				buffering = false
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
 
-	// 先推送预缓冲内容
-	for _, pkt := range preBuffer {
-		_, err := w.Write(pkt)
+			payload := data.([]byte)
+			if len(payload) == 0 {
+				bufPool.Put(payload[:cap(payload)])
+				continue
+			}
+
+			n, err := w.Write(payload)
+			bufPool.Put(payload[:cap(payload)])
 		if err != nil {
-			logger.LogPrintf("Write error: %v", err)
 			return err
 		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
-
-	bufSize := buffer.GetOptimalBufferSize("video/mp2t", r.URL.Path)
-	buf := buffer.GetBuffer(bufSize)
-	defer buffer.PutBuffer(bufSize, buf)
-
-	for {
-		select {
-		case pkt, ok := <-clientChan:
-			if !ok {
-				return nil // 正常退出，不再推送数据
+			if n != len(payload) {
+				continue
 			}
-			n := copy(buf, pkt)
-			if n > 0 {
-				_, err := w.Write(buf[:n])
-				if err != nil {
-					logger.LogPrintf("Write error: %v", err)
-					return err
-				}
-				// ⚡ 出流量统计
-				// monitor.AddAppOutboundBytes(uint64(n))
+
 				if flusher != nil {
 					flusher.Flush()
 				}
-			}
-			// 更新活跃时间
 			if updateActive != nil {
 				updateActive()
 			}
-		case <-ctx.Done():
-			return ctx.Err()
 		}
 	}
-
 }
