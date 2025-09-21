@@ -117,11 +117,17 @@ func (m *ActiveConnectionsManager) CleanInactiveConnections(timeout time.Duratio
 }
 
 // StartCleaner 启动定时清理器
-func (m *ActiveConnectionsManager) StartCleaner(interval time.Duration, timeout time.Duration) {
+func (m *ActiveConnectionsManager) StartCleaner(interval time.Duration, timeout time.Duration, stopChan chan struct{}) {
 	ticker := time.NewTicker(interval)
 	go func() {
-		for range ticker.C {
+		for {
+			select {
+			case <-ticker.C:
 			m.CleanInactiveConnections(timeout)
+			case <-stopChan:
+				ticker.Stop()
+				return
+			}
 		}
 	}()
 }

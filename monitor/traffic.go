@@ -191,11 +191,17 @@ func (ts *TrafficStats) GetTrafficStats() *TrafficStats {
 
 // -------------------- 系统统计 --------------------
 
-func StartSystemStatsUpdater(interval time.Duration) {
+func StartSystemStatsUpdater(interval time.Duration, stopChan chan struct{}) {
+	ticker := time.NewTicker(interval)
 	go func() {
 		for {
+			select {
+			case <-ticker.C:
 			updateSystemStats()
-			time.Sleep(interval)
+			case <-stopChan:
+				ticker.Stop()
+				return
+			}
 		}
 	}()
 }

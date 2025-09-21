@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"github.com/qist/tvgate/server"
 	httpclient "github.com/qist/tvgate/utils/http"
 	"github.com/qist/tvgate/web"
+	_ "net/http/pprof"
 )
 
 var shutdownMux sync.Mutex
@@ -34,19 +36,33 @@ var shutdownOnce sync.Once
 
 func main() {
 	flag.Parse()
+
+	// 启动 pprof 性能分析接口（默认 6060 端口）
+	go func() {
+		log.Println("pprof 性能分析接口已启动: http://0.0.0.0:6060/debug/pprof/ 可远程访问")
+		http.ListenAndServe("0.0.0.0:6060", nil)
+	}()
 	if *config.VersionFlag {
 		fmt.Println("程序版本:", config.Version)
 		return
 	}
 
 	// -------------------------
-	// 初始化 tableflip Upgrader
+	// 初始化 tableflip Upgrader（仅非 Windows 平台）
 	// -------------------------
-	upg, err := tableflip.New(tableflip.Options{})
+	var upg *tableflip.Upgrader
+	var err error
+	isWindows := runtime.GOOS == "windows"
+	if !isWindows {
+		upg, err = tableflip.New(tableflip.Options{})
 	if err != nil {
 		log.Fatalf("无法创建升级器: %v", err)
 	}
 	defer upg.Stop() // 确保退出时清理
+	} else {
+		upg = nil
+		// fmt.Println("Windows 平台不支持 tableflip 热升级，采用普通重启")
+	}
 
 	// -------------------------
 	// 配置文件加载
@@ -100,12 +116,15 @@ func main() {
 	// -------------------------
 	// 启动监控 & 清理任务
 	// -------------------------
-	go monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second)
-	go monitor.StartSystemStatsUpdater(10 * time.Second)
+	stopActiveClients := make(chan struct{})
+	stopStartSystemStatsUpdater := make(chan struct{})
 
 	stopCleaner := make(chan struct{})
 	stopAccessCleaner := make(chan struct{})
 	stopProxyStats := make(chan struct{})
+
+	go monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second, stopActiveClients)
+	go monitor.StartSystemStatsUpdater(30*time.Second, stopStartSystemStatsUpdater)
 
 	go clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
 	go clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
@@ -199,22 +218,28 @@ func main() {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 		fmt.Println("收到退出信号，开始优雅退出")
-		gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats)
+		gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater)
+		if !isWindows && upg != nil {
 		upg.Exit() // tableflip 清理旧进程
+		} else {
+			os.Exit(0)
+		}
 	}()
 
 	// -------------------------
-	// tableflip 准备完成
+	// tableflip 准备完成（仅非 Windows）
 	// -------------------------
+	if !isWindows && upg != nil {
 	if err := upg.Ready(); err != nil {
 		log.Fatalf("升级器准备失败: %v", err)
 	}
+	}
 
 	<-config.ServerCtx.Done()
-	gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats)
+	gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater)
 }
 
-func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats chan struct{}) {
+func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater chan struct{}) {
 	shutdownOnce.Do(func() {
 		shutdownMux.Lock()
 		defer shutdownMux.Unlock()
@@ -223,9 +248,15 @@ func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats chan struct
 			config.Cancel()
 		}
 
+		// 给goroutines一些时间来处理关闭信号
 		close(stopCleaner)
 		close(stopAccessCleaner)
 		close(stopProxyStats)
+		close(stopActiveClients)
+		close(stopStartSystemStatsUpdater)
+
+		// 等待一段时间确保所有goroutines都已退出
+		time.Sleep(100 * time.Millisecond)
 
 		fmt.Println("优雅退出完成")
 	})

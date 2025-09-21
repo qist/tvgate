@@ -215,7 +215,8 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	if err := unzip(tmpFile, tmpDestDir); err != nil {
 		return err
 	}
-	newExecPath := filepath.Join(tmpDestDir, filepath.Base(execPath))
+	newapp := fmt.Sprintf("TVGate-%s-%s", arch.GOOS, arch.PackageArch)
+	newExecPath := filepath.Join(tmpDestDir, filepath.Base(newapp))
 	if runtime.GOOS != "windows" {
 		_ = os.Chmod(newExecPath, 0755)
 	}
@@ -225,6 +226,7 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	// 在退出前更新状态为成功
 	SetStatus("success", "升级成功，正在重启")
 	// 注意：这里我们不创建新的upgrader，而是使用已有的全局upgrader
+	
 	upgrade.UpgradeProcess(newExecPath, *config.ConfigFilePath, tmpDestDir)
 
 	return nil
