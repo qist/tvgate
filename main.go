@@ -28,7 +28,7 @@ import (
 	"github.com/qist/tvgate/server"
 	httpclient "github.com/qist/tvgate/utils/http"
 	"github.com/qist/tvgate/web"
-	_ "net/http/pprof"
+	// _ "net/http/pprof"
 )
 
 // 定义任务结构体用于sync.Pool
@@ -51,18 +51,18 @@ func main() {
 
 	// 启动 pprof 性能分析接口（默认 6060 端口）
 	// 从池中获取任务对象
-	task := taskPool.Get().(*mainTask)
-	task.f = func() {
-		log.Println("pprof 性能分析接口已启动: http://0.0.0.0:6060/debug/pprof/ 可远程访问")
-		http.ListenAndServe("0.0.0.0:6060", nil)
-	}
+	// task := taskPool.Get().(*mainTask)
+	// task.f = func() {
+	// 	log.Println("pprof 性能分析接口已启动: http://0.0.0.0:6060/debug/pprof/ 可远程访问")
+	// 	http.ListenAndServe("0.0.0.0:6060", nil)
+	// }
 	
-	// 执行任务
-	go task.f()
+	// // 执行任务
+	// go task.f()
 	
-	// 清空任务并放回池中
-	task.f = nil
-	taskPool.Put(task)
+	// // 清空任务并放回池中
+	// task.f = nil
+	// taskPool.Put(task)
 	if *config.VersionFlag {
 		fmt.Println("程序版本:", config.Version)
 		return
