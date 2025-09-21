@@ -182,7 +182,7 @@ func WatchConfigFile(configPath string) {
 						ServerHeaders: mapping.ServerHeaders,
 					}
 				}
-				localClient := &http.Client{Timeout: 30 * time.Second}
+				localClient := &http.Client{Timeout: config.Cfg.HTTP.Timeout}
 				domainMapper := domainmap.NewDomainMapper(mappings, localClient, defaultHandler)
 				// mux.Handle("/", domainMapper)
 				newMux.Handle("/", server.SecurityHeaders(domainMapper))

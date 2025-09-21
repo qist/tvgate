@@ -814,7 +814,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, maxRedirect int, frontendScheme, frontendHost string) (*http.Response, error) {
 	defer dm.CleanTokenManagers()
 	reqBodyBytes, _ := io.ReadAll(req.Body)
-	req.Body.Close()
+	// req.Body.Close()
 
 	for i := 0; i < maxRedirect; i++ {
 		req.Body = io.NopCloser(bytes.NewReader(reqBodyBytes))
@@ -825,7 +825,7 @@ func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, m
 
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 			loc := resp.Header.Get("Location")
-			resp.Body.Close()
+			// resp.Body.Close()
 			if loc == "" {
 				return resp, nil
 			}

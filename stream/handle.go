@@ -300,7 +300,7 @@ func handleRedirect(w http.ResponseWriter, r *http.Request, proxyResp *http.Resp
 
 // handleSpecialContent 处理 m3u8 文件内容
 func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *http.Response, buf []byte) {
-	defer proxyResp.Body.Close()
+	// defer proxyResp.Body.Close()
 
 	bufSize := len(buf)
 	reader := bufio.NewReaderSize(proxyResp.Body, bufSize)
