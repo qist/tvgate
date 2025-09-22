@@ -57,18 +57,18 @@ func (r *RingBuffer) GetAll() [][]byte {
 // StreamHub
 // ====================
 type StreamHub struct {
-	Mu            sync.Mutex
-	Clients       map[chan []byte]struct{}
-	AddCh         chan chan []byte
-	RemoveCh      chan chan []byte
-	UdpConn       *net.UDPConn
-	Closed        chan struct{}
-	BufPool       *sync.Pool
-	LastFrame     []byte
-	LastKeyFrame  []byte
-	CacheBuffer   *RingBuffer
+	Mu             sync.Mutex
+	Clients        map[chan []byte]struct{}
+	AddCh          chan chan []byte
+	RemoveCh       chan chan []byte
+	UdpConn        *net.UDPConn
+	Closed         chan struct{}
+	BufPool        *sync.Pool
+	LastFrame      []byte
+	LastKeyFrame   []byte
+	CacheBuffer    *RingBuffer
 	DetectedFormat string // ts 或 rtp
-	addr          string
+	addr           string
 
 	// 性能统计
 	PacketCount uint64
@@ -134,14 +134,14 @@ func NewStreamHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 	_ = conn.SetReadBuffer(8 * 1024 * 1024)
 
 	hub := &StreamHub{
-		Clients:      make(map[chan []byte]struct{}),
-		AddCh:        make(chan chan []byte, 1024),
-		RemoveCh:     make(chan chan []byte, 1024),
-		UdpConn:      conn,
-		Closed:       make(chan struct{}),
-		BufPool:      &sync.Pool{New: func() any { return make([]byte, 32*1024) }},
-		CacheBuffer:  NewRingBuffer(300),
-		addr:         udpAddr,
+		Clients:        make(map[chan []byte]struct{}),
+		AddCh:          make(chan chan []byte, 1024),
+		RemoveCh:       make(chan chan []byte, 1024),
+		UdpConn:        conn,
+		Closed:         make(chan struct{}),
+		BufPool:        &sync.Pool{New: func() any { return make([]byte, 32*1024) }},
+		CacheBuffer:    NewRingBuffer(512), // 大约 10 秒缓存 (假设每帧 188 字节，每秒 1Mbps)
+		addr:           udpAddr,
 		DetectedFormat: "",
 	}
 
@@ -306,21 +306,36 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 
 	ctx := r.Context()
+	bufferedBytes := 0
+	flushTicker := time.NewTicker(200 * time.Millisecond)
+	defer flushTicker.Stop()
+	activeTicker := time.NewTicker(5 * time.Second)
+	defer activeTicker.Stop()
+
 	for {
 		select {
 		case data, ok := <-ch:
 			if !ok {
 				return
 			}
-			_, err := w.Write(data)
+			n, err := w.Write(data)
 			if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
 				logger.LogPrintf("写入客户端错误: %v", err)
 				return
 			}
-			flusher.Flush()
+			bufferedBytes += n
+
+		case <-flushTicker.C:
+			if flusher != nil && bufferedBytes > 0 {
+				flusher.Flush()
+				bufferedBytes = 0
+			}
+
+		case <-activeTicker.C:
 			if updateActive != nil {
 				updateActive()
 			}
+
 		case <-ctx.Done():
 			return
 		case <-time.After(30 * time.Second):

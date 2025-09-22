@@ -2,12 +2,12 @@ package stream
 
 import (
 	"context"
-	"net/http"
-
 	"github.com/bluenviron/gortsplib/v5"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/pion/rtp"
+	"net/http"
+	"time"
 
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
@@ -26,7 +26,7 @@ func HandleMpegtsStream(
 	updateActive func(),
 ) error {
 
-	clientChan, err := ringbuffer.New(1024)
+	clientChan, err := ringbuffer.New(2048)
 	if err != nil {
 		return err
 	}
@@ -138,12 +138,29 @@ func HandleMpegtsStream(
 	w.Header().Set("Content-Type", "video/mp2t")
 	flusher, _ := w.(http.Flusher)
 
+	flushTicker := time.NewTicker(200 * time.Millisecond) // 定时 flush
+	defer flushTicker.Stop()
+
+	activeTicker := time.NewTicker(5 * time.Second) // 定时更新活跃
+	defer activeTicker.Stop()
+
+	bufferedBytes := 0
+
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
+		case <-flushTicker.C:
+			if flusher != nil && bufferedBytes > 0 {
+				flusher.Flush()
+				bufferedBytes = 0
+			}
+		case <-activeTicker.C:
+			if updateActive != nil {
+				updateActive()
+			}
 		default:
-			data, ok := clientChan.Pull()
+			data, ok := clientChan.PullWithContext(ctx)
 			if !ok {
 				return nil
 			}
@@ -153,17 +170,12 @@ func HandleMpegtsStream(
 				continue
 			}
 
-			_, err := w.Write(payload)
+			n, err := w.Write(payload)
 			if err != nil {
 				logger.LogPrintf("Write error: %v", err)
 				return err
 			}
-			if flusher != nil {
-				flusher.Flush()
-			}
-			if updateActive != nil {
-				updateActive()
-			}
+			bufferedBytes += n
 		}
 	}
 }

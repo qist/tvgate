@@ -113,7 +113,7 @@ func HandleH264AacStream(
 	updateActive func(),
 ) error {
 	// 创建客户端通道
-	clientChan, err := ringbuffer.New(8 * 1024 * 1024)
+	clientChan, err := ringbuffer.New(2048) // 增加缓冲区大小以适应更高的吞吐量
 	if err != nil {
 		return err
 	}
@@ -382,13 +382,30 @@ func HandleH264AacStream(
 	logger.LogRequestAndResponse(r, rtspURL, &http.Response{StatusCode: http.StatusOK})
 	w.Header().Set("Content-Type", "video/mp2t")
 	flusher, _ := w.(http.Flusher)
+	
+	flushTicker := time.NewTicker(200 * time.Millisecond)
+	defer flushTicker.Stop()
+
+	activeTicker := time.NewTicker(5 * time.Second)
+	defer activeTicker.Stop()
+
+	bufferedBytes := 0
 
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
+		case <-flushTicker.C:
+			if flusher != nil && bufferedBytes > 0 {
+				flusher.Flush()
+				bufferedBytes = 0
+			}
+		case <-activeTicker.C:
+			if updateActive != nil {
+				updateActive()
+			}
 		default:
-			data, ok := clientChan.Pull()
+			data, ok := clientChan.PullWithContext(ctx)
 			if !ok {
 				return nil
 			}
@@ -401,19 +418,12 @@ func HandleH264AacStream(
 
 			n, err := w.Write(payload)
 			bufPool.Put(payload[:cap(payload)])
-		if err != nil {
-			return err
-		}
-			if n != len(payload) {
-				continue
+
+			if err != nil {
+				return err
 			}
 
-				if flusher != nil {
-					flusher.Flush()
-				}
-			if updateActive != nil {
-				updateActive()
-			}
+			bufferedBytes += n
 		}
 	}
 }

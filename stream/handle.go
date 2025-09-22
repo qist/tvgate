@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/qist/tvgate/auth"
+	"net"
 	"github.com/qist/tvgate/logger"
 	// "github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/utils/buffer"
@@ -177,60 +178,81 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 
 // CopyWithContext 流式复制 src -> dst，使用 buffer 池，bufio 内部缓存可控
 func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, updateActive func()) error {
-	// 使用ticker控制活跃时间更新频率，避免频繁调用
+	// 活跃时间心跳
 	var activeTicker *time.Ticker
-	var activeChan <-chan time.Time
 	if updateActive != nil {
-		activeTicker = time.NewTicker(5 * time.Second) // 每5秒更新一次活跃时间
+		activeTicker = time.NewTicker(5 * time.Second)
 		defer activeTicker.Stop()
-		activeChan = activeTicker.C
-		defer updateActive() // 确保最后更新一次
+		defer updateActive() // 退出前更新一次
 	}
-	
-	// 判断是否支持Flush
+
+	// flush 定时器（降低延迟）
+	flushTicker := time.NewTicker(200 * time.Millisecond)
+	defer flushTicker.Stop()
+
+	// 是否支持 http flush
 	flusher, canFlush := dst.(http.Flusher)
-	
-	// 统计写入字节数，定期flush
+
+	// 统计写入字节数
 	bytesWritten := 0
-	
+
+	// 如果 src 是 net.Conn，给它绑 ctx
+	if c, ok := src.(net.Conn); ok {
+		go func() {
+			<-ctx.Done()
+			// 打断阻塞 read
+			_ = c.SetReadDeadline(time.Now())
+		}()
+	}
+
 	for {
+		// 读取数据
+		n, readErr := src.Read(buf)
+		if n > 0 {
+			// monitor.AddAppInboundBytes(uint64(n))
+			written := 0
+			for written < n {
+				wn, writeErr := dst.Write(buf[written:n])
+				if writeErr != nil {
+					return fmt.Errorf("写入错误: %w", writeErr)
+				}
+				written += wn
+				bytesWritten += wn
+			}
+			// monitor.AddAppOutboundBytes(uint64(n))
+
+			// 大数据量触发 flush
+			if canFlush && bytesWritten >= 32*1024 {
+				flusher.Flush()
+				bytesWritten = 0
+			}
+		}
+
+		// 错误处理
+		if readErr != nil {
+			if canFlush && bytesWritten > 0 {
+				flusher.Flush()
+			}
+			if errors.Is(readErr, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("读取错误: %w", readErr)
+		}
+
+		// 非阻塞检查 ctx / ticker
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-activeChan:
-			updateActive()
+		case <-flushTicker.C:
+			if canFlush && bytesWritten > 0 {
+				flusher.Flush()
+				bytesWritten = 0
+			}
+		case <-activeTicker.C:
+			if updateActive != nil {
+				updateActive()
+			}
 		default:
-			n, readErr := src.Read(buf)
-			if n > 0 {
-				// 更新全局 App 流量统计（线程安全）
-				// monitor.AddAppInboundBytes(uint64(n))
-				written := 0
-				for written < n {
-					wn, writeErr := dst.Write(buf[written:n])
-					if writeErr != nil {
-						return fmt.Errorf("写入错误: %w", writeErr)
-					}
-					written += wn
-					bytesWritten += wn
-				}
-				// monitor.AddAppOutboundBytes(uint64(n))
-				
-				// 每写入一定数据量后才flush，避免频繁flush
-				if canFlush && bytesWritten >= 32*1024 { // 每32KB flush一次
-					flusher.Flush()
-					bytesWritten = 0
-				}
-			}
-			if readErr != nil {
-				// 最后flush一次确保数据发送完毕
-				if canFlush && bytesWritten > 0 {
-					flusher.Flush()
-				}
-				if errors.Is(readErr, io.EOF) {
-					return nil
-				}
-				return fmt.Errorf("读取错误: %w", readErr)
-			}
 		}
 	}
 }
