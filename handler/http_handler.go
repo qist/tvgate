@@ -85,7 +85,7 @@ func (t *timeoutReadCloser) Read(p []byte) (int, error) {
 	if t.err != nil {
 		return 0, t.err
 	}
-		return n, err
+	return n, err
 }
 
 func (t *timeoutReadCloser) Close() error {
@@ -114,7 +114,10 @@ func Handler(client *http.Client) http.HandlerFunc {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.Header().Set("Server", "TVGate")
 
-			msg := fmt.Sprintf("TVGate running\nVersion: %s\nProtocols: HTTP/1.1, HTTP/2, HTTP/3\n", config.Version)
+			msg := fmt.Sprintf(
+				"TVGate running\nVersion: %s\nProtocols: HTTP/1.1, HTTP/2, HTTP/3\n\n本工具仅供技术测试与研究之用，严禁用于任何侵权或非法活动。\n",
+				config.Version,
+			)
 			_, _ = w.Write([]byte(msg))
 			return
 		}
