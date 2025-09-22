@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -119,33 +120,63 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 			oldTLSCertFile != config.Cfg.Server.TLS.CertFile ||
 			oldTLSKeyFile != config.Cfg.Server.TLS.KeyFile
 
-		ports := []int{config.Cfg.Server.Port}
-		if config.Cfg.Server.HTTPPort > 0 {
-			ports = append(ports, config.Cfg.Server.HTTPPort)
-		}
-		if config.Cfg.Server.TLS.HTTPSPort > 0 {
-			ports = append(ports, config.Cfg.Server.TLS.HTTPSPort)
-		}
+		// 如果需要重启服务
+		if needRestart {
+			logger.LogPrintf("🔄 检测到关键配置变更，需要重启服务")
+			
+			// 先关闭旧服务
+			if httpCancel != nil {
+				logger.LogPrintf("🔄 正在通过上下文关闭旧服务...")
+				httpCancel()
+				// 等待服务完全关闭
+				time.Sleep(500 * time.Millisecond)
+			}
+			
+			// 直接关闭所有服务器
+			logger.LogPrintf("🔄 正在直接关闭所有服务...")
+			server.CloseAllServers()
+			time.Sleep(100 * time.Millisecond)
 
-		for _, p := range ports {
-			addr := fmt.Sprintf(":%d", p)
-			mux := server.RegisterMux(addr, &config.Cfg)
-			if needRestart {
-				// 关闭旧服务
-				if httpCancel != nil {
-					httpCancel()
-				}
-				ctx, cancel := context.WithCancel(context.Background())
-				httpCancel = cancel
+			// 创建新的上下文
+			ctx, cancel := context.WithCancel(context.Background())
+			httpCancel = cancel
 
-				go func(addr string) {
-					if err := server.StartHTTPServer(ctx, addr, nil); err != nil {
+			// 构建需要启动的新地址列表
+			newAddrs := make(map[string]bool)
+			newAddrs[fmt.Sprintf(":%d", config.Cfg.Server.Port)] = true
+			if config.Cfg.Server.HTTPPort > 0 {
+				newAddrs[fmt.Sprintf(":%d", config.Cfg.Server.HTTPPort)] = true
+			}
+			if config.Cfg.Server.TLS.HTTPSPort > 0 {
+				newAddrs[fmt.Sprintf(":%d", config.Cfg.Server.TLS.HTTPSPort)] = true
+			}
+
+			// 启动所有新服务
+			for addr := range newAddrs {
+				mux := server.RegisterMux(addr, &config.Cfg)
+				logger.LogPrintf("🚀 正在启动服务 %s", addr)
+				go func(addr string, mux *http.ServeMux) {
+					if err := server.StartHTTPServerWithConfig(ctx, addr, nil, &config.Cfg); err != nil {
 						logger.LogPrintf("❌ 启动 HTTP 服务失败 %s: %v", addr, err)
 					}
-				}(addr)
-			} else {
-
-				// 再平滑替换 Handler
+				}(addr, mux)
+			}
+		} else {
+			// 平滑更新路由
+			logger.LogPrintf("🔄 配置变更无需重启服务，进行平滑更新")
+			
+			// 构建地址列表
+			addrs := make(map[string]bool)
+			addrs[fmt.Sprintf(":%d", config.Cfg.Server.Port)] = true
+			if config.Cfg.Server.HTTPPort > 0 {
+				addrs[fmt.Sprintf(":%d", config.Cfg.Server.HTTPPort)] = true
+			}
+			if config.Cfg.Server.TLS.HTTPSPort > 0 {
+				addrs[fmt.Sprintf(":%d", config.Cfg.Server.TLS.HTTPSPort)] = true
+			}
+			
+			for addr := range addrs {
+				mux := server.RegisterMux(addr, &config.Cfg)
 				server.SetHTTPHandler(addr, mux)
 			}
 		}

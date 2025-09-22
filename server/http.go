@@ -31,13 +31,50 @@ var (
     h3servers = make(map[string]*http3.Server)
 )
 
+// CloseAllServers 关闭所有正在运行的服务器
+func CloseAllServers() {
+	serverMu.Lock()
+	defer serverMu.Unlock()
+
+	// 关闭所有HTTP/HTTPS服务器
+	for addr, srv := range servers {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := srv.Shutdown(ctx); err != nil {
+			logger.LogPrintf("❌ 关闭服务器失败 %s: %v", addr, err)
+		} else {
+			logger.LogPrintf("✅ 端口 %s 已关闭", addr)
+		}
+		cancel()
+	}
+	
+	// 关闭所有HTTP/3服务器
+	for addr, srv := range h3servers {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := srv.Shutdown(ctx); err != nil {
+			logger.LogPrintf("❌ 关闭HTTP/3服务器失败 %s: %v", addr, err)
+		} else {
+			logger.LogPrintf("✅ HTTP/3端口 %s 已关闭", addr)
+		}
+		cancel()
+	}
+
+	// 清空maps
+	servers = make(map[string]*http.Server)
+	h3servers = make(map[string]*http3.Server)
+}
+
 // ==================== HTTP/TLS 服务器 ====================
 
 func StartHTTPServer(ctx context.Context, addr string, upgrader *tableflip.Upgrader) error {
-    mux := RegisterMux(addr, &config.Cfg)
+    return StartHTTPServerWithConfig(ctx, addr, upgrader, &config.Cfg)
+}
 
-    tlsConfig, certFile, keyFile := GetTLSConfig(addr, &config.Cfg)
-    enableH3 := tlsConfig != nil && addr == fmt.Sprintf(":%d", config.Cfg.Server.TLS.HTTPSPort) && config.Cfg.Server.TLS.EnableH3
+// StartHTTPServerWithConfig 启动HTTP服务器并使用指定配置
+func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *tableflip.Upgrader, cfg *config.Config) error {
+    mux := RegisterMux(addr, cfg)
+
+    tlsConfig, certFile, keyFile := GetTLSConfig(addr, cfg)
+    enableH3 := tlsConfig != nil && addr == fmt.Sprintf(":%d", cfg.Server.TLS.HTTPSPort) && cfg.Server.TLS.EnableH3
 
     srv := &http.Server{
         Handler:           mux,
