@@ -290,9 +290,18 @@
                            onchange="updateConfig('port', parseInt(this.value))">
                     <div class="help-text">服务器监听的端口号</div>
                 </div>
+
+                <div class="form-group">
+                    <label for="http_port">HTTP端口:</label>
+                    <input type="number" id="http_port" class="form-control" 
+                           placeholder="0 (0表示不启用)" 
+                           value="{{ if .config.http_port }}{{ .config.http_port }}{{ end }}" 
+                           onchange="updateConfig('http_port', parseInt(this.value))">
+                    <div class="help-text">独立的HTTP端口，0表示不启用</div>
+                </div>
                 
                 <div class="form-group">
-                    <label for="certfile">证书文件路径:</label>
+                    <label for="certfile">原证书文件路径:</label>
                     <input type="text" id="certfile" class="form-control" 
                            placeholder="" 
                            value="{{ if .config.certfile }}{{ .config.certfile }}{{ end }}" 
@@ -301,17 +310,26 @@
                 </div>
                 
                 <div class="form-group">
-                    <label for="keyfile">私钥文件路径:</label>
+                    <label for="keyfile">原私钥文件路径:</label>
                     <input type="text" id="keyfile" class="form-control" 
                            placeholder="" 
                            value="{{ if .config.keyfile }}{{ .config.keyfile }}{{ end }}" 
                            onchange="updateConfig('keyfile', this.value)">
                     <div class="help-text">TLS私钥文件路径，留空表示不启用HTTPS</div>
                 </div>
+
+                <div class="form-group">
+                    <label for="http_to_https">
+                        <input type="checkbox" id="http_to_https" 
+                               onchange="updateConfig('http_to_https', this.checked)" />
+                        HTTP跳转到HTTPS
+                    </label>
+                    <div class="help-text">启用后，HTTP请求将自动跳转到HTTPS</div>
+                </div>
             </div>
             
             <div class="section">
-                <h2 class="section-title">SSL配置</h2>
+                <h2 class="section-title">原SSL配置</h2>
                 
                 <div class="form-group">
                     <label for="ssl_protocols">SSL协议版本:</label>
@@ -337,6 +355,72 @@
                            value="{{ if .config.ssl_ecdh_curve }}{{ .config.ssl_ecdh_curve }}{{ else }}{{ end }}" 
                            onchange="updateConfig('ssl_ecdh_curve', this.value)">
                     <div class="help-text">支持的TLS曲线，多个曲线用冒号分隔</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">独立端口TLS配置</h2>
+                
+                <div class="form-group">
+                    <label for="tls_https_port">HTTPS端口:</label>
+                    <input type="number" id="tls_https_port" class="form-control" 
+                           placeholder="0 (0表示不启用)" 
+                           value="{{ if and .config.tls .config.tls.https_port }}{{ .config.tls.https_port }}{{ end }}" 
+                           onchange="updateTLSConfig('https_port', parseInt(this.value))">
+                    <div class="help-text">独立的HTTPS端口，0表示不启用</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="tls_certfile">TLS证书文件路径:</label>
+                    <input type="text" id="tls_certfile" class="form-control" 
+                           placeholder="" 
+                           value="{{ if and .config.tls .config.tls.certfile }}{{ .config.tls.certfile }}{{ end }}" 
+                           onchange="updateTLSConfig('certfile', this.value)">
+                    <div class="help-text">TLS证书文件路径</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="tls_keyfile">TLS私钥文件路径:</label>
+                    <input type="text" id="tls_keyfile" class="form-control" 
+                           placeholder="" 
+                           value="{{ if and .config.tls .config.tls.keyfile }}{{ .config.tls.keyfile }}{{ end }}" 
+                           onchange="updateTLSConfig('keyfile', this.value)">
+                    <div class="help-text">TLS私钥文件路径</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="tls_ssl_protocols">TLS协议版本:</label>
+                    <input type="text" id="tls_ssl_protocols" class="form-control" 
+                           placeholder="TLSv1.2 TLSv1.3" 
+                           value="{{ if and .config.tls .config.tls.ssl_protocols }}{{ .config.tls.ssl_protocols }}{{ else }}{{ end }}" 
+                           onchange="updateTLSConfig('ssl_protocols', this.value)">
+                    <div class="help-text">支持的TLS协议版本，多个版本用空格分隔</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="tls_ssl_ciphers">TLS加密套件:</label>
+                    <textarea id="tls_ssl_ciphers" class="form-control" rows="4"
+                              placeholder="TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305:TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305:TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256" 
+                              onchange="updateTLSConfig('ssl_ciphers', this.value)">{{ if and .config.tls .config.tls.ssl_ciphers }}{{ .config.tls.ssl_ciphers }}{{ else }}{{ end }}</textarea>
+                    <div class="help-text">支持的TLS加密套件，多个套件用冒号分隔</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="tls_ssl_ecdh_curve">TLS ECDH曲线:</label>
+                    <input type="text" id="tls_ssl_ecdh_curve" class="form-control" 
+                           placeholder="X25519MLKEM768:X25519:P-384:P-256" 
+                           value="{{ if and .config.tls .config.tls.ssl_ecdh_curve }}{{ .config.tls.ssl_ecdh_curve }}{{ else }}{{ end }}" 
+                           onchange="updateTLSConfig('ssl_ecdh_curve', this.value)">
+                    <div class="help-text">支持的TLS曲线，多个曲线用冒号分隔</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="enable_h3">
+                        <input type="checkbox" id="enable_h3" 
+                               onchange="updateTLSConfig('enable_h3', this.checked)" />
+                        启用HTTP/3
+                    </label>
+                    <div class="help-text">启用HTTP/3支持（需要配置HTTPS端口）</div>
                 </div>
             </div>
             
@@ -390,6 +474,10 @@
                 })
                 .then(data => {
                     serverConfig = data || {};
+                    // 确保tls字段存在
+                    if (!serverConfig.tls) {
+                        serverConfig.tls = {};
+                    }
                     originalConfig = JSON.parse(JSON.stringify(serverConfig)); // 保存原始配置副本
                     populateForm();
                 })
@@ -402,11 +490,24 @@
         // 填充表单
         function populateForm() {
             document.getElementById('port').value = serverConfig.port || 8888;
+            document.getElementById('http_port').value = serverConfig.http_port || 0;
             document.getElementById('certfile').value = serverConfig.certfile || '';
             document.getElementById('keyfile').value = serverConfig.keyfile || '';
             document.getElementById('ssl_protocols').value = serverConfig.ssl_protocols || '';
             document.getElementById('ssl_ciphers').value = serverConfig.ssl_ciphers || '';
             document.getElementById('ssl_ecdh_curve').value = serverConfig.ssl_ecdh_curve || '';
+            document.getElementById('http_to_https').checked = serverConfig.http_to_https || false;
+            
+            // TLS配置
+            if (serverConfig.tls) {
+                document.getElementById('tls_https_port').value = serverConfig.tls.https_port || 0;
+                document.getElementById('tls_certfile').value = serverConfig.tls.certfile || '';
+                document.getElementById('tls_keyfile').value = serverConfig.tls.keyfile || '';
+                document.getElementById('tls_ssl_protocols').value = serverConfig.tls.ssl_protocols || '';
+                document.getElementById('tls_ssl_ciphers').value = serverConfig.tls.ssl_ciphers || '';
+                document.getElementById('tls_ssl_ecdh_curve').value = serverConfig.tls.ssl_ecdh_curve || '';
+                document.getElementById('enable_h3').checked = serverConfig.tls.enable_h3 || false;
+            }
             
             // 处理组播接口列表
             const container = document.getElementById('multicast-ifaces-container');
@@ -464,6 +565,14 @@
         // 更新配置
         function updateConfig(field, value) {
             serverConfig[field] = value;
+        }
+
+        // 更新TLS配置
+        function updateTLSConfig(field, value) {
+            if (!serverConfig.tls) {
+                serverConfig.tls = {};
+            }
+            serverConfig.tls[field] = value;
         }
 
         // 保存配置

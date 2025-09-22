@@ -40,12 +40,23 @@ func (h *ConfigHandler) handleServerConfig(w http.ResponseWriter, r *http.Reques
 	// 转换为可JSON序列化的格式
 	serverConfig := map[string]interface{}{
 		"port":              server.Port,
+		"http_port":         server.HTTPPort,
 		"certfile":          server.CertFile,
 		"keyfile":           server.KeyFile,
 		"ssl_protocols":     server.SSLProtocols,
 		"ssl_ciphers":       server.SSLCiphers,
 		"ssl_ecdh_curve":    server.SSLECDHCurve,
+		"http_to_https":     server.HTTPToHTTPS,
 		"multicast_ifaces":  server.MulticastIfaces,
+		"tls": map[string]interface{}{
+			"https_port":    server.TLS.HTTPSPort,
+			"certfile":      server.TLS.CertFile,
+			"keyfile":       server.TLS.KeyFile,
+			"ssl_protocols": server.TLS.Protocols,
+			"ssl_ciphers":   server.TLS.Ciphers,
+			"ssl_ecdh_curve": server.TLS.ECDHCurve,
+			"enable_h3":     server.TLS.EnableH3,
+		},
 	}
 
 	// 返回JSON格式的配置
@@ -112,6 +123,16 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 							&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", port)})
 					}
 
+					// 添加http_port
+					if httpPort, ok := serverConfig["http_port"]; ok {
+						httpPortValue := fmt.Sprintf("%v", httpPort)
+						if httpPortValue != "" && httpPortValue != "0" {
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "http_port"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: httpPortValue})
+						}
+					}
+
 					// 添加certfile
 					if certfile, ok := serverConfig["certfile"]; ok {
 						certfileStr := fmt.Sprintf("%v", certfile)
@@ -168,6 +189,16 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 						}
 					}
 
+					// 添加http_to_https
+					if httpToHTTPS, ok := serverConfig["http_to_https"]; ok {
+						httpToHTTPSStr := fmt.Sprintf("%v", httpToHTTPS)
+						if httpToHTTPSStr == "true" || httpToHTTPSStr == "1" {
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "http_to_https"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "true"})
+						}
+					}
+
 					// 添加multicast_ifaces
 					if multicastIfaces, ok := serverConfig["multicast_ifaces"]; ok {
 						if ifaces, ok := multicastIfaces.([]interface{}); ok && len(ifaces) > 0 {
@@ -199,6 +230,89 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 								newServerNode.Content = append(newServerNode.Content,
 									&yaml.Node{Kind: yaml.ScalarNode, Value: "multicast_ifaces"},
 									ifacesNode)
+							}
+						}
+					}
+
+					// 添加tls配置块
+					if tlsConfig, ok := serverConfig["tls"]; ok {
+						if tlsMap, ok := tlsConfig.(map[string]interface{}); ok {
+							tlsNode := &yaml.Node{Kind: yaml.MappingNode}
+							
+							// 添加https_port
+							if httpsPort, ok := tlsMap["https_port"]; ok {
+								httpsPortValue := fmt.Sprintf("%v", httpsPort)
+								if httpsPortValue != "" && httpsPortValue != "0" {
+									tlsNode.Content = append(tlsNode.Content,
+										&yaml.Node{Kind: yaml.ScalarNode, Value: "https_port"},
+										&yaml.Node{Kind: yaml.ScalarNode, Value: httpsPortValue})
+								}
+							}
+							
+							// 添加certfile
+							if certfile, ok := tlsMap["certfile"]; ok {
+								certfileStr := fmt.Sprintf("%v", certfile)
+								if certfileStr != "" {
+									tlsNode.Content = append(tlsNode.Content,
+										&yaml.Node{Kind: yaml.ScalarNode, Value: "certfile"},
+										&yaml.Node{Kind: yaml.ScalarNode, Value: certfileStr, Style: yaml.DoubleQuotedStyle})
+								}
+							}
+							
+							// 添加keyfile
+							if keyfile, ok := tlsMap["keyfile"]; ok {
+								keyfileStr := fmt.Sprintf("%v", keyfile)
+								if keyfileStr != "" {
+									tlsNode.Content = append(tlsNode.Content,
+										&yaml.Node{Kind: yaml.ScalarNode, Value: "keyfile"},
+										&yaml.Node{Kind: yaml.ScalarNode, Value: keyfileStr, Style: yaml.DoubleQuotedStyle})
+								}
+							}
+							
+							// 添加ssl_protocols
+							if sslProtocols, ok := tlsMap["ssl_protocols"]; ok {
+								sslProtocolsStr := fmt.Sprintf("%v", sslProtocols)
+								if sslProtocolsStr != "" {
+									tlsNode.Content = append(tlsNode.Content,
+										&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_protocols"},
+										&yaml.Node{Kind: yaml.ScalarNode, Value: sslProtocolsStr, Style: yaml.DoubleQuotedStyle})
+								}
+							}
+							
+							// 添加ssl_ciphers
+							if sslCiphers, ok := tlsMap["ssl_ciphers"]; ok {
+								sslCiphersStr := fmt.Sprintf("%v", sslCiphers)
+								if sslCiphersStr != "" {
+									tlsNode.Content = append(tlsNode.Content,
+										&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_ciphers"},
+										&yaml.Node{Kind: yaml.ScalarNode, Value: sslCiphersStr, Style: yaml.DoubleQuotedStyle})
+								}
+							}
+							
+							// 添加ssl_ecdh_curve
+							if sslECDHCurve, ok := tlsMap["ssl_ecdh_curve"]; ok {
+								sslECDHCurveStr := fmt.Sprintf("%v", sslECDHCurve)
+								if sslECDHCurveStr != "" {
+									tlsNode.Content = append(tlsNode.Content,
+										&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_ecdh_curve"},
+										&yaml.Node{Kind: yaml.ScalarNode, Value: sslECDHCurveStr, Style: yaml.DoubleQuotedStyle})
+								}
+							}
+							
+							// 添加enable_h3
+							if enableH3, ok := tlsMap["enable_h3"]; ok {
+								enableH3Str := fmt.Sprintf("%v", enableH3)
+								if enableH3Str == "true" || enableH3Str == "1" {
+									tlsNode.Content = append(tlsNode.Content,
+										&yaml.Node{Kind: yaml.ScalarNode, Value: "enable_h3"},
+										&yaml.Node{Kind: yaml.ScalarNode, Value: "true"})
+								}
+							}
+							
+							if len(tlsNode.Content) > 0 {
+								newServerNode.Content = append(newServerNode.Content,
+									&yaml.Node{Kind: yaml.ScalarNode, Value: "tls"},
+									tlsNode)
 							}
 						}
 					}
