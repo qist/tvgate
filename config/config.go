@@ -31,13 +31,16 @@ func init() {
 // Config 主配置结构
 type Config struct {
 	Server struct {
-		Port            int      `yaml:"port"`             // 监听端口
-		CertFile        string   `yaml:"certfile"`         // TLS证书文件
-		KeyFile         string   `yaml:"keyfile"`          // TLS私钥文件
-		SSLProtocols    string   `yaml:"ssl_protocols"`    // 支持的TLS协议版本
-		SSLCiphers      string   `yaml:"ssl_ciphers"`      // 支持的TLS加密算法
-		SSLECDHCurve    string   `yaml:"ssl_ecdh_curve"`   // 支持的TLS曲线
-		MulticastIfaces []string `yaml:"multicast_ifaces"` // 多播网卡列表
+		Port         int    `yaml:"port"`           // 旧端口
+		HTTPPort     int    `yaml:"http_port"`      // HTTP 可配置端口
+		CertFile     string `yaml:"certfile"`       // TLS证书文件
+		KeyFile      string `yaml:"keyfile"`        // TLS私钥文件
+		SSLProtocols string `yaml:"ssl_protocols"`  // 支持的TLS协议版本
+		SSLCiphers   string `yaml:"ssl_ciphers"`    // 支持的TLS加密算法
+		SSLECDHCurve string `yaml:"ssl_ecdh_curve"` // 支持的TLS曲线
+		TLS             TLSConfig `yaml:"tls"`              // TLS 配置
+		HTTPToHTTPS     bool      `yaml:"http_to_https"`    // HTTP 跳转 HTTPS
+		MulticastIfaces []string  `yaml:"multicast_ifaces"` // 多播网卡
 	} `yaml:"server"`
 
 	Log struct {
@@ -86,6 +89,16 @@ type Config struct {
 	ProxyGroups map[string]*ProxyGroupConfig `yaml:"proxygroups"` // 代理组配置
 	JX          JXConfig                     `yaml:"jx"`          // 视频解析配置
 	Reload      int                          `yaml:"reload"`      // 添加 Reload 字段
+}
+
+type TLSConfig struct {
+	HTTPSPort int    `yaml:"https_port"`
+	CertFile  string `yaml:"certfile"`
+	KeyFile   string `yaml:"keyfile"`
+	Protocols string `yaml:"ssl_protocols"`
+	Ciphers   string `yaml:"ssl_ciphers"`
+	ECDHCurve string `yaml:"ssl_ecdh_curve"`
+	EnableH3  bool   `yaml:"enable_h3"` // 新增 HTTP/3 开关
 }
 
 // DomainMapConfig 域名映射配置结构

@@ -5,13 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
 	"sync"
 	"syscall"
-	"time"
+	"time" 
 
 	"github.com/cloudflare/tableflip"
 	"github.com/qist/tvgate/auth"
@@ -19,24 +18,19 @@ import (
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/watch"
-	"github.com/qist/tvgate/domainmap"
 	"github.com/qist/tvgate/groupstats"
-	h "github.com/qist/tvgate/handler"
-	"github.com/qist/tvgate/jx"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/server"
-	httpclient "github.com/qist/tvgate/utils/http"
 	"github.com/qist/tvgate/web"
-	// _ "net/http/pprof"
 )
 
-// 定义任务结构体用于sync.Pool
+// 定义任务结构体用于 sync.Pool
 type mainTask struct {
 	f func()
 }
 
-// 创建sync.Pool用于复用任务对象
+// 创建 sync.Pool 用于复用任务对象
 var taskPool = sync.Pool{
 	New: func() interface{} {
 		return &mainTask{}
@@ -49,20 +43,6 @@ var shutdownOnce sync.Once
 func main() {
 	flag.Parse()
 
-	// 启动 pprof 性能分析接口（默认 6060 端口）
-	// 从池中获取任务对象
-	// task := taskPool.Get().(*mainTask)
-	// task.f = func() {
-	// 	log.Println("pprof 性能分析接口已启动: http://0.0.0.0:6060/debug/pprof/ 可远程访问")
-	// 	http.ListenAndServe("0.0.0.0:6060", nil)
-	// }
-	
-	// // 执行任务
-	// go task.f()
-	
-	// // 清空任务并放回池中
-	// task.f = nil
-	// taskPool.Put(task)
 	if *config.VersionFlag {
 		fmt.Println("程序版本:", config.Version)
 		return
@@ -76,13 +56,12 @@ func main() {
 	isWindows := runtime.GOOS == "windows"
 	if !isWindows {
 		upg, err = tableflip.New(tableflip.Options{})
-	if err != nil {
-		log.Fatalf("无法创建升级器: %v", err)
-	}
-	defer upg.Stop() // 确保退出时清理
+		if err != nil {
+			log.Fatalf("无法创建升级器: %v", err)
+		}
+		defer upg.Stop()
 	} else {
 		upg = nil
-		// fmt.Println("Windows 平台不支持 tableflip 热升级，采用普通重启")
 	}
 
 	// -------------------------
@@ -100,8 +79,6 @@ func main() {
 		log.Fatalf("加载配置文件失败: %v", err)
 	}
 	config.Cfg.SetDefaults()
-
-	client := httpclient.NewHTTPClient(&config.Cfg, nil)
 
 	// -------------------------
 	// 初始化代理组统计
@@ -121,12 +98,14 @@ func main() {
 	} else {
 		auth.GlobalTokenManager = nil
 	}
+
 	tm := &auth.TokenManager{
 		Enabled:       true,
 		StaticTokens:  make(map[string]*auth.SessionInfo),
 		DynamicTokens: make(map[string]*auth.SessionInfo),
 	}
-	// 从池中获取任务对象
+
+	// token 清理任务
 	cleanupTask := taskPool.Get().(*mainTask)
 	cleanupTask.f = func() {
 		ticker := time.NewTicker(time.Minute)
@@ -135,11 +114,8 @@ func main() {
 			tm.CleanupExpiredSessions()
 		}
 	}
-	
-	// 在goroutine内部执行任务并确保完成后放回池中
 	go func() {
 		defer func() {
-			// 清空任务并放回池中
 			cleanupTask.f = nil
 			taskPool.Put(cleanupTask)
 		}()
@@ -151,90 +127,27 @@ func main() {
 	// -------------------------
 	stopActiveClients := make(chan struct{})
 	stopStartSystemStatsUpdater := make(chan struct{})
-
 	stopCleaner := make(chan struct{})
 	stopAccessCleaner := make(chan struct{})
 	stopProxyStats := make(chan struct{})
 
-	// 从池中获取任务对象
-	monitorTask := taskPool.Get().(*mainTask)
-	monitorTask.f = func() {
-		monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second, stopActiveClients)
-	}
-	
-	// 在goroutine内部执行任务并确保完成后放回池中
-	go func() {
-		defer func() {
-			// 清空任务并放回池中
-			monitorTask.f = nil
-			taskPool.Put(monitorTask)
+	startTask := func(f func()) {
+		task := taskPool.Get().(*mainTask)
+		task.f = f
+		go func() {
+			defer func() {
+				task.f = nil
+				taskPool.Put(task)
+			}()
+			task.f()
 		}()
-		monitorTask.f()
-	}()
+	}
 
-	// 从池中获取任务对象
-	statsTask := taskPool.Get().(*mainTask)
-	statsTask.f = func() {
-		monitor.StartSystemStatsUpdater(30*time.Second, stopStartSystemStatsUpdater)
-	}
-	
-	// 在goroutine内部执行任务并确保完成后放回池中
-	go func() {
-		defer func() {
-			// 清空任务并放回池中
-			statsTask.f = nil
-			taskPool.Put(statsTask)
-		}()
-		statsTask.f()
-	}()
-
-	// 从池中获取任务对象
-	clearTask1 := taskPool.Get().(*mainTask)
-	clearTask1.f = func() {
-		clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner)
-	}
-	
-	// 在goroutine内部执行任务并确保完成后放回池中
-	go func() {
-		defer func() {
-			// 清空任务并放回池中
-			clearTask1.f = nil
-			taskPool.Put(clearTask1)
-		}()
-		clearTask1.f()
-	}()
-
-	// 从池中获取任务对象
-	clearTask2 := taskPool.Get().(*mainTask)
-	clearTask2.f = func() {
-		clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner)
-	}
-	
-	// 在goroutine内部执行任务并确保完成后放回池中
-	go func() {
-		defer func() {
-			// 清空任务并放回池中
-			clearTask2.f = nil
-			taskPool.Put(clearTask2)
-		}()
-		clearTask2.f()
-	}()
-
-	// 从池中获取任务对象
-	clearTask3 := taskPool.Get().(*mainTask)
-	clearTask3.f = func() {
-		clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopProxyStats)
-	}
-	
-	// 在goroutine内部执行任务并确保完成后放回池中
-	go func() {
-		defer func() {
-			// 清空任务并放回池中
-			clearTask3.f = nil
-			taskPool.Put(clearTask3)
-		}()
-		clearTask3.f()
-	}()
+	startTask(func() { monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second, stopActiveClients) })
+	startTask(func() { monitor.StartSystemStatsUpdater(30*time.Second, stopStartSystemStatsUpdater) })
+	startTask(func() { clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner) })
+	startTask(func() { clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner) })
+	startTask(func() { clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopProxyStats) })
 
 	// -------------------------
 	// 日志
@@ -249,69 +162,19 @@ func main() {
 	})
 
 	// -------------------------
-	// HTTP 路由
+	// 启动配置文件监控
 	// -------------------------
-	jxHandler := jx.NewJXHandler(&config.Cfg.JX)
-	mux := http.NewServeMux()
-	// 从池中获取任务对象
 	watchTask := taskPool.Get().(*mainTask)
 	watchTask.f = func() {
-		watch.WatchConfigFile(*config.ConfigFilePath)
+		watch.WatchConfigFile(configFilePath, upg)
 	}
-	
-	// 执行任务
-	go watchTask.f()
-	
-	// 清空任务并放回池中
-	watchTask.f = nil
-	taskPool.Put(watchTask)
-
-	monitorPath := config.Cfg.Monitor.Path
-	if monitorPath == "" {
-		monitorPath = "/status"
-	}
-	mux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.HandleMonitor)))
-
-	jxPath := config.Cfg.JX.Path
-	if jxPath == "" {
-		jxPath = "/jx"
-	}
-	mux.Handle(jxPath, server.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		jxHandler.Handle(w, r)
-	})))
-
-	if config.Cfg.Web.Enabled {
-		webConfig := web.WebConfig{
-			Username: config.Cfg.Web.Username,
-			Password: config.Cfg.Web.Password,
-			Enabled:  config.Cfg.Web.Enabled,
-			Path:     config.Cfg.Web.Path,
-		}
-		configHandler := web.NewConfigHandler(webConfig)
-		configHandler.RegisterRoutes(mux)
-	}
-
-	defaultHandler := server.SecurityHeaders(http.HandlerFunc(h.Handler(client)))
-
-	if len(config.Cfg.DomainMap) > 0 {
-		mappings := make(auth.DomainMapList, len(config.Cfg.DomainMap))
-		for i, mapping := range config.Cfg.DomainMap {
-			mappings[i] = &auth.DomainMapConfig{
-				Name:          mapping.Name,
-				Source:        mapping.Source,
-				Target:        mapping.Target,
-				Protocol:      mapping.Protocol,
-				Auth:          mapping.Auth,
-				ClientHeaders: mapping.ClientHeaders,
-				ServerHeaders: mapping.ServerHeaders,
-			}
-		}
-		localClient := &http.Client{Timeout: config.Cfg.HTTP.Timeout}
-		domainMapper := domainmap.NewDomainMapper(mappings, localClient, defaultHandler)
-		mux.Handle("/", server.SecurityHeaders(domainMapper))
-	} else {
-		mux.Handle("/", defaultHandler)
-	}
+	go func() {
+		defer func() {
+			watchTask.f = nil
+			taskPool.Put(watchTask)
+		}()
+		watchTask.f()
+	}()
 
 	// -------------------------
 	// context 管理
@@ -321,25 +184,33 @@ func main() {
 	// -------------------------
 	// 启动 HTTP Server（支持 tableflip 热更）
 	// -------------------------
-	// 从池中获取任务对象
-	serverTask := taskPool.Get().(*mainTask)
-	serverTask.f = func() {
-		if err := server.StartHTTPServer(config.ServerCtx, mux, upg); err != nil {
-			log.Fatalf("启动HTTP服务器失败: %v", err)
-		}
+	var wg sync.WaitGroup
+	startServer := func(port int) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			addr := fmt.Sprintf(":%d", port)
+			if err := server.StartHTTPServer(config.ServerCtx, addr, upg); err != nil && err != context.Canceled {
+				logger.LogPrintf("❌ 启动 HTTP 服务失败 %s: %v", addr, err)
+			}
+		}()
 	}
-	
-	// 执行任务
-	go serverTask.f()
-	
-	// 清空任务并放回池中
-	serverTask.f = nil
-	taskPool.Put(serverTask)
+
+	if config.Cfg.Server.Port > 0 {
+		startServer(config.Cfg.Server.Port)
+	}
+	if config.Cfg.Server.HTTPPort > 0 {
+		startServer(config.Cfg.Server.HTTPPort)
+	}
+	if config.Cfg.Server.TLS.HTTPSPort > 0 {
+		startServer(config.Cfg.Server.TLS.HTTPSPort)
+	}
+
+	wg.Wait() // 阻塞等待所有 server
 
 	// -------------------------
 	// 捕获系统退出信号
 	// -------------------------
-	// 从池中获取任务对象
 	signalTask := taskPool.Get().(*mainTask)
 	signalTask.f = func() {
 		sigChan := make(chan os.Signal, 1)
@@ -348,26 +219,26 @@ func main() {
 		fmt.Println("收到退出信号，开始优雅退出")
 		gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater)
 		if !isWindows && upg != nil {
-		upg.Exit() // tableflip 清理旧进程
+			upg.Exit()
 		} else {
 			os.Exit(0)
 		}
 	}
-	
-	// 执行任务
-	go signalTask.f()
-	
-	// 清空任务并放回池中
-	signalTask.f = nil
-	taskPool.Put(signalTask)
+	go func() {
+		defer func() {
+			signalTask.f = nil
+			taskPool.Put(signalTask)
+		}()
+		signalTask.f()
+	}()
 
 	// -------------------------
 	// tableflip 准备完成（仅非 Windows）
 	// -------------------------
 	if !isWindows && upg != nil {
-	if err := upg.Ready(); err != nil {
-		log.Fatalf("升级器准备失败: %v", err)
-	}
+		if err := upg.Ready(); err != nil {
+			log.Fatalf("升级器准备失败: %v", err)
+		}
 	}
 
 	<-config.ServerCtx.Done()
@@ -383,16 +254,13 @@ func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActive
 			config.Cancel()
 		}
 
-		// 给goroutines一些时间来处理关闭信号
 		close(stopCleaner)
 		close(stopAccessCleaner)
 		close(stopProxyStats)
 		close(stopActiveClients)
 		close(stopStartSystemStatsUpdater)
 
-		// 等待一段时间确保所有goroutines都已退出
 		time.Sleep(100 * time.Millisecond)
-
 		fmt.Println("优雅退出完成")
 	})
 }

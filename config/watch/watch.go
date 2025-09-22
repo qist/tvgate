@@ -2,55 +2,35 @@ package watch
 
 import (
 	"context"
-	"net/http"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/cloudflare/tableflip"
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/update"
-	"github.com/qist/tvgate/domainmap"
-	h "github.com/qist/tvgate/handler"
-	"github.com/qist/tvgate/jx"
 	"github.com/qist/tvgate/logger"
-	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/server"
-	httpclient "github.com/qist/tvgate/utils/http"
-	"github.com/qist/tvgate/web"
 )
 
-// 定义任务结构体用于sync.Pool
-type watchTask struct {
-	f func()
-}
-
-// 创建sync.Pool用于复用任务对象
-var taskPool = sync.Pool{
-	New: func() interface{} {
-		return &watchTask{}
-	},
-}
-
-func WatchConfigFile(configPath string) {
-	var httpCancel context.CancelFunc
-	var muxMu sync.Mutex
+// WatchConfigFile 监控配置文件变更并平滑更新服务
+func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 	if configPath == "" {
 		return
 	}
 
-	// 获取配置文件的绝对路径
 	absPath, err := filepath.Abs(configPath)
 	if err != nil {
 		logger.LogPrintf("❌ 获取配置文件绝对路径失败: %v", err)
 		return
 	}
 
-	// 获取父目录路径
 	parentDir := filepath.Dir(absPath)
 	if parentDir == "" {
 		parentDir = "."
@@ -62,7 +42,7 @@ func WatchConfigFile(configPath string) {
 		lastModifiedTime = fileInfo.ModTime()
 	} else {
 		lastModifiedTime = time.Now()
-		logger.LogPrintf("⚠️ 获取配置文件状态失败，将使用当前时间作为基准: %v", err)
+		logger.LogPrintf("⚠️ 获取配置文件状态失败，将使用当前时间: %v", err)
 	}
 
 	watcher, err := fsnotify.NewWatcher()
@@ -72,24 +52,15 @@ func WatchConfigFile(configPath string) {
 	}
 	defer watcher.Close()
 
-	// 添加监控
 	setupWatcher := func() error {
-		// 监控父目录
 		if err := watcher.Add(parentDir); err != nil {
-			logger.LogPrintf("⚠️ 添加父目录监听失败: %v", err)
 			return err
 		}
-
-		// 监控配置文件本身
 		if err := watcher.Add(absPath); err != nil {
-			logger.LogPrintf("⚠️ 添加配置文件监听失败: %v", err)
 			return err
 		}
-
-		logger.LogPrintf("✅ 成功设置配置文件监控: %s", absPath)
 		return nil
 	}
-
 	if err := setupWatcher(); err != nil {
 		logger.LogPrintf("❌ 初始化文件监控失败: %v", err)
 		return
@@ -98,33 +69,17 @@ func WatchConfigFile(configPath string) {
 	var debounceTimer *time.Timer
 	debounceDelay := time.Duration(config.Cfg.Reload) * time.Second
 
-	// 定期检查监控状态
-	// 使用sync.Pool优化goroutine创建
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
+	var httpCancel context.CancelFunc
+	var muxMu sync.Mutex
 
-		for range ticker.C {
-			// 从池中获取任务对象
-			task := taskPool.Get().(*watchTask)
-			task.f = func() {
-				if _, err := os.Stat(absPath); err != nil {
-					logger.LogPrintf("⚠️ 配置文件状态异常，尝试重新建立监控: %v", err)
-					setupWatcher()
-				}
-			}
-			
-			// 在goroutine内部执行任务并确保完成后放回池中
-			go func() {
-				defer func() {
-					// 清空任务并放回池中
-					task.f = nil
-					taskPool.Put(task)
-				}()
-				task.f()
-			}()
-		}
-	}()
+	// 缓存端口/证书状态，用于判断是否需要重启
+	oldPort := config.Cfg.Server.Port
+	oldHTTPPort := config.Cfg.Server.HTTPPort
+	oldHTTPSPort := config.Cfg.Server.TLS.HTTPSPort
+	oldCertFile := config.Cfg.Server.CertFile
+	oldKeyFile := config.Cfg.Server.KeyFile
+	oldTLSCertFile := config.Cfg.Server.TLS.CertFile
+	oldTLSKeyFile := config.Cfg.Server.TLS.KeyFile
 
 	reload := func() {
 		info, err := os.Stat(configPath)
@@ -132,115 +87,77 @@ func WatchConfigFile(configPath string) {
 			logger.LogPrintf("❌ 获取文件信息失败: %v", err)
 			return
 		}
-		if info.ModTime().After(lastModifiedTime) {
-			lastModifiedTime = info.ModTime()
-			logger.LogPrintf("📦 检测到配置文件修改，准备重新加载...")
-
-			if err := load.LoadConfig(configPath); err != nil {
-				logger.LogPrintf("❌ 重新加载配置失败: %v", err)
-				return
-			}
-			logger.LogPrintf("✅ 配置文件重新加载完成")
-			// 平滑更新多播网卡监听（零丢包）
-			config.CfgMu.RLock()
-			update.UpdateHubsOnConfigChange(config.Cfg.Server.MulticastIfaces)
-			config.CfgMu.RUnlock()
-			// 添加监控路径处理
-			// 平滑替换 HTTP 服务
-			muxMu.Lock()
-			defer muxMu.Unlock()
-
-			if httpCancel != nil {
-				httpCancel() // 关闭旧服务
-			}
-			// 2️⃣ 设置默认值
-			config.Cfg.SetDefaults()
-			// 初始化/更新全局token管理器
-			auth.ReloadGlobalTokenManager(&config.Cfg.GlobalAuth)
-			auth.CleanupGlobalTokenManager()
-
-			jxHandler := jx.NewJXHandler(&config.Cfg.JX)
-			newMux := http.NewServeMux()
-			monitorPath := config.Cfg.Monitor.Path
-			if monitorPath == "" {
-				monitorPath = "/status"
-			}
-			client := httpclient.NewHTTPClient(&config.Cfg, nil)
-			newMux.Handle(monitorPath, server.SecurityHeaders(http.HandlerFunc(monitor.HandleMonitor)))
-			// jx 路径
-			jxPath := config.Cfg.JX.Path
-			if jxPath == "" {
-				jxPath = "/jx"
-			}
-			newMux.Handle(jxPath, server.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				jxHandler.Handle(w, r)
-			})))
-			// 注册 Web 管理界面处理器
-			if config.Cfg.Web.Enabled {
-				// 将config.Cfg.Web转换为web.WebConfig类型
-				webConfig := web.WebConfig{
-					Username: config.Cfg.Web.Username,
-					Password: config.Cfg.Web.Password,
-					Enabled:  config.Cfg.Web.Enabled,
-					Path:     config.Cfg.Web.Path,
-				}
-				configHandler := web.NewConfigHandler(webConfig)
-				configHandler.RegisterRoutes(newMux)
-			}
-
-			// 创建默认处理器
-			defaultHandler := server.SecurityHeaders(http.HandlerFunc(h.Handler(client)))
-
-			// 清理旧的 domainmap tokenManagers
-			// domainmap.CleanTokenManagers()
-
-			// 检查是否配置了域名映射
-			if len(config.Cfg.DomainMap) > 0 {
-				// 创建域名映射处理器
-				mappings := make(auth.DomainMapList, len(config.Cfg.DomainMap))
-				for i, mapping := range config.Cfg.DomainMap {
-					mappings[i] = &auth.DomainMapConfig{
-						Name:          mapping.Name,
-						Source:        mapping.Source,
-						Target:        mapping.Target,
-						Protocol:      mapping.Protocol,
-						Auth:          mapping.Auth,
-						ClientHeaders: mapping.ClientHeaders,
-						ServerHeaders: mapping.ServerHeaders,
-					}
-				}
-				localClient := &http.Client{Timeout: config.Cfg.HTTP.Timeout}
-				domainMapper := domainmap.NewDomainMapper(mappings, localClient, defaultHandler)
-				// mux.Handle("/", domainMapper)
-				newMux.Handle("/", server.SecurityHeaders(domainMapper))
-			} else {
-				// 没有域名映射配置，直接使用默认处理器
-				newMux.Handle("/", defaultHandler)
-			}
-
-			_, cancel := context.WithCancel(context.Background())
-			httpCancel = cancel
-			// 启动新 HTTP 服务（startHTTPServer 内部会处理平滑替换）
-			// 使用sync.Pool优化goroutine创建
-			task := taskPool.Get().(*watchTask)
-			task.f = func() {
-				defer func() {
-					if r := recover(); r != nil {
-						logger.LogPrintf("🔥 启动 HTTP 服务过程中发生 panic: %v", r)
-					}
-				}()
-				// if err := server.StartHTTPServer(ctx, newMux); err != nil && err != context.Canceled {
-				// 	logger.LogPrintf("❌ 启动 HTTP 服务失败: %v", err)
-				// }
-				server.SetHTTPHandler(newMux)
-			}
-			
-			go task.f()
-			
-			// 清空任务并放回池中
-			task.f = nil
-			taskPool.Put(task)
+		if !info.ModTime().After(lastModifiedTime) {
+			return
 		}
+		lastModifiedTime = info.ModTime()
+		logger.LogPrintf("📦 检测到配置文件修改，准备重新加载...")
+
+		if err := load.LoadConfig(configPath); err != nil {
+			logger.LogPrintf("❌ 重新加载配置失败: %v", err)
+			return
+		}
+		logger.LogPrintf("✅ 配置文件重新加载完成")
+
+		config.CfgMu.RLock()
+		update.UpdateHubsOnConfigChange(config.Cfg.Server.MulticastIfaces)
+		config.CfgMu.RUnlock()
+
+		muxMu.Lock()
+		defer muxMu.Unlock()
+
+		// 设置默认值 & token 管理器
+		config.Cfg.SetDefaults()
+		auth.ReloadGlobalTokenManager(&config.Cfg.GlobalAuth)
+		auth.CleanupGlobalTokenManager()
+
+		needRestart := oldPort != config.Cfg.Server.Port ||
+			oldHTTPPort != config.Cfg.Server.HTTPPort ||
+			oldHTTPSPort != config.Cfg.Server.TLS.HTTPSPort ||
+			oldCertFile != config.Cfg.Server.CertFile ||
+			oldKeyFile != config.Cfg.Server.KeyFile ||
+			oldTLSCertFile != config.Cfg.Server.TLS.CertFile ||
+			oldTLSKeyFile != config.Cfg.Server.TLS.KeyFile
+
+		ports := []int{config.Cfg.Server.Port}
+		if config.Cfg.Server.HTTPPort > 0 {
+			ports = append(ports, config.Cfg.Server.HTTPPort)
+		}
+		if config.Cfg.Server.TLS.HTTPSPort > 0 {
+			ports = append(ports, config.Cfg.Server.TLS.HTTPSPort)
+		}
+
+		for _, p := range ports {
+			addr := fmt.Sprintf(":%d", p)
+			mux := server.RegisterMux(addr, &config.Cfg)
+			if needRestart {
+				// 关闭旧服务
+				if httpCancel != nil {
+					httpCancel()
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				httpCancel = cancel
+
+				go func(addr string) {
+					if err := server.StartHTTPServer(ctx, addr, nil); err != nil {
+						logger.LogPrintf("❌ 启动 HTTP 服务失败 %s: %v", addr, err)
+					}
+				}(addr)
+			} else {
+
+				// 再平滑替换 Handler
+				server.SetHTTPHandler(addr, mux)
+			}
+		}
+
+		// 更新缓存
+		oldPort = config.Cfg.Server.Port
+		oldHTTPPort = config.Cfg.Server.HTTPPort
+		oldHTTPSPort = config.Cfg.Server.TLS.HTTPSPort
+		oldCertFile = config.Cfg.Server.CertFile
+		oldKeyFile = config.Cfg.Server.KeyFile
+		oldTLSCertFile = config.Cfg.Server.TLS.CertFile
+		oldTLSKeyFile = config.Cfg.Server.TLS.KeyFile
 	}
 
 	for {
@@ -249,24 +166,18 @@ func WatchConfigFile(configPath string) {
 			if !ok {
 				return
 			}
-
-			// 只关注配置文件的事件
 			if filepath.Clean(event.Name) == filepath.Clean(absPath) {
 				switch {
 				case event.Op&(fsnotify.Write|fsnotify.Create) != 0:
-					// 文件被修改或创建
 					if debounceTimer != nil {
 						debounceTimer.Stop()
 					}
 					debounceTimer = time.AfterFunc(debounceDelay, reload)
-
 				case event.Op&(fsnotify.Rename|fsnotify.Remove) != 0:
-					// 文件被重命名或删除
-					logger.LogPrintf("⚠️ 检测到配置文件被重命名或删除，尝试重新建立监控")
+					logger.LogPrintf("⚠️ 配置文件被重命名或删除，尝试重新建立监控")
 					if debounceTimer != nil {
 						debounceTimer.Stop()
 					}
-					// 等待一小段时间，让文件系统操作完成
 					time.Sleep(100 * time.Millisecond)
 					if err := setupWatcher(); err == nil {
 						debounceTimer = time.AfterFunc(debounceDelay, reload)
@@ -279,7 +190,6 @@ func WatchConfigFile(configPath string) {
 				return
 			}
 			logger.LogPrintf("❌ 文件监听错误: %v", err)
-			// 尝试重新建立监控
 			if err := setupWatcher(); err != nil {
 				logger.LogPrintf("❌ 重新建立监控失败: %v", err)
 			}
