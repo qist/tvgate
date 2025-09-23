@@ -629,81 +629,128 @@ func detectStreamFormat(pkt []byte) string {
 
 // 改进的TS关键帧检测
 func isKeyFrameTS(pkt []byte) bool {
-	// 首先检查是否为有效的TS包
-	if !isValidTSPacket(pkt) {
-		return false
-	}
+    if !isValidTSPacket(pkt) {
+        return false
+    }
 
-	// 提取负载
-	payload := extractTSPayload(pkt)
-	if payload == nil || len(payload) < 4 {
-		return false
-	}
+    // 提取PID
+    pid := uint16(pkt[1]&0x1F)<<8 | uint16(pkt[2])
+    
+    // 只检查视频PID（通常为0x100-0x11FF），减少不必要的处理
+    if pid < 0x100 || pid > 0x11FF {
+        return false
+    }
 
-	// 在负载中查找H.264起始码和关键帧
-	for i := 0; i < len(payload)-4; i++ {
-		// 查找起始码: 0x00 0x00 0x01 或 0x00 0x00 0x00 0x01
-		if payload[i] == 0x00 && payload[i+1] == 0x00 {
-			if payload[i+2] == 0x01 {
-				// 3字节起始码
-				if i+3 < len(payload) {
-					naluType := payload[i+3] & 0x1F
-					if naluType == 5 { // IDR帧
-						return true
-					}
-				}
-			} else if i+3 < len(payload) && payload[i+2] == 0x00 && payload[i+3] == 0x01 {
-				// 4字节起始码
-				if i+4 < len(payload) {
-					naluType := payload[i+4] & 0x1F
-					if naluType == 5 { // IDR帧
-						return true
-					}
-				}
-			}
-		}
-	}
+    payload := extractTSPayload(pkt)
+    if payload == nil || len(payload) < 4 {
+        return false
+    }
 
-	return false
+    // 在负载中查找H.264起始码和关键帧
+    for i := 0; i < len(payload)-4; i++ {
+        if payload[i] == 0x00 && payload[i+1] == 0x00 {
+            if payload[i+2] == 0x01 {
+                // 3字节起始码
+                if i+3 < len(payload) {
+                    naluType := payload[i+3] & 0x1F
+                    if naluType == 5 { // IDR帧
+                        return true
+                    } else if naluType == 7 || naluType == 8 {
+                        // SPS或PPS也可能表示新序列开始
+                        return true
+                    }
+                }
+            } else if i+3 < len(payload) && payload[i+2] == 0x00 && payload[i+3] == 0x01 {
+                // 4字节起始码
+                if i+4 < len(payload) {
+                    naluType := payload[i+4] & 0x1F
+                    if naluType == 5 { // IDR帧
+                        return true
+                    } else if naluType == 7 || naluType == 8 {
+                        return true
+                    }
+                }
+            }
+        }
+    }
+
+    return false
 }
 
-// 改进的RTP关键帧检测
+
+// 改进的RTP关键帧检测 - 专门处理TS over RTP
 func isKeyFrameRTP(pkt []byte) bool {
-	if len(pkt) < 12 {
-		return false
-	}
+    if len(pkt) < 12 {
+        return false
+    }
 
-	// RTP头部验证
-	version := (pkt[0] >> 6) & 0x03
-	if version != 2 {
-		return false
-	}
+    // RTP头部验证
+    version := (pkt[0] >> 6) & 0x03
+    if version != 2 {
+        return false
+    }
 
-	payload := pkt[12:]
-	if len(payload) < 2 {
-		return false
-	}
+    // 获取负载类型
+    payloadType := pkt[1] & 0x7F
+    
+    // 专门处理MP2T负载（类型33） - TS over RTP
+    if payloadType == 33 {
+        // 计算RTP负载起始位置（考虑CSRC和扩展头）
+        csrcCount := int(pkt[0] & 0x0F)
+        extension := (pkt[0] >> 4) & 0x01
+        payloadStart := 12 + (4 * csrcCount)
 
-	// 检查H.264的NAL单元类型
-	// RTP H.264负载格式: 第一个字节的type字段
-	naluType := payload[0] & 0x1F
+        // 处理扩展头
+        if extension == 1 {
+            if len(pkt) < payloadStart+4 {
+                return false
+            }
+            extLen := int(binary.BigEndian.Uint16(pkt[payloadStart+2:payloadStart+4])) * 4
+            payloadStart += 4 + extLen
+        }
 
-	// 如果是分片单元，检查FU-A的起始分片和类型
-	if naluType == 28 { // FU-A
-		if len(payload) < 2 {
-			return false
-		}
-		// FU indicator的type=28, FU header的S=1表示起始分片
-		startBit := (payload[1] >> 7) & 0x01
-		if startBit == 1 {
-			fragmentedNaluType := payload[1] & 0x1F
-			return fragmentedNaluType == 5 // IDR帧
-		}
-		return false
-	}
+        if len(pkt) < payloadStart {
+            return false
+        }
+        
+        // 提取TS包数据
+        tsData := pkt[payloadStart:]
+        
+        // 在RTP负载中查找TS包并检测关键帧
+        // 一个RTP包可能包含多个TS包（1348字节大约包含7个TS包）
+        for i := 0; i <= len(tsData)-188; i += 188 {
+            if i+188 <= len(tsData) && tsData[i] == TS_SYNC_BYTE {
+                if isKeyFrameTS(tsData[i:i+188]) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+    
+    // 对于非MP2T负载，保持原有的H.264检测逻辑
+    payload := pkt[12:]
+    if len(payload) < 2 {
+        return false
+    }
 
-	return naluType == 5 // 完整的IDR帧
+    naluType := payload[0] & 0x1F
+
+    if naluType == 28 { // FU-A
+        if len(payload) < 2 {
+            return false
+        }
+        startBit := (payload[1] >> 7) & 0x01
+        if startBit == 1 {
+            fragmentedNaluType := payload[1] & 0x1F
+            return fragmentedNaluType == 5 // IDR帧
+        }
+        return false
+    }
+
+    return naluType == 5 // 完整的IDR帧
 }
+
 
 func isMulticast(ip net.IP) bool {
 	ip4 := ip.To4()

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"github.com/qist/tvgate/dns"
+	"github.com/qist/tvgate/logger"
 	"golang.org/x/net/proxy"
 )
 
@@ -123,5 +125,19 @@ type SocksDialerWrapper struct {
 }
 
 func (w *SocksDialerWrapper) Dial(network, addr string) (net.Conn, error) {
+	// 先用自定义 DNS 解析 host
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	resolver := dns.GetInstance()
+	ips, err := resolver.LookupIPAddr(context.Background(), host)
+	if err == nil && len(ips) > 0 {
+		addr = net.JoinHostPort(ips[0].IP.String(), port)
+		logger.LogPrintf("✅ Socks DNS解析 %s -> %s", host, ips[0].IP.String())
+	} else {
+		logger.LogPrintf("⚠️ Socks DNS解析失败 %s: %v, 使用原始地址", host, err)
+	}
+
 	return w.DialFn(network, addr)
 }

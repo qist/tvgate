@@ -85,6 +85,12 @@ func main() {
 	// 初始化 DNS 解析器
 	// -------------------------
 	dns.Init()
+	
+	// 添加调试信息，确认DNS初始化是否正常工作
+	resolver := dns.GetInstance()
+	resolvers := resolver.GetResolvers()
+	fmt.Printf("DNS Resolvers: %v\n", resolvers)
+	
 	// -------------------------
 	// 初始化代理组统计
 	// -------------------------

@@ -3,6 +3,7 @@ package domainmap
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/md5"
 	"crypto/tls"
 	"encoding/hex"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/lb"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
@@ -280,13 +282,13 @@ func (dm *DomainMapper) CleanTokenManagers() {
 	if dm.tokenManagers == nil {
 		return
 	}
-	
+
 	// 遍历 tokenManagers，清理不再需要的条目
 	for host, tm := range dm.tokenManagers {
 		if tm == nil {
 			continue
 		}
-		
+
 		// 检查该 host 是否还在当前的域名映射配置中
 		if cfg := dm.GetDomainConfig(host); cfg == nil {
 			// 如果不在配置中，清理这个 tokenManager
@@ -345,7 +347,7 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 								token = tok
 							}
 						}
-						
+
 						// 如果动态token生成失败，尝试使用静态token
 						if token == "" && len(globalTm.StaticTokens) > 0 {
 							for st := range globalTm.StaticTokens {
@@ -396,7 +398,7 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 					token = tok
 				}
 			}
-			
+
 			// 如果动态token生成失败，尝试使用静态token
 			if token == "" && len(globalTm.StaticTokens) > 0 {
 				for st := range globalTm.StaticTokens {
@@ -487,17 +489,17 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if tokenParam == "" {
 			tokenParam = "token"
 		}
-		
+
 		token := r.URL.Query().Get(tokenParam)
 		clientIP := monitor.GetClientIP(r)
 		connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-		
+
 		// 检查domainmap是否开启了授权
 		if cfg.Auth.TokensEnabled {
 			// 如果domainmap配置了授权且启用了tokens，则进行验证
 			if cfg.Auth.DynamicTokens.EnableDynamic || cfg.Auth.StaticTokens.EnableStatic {
 				var tm *auth.TokenManager
-				
+
 				// 使用host作为key来获取TokenManager
 				host := r.Host
 				if existingTm, ok := dm.tokenManagers[host]; ok {
@@ -506,13 +508,13 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					tm = auth.NewTokenManagerFromConfig(cfg)
 					dm.tokenManagers[host] = tm
 				}
-				
+
 				// 验证token时使用原始路径而不是RTSP路径
 				if !tm.ValidateToken(token, r.URL.Path, connID) {
 					http.Error(w, "Forbidden", http.StatusUnauthorized)
 					return
 				}
-				
+
 				// 更新token活跃状态
 				tm.KeepAlive(token, connID, clientIP, r.URL.Path)
 			}
@@ -526,19 +528,19 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						http.Error(w, "Forbidden", http.StatusUnauthorized)
 						return
 					}
-					
+
 					// 更新token活跃状态
 					globalTm.KeepAlive(token, connID, clientIP, r.URL.Path)
 				}
 			}
 			// 3. 如果都没有配置授权，则不进行认证
 		}
-		
+
 		// 创建新的请求
 		newReq := r.Clone(r.Context())
 		newReq.URL.Path = newPath
 		newReq.URL.RawQuery = r.URL.RawQuery
-		
+
 		// 转发给下一个处理器（即RTSP处理器）
 		RtspToHTTPHandler(w, newReq)
 		return
@@ -659,14 +661,37 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// -------- 使用动态 HTTP 配置创建 Transport 和 Client ----------
 	httpCfg := config.Cfg.HTTP
 	config.Cfg.SetDefaults()
+	resolver := dns.GetInstance()
 
 	dialer := &net.Dialer{
 		Timeout:   httpCfg.ConnectTimeout,
 		KeepAlive: httpCfg.KeepAlive,
 	}
 
+	// 自定义 DialContext 支持自定义 DNS + 回落
+	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+
+		// 使用自定义 Resolver 解析
+		ips, err := resolver.LookupIPAddr(ctx, host)
+		if err != nil || len(ips) == 0 {
+			logger.LogPrintf("⚠️ DNS解析失败 %s: %v, 回落系统DNS", host, err)
+			return dialer.DialContext(ctx, network, addr)
+		}
+
+		ip := ips[0].IP.String()
+		target := net.JoinHostPort(ip, port)
+		logger.LogPrintf("✅ 自定义DNS解析 %s -> %s", host, ip)
+
+		return dialer.DialContext(ctx, network, target)
+	}
+
+	// 创建 Transport
 	baseTransport := &http.Transport{
-		DialContext:           dialer.DialContext,
+		DialContext:           dialContext,
 		TLSHandshakeTimeout:   httpCfg.TLSHandshakeTimeout,
 		ResponseHeaderTimeout: httpCfg.ResponseHeaderTimeout,
 		ExpectContinueTimeout: httpCfg.ExpectContinueTimeout,
@@ -678,6 +703,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 	}
 
+	// 创建 Client
 	client := &http.Client{
 		Transport: baseTransport,
 		Timeout:   httpCfg.Timeout,
