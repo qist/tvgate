@@ -19,7 +19,7 @@ import (
 	"github.com/jedisct1/go-dnsstamps"
 	"github.com/miekg/dns"
 	"github.com/qist/tvgate/config"
-	// "github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/logger"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/quic-go"
 )
@@ -198,6 +198,7 @@ func (r *Resolver) LookupIP(host string) ([]net.IP, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	// 首先尝试配置的DNS解析器
 	for _, client := range clients {
 		ips, err := client.LookupIPAddr(ctx, host)
 		if err == nil {
@@ -207,9 +208,13 @@ func (r *Resolver) LookupIP(host string) ([]net.IP, error) {
 			}
 			return result, nil
 		}
+		// 即使有错误也继续尝试下一个解析器
 	}
 
-	ips, err := r.systemResolver.LookupIPAddr(ctx, host)
+	// 如果配置的DNS解析失败或超时，回退到系统解析器
+	// 创建一个新的context，不带超时，让系统解析器自己处理
+	systemCtx := context.Background()
+	ips, err := r.systemResolver.LookupIPAddr(systemCtx, host)
 	if err != nil {
 		return nil, fmt.Errorf("both configured and system DNS resolvers failed: %v", err)
 	}
@@ -237,9 +242,11 @@ func (r *Resolver) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr,
 		if err == nil {
 			return ips, nil
 		}
+		// 即使有错误也继续尝试下一个解析器
 	}
 
-	// 如果配置的DNS解析失败，回退到系统解析器
+	// 如果配置的DNS解析失败或超时，回退到系统解析器
+	// 使用原始context（可能不带超时）来调用系统解析器
 	ips, err := r.systemResolver.LookupIPAddr(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("both configured and system DNS resolvers failed: %v", err)
@@ -247,6 +254,7 @@ func (r *Resolver) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr,
 
 	return ips, nil
 }
+
 
 // RefreshConfig 刷新配置
 func (r *Resolver) RefreshConfig() {
@@ -382,7 +390,7 @@ func parseDNSResponse(respBytes []byte) ([]net.IPAddr, error) {
 	if len(addrs) == 0 {
 		return nil, fmt.Errorf("DNS查询成功但未返回任何IP地址")
 	}
-	// logger.LogPrintf("999999DNS query via %v returned %d addresses", respMsg.Question, len(addrs))
+	logger.LogPrintf("999999DNS query via %v returned %d addresses", respMsg.Question, len(addrs))
 	return addrs, nil
 }
 

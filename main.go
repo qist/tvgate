@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
-	"time" 
+	"time"
 
 	"github.com/cloudflare/tableflip"
 	"github.com/qist/tvgate/auth"
@@ -84,10 +84,7 @@ func main() {
 	// -------------------------
 	// 初始化 DNS 解析器
 	// -------------------------
-	if err := dns.Init(); err != nil {
-		log.Printf("初始化DNS解析器失败: %v", err)
-	}
-
+	dns.Init()
 	// -------------------------
 	// 初始化代理组统计
 	// -------------------------
