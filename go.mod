@@ -3,12 +3,15 @@ module github.com/qist/tvgate
 go 1.24.4
 
 require (
+	github.com/ameshkov/dnscrypt/v2 v2.4.0
 	github.com/asticode/go-astits v1.13.0
 	github.com/bluenviron/gortsplib/v5 v5.0.0
 	github.com/bluenviron/mediacommon/v2 v2.4.3
 	github.com/cloudflare/tableflip v1.2.3
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/jedisct1/go-dnsstamps v0.0.0-20240423203910-07a0735c7774
 	github.com/libp2p/go-reuseport v0.4.0
+	github.com/miekg/dns v1.1.68
 	github.com/pion/rtp v1.8.22
 	github.com/quic-go/quic-go v0.54.0
 	github.com/shirou/gopsutil/v3 v3.24.5
@@ -19,6 +22,8 @@ require (
 )
 
 require (
+	github.com/AdguardTeam/golibs v0.32.7 // indirect
+	github.com/ameshkov/dnsstamps v1.0.3 // indirect
 	github.com/asticode/go-astikit v0.30.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -38,6 +43,7 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.uber.org/mock v0.5.0 // indirect
 	golang.org/x/crypto v0.42.0 // indirect
+	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
 	golang.org/x/mod v0.27.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.36.0 // indirect

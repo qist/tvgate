@@ -78,6 +78,9 @@ type Config struct {
 		Path     string `yaml:"path"`     // Web管理路径，默认为/web/
 	} `yaml:"web"`
 
+	// DNS配置
+	DNS DNSConfig `yaml:"dns"`
+
 	// GitHub 加速配置
 	Github GithubConfig `yaml:"github"`
 
@@ -89,6 +92,13 @@ type Config struct {
 	ProxyGroups map[string]*ProxyGroupConfig `yaml:"proxygroups"` // 代理组配置
 	JX          JXConfig                     `yaml:"jx"`          // 视频解析配置
 	Reload      int                          `yaml:"reload"`      // 添加 Reload 字段
+}
+
+// DNSConfig DNS配置
+type DNSConfig struct {
+	Servers  []string      `yaml:"servers"`  // DNS服务器列表
+	Timeout  time.Duration `yaml:"timeout"`  // DNS查询超时时间
+	MaxConns int           `yaml:"max_conns"`// 最大连接数
 }
 
 type TLSConfig struct {
@@ -308,6 +318,15 @@ func (c *Config) SetDefaults() {
 	if c.HTTP.MaxConnsPerHost == 0 {
 		c.HTTP.MaxConnsPerHost = 8
 	}
+	
+	// DNS 默认值
+	if c.DNS.Timeout == 0 {
+		c.DNS.Timeout = 5 * time.Second
+	}
+	if c.DNS.MaxConns == 0 {
+		c.DNS.MaxConns = 10
+	}
+	
 	// GitHub 默认值
 	if c.Github.Timeout == 0 {
 		c.Github.Timeout = 10 * time.Second

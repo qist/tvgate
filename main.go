@@ -18,6 +18,7 @@ import (
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/watch"
+	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/groupstats"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
@@ -79,6 +80,13 @@ func main() {
 		log.Fatalf("加载配置文件失败: %v", err)
 	}
 	config.Cfg.SetDefaults()
+
+	// -------------------------
+	// 初始化 DNS 解析器
+	// -------------------------
+	if err := dns.Init(); err != nil {
+		log.Printf("初始化DNS解析器失败: %v", err)
+	}
 
 	// -------------------------
 	// 初始化代理组统计
