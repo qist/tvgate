@@ -762,7 +762,6 @@ func executeDNSQuery(ctx context.Context, dnsServer string, query []byte, timeou
 }
 
 // sendDoQQuery 将 base64 编码的 DNS 查询发送到 QUIC 服务器并返回响应
-// sendDoQQuery 通过 QUIC 发送 base64 DNS 查询
 func sendDoQQuery(ctx context.Context, dnsServer, b64 string) (*http.Response, error) {
 	// 解析 URL
 	parsedURL, err := url.Parse(dnsServer)

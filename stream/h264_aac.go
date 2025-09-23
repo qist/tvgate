@@ -383,7 +383,7 @@ func HandleH264AacStream(
 	w.Header().Set("Content-Type", "video/mp2t")
 	flusher, _ := w.(http.Flusher)
 	
-	flushTicker := time.NewTicker(200 * time.Millisecond)
+	flushTicker := time.NewTicker(100 * time.Millisecond)
 	defer flushTicker.Stop()
 
 	activeTicker := time.NewTicker(5 * time.Second)
