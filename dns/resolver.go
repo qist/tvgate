@@ -48,13 +48,19 @@ type dotClient struct {
 	timeout time.Duration
 }
 
+type Common struct {
+	Server    string
+	ReuseConn bool
+}
+
 // QUIC 是用于通过 QUIC 协议进行 DNS 查询的结构体
 type QUIC struct {
-	Server    string
-	TLSConfig *tls.Config
-	PMTUD     bool
-	ReuseConn bool
-	conn      *quic.Conn
+	Common
+	TLSConfig       *tls.Config
+	PMTUD           bool
+	AddLengthPrefix bool
+
+	conn *quic.Conn
 }
 
 // quicClient 是我们项目中使用的QUIC客户端
@@ -585,6 +591,7 @@ func (c *quicClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAdd
 	// 解析响应
 	addrs, err := parseDNSResponse(respBytes)
 	if err != nil {
+		logger.LogPrintf("解析QUIC响应失败: %v", err)
 		return nil, fmt.Errorf("解析QUIC响应失败: %w", err)
 	}
 
@@ -761,105 +768,110 @@ func executeDNSQuery(ctx context.Context, dnsServer string, query []byte, timeou
 	return resp[:n], nil
 }
 
-// sendDoQQuery 将 base64 编码的 DNS 查询发送到 QUIC 服务器并返回响应
-func sendDoQQuery(ctx context.Context, dnsServer, b64 string) (*http.Response, error) {
-	// 解析 URL
-	parsedURL, err := url.Parse(dnsServer)
+// sendDoQQuery 通过 QUIC DoQ 发送 DNS 查询，并返回 HTTP 响应
+func sendDoQQuery(ctx context.Context, dnsServer, b64Query string) (*http.Response, error) {
+	// 规范化 DNS 服务器地址
+	dnsServerAddr, err := normalizeDoQServer(dnsServer)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid DNS server: %w", err)
 	}
 
-	host := parsedURL.Host
-	if !strings.Contains(host, ":") {
-		host += ":853" // 默认 QUIC DoQ 端口
-	}
-
-	// 解码 Base64 DNS 查询
-	query, err := base64.RawURLEncoding.DecodeString(b64)
+	// 解码 Base64 查询
+	queryData, err := base64.RawURLEncoding.DecodeString(b64Query)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode base64 query failed: %v", err)
 	}
 
-	// TLS 配置
-	tlsConfig := &tls.Config{
+	// 解析为 dns.Msg
+	msg := new(dns.Msg)
+	if err := msg.Unpack(queryData); err != nil {
+		return nil, fmt.Errorf("unpack DNS query failed: %v", err)
+	}
+
+	// DoQ 要求 Message ID 为 0
+	msg.Id = 0
+	packedQuery, err := msg.Pack()
+	if err != nil {
+		return nil, fmt.Errorf("pack DNS query failed: %v", err)
+	}
+
+	// 配置 TLS
+	tlsConf := &tls.Config{
 		InsecureSkipVerify: true,
 		NextProtos:         []string{"doq"},
 	}
-	setServerName(tlsConfig, host)
-
-	// QUIC 配置
-	quicConfig := &quic.Config{
-		DisablePathMTUDiscovery: true,
-		KeepAlivePeriod:         30 * time.Second,
-		TokenStore:              newQUICTokenStore(),
-	}
 
 	// 建立 QUIC 连接
-	conn, err := quic.DialAddr(ctx, host, tlsConfig, quicConfig)
+	conn, err := quic.DialAddr(ctx, dnsServerAddr, tlsConf, &quic.Config{DisablePathMTUDiscovery: true})
 	if err != nil {
-		return nil, fmt.Errorf("打开到 %s 的 QUIC 会话失败: %v", host, err)
+		return nil, fmt.Errorf("quic dial failed: %v", err)
 	}
-	defer conn.CloseWithError(0, "done") // 确保退出时关闭连接
+	defer conn.CloseWithError(0, "done")
 
 	// 打开 QUIC 流
-	stream, err := conn.OpenStream()
+	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("打开 QUIC 流失败: %v", err)
+		return nil, fmt.Errorf("open stream failed: %v", err)
 	}
 	defer stream.Close()
 
-	// 发送 DNS 查询
-	_, err = stream.Write(addPrefix(query))
-	if err != nil {
-		return nil, fmt.Errorf("写入 QUIC 流失败: %v", err)
+	// 发送 DNS 查询，带 2 字节长度前缀
+	if _, err := stream.Write(addPrefix(packedQuery)); err != nil {
+		return nil, fmt.Errorf("write stream failed: %v", err)
+	}
+
+	// 关闭流表示发送完毕
+	if err := stream.Close(); err != nil {
+		return nil, fmt.Errorf("close stream failed: %v", err)
 	}
 
 	// 读取响应
 	respBuf, err := io.ReadAll(stream)
 	if err != nil {
-		return nil, fmt.Errorf("从 QUIC 流读取响应失败: %v", err)
+		return nil, fmt.Errorf("read response failed: %v", err)
 	}
 	if len(respBuf) < 2 {
-		return nil, fmt.Errorf("从 %s 收到的响应过短", host)
+		return nil, fmt.Errorf("response too short")
 	}
 
 	// 解包 DNS 响应
-	m := new(dns.Msg)
-	if err := m.Unpack(respBuf[2:]); err != nil {
-		return nil, fmt.Errorf("DNS 响应解包失败: %w", err)
+	respMsg := new(dns.Msg)
+	if err := respMsg.Unpack(respBuf[2:]); err != nil {
+		return nil, fmt.Errorf("unpack response failed: %v", err)
 	}
 
-	// 重新打包 DNS 响应
-	packedResp, err := m.Pack()
+	// 打包响应返回 HTTP
+	packedResp, err := respMsg.Pack()
 	if err != nil {
-		return nil, fmt.Errorf("DNS 响应打包失败: %w", err)
+		return nil, fmt.Errorf("pack response failed: %v", err)
 	}
 
-	// 返回 HTTP 响应对象
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Body:       io.NopCloser(bytes.NewReader(packedResp)),
 	}, nil
 }
 
-// addPrefix 为 DNS 查询添加 2 字节长度前缀
+// addPrefix 为 DNS 消息加 2 字节长度前缀
 func addPrefix(b []byte) []byte {
 	m := make([]byte, 2+len(b))
 	binary.BigEndian.PutUint16(m, uint16(len(b)))
 	copy(m[2:], b)
 	return m
 }
-
-// setServerName 设置 TLSConfig.ServerName（去掉端口）
-func setServerName(cfg *tls.Config, hostPort string) {
-	host, _, err := net.SplitHostPort(hostPort)
+func normalizeDoQServer(raw string) (string, error) {
+	u, err := url.Parse(raw)
 	if err != nil {
-		host = hostPort // 没有端口直接使用 hostPort
+		return "", err
 	}
-	cfg.ServerName = host
-}
 
-// newQUICTokenStore 返回简单的 LRU TokenStore
-func newQUICTokenStore() quic.TokenStore {
-	return quic.NewLRUTokenStore(1, 10)
+	host := u.Host
+	if host == "" {
+		// 如果直接传 host:port 而不是 URL
+		host = raw
+	}
+	if !strings.Contains(host, ":") {
+		host += ":853"
+	}
+	return host, nil
 }
