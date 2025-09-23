@@ -574,7 +574,6 @@ func (c *quicClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAdd
 	if !strings.Contains(c.server, ":") {
 		dnsServer = "quic://" + c.server + ":853"
 	}
-	logger.LogPrintf("QUIC DNS server: %s", dnsServer)
 	// 发送DoQ查询
 	resp, err := sendDoQQuery(ctx, dnsServer, b64)
 	if err != nil {
