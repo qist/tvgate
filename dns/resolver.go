@@ -19,7 +19,8 @@ import (
 	"github.com/jedisct1/go-dnsstamps"
 	"github.com/miekg/dns"
 	"github.com/qist/tvgate/config"
-	"github.com/qist/tvgate/logger"
+	// "github.com/qist/tvgate/logger"
+	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/quic-go"
 )
 
@@ -35,6 +36,11 @@ type plainDNSClient struct {
 }
 
 type dohClient struct {
+	server  string
+	timeout time.Duration
+}
+
+type doh3Client struct {
 	server  string
 	timeout time.Duration
 }
@@ -156,6 +162,9 @@ func createDNSClient(server string, timeout time.Duration) (dnsClient, error) {
 		switch parsedURL.Scheme {
 		case "https":
 			return &dohClient{server: server, timeout: timeout}, nil
+		case "h3":
+			host := strings.TrimPrefix(server, "h3://")
+			return &doh3Client{server: "https://" + host, timeout: timeout}, nil
 		case "sdns":
 			return &dnsCryptClient{server: server}, nil
 		case "tls":
@@ -373,7 +382,7 @@ func parseDNSResponse(respBytes []byte) ([]net.IPAddr, error) {
 	if len(addrs) == 0 {
 		return nil, fmt.Errorf("DNS查询成功但未返回任何IP地址")
 	}
-	logger.LogPrintf("999999DNS query via %v returned %d addresses", respMsg.Question, len(addrs))
+	// logger.LogPrintf("999999DNS query via %v returned %d addresses", respMsg.Question, len(addrs))
 	return addrs, nil
 }
 
@@ -431,6 +440,37 @@ func (c *dohClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr
 	addrs, err := parseDNSResponse(respBytes)
 	if err != nil {
 		return nil, fmt.Errorf("解析DoH响应失败: %w", err)
+	}
+
+	return addrs, nil
+}
+
+// --------------------------- doh3Client ---------------------------
+
+func (c *doh3Client) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
+	// 创建DNS查询
+	msg := &dns.Msg{}
+	msg.SetQuestion(dns.Fqdn(host), dns.TypeA)
+
+	// 将查询打包成字节
+	queryBytes, err := msg.Pack()
+	if err != nil {
+		return nil, fmt.Errorf("打包DNS查询失败: %w", err)
+	}
+
+	// 使用base64编码查询
+	b64 := base64.RawURLEncoding.EncodeToString(queryBytes)
+
+	// 发送DoH3查询
+	respBytes, err := sendH3Query(ctx, c.server, b64, c.timeout)
+	if err != nil {
+		return nil, fmt.Errorf("DoH3查询失败: %w", err)
+	}
+
+	// 解析响应
+	addrs, err := parseDNSResponse(respBytes)
+	if err != nil {
+		return nil, fmt.Errorf("解析DoH3响应失败: %w", err)
 	}
 
 	return addrs, nil
@@ -590,7 +630,6 @@ func (c *quicClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAdd
 	// 解析响应
 	addrs, err := parseDNSResponse(respBytes)
 	if err != nil {
-		logger.LogPrintf("解析QUIC响应失败: %v", err)
 		return nil, fmt.Errorf("解析QUIC响应失败: %w", err)
 	}
 
@@ -625,6 +664,49 @@ func sendDoHQuery(ctx context.Context, dnsServer, b64 string, timeout time.Durat
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("DoH查询失败, 状态码: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应体失败: %w", err)
+	}
+
+	return body, nil
+}
+
+func sendH3Query(ctx context.Context, dnsServer, b64 string, timeout time.Duration) ([]byte, error) {
+	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+
+	if strings.HasPrefix(dnsServer, "h3://") {
+		dnsServer = "https://" + dnsServer[5:]
+	}
+
+	// HTTP/3 客户端
+	http3Transport := &http3.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+	client := &http.Client{
+		Timeout:   timeout,
+		Transport: http3Transport,
+	}
+
+	// 构建请求 URL
+	reqURL := dnsServer + "?dns=" + b64
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/dns-message")
+
+	// 尝试发送 HTTP/3 请求
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("DoH3查询失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("DoH3查询失败, 状态码: %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
