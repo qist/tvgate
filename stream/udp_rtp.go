@@ -684,71 +684,76 @@ func isKeyFrameRTP(pkt []byte) bool {
         return false
     }
 
-    // RTP头部验证
     version := (pkt[0] >> 6) & 0x03
     if version != 2 {
         return false
     }
 
-    // 获取负载类型
     payloadType := pkt[1] & 0x7F
-    
-    // 专门处理MP2T负载（类型33） - TS over RTP
+
+    // 处理 TS over RTP (PT=33)
     if payloadType == 33 {
-        // 计算RTP负载起始位置（考虑CSRC和扩展头）
         csrcCount := int(pkt[0] & 0x0F)
         extension := (pkt[0] >> 4) & 0x01
         payloadStart := 12 + (4 * csrcCount)
 
-        // 处理扩展头
+        if payloadStart > len(pkt) {
+            return false
+        }
+
         if extension == 1 {
+            // RTP 扩展头至少 4 字节
             if len(pkt) < payloadStart+4 {
                 return false
             }
+            // extLen 是以 32bit words 为单位
             extLen := int(binary.BigEndian.Uint16(pkt[payloadStart+2:payloadStart+4])) * 4
-            payloadStart += 4 + extLen
+            if len(pkt) < payloadStart+4+extLen {
+                // 扩展头不完整 → 退回不带扩展的处理
+            } else {
+                payloadStart += 4 + extLen
+            }
         }
 
-        if len(pkt) < payloadStart {
+        if payloadStart >= len(pkt) {
             return false
         }
-        
-        // 提取TS包数据
+
         tsData := pkt[payloadStart:]
-        
-        // 在RTP负载中查找TS包并检测关键帧
-        // 一个RTP包可能包含多个TS包（1348字节大约包含7个TS包）
+
+        // 确保对齐 TS_SYNC_BYTE
+        if len(tsData) < 188 || tsData[0] != TS_SYNC_BYTE {
+            return false
+        }
+
+        // 遍历 RTP 负载内所有 TS 包
         for i := 0; i <= len(tsData)-188; i += 188 {
-            if i+188 <= len(tsData) && tsData[i] == TS_SYNC_BYTE {
-                if isKeyFrameTS(tsData[i:i+188]) {
+            if tsData[i] == TS_SYNC_BYTE {
+                if isKeyFrameTS(tsData[i : i+188]) {
                     return true
                 }
             }
         }
         return false
     }
-    
-    // 对于非MP2T负载，保持原有的H.264检测逻辑
+
+    // 处理 H264 over RTP
     payload := pkt[12:]
     if len(payload) < 2 {
         return false
     }
 
     naluType := payload[0] & 0x1F
-
     if naluType == 28 { // FU-A
-        if len(payload) < 2 {
-            return false
-        }
         startBit := (payload[1] >> 7) & 0x01
         if startBit == 1 {
             fragmentedNaluType := payload[1] & 0x1F
-            return fragmentedNaluType == 5 // IDR帧
+            return fragmentedNaluType == 5
         }
         return false
     }
 
-    return naluType == 5 // 完整的IDR帧
+    return naluType == 5
 }
 
 
