@@ -3,15 +3,14 @@ package stream
 import (
 	"context"
 	"crypto/md5"
-	"encoding/hex"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
-	"sync/atomic"
 	"fmt"
 	"github.com/qist/tvgate/logger"
-	"golang.org/x/net/ipv4"
 	"net"
 	"net/http"
+	"sync/atomic"
 	// "sort"
 	"strconv"
 	"strings"
@@ -145,15 +144,18 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 					lastErr = ierr
 					continue
 				}
-				conn, err := listenMulticast(udpAddr, iface)
+				conn, err := listenMulticast(udpAddr, []*net.Interface{iface})
+
 				if err == nil {
 					hub.UdpConns = append(hub.UdpConns, conn)
 					break
 				}
 				lastErr = err
 			}
+			logger.LogPrintf("Listening on %s via iface %s", udpAddr, ifaces[0])
 		}
 	}
+
 	if len(hub.UdpConns) == 0 {
 		return nil, fmt.Errorf("所有网卡监听失败: %v", lastErr)
 	}
@@ -166,28 +168,67 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 // ====================
 // 多播监听封装
 // ====================
-func listenMulticast(addr *net.UDPAddr, iface *net.Interface) (*net.UDPConn, error) {
-	conn, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("ListenUDP failed: %w", err)
+// listenMulticast 负责多播/单播监听逻辑
+// listenMulticast 负责多播/单播监听逻辑
+func listenMulticast(addr *net.UDPAddr, ifaces []*net.Interface) (*net.UDPConn, error) {
+	if addr == nil || addr.IP == nil || !isMulticast(addr.IP) {
+		return nil, fmt.Errorf("仅支持多播地址: %v", addr)
 	}
 
-	if raw, err := conn.SyscallConn(); err == nil {
-		raw.Control(func(fd uintptr) {
-			setReuse(fd)
-		})
-	}
+	var conn *net.UDPConn
+	var lastErr error
+	var err error
 
-	p := ipv4.NewPacketConn(conn)
-	if iface != nil {
-		if err := p.JoinGroup(iface, addr); err != nil {
-			conn.Close()
-			return nil, fmt.Errorf("JoinGroup failed: %w", err)
+	if len(ifaces) == 0 {
+		// 空网卡 → 所有接口
+		conn, err = net.ListenMulticastUDP("udp", nil, addr)
+		if err != nil {
+			logger.LogPrintf("⚠️ 多播监听失败，尝试回退单播: %v", err)
+			conn, err = net.ListenUDP("udp", addr)
+			if err != nil {
+				return nil, fmt.Errorf("默认接口监听失败: %w", err)
+			}
+			logger.LogPrintf("🟡 已回退为单播 UDP 监听 %v", addr)
+		} else {
+			logger.LogPrintf("🟢 监听 %v (全部接口)", addr)
+		}
+	} else {
+		// 指定网卡
+		for _, iface := range ifaces {
+			if iface == nil {
+				continue
+			}
+			conn, err = net.ListenMulticastUDP("udp", iface, addr)
+			if err == nil {
+				logger.LogPrintf("🟢 监听 %v@%s 成功", addr, iface.Name)
+				break
+			}
+			lastErr = err
+			logger.LogPrintf("⚠️ 监听 %v@%s 失败: %v", addr, iface.Name, err)
+		}
+
+		if conn == nil {
+			// 所有网卡失败 → 尝试单播
+			conn, err = net.ListenUDP("udp", addr)
+			if err != nil {
+				return nil, fmt.Errorf("所有网卡监听失败且单播监听失败: %v (last=%v)", err, lastErr)
+			}
+			logger.LogPrintf("🟡 所有网卡多播失败，已回退为单播 UDP 监听 %v", addr)
 		}
 	}
 
+	// 设置 socket buffer
 	_ = conn.SetReadBuffer(8 * 1024 * 1024)
+
 	return conn, nil
+}
+
+func isMulticast(ip net.IP) bool {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	return ip4[0] >= 224 && ip4[0] <= 239
 }
 
 // ====================
@@ -200,43 +241,41 @@ func (h *StreamHub) startReadLoops() {
 }
 
 func (h *StreamHub) readLoop(conn *net.UDPConn) {
-    if conn == nil {
-        logger.LogPrintf("❌ readLoop: conn is nil, hubKey=%s", h.UdpConns)
-        return
-    }
+	if conn == nil {
+		logger.LogPrintf("❌ readLoop: conn is nil, hubKey=%s", h.UdpConns)
+		return
+	}
 
-    defer func() {
-        if r := recover(); r != nil {
-            logger.LogPrintf("readLoop recovered: %v (hubKey=%s)", r, h.UdpConns)
-        }
-    }()
+	defer func() {
+		if r := recover(); r != nil {
+			logger.LogPrintf("readLoop recovered: %v (hubKey=%s)", r, h.UdpConns)
+		}
+	}()
 
-    for {
-        select {
-        case <-h.Closed:
-            return
-        default:
-        }
+	for {
+		select {
+		case <-h.Closed:
+			return
+		default:
+		}
 
-        buf := h.BufPool.Get().([]byte)
-        n, _, err := conn.ReadFromUDP(buf)
-        if err != nil {
-            h.BufPool.Put(buf)
-            if !errors.Is(err, net.ErrClosed) {
-                logger.LogPrintf("❌ ReadFromUDP failed: %v (hubKey=%s)", err, h.UdpConns)
-            }
-            return // conn 已关闭，退出循环
-        }
+		buf := h.BufPool.Get().([]byte)
+		n, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			h.BufPool.Put(buf)
+			if !errors.Is(err, net.ErrClosed) {
+				logger.LogPrintf("❌ ReadFromUDP failed: %v (hubKey=%s)", err, h.UdpConns)
+			}
+			return // conn 已关闭，退出循环
+		}
 
-        data := make([]byte, n)
-        copy(data, buf[:n])
-        h.BufPool.Put(buf)
+		data := make([]byte, n)
+		copy(data, buf[:n])
+		h.BufPool.Put(buf)
 
-        h.broadcast(data)
-    }
+		h.broadcast(data)
+	}
 }
-
-
 
 // ====================
 // 广播到所有客户端
@@ -561,9 +600,9 @@ func (h *StreamHub) UpdateInterfaces(ifaces []string) error {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
-	if len(ifaces) == 0 {
-		return errors.New("至少指定一个网卡")
-	}
+	// if len(ifaces) == 0 {
+	// 	return errors.New("至少指定一个网卡")
+	// }
 
 	var newConns []*net.UDPConn
 	var lastErr error
@@ -581,7 +620,7 @@ func (h *StreamHub) UpdateInterfaces(ifaces []string) error {
 				lastErr = ierr
 				continue
 			}
-			conn, err = listenMulticast(udpAddr, iface)
+			conn, err := listenMulticast(udpAddr, []*net.Interface{iface})
 			if err == nil {
 				newConns = append(newConns, conn)
 				break
@@ -820,7 +859,6 @@ func ResetFrameLogCounters() {
 	atomic.StoreInt32(&keyFrameLogCount, 0)
 	atomic.StoreInt32(&nonKeyFrameLogCount, 0)
 }
-
 
 // 改进的TS关键帧检测
 func (h *StreamHub) isKeyFrameTS(pkt []byte) bool {
