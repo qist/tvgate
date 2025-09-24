@@ -4,15 +4,18 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/qist/tvgate/logger"
+	"golang.org/x/net/ipv4"
 	"io"
 	"net"
 	"net/http"
+	// "runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	// "syscall"
 	"time"
-
-	"github.com/qist/tvgate/logger"
 )
 
 // ====================
@@ -60,7 +63,7 @@ func (r *RingBuffer) GetAll() [][]byte {
 }
 
 // ====================
-// StreamHub
+// StreamHub 单频道 Hub
 // ====================
 type StreamHub struct {
 	Mu             sync.Mutex
@@ -72,21 +75,18 @@ type StreamHub struct {
 	BufPool        *sync.Pool
 	LastFrame      []byte
 	LastKeyFrame   []byte
+	LastInitFrame  [][]byte // 保存 SPS/PPS + IDR
 	CacheBuffer    *RingBuffer
-	DetectedFormat string // ts 或 rtp
+	DetectedFormat string
 	addr           string
 
-	// 性能统计
 	PacketCount uint64
 	DropCount   uint64
-	DelaySum    int64
-	DelayCount  int64
+	hasSPS      bool
+	hasPPS      bool
 }
 
-var (
-	Hubs   = make(map[string]*StreamHub)
-	HubsMu sync.Mutex
-)
+var GlobalMultiChannelHub = NewMultiChannelHub()
 
 // ====================
 // 创建新Hub
@@ -96,94 +96,111 @@ func NewStreamHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	if addr == nil || addr.IP == nil || !isMulticast(addr.IP) {
 		return nil, fmt.Errorf("仅支持多播地址: %s", udpAddr)
 	}
 
 	var conn *net.UDPConn
+	var lastErr error
+
 	if len(ifaces) == 0 {
-		conn, err = net.ListenMulticastUDP("udp", nil, addr)
+		// 无指定网卡时，尝试所有接口
+		conn, err = listenMulticast(addr, nil)
 		if err != nil {
-			conn, err = net.ListenUDP("udp", addr)
-			if err != nil {
-				return nil, err
-			}
+			return nil, err
 		}
-		logger.LogPrintf("🟢 监听 %s (默认接口)", udpAddr)
 	} else {
-		var lastErr error
+		// 遍历指定接口
 		for _, name := range ifaces {
 			iface, ierr := net.InterfaceByName(name)
 			if ierr != nil {
 				lastErr = ierr
-				logger.LogPrintf("⚠️ 网卡 %s 不存在或不可用: %v", name, ierr)
 				continue
 			}
-			conn, err = net.ListenMulticastUDP("udp", iface, addr)
+			conn, err = listenMulticast(addr, iface)
 			if err == nil {
-				logger.LogPrintf("🟢 监听 %s@%s 成功", udpAddr, name)
 				break
 			}
 			lastErr = err
-			logger.LogPrintf("⚠️ 监听 %s@%s 失败: %v", udpAddr, name, err)
 		}
 		if conn == nil {
-			conn, err = net.ListenUDP("udp", addr)
-			if err != nil {
-				return nil, fmt.Errorf("所有网卡监听失败且 UDP 监听失败: %v (last=%v)", err, lastErr)
-			}
-			logger.LogPrintf("🟡 回退为普通 UDP 监听 %s", udpAddr)
+			return nil, fmt.Errorf("所有网卡监听失败: %v", lastErr)
 		}
 	}
 
 	_ = conn.SetReadBuffer(8 * 1024 * 1024)
 
 	hub := &StreamHub{
-		Clients:        make(map[chan []byte]struct{}),
-		AddCh:          make(chan chan []byte, 1024),
-		RemoveCh:       make(chan chan []byte, 1024),
-		UdpConn:        conn,
-		Closed:         make(chan struct{}),
-		BufPool:        &sync.Pool{New: func() any { return make([]byte, 32*1024) }},
-		CacheBuffer:    NewRingBuffer(4096), // 大约 10 秒缓存 (假设每帧 188 字节，每秒 1Mbps)
-		addr:           udpAddr,
-		DetectedFormat: "",
+		Clients:     make(map[chan []byte]struct{}),
+		AddCh:       make(chan chan []byte, 1024),
+		RemoveCh:    make(chan chan []byte, 1024),
+		UdpConn:     conn,
+		Closed:      make(chan struct{}),
+		BufPool:     &sync.Pool{New: func() any { return make([]byte, 32*1024) }},
+		CacheBuffer: NewRingBuffer(4096),
+		addr:        udpAddr,
 	}
 
 	go hub.run()
 	go hub.readLoop()
 
-	logger.LogPrintf("UDP 监听地址：%s ifaces=%v", udpAddr, ifaces)
 	return hub, nil
+}
+
+// 封装跨平台多播监听
+func listenMulticast(addr *net.UDPAddr, iface *net.Interface) (*net.UDPConn, error) {
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("ListenUDP failed: %w", err)
+	}
+
+	// 设置 socket 选项 (跨平台)
+	if raw, err := conn.SyscallConn(); err == nil {
+		raw.Control(func(fd uintptr) {
+			setReuse(fd)
+		})
+	}
+
+	// 加入多播组
+	p := ipv4.NewPacketConn(conn)
+	if iface != nil {
+		if err := p.JoinGroup(iface, addr); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("JoinGroup failed: %w", err)
+		}
+	}
+
+	return conn, nil
 }
 
 // ====================
 // 客户端管理循环
 // ====================
 func (h *StreamHub) run() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
+		case <-ticker.C:
+			h.checkIsolation()
 		case ch := <-h.AddCh:
 			h.Mu.Lock()
 			h.Clients[ch] = struct{}{}
 			go h.sendInitial(ch)
 			h.Mu.Unlock()
-			logger.LogPrintf("➕ 客户端加入，当前=%d", len(h.Clients))
-
 		case ch := <-h.RemoveCh:
 			h.Mu.Lock()
 			if _, ok := h.Clients[ch]; ok {
 				delete(h.Clients, ch)
 				close(ch)
 			}
-			clientCount := len(h.Clients)
-			h.Mu.Unlock()
-			logger.LogPrintf("➖ 客户端离开，当前=%d", clientCount)
-			if clientCount == 0 {
+			if len(h.Clients) == 0 {
+				h.Mu.Unlock()
 				h.Close()
+				return
 			}
-
+			h.Mu.Unlock()
 		case <-h.Closed:
 			h.Mu.Lock()
 			for ch := range h.Clients {
@@ -196,17 +213,39 @@ func (h *StreamHub) run() {
 	}
 }
 
+func (h *StreamHub) checkIsolation() {
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+	for _, hub := range GlobalMultiChannelHub.Hubs {
+		if hub != h && hub.UdpConn == h.UdpConn {
+			logger.LogPrintf("CRITICAL: 检测到连接共享! %s 与 %s", h.addr, hub.addr)
+		}
+	}
+}
+
 // ====================
 // 读取UDP并分发
 // ====================
 func (h *StreamHub) readLoop() {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.LogPrintf("readLoop recovered from panic: %v", r)
+			logger.LogPrintf("❌ readLoop recovered from panic: %v", r)
 		}
 	}()
 
 	for {
+		// 检查是否已经关闭
+		select {
+		case <-h.Closed:
+			return
+		default:
+		}
+
+		if h.UdpConn == nil {
+			logger.LogPrintf("⚠️ readLoop exit: UdpConn is nil")
+			return
+		}
+
 		buf := h.BufPool.Get().([]byte)
 		n, _, err := h.UdpConn.ReadFromUDP(buf)
 		if err != nil {
@@ -219,35 +258,45 @@ func (h *StreamHub) readLoop() {
 			}
 		}
 
+		// 拷贝数据
 		data := make([]byte, n)
 		copy(data, buf[:n])
 		h.BufPool.Put(buf)
 
+		// 写入Hub状态
 		h.Mu.Lock()
+		if h.CacheBuffer == nil {
+			h.Mu.Unlock()
+			return
+		}
+
 		h.PacketCount++
 		h.LastFrame = data
 		h.CacheBuffer.Push(data)
 
-		// 第一次接收数据自动检测格式
-		// 改进的格式检测逻辑
+		// 自动探测格式
 		if h.DetectedFormat == "" {
 			h.DetectedFormat = detectStreamFormat(data)
-			// logger.LogPrintf("🔍 自动检测流类型: %s, 包长度: %d", h.DetectedFormat, len(data))
 		}
 
-		// 使用改进的关键帧检测
-		keyFrame := h.isKeyFrameByFormat(data, h.DetectedFormat)
-		if keyFrame {
+		// 检测关键帧
+		if h.DetectedFormat != "" && h.isKeyFrameByFormat(data, h.DetectedFormat) {
+			// 保存 LastKeyFrame
 			h.LastKeyFrame = data
-			// logger.LogPrintf("🎯 检测到关键帧: 格式=%s, 长度=%d", h.DetectedFormat, len(data))
+
+			// 保存完整初始化帧: 最近若干缓存 + 当前关键帧
+			cached := h.CacheBuffer.GetAll()
+			h.LastInitFrame = append(h.LastInitFrame[:0], cached...) // 保留缓存里关键帧前的SPS/PPS
 		}
 
+		// 拷贝客户端列表
 		clients := make([]chan []byte, 0, len(h.Clients))
 		for ch := range h.Clients {
 			clients = append(clients, ch)
 		}
 		h.Mu.Unlock()
 
+		// 投递数据到客户端
 		for _, ch := range clients {
 			select {
 			case ch <- data:
@@ -259,15 +308,26 @@ func (h *StreamHub) readLoop() {
 		}
 	}
 }
-
 // ====================
-// 新客户端发送初始关键帧 + 后续帧
+// 新客户端发送完整初始化帧 + 后续帧
 // ====================
 func (h *StreamHub) sendInitial(ch chan []byte) {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
-	sentKey := false
+	// 发送完整初始化帧 (SPS/PPS + IDR)
+	if len(h.LastInitFrame) > 0 {
+		for _, f := range h.LastInitFrame {
+			select {
+			case ch <- f:
+			default:
+			}
+		}
+		return
+	}
+
+	// 缓存中查找最近的关键帧
+	var sentKey bool
 	for _, f := range h.CacheBuffer.GetAll() {
 		if !sentKey && h.isKeyFrameByFormat(f, h.DetectedFormat) {
 			sentKey = true
@@ -277,12 +337,6 @@ func (h *StreamHub) sendInitial(ch chan []byte) {
 			case ch <- f:
 			default:
 			}
-		}
-	}
-	if !sentKey && h.LastKeyFrame != nil {
-		select {
-		case ch <- h.LastKeyFrame:
-		default:
 		}
 	}
 }
@@ -316,35 +370,36 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	activeTicker := time.NewTicker(5 * time.Second)
 	defer activeTicker.Stop()
 
-	for {
+	clientClosed := false
+	for !clientClosed {
 		select {
 		case data, ok := <-ch:
 			if !ok {
 				return
 			}
 			n, err := w.Write(data)
-			if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
-				logger.LogPrintf("写入客户端错误: %v", err)
+			if err != nil {
+				if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
+					logger.LogPrintf("写入客户端错误: %v", err)
+				}
+				clientClosed = true
 				return
 			}
 			bufferedBytes += n
-
 		case <-flushTicker.C:
-			if flusher != nil && bufferedBytes > 0 {
+			if bufferedBytes > 0 {
 				flusher.Flush()
 				bufferedBytes = 0
 			}
-
 		case <-activeTicker.C:
 			if updateActive != nil {
 				updateActive()
 			}
-
 		case <-ctx.Done():
-			return
-		case <-time.After(30 * time.Second):
+			clientClosed = true
 			return
 		case <-h.Closed:
+			clientClosed = true
 			return
 		}
 	}
@@ -354,6 +409,11 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 // 客户端迁移
 // ====================
 func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
+	if h.addr != newHub.addr {
+		logger.LogPrintf("❌ 禁止跨频道迁移客户端: %s -> %s", h.addr, newHub.addr)
+		return
+	}
+
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
@@ -438,25 +498,48 @@ func (h *StreamHub) UpdateInterfaces(udpAddr string, ifaces []string) error {
 // ====================
 // 关闭Hub
 // ====================
+
 func (h *StreamHub) Close() {
 	h.Mu.Lock()
-	defer h.Mu.Unlock()
-	select {
-	case <-h.Closed:
-		return
-	default:
+	if h.Closed != nil {
+		select {
+		case <-h.Closed:
+			h.Mu.Unlock()
+			return
+		default:
+		}
 		close(h.Closed)
 	}
+
 	if h.UdpConn != nil {
 		_ = h.UdpConn.Close()
 		h.UdpConn = nil
 	}
+
 	for ch := range h.Clients {
 		close(ch)
 	}
 	h.Clients = nil
 	h.CacheBuffer = nil
-	logger.LogPrintf("UDP监听已关闭，端口已释放: %s", h.addr)
+	h.Mu.Unlock()
+
+	// 不要在这里移除 MultiChannelHub，由 MultiChannelHub 管理
+	// GlobalMultiChannelHub.RemoveHub(h.addr, nil)
+}
+
+
+// ====================
+// MultiChannelHub 管理所有 Hub
+// ====================
+type MultiChannelHub struct {
+	Mu   sync.RWMutex
+	Hubs map[string]*StreamHub
+}
+
+func NewMultiChannelHub() *MultiChannelHub {
+	return &MultiChannelHub{
+		Hubs: make(map[string]*StreamHub),
+	}
 }
 
 // ====================
@@ -473,18 +556,20 @@ var (
 func (h *StreamHub) isKeyFrameByFormat(pkt []byte, format string) bool {
 	var result bool
 	var frameType string
-
+	// 每次检测前重置全局状态
+	h.hasSPS = false
+	h.hasPPS = false
 	switch format {
 	case "ts":
-		result = isKeyFrameTS(pkt)
+		result = h.isKeyFrameTS(pkt)
 	case "rtp":
-		result = isKeyFrameRTP(pkt)
+		result = h.isKeyFrameRTP(pkt)
 	default:
 		// 自动检测格式
-		if isKeyFrameTS(pkt) {
+		if h.isKeyFrameTS(pkt) {
 			result = true
 		} else {
-			result = isKeyFrameRTP(pkt)
+			result = h.isKeyFrameRTP(pkt)
 		}
 	}
 
@@ -628,158 +713,191 @@ func detectStreamFormat(pkt []byte) string {
 }
 
 // 改进的TS关键帧检测
-func isKeyFrameTS(pkt []byte) bool {
-    if !isValidTSPacket(pkt) {
-        return false
-    }
-
-    // 提取PID
-    pid := uint16(pkt[1]&0x1F)<<8 | uint16(pkt[2])
-    
-    // 只检查视频PID（通常为0x100-0x11FF），减少不必要的处理
-    if pid < 0x100 || pid > 0x11FF {
-        return false
-    }
-
-    payload := extractTSPayload(pkt)
-    if payload == nil || len(payload) < 4 {
-        return false
-    }
-
-    // 在负载中查找H.264起始码和关键帧
-    for i := 0; i < len(payload)-4; i++ {
-        if payload[i] == 0x00 && payload[i+1] == 0x00 {
-            if payload[i+2] == 0x01 {
-                // 3字节起始码
-                if i+3 < len(payload) {
-                    naluType := payload[i+3] & 0x1F
-                    if naluType == 5 { // IDR帧
-                        return true
-                    } else if naluType == 7 || naluType == 8 {
-                        // SPS或PPS也可能表示新序列开始
-                        return true
-                    }
-                }
-            } else if i+3 < len(payload) && payload[i+2] == 0x00 && payload[i+3] == 0x01 {
-                // 4字节起始码
-                if i+4 < len(payload) {
-                    naluType := payload[i+4] & 0x1F
-                    if naluType == 5 { // IDR帧
-                        return true
-                    } else if naluType == 7 || naluType == 8 {
-                        return true
-                    }
-                }
-            }
-        }
-    }
-
-    return false
-}
-
-
-// 改进的RTP关键帧检测 - 专门处理TS over RTP
-func isKeyFrameRTP(pkt []byte) bool {
-    if len(pkt) < 12 {
-        return false
-    }
-
-    version := (pkt[0] >> 6) & 0x03
-    if version != 2 {
-        return false
-    }
-
-    payloadType := pkt[1] & 0x7F
-
-    // 处理 TS over RTP (PT=33)
-    if payloadType == 33 {
-        csrcCount := int(pkt[0] & 0x0F)
-        extension := (pkt[0] >> 4) & 0x01
-        payloadStart := 12 + (4 * csrcCount)
-
-        if payloadStart > len(pkt) {
-            return false
-        }
-
-        if extension == 1 {
-            // RTP 扩展头至少 4 字节
-            if len(pkt) < payloadStart+4 {
-                return false
-            }
-            // extLen 是以 32bit words 为单位
-            extLen := int(binary.BigEndian.Uint16(pkt[payloadStart+2:payloadStart+4])) * 4
-            if len(pkt) < payloadStart+4+extLen {
-                // 扩展头不完整 → 退回不带扩展的处理
-            } else {
-                payloadStart += 4 + extLen
-            }
-        }
-
-        if payloadStart >= len(pkt) {
-            return false
-        }
-
-        tsData := pkt[payloadStart:]
-
-        // 确保对齐 TS_SYNC_BYTE
-        if len(tsData) < 188 || tsData[0] != TS_SYNC_BYTE {
-            return false
-        }
-
-        // 遍历 RTP 负载内所有 TS 包
-        for i := 0; i <= len(tsData)-188; i += 188 {
-            if tsData[i] == TS_SYNC_BYTE {
-                if isKeyFrameTS(tsData[i : i+188]) {
-                    return true
-                }
-            }
-        }
-        return false
-    }
-
-    // 处理 H264 over RTP
-    payload := pkt[12:]
-    if len(payload) < 2 {
-        return false
-    }
-
-    naluType := payload[0] & 0x1F
-    if naluType == 28 { // FU-A
-        startBit := (payload[1] >> 7) & 0x01
-        if startBit == 1 {
-            fragmentedNaluType := payload[1] & 0x1F
-            return fragmentedNaluType == 5
-        }
-        return false
-    }
-
-    return naluType == 5
-}
-
-
-func isMulticast(ip net.IP) bool {
-	ip4 := ip.To4()
-	if ip4 == nil {
+func (h *StreamHub) isKeyFrameTS(pkt []byte) bool {
+	if len(pkt) != TS_PACKET_SIZE || pkt[0] != TS_SYNC_BYTE {
 		return false
 	}
-	return ip4[0] >= 224 && ip4[0] <= 239
+
+	// Adaptation field + payload
+	adaptation := (pkt[3] >> 4) & 0x03
+	payloadStart := 4
+	if adaptation == 2 || adaptation == 3 { // with adaptation field
+		adaptLen := int(pkt[4])
+		payloadStart += 1 + adaptLen
+		if payloadStart >= TS_PACKET_SIZE {
+			return false
+		}
+	}
+
+	payload := pkt[payloadStart:]
+	if len(payload) < 4 {
+		return false
+	}
+
+	// 扫描 H.264 NALU
+	for i := 0; i < len(payload)-4; i++ {
+		if payload[i] == 0x00 && payload[i+1] == 0x00 {
+			var naluType byte
+			if payload[i+2] == 0x01 {
+				naluType = payload[i+3] & 0x1F
+			} else if payload[i+2] == 0x00 && payload[i+3] == 0x01 {
+				naluType = payload[i+4] & 0x1F
+			} else {
+				continue
+			}
+
+			switch naluType {
+			case 7: // SPS
+				h.hasSPS = true
+			case 8: // PPS
+				h.hasPPS = true
+			case 5: // IDR
+				if h.hasSPS && h.hasPPS {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
-func HubKey(addr string, ifaces []string) string {
-	return addr + "|" + strings.Join(ifaces, ",")
+// 改进的RTP关键帧检测 - 专门处理TS over RTP
+func (h *StreamHub) isKeyFrameRTP(pkt []byte) bool {
+	if len(pkt) < 12 {
+		return false
+	}
+
+	version := (pkt[0] >> 6) & 0x03
+	if version != 2 {
+		return false
+	}
+
+	// RTP 头
+	csrcCount := int(pkt[0] & 0x0F)
+	extension := (pkt[0] >> 4) & 0x01
+	payloadType := pkt[1] & 0x7F
+	headerLen := 12 + (4 * csrcCount)
+
+	if extension == 1 {
+		if len(pkt) < headerLen+4 {
+			return false
+		}
+		extLen := int(binary.BigEndian.Uint16(pkt[headerLen+2:headerLen+4])) * 4
+		headerLen += 4 + extLen
+	}
+
+	if len(pkt) <= headerLen {
+		return false
+	}
+	payload := pkt[headerLen:]
+
+	// ---------------- RTP MP2T 模式 (TS over RTP, PT=33) ----------------
+	if payloadType == 33 {
+		for i := 0; i+TS_PACKET_SIZE <= len(payload); i++ {
+			if payload[i] == TS_SYNC_BYTE {
+				if h.isKeyFrameTS(payload[i : i+TS_PACKET_SIZE]) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	// ---------------- RTP H.264 模式 ----------------
+	if len(payload) < 1 {
+		return false
+	}
+	naluType := payload[0] & 0x1F
+
+	switch naluType {
+	case 1: // 非IDR帧
+		return false
+	case 5: // 完整IDR
+		return true
+	case 7: // SPS
+		h.hasSPS = true
+	case 8: // PPS
+		h.hasPPS = true
+	case 24: // STAP-A (多个NALU打包)
+		offset := 1
+		for offset+2 < len(payload) {
+			nalSize := int(binary.BigEndian.Uint16(payload[offset : offset+2]))
+			offset += 2
+			if offset+nalSize > len(payload) {
+				break
+			}
+			nalu := payload[offset]
+			naluTypeInner := nalu & 0x1F
+			if naluTypeInner == 7 {
+				h.hasSPS = true
+			} else if naluTypeInner == 8 {
+				h.hasPPS = true
+			} else if naluTypeInner == 5 && h.hasSPS && h.hasPPS {
+				return true
+			}
+			offset += nalSize
+		}
+	case 28: // FU-A
+		if len(payload) < 2 {
+			return false
+		}
+		startBit := (payload[1] >> 7) & 0x01
+		if startBit == 1 {
+			fragNaluType := payload[1] & 0x1F
+			if fragNaluType == 5 && h.hasSPS && h.hasPPS {
+				return true
+			}
+		}
+	}
+	return false
 }
 
-func GetOrCreateHub(udpAddr string, ifaces []string) (*StreamHub, error) {
-	key := HubKey(udpAddr, ifaces)
+// ==============================
+// MultiChannelHub 核心逻辑
+// ==============================
 
-	HubsMu.Lock()
-	defer HubsMu.Unlock()
+func (m *MultiChannelHub) HubKey(addr string, ifaces []string) string {
+	// 解析 IP:Port
+	uAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		// 出错回退为原始字符串
+		uAddr = &net.UDPAddr{IP: net.ParseIP(addr), Port: 0}
+	}
+	ipPort := fmt.Sprintf("%s_%d", uAddr.IP.String(), uAddr.Port)
 
-	if hub, ok := Hubs[key]; ok {
-		select {
-		case <-hub.Closed:
-			delete(Hubs, key)
-		default:
+	// 接口去重并排序
+	ifaceMap := make(map[string]struct{})
+	for _, iface := range ifaces {
+		iface = strings.TrimSpace(strings.ToLower(iface))
+		if iface != "" {
+			ifaceMap[iface] = struct{}{}
+		}
+	}
+
+	uniqueIfaces := make([]string, 0, len(ifaceMap))
+	for iface := range ifaceMap {
+		uniqueIfaces = append(uniqueIfaces, iface)
+	}
+	sort.Strings(uniqueIfaces)
+
+	// 最终键 = IP_PORT|iface1#iface2
+	return ipPort + "|" + strings.Join(uniqueIfaces, "#")
+}
+
+// 获取或创建 Hub，确保同一 UDPAddr + 接口唯一
+func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*StreamHub, error) {
+	key := m.HubKey(udpAddr, ifaces)
+	logger.LogPrintf("🔑 GetOrCreateHub HubKey: %s", key)
+
+	m.Mu.RLock()
+	hub, exists := m.Hubs[key]
+	m.Mu.RUnlock()
+
+	if exists {
+		if hub.IsClosed() { // Hub 自身提供状态方法，不直接用通道判断
+			logger.LogPrintf("⚠️ Hub 已关闭，安全移除: %s", key)
+			m.RemoveHub(udpAddr, ifaces)
+		} else {
 			return hub, nil
 		}
 	}
@@ -788,8 +906,63 @@ func GetOrCreateHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 	if err != nil {
 		return nil, err
 	}
-	Hubs[key] = newHub
+
+	m.Mu.Lock()
+	m.Hubs[key] = newHub
+	m.Mu.Unlock()
+
+	m.CheckIsolation()
 	return newHub, nil
+}
+
+// 判断 Hub 是否已关闭
+func (h *StreamHub) IsClosed() bool {
+	select {
+	case <-h.Closed:
+		return true
+	default:
+		return false
+	}
+}
+
+// 删除指定 Hub
+func (m *MultiChannelHub) RemoveHub(udpAddr string, ifaces []string) {
+	key := m.HubKey(udpAddr, ifaces)
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	if hub, ok := m.Hubs[key]; ok {
+		hub.Close()
+		delete(m.Hubs, key)
+		logger.LogPrintf("🗑️ Hub 已删除: %s", key)
+	}
+}
+
+// 检查是否存在串台（同一 UDPConn 被多个 Hub 使用）
+func (m *MultiChannelHub) CheckIsolation() {
+	m.Mu.RLock()
+	defer m.Mu.RUnlock()
+	for key1, hub1 := range m.Hubs {
+		for key2, hub2 := range m.Hubs {
+			if key1 == key2 {
+				continue
+			}
+			if hub1.UdpConn != nil && hub1.UdpConn == hub2.UdpConn {
+				logger.LogPrintf("⚠️ 串台检测: Hub %s 与 Hub %s 共用同一 UDPConn", hub1.addr, hub2.addr)
+			}
+		}
+	}
+}
+
+
+// ====================
+// 工具函数
+// ====================
+func isMulticast(ip net.IP) bool {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	return ip4[0] >= 224 && ip4[0] <= 239
 }
 
 // 检查是否为有效的TS包

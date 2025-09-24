@@ -13,40 +13,35 @@ import (
 )
 
 func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
-	// 注册活跃客户端
 	clientIP := monitor.GetClientIP(r)
 	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	// 全局token验证
+
+	logger.LogPrintf("DEBUG: UDP请求开始处理 - Path: %s, ClientIP: %s, ConnID: %s", r.URL.Path, clientIP, connID)
+
+	// 全局 token 验证
 	if auth.GetGlobalTokenManager() != nil {
-		tokenParamName := "my_token" // 默认参数名
-		token := r.URL.Query().Get(tokenParamName)
+		tokenParam := "my_token"
+		token := r.URL.Query().Get(tokenParam)
 
-		// 获取客户端真实IP
-		clientIP := monitor.GetClientIP(r)
-
-		// 构造连接ID（IP+端口）
-		connID := clientIP + "_" + r.RemoteAddr
-
-		// 验证全局token
 		if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
-			// logger.LogPrintf("全局token验证失败: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+			logger.LogPrintf("全局 token 验证失败: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 
-		// 更新全局token活跃状态
 		auth.GetGlobalTokenManager().KeepAlive(token, connID, clientIP, r.URL.Path)
-		// logger.LogPrintf("全局token验证成功: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
+		logger.LogPrintf("DEBUG: 全局 token 验证成功: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
 	}
 
-	// URL 形如 /rtp/239.0.0.1:5000?iface=eth0,eth1
+	// 解析 UDP 地址
 	addr := r.URL.Path[len(prefix):]
 	if addr == "" || !strings.Contains(addr, ":") {
+		logger.LogPrintf("DEBUG: 地址格式错误 - Addr: %s", addr)
 		http.Error(w, "Address must be ip:port", http.StatusBadRequest)
 		return
 	}
 
-	// 覆盖配置的 iface
+	// 获取指定网卡
 	var ifaces []string
 	if s := r.URL.Query().Get("iface"); s != "" {
 		for _, n := range strings.Split(s, ",") {
@@ -61,13 +56,17 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 		config.CfgMu.RUnlock()
 	}
 
-	hub, err := stream.GetOrCreateHub(addr, ifaces)
+	logger.LogPrintf("DEBUG: 获取或创建 Hub - Addr: %s, Ifaces: %v", addr, ifaces)
+
+	// 使用 MultiChannelHub 获取或创建 Hub
+	hub, err := stream.GlobalMultiChannelHub.GetOrCreateHub(addr, ifaces)
 	if err != nil {
+		logger.LogPrintf("DEBUG: 创建 Hub 失败 - Addr: %s, Error: %v", addr, err)
 		http.Error(w, "Failed to listen UDP: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// 确定连接类型 (从 prefix 取 "/udp/" 或 "/rtp/")
+	// 注册客户端活跃信息
 	connectionType := "UDP"
 	if strings.HasPrefix(prefix, "/rtp/") {
 		connectionType = "RTP"
@@ -82,10 +81,11 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 	})
 	defer monitor.ActiveClients.Unregister(connID, connectionType)
 
-	// 定义更新活跃时间的回调
 	updateActive := func() {
 		monitor.ActiveClients.UpdateLastActive(connID, time.Now())
 	}
-	logger.LogRequestAndResponse(r, addr, &http.Response{StatusCode: http.StatusOK})
+
+	logger.LogPrintf("DEBUG: 开始 HTTP 流服务 - Addr: %s", addr)
 	hub.ServeHTTP(w, r, "application/octet-stream", updateActive)
+	logger.LogPrintf("DEBUG: HTTP 流服务结束 - Addr: %s", addr)
 }

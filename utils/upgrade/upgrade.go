@@ -67,12 +67,12 @@ func StartListener(onUpgrade func()) {
 			logger.LogPrintf("收到升级信号，开始优雅退出...")
 
 			// 关闭 StreamHub
-			stream.HubsMu.Lock()
-			for key, hub := range stream.Hubs {
+			stream.GlobalMultiChannelHub.Mu.Lock()
+			for key, hub := range stream.GlobalMultiChannelHub.Hubs {
 				hub.Close()
-				delete(stream.Hubs, key)
+				delete(stream.GlobalMultiChannelHub.Hubs, key)
 			}
-			stream.HubsMu.Unlock()
+			stream.GlobalMultiChannelHub.Mu.Unlock()
 
 			if onUpgrade != nil {
 				onUpgrade()
