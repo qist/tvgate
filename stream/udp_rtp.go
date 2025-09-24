@@ -9,12 +9,10 @@ import (
 	"io"
 	"net"
 	"net/http"
-	// "runtime"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
-	// "syscall"
 	"time"
 )
 
@@ -75,7 +73,7 @@ type StreamHub struct {
 	BufPool        *sync.Pool
 	LastFrame      []byte
 	LastKeyFrame   []byte
-	LastInitFrame  [][]byte // 保存 SPS/PPS + IDR
+	LastInitFrame  [][]byte
 	CacheBuffer    *RingBuffer
 	DetectedFormat string
 	addr           string
@@ -104,13 +102,11 @@ func NewStreamHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 	var lastErr error
 
 	if len(ifaces) == 0 {
-		// 无指定网卡时，尝试所有接口
 		conn, err = listenMulticast(addr, nil)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		// 遍历指定接口
 		for _, name := range ifaces {
 			iface, ierr := net.InterfaceByName(name)
 			if ierr != nil {
@@ -154,14 +150,12 @@ func listenMulticast(addr *net.UDPAddr, iface *net.Interface) (*net.UDPConn, err
 		return nil, fmt.Errorf("ListenUDP failed: %w", err)
 	}
 
-	// 设置 socket 选项 (跨平台)
 	if raw, err := conn.SyscallConn(); err == nil {
 		raw.Control(func(fd uintptr) {
 			setReuse(fd)
 		})
 	}
 
-	// 加入多播组
 	p := ipv4.NewPacketConn(conn)
 	if iface != nil {
 		if err := p.JoinGroup(iface, addr); err != nil {
@@ -187,8 +181,8 @@ func (h *StreamHub) run() {
 		case ch := <-h.AddCh:
 			h.Mu.Lock()
 			h.Clients[ch] = struct{}{}
-			go h.sendInitial(ch)
 			h.Mu.Unlock()
+			go h.sendInitial(ch)
 		case ch := <-h.RemoveCh:
 			h.Mu.Lock()
 			if _, ok := h.Clients[ch]; ok {
@@ -234,7 +228,6 @@ func (h *StreamHub) readLoop() {
 	}()
 
 	for {
-		// 检查是否已经关闭
 		select {
 		case <-h.Closed:
 			return
@@ -258,12 +251,10 @@ func (h *StreamHub) readLoop() {
 			}
 		}
 
-		// 拷贝数据
 		data := make([]byte, n)
 		copy(data, buf[:n])
 		h.BufPool.Put(buf)
 
-		// 写入Hub状态
 		h.Mu.Lock()
 		if h.CacheBuffer == nil {
 			h.Mu.Unlock()
@@ -274,29 +265,22 @@ func (h *StreamHub) readLoop() {
 		h.LastFrame = data
 		h.CacheBuffer.Push(data)
 
-		// 自动探测格式
 		if h.DetectedFormat == "" {
 			h.DetectedFormat = detectStreamFormat(data)
 		}
 
-		// 检测关键帧
 		if h.DetectedFormat != "" && h.isKeyFrameByFormat(data, h.DetectedFormat) {
-			// 保存 LastKeyFrame
 			h.LastKeyFrame = data
-
-			// 保存完整初始化帧: 最近若干缓存 + 当前关键帧
 			cached := h.CacheBuffer.GetAll()
-			h.LastInitFrame = append(h.LastInitFrame[:0], cached...) // 保留缓存里关键帧前的SPS/PPS
+			h.LastInitFrame = append(h.LastInitFrame[:0], cached...)
 		}
 
-		// 拷贝客户端列表
 		clients := make([]chan []byte, 0, len(h.Clients))
 		for ch := range h.Clients {
 			clients = append(clients, ch)
 		}
 		h.Mu.Unlock()
 
-		// 投递数据到客户端
 		for _, ch := range clients {
 			select {
 			case ch <- data:
@@ -308,16 +292,17 @@ func (h *StreamHub) readLoop() {
 		}
 	}
 }
+
 // ====================
 // 新客户端发送完整初始化帧 + 后续帧
 // ====================
 func (h *StreamHub) sendInitial(ch chan []byte) {
 	h.Mu.Lock()
-	defer h.Mu.Unlock()
+	lastInit := append([][]byte(nil), h.LastInitFrame...)
+	h.Mu.Unlock()
 
-	// 发送完整初始化帧 (SPS/PPS + IDR)
-	if len(h.LastInitFrame) > 0 {
-		for _, f := range h.LastInitFrame {
+	if len(lastInit) > 0 {
+		for _, f := range lastInit {
 			select {
 			case ch <- f:
 			default:
@@ -326,9 +311,11 @@ func (h *StreamHub) sendInitial(ch chan []byte) {
 		return
 	}
 
-	// 缓存中查找最近的关键帧
+	h.Mu.Lock()
+	cache := h.CacheBuffer.GetAll()
+	h.Mu.Unlock()
 	var sentKey bool
-	for _, f := range h.CacheBuffer.GetAll() {
+	for _, f := range cache {
 		if !sentKey && h.isKeyFrameByFormat(f, h.DetectedFormat) {
 			sentKey = true
 		}
@@ -498,7 +485,6 @@ func (h *StreamHub) UpdateInterfaces(udpAddr string, ifaces []string) error {
 // ====================
 // 关闭Hub
 // ====================
-
 func (h *StreamHub) Close() {
 	h.Mu.Lock()
 	if h.Closed != nil {
@@ -522,11 +508,7 @@ func (h *StreamHub) Close() {
 	h.Clients = nil
 	h.CacheBuffer = nil
 	h.Mu.Unlock()
-
-	// 不要在这里移除 MultiChannelHub，由 MultiChannelHub 管理
-	// GlobalMultiChannelHub.RemoveHub(h.addr, nil)
 }
-
 
 // ====================
 // MultiChannelHub 管理所有 Hub
@@ -540,6 +522,140 @@ func NewMultiChannelHub() *MultiChannelHub {
 	return &MultiChannelHub{
 		Hubs: make(map[string]*StreamHub),
 	}
+}
+
+func (m *MultiChannelHub) HubKey(addr string, ifaces []string) string {
+	uAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		uAddr = &net.UDPAddr{IP: net.ParseIP(addr), Port: 0}
+	}
+	ipPort := fmt.Sprintf("%s_%d", uAddr.IP.String(), uAddr.Port)
+
+	ifaceMap := make(map[string]struct{})
+	for _, iface := range ifaces {
+		iface = strings.TrimSpace(strings.ToLower(iface))
+		if iface != "" {
+			ifaceMap[iface] = struct{}{}
+		}
+	}
+
+	uniqueIfaces := make([]string, 0, len(ifaceMap))
+	for iface := range ifaceMap {
+		uniqueIfaces = append(uniqueIfaces, iface)
+	}
+	sort.Strings(uniqueIfaces)
+
+	return ipPort + "|" + strings.Join(uniqueIfaces, "#")
+}
+
+func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*StreamHub, error) {
+	key := m.HubKey(udpAddr, ifaces)
+	logger.LogPrintf("🔑 GetOrCreateHub HubKey: %s", key)
+
+	m.Mu.RLock()
+	hub, exists := m.Hubs[key]
+	m.Mu.RUnlock()
+
+	if exists {
+		if hub.IsClosed() {
+			logger.LogPrintf("⚠️ Hub 已关闭且无客户端，可安全移除: %s", key)
+			m.Mu.Lock()
+			delete(m.Hubs, key)
+			m.Mu.Unlock()
+		} else {
+			return hub, nil
+		}
+	}
+
+	newHub, err := NewStreamHub(udpAddr, ifaces)
+	if err != nil {
+		return nil, err
+	}
+
+	m.Mu.Lock()
+	m.Hubs[key] = newHub
+	m.Mu.Unlock()
+
+	m.CheckIsolation()
+	return newHub, nil
+}
+
+func (h *StreamHub) IsClosed() bool {
+	select {
+	case <-h.Closed:
+		h.Mu.Lock()
+		defer h.Mu.Unlock()
+		return len(h.Clients) == 0
+	default:
+		return false
+	}
+}
+
+func (m *MultiChannelHub) RemoveHub(udpAddr string, ifaces []string) {
+	key := m.HubKey(udpAddr, ifaces)
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	if hub, ok := m.Hubs[key]; ok {
+		hub.Close()
+		delete(m.Hubs, key)
+		logger.LogPrintf("🗑️ Hub 已删除: %s", key)
+	}
+}
+
+func (m *MultiChannelHub) CheckIsolation() {
+	m.Mu.RLock()
+	defer m.Mu.RUnlock()
+	for key1, hub1 := range m.Hubs {
+		for key2, hub2 := range m.Hubs {
+			if key1 == key2 {
+				continue
+			}
+			if hub1.UdpConn != nil && hub1.UdpConn == hub2.UdpConn {
+				logger.LogPrintf("⚠️ 串台检测: Hub %s 与 Hub %s 共用同一 UDPConn", hub1.addr, hub2.addr)
+			}
+		}
+	}
+}
+
+// ====================
+// 工具函数
+// ====================
+func isMulticast(ip net.IP) bool {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	return ip4[0] >= 224 && ip4[0] <= 239
+}
+
+func isValidTSPacket(pkt []byte) bool {
+	if len(pkt) < TS_PACKET_SIZE {
+		return false
+	}
+	return pkt[0] == TS_SYNC_BYTE
+}
+
+func extractTSPayload(pkt []byte) []byte {
+	if len(pkt) < 4 || pkt[0] != TS_SYNC_BYTE {
+		return nil
+	}
+
+	adaptFieldCtrl := (pkt[3] >> 4) & 0x03
+	payloadStart := 4
+
+	if adaptFieldCtrl == 0x02 || adaptFieldCtrl == 0x03 {
+		adaptFieldLen := int(pkt[4])
+		if len(pkt) < 5+adaptFieldLen {
+			return nil
+		}
+		payloadStart = 5 + adaptFieldLen
+	}
+
+	if payloadStart >= len(pkt) {
+		return nil
+	}
+
+	return pkt[payloadStart:]
 }
 
 // ====================
@@ -850,151 +966,4 @@ func (h *StreamHub) isKeyFrameRTP(pkt []byte) bool {
 		}
 	}
 	return false
-}
-
-// ==============================
-// MultiChannelHub 核心逻辑
-// ==============================
-
-func (m *MultiChannelHub) HubKey(addr string, ifaces []string) string {
-	// 解析 IP:Port
-	uAddr, err := net.ResolveUDPAddr("udp", addr)
-	if err != nil {
-		// 出错回退为原始字符串
-		uAddr = &net.UDPAddr{IP: net.ParseIP(addr), Port: 0}
-	}
-	ipPort := fmt.Sprintf("%s_%d", uAddr.IP.String(), uAddr.Port)
-
-	// 接口去重并排序
-	ifaceMap := make(map[string]struct{})
-	for _, iface := range ifaces {
-		iface = strings.TrimSpace(strings.ToLower(iface))
-		if iface != "" {
-			ifaceMap[iface] = struct{}{}
-		}
-	}
-
-	uniqueIfaces := make([]string, 0, len(ifaceMap))
-	for iface := range ifaceMap {
-		uniqueIfaces = append(uniqueIfaces, iface)
-	}
-	sort.Strings(uniqueIfaces)
-
-	// 最终键 = IP_PORT|iface1#iface2
-	return ipPort + "|" + strings.Join(uniqueIfaces, "#")
-}
-
-// 获取或创建 Hub，确保同一 UDPAddr + 接口唯一
-func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*StreamHub, error) {
-	key := m.HubKey(udpAddr, ifaces)
-	logger.LogPrintf("🔑 GetOrCreateHub HubKey: %s", key)
-
-	m.Mu.RLock()
-	hub, exists := m.Hubs[key]
-	m.Mu.RUnlock()
-
-	if exists {
-		if hub.IsClosed() { // Hub 自身提供状态方法，不直接用通道判断
-			logger.LogPrintf("⚠️ Hub 已关闭，安全移除: %s", key)
-			m.RemoveHub(udpAddr, ifaces)
-		} else {
-			return hub, nil
-		}
-	}
-
-	newHub, err := NewStreamHub(udpAddr, ifaces)
-	if err != nil {
-		return nil, err
-	}
-
-	m.Mu.Lock()
-	m.Hubs[key] = newHub
-	m.Mu.Unlock()
-
-	m.CheckIsolation()
-	return newHub, nil
-}
-
-// 判断 Hub 是否已关闭
-func (h *StreamHub) IsClosed() bool {
-	select {
-	case <-h.Closed:
-		return true
-	default:
-		return false
-	}
-}
-
-// 删除指定 Hub
-func (m *MultiChannelHub) RemoveHub(udpAddr string, ifaces []string) {
-	key := m.HubKey(udpAddr, ifaces)
-	m.Mu.Lock()
-	defer m.Mu.Unlock()
-	if hub, ok := m.Hubs[key]; ok {
-		hub.Close()
-		delete(m.Hubs, key)
-		logger.LogPrintf("🗑️ Hub 已删除: %s", key)
-	}
-}
-
-// 检查是否存在串台（同一 UDPConn 被多个 Hub 使用）
-func (m *MultiChannelHub) CheckIsolation() {
-	m.Mu.RLock()
-	defer m.Mu.RUnlock()
-	for key1, hub1 := range m.Hubs {
-		for key2, hub2 := range m.Hubs {
-			if key1 == key2 {
-				continue
-			}
-			if hub1.UdpConn != nil && hub1.UdpConn == hub2.UdpConn {
-				logger.LogPrintf("⚠️ 串台检测: Hub %s 与 Hub %s 共用同一 UDPConn", hub1.addr, hub2.addr)
-			}
-		}
-	}
-}
-
-
-// ====================
-// 工具函数
-// ====================
-func isMulticast(ip net.IP) bool {
-	ip4 := ip.To4()
-	if ip4 == nil {
-		return false
-	}
-	return ip4[0] >= 224 && ip4[0] <= 239
-}
-
-// 检查是否为有效的TS包
-func isValidTSPacket(pkt []byte) bool {
-	if len(pkt) < TS_PACKET_SIZE {
-		return false
-	}
-	return pkt[0] == TS_SYNC_BYTE
-}
-
-// 从TS包中提取负载
-func extractTSPayload(pkt []byte) []byte {
-	if len(pkt) < 4 || pkt[0] != TS_SYNC_BYTE {
-		return nil
-	}
-
-	// 检查适配字段控制
-	adaptFieldCtrl := (pkt[3] >> 4) & 0x03
-	payloadStart := 4 // 基本包头长度
-
-	// 处理适配字段
-	if adaptFieldCtrl == 0x02 || adaptFieldCtrl == 0x03 {
-		adaptFieldLen := int(pkt[4])
-		if len(pkt) < 5+adaptFieldLen {
-			return nil
-		}
-		payloadStart = 5 + adaptFieldLen
-	}
-
-	if payloadStart >= len(pkt) {
-		return nil
-	}
-
-	return pkt[payloadStart:]
 }
