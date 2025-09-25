@@ -39,13 +39,13 @@ func NewHTTPClient(c *config.Config, transport *http.Transport) *http.Client {
 				// 用自定义 resolver 解析
 				ips, err := resolver.LookupIPAddr(ctx, host)
 				if err != nil || len(ips) == 0 {
-					logger.LogPrintf("⚠️ 自定义DNS解析失败 %s: %v, 尝试系统解析", host, err)
+					// logger.LogPrintf("⚠️ 自定义DNS解析失败 %s: %v, 尝试系统解析", host, err)
 					return baseDialer.DialContext(ctx, network, addr) // fallback
 				}
 
 				ip := ips[0].IP.String()
 				target := net.JoinHostPort(ip, port)
-				logger.LogPrintf("✅ DNS解析 %s -> %s", host, ip)
+				// logger.LogPrintf("✅ DNS解析 %s -> %s", host, ip)
 
 				return baseDialer.DialContext(ctx, network, target)
 			},

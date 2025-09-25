@@ -701,7 +701,7 @@ func (m *MultiChannelHub) RemoveHub(udpAddr string) {
 	if hub, ok := m.Hubs[key]; ok {
 		hub.Close()
 		delete(m.Hubs, key)
-		logger.LogPrintf("🗑️ Hub 已删除: %s", key)
+		// logger.LogPrintf("🗑️ Hub 已删除: %s", key)
 	}
 }
 

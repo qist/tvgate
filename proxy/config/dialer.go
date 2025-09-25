@@ -10,7 +10,7 @@ import (
 	"strings"
 	// "sync"
 	"github.com/qist/tvgate/dns"
-	"github.com/qist/tvgate/logger"
+	// "github.com/qist/tvgate/logger"
 	"golang.org/x/net/proxy"
 	"time"
 )
@@ -143,10 +143,10 @@ func SafeDialContext(base *net.Dialer, enableIPv6 bool) func(ctx context.Context
 			if err == nil && len(ips) > 0 {
 				ip := ips[0].IP.String()
 				target := net.JoinHostPort(ip, port)
-				logger.LogPrintf("✅ 自定义DNS解析 %s -> %s", host, ip)
+				// logger.LogPrintf("✅ 自定义DNS解析 %s -> %s", host, ip)
 				return base.DialContext(ctx, network, target)
 			}
-			logger.LogPrintf("⚠️ DNS解析失败 %s: %v, 回落系统DNS", host, err)
+			// logger.LogPrintf("⚠️ DNS解析失败 %s: %v, 回落系统DNS", host, err)
 		}
 
 		// 系统 DNS

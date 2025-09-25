@@ -678,13 +678,13 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// 使用自定义 Resolver 解析
 		ips, err := resolver.LookupIPAddr(ctx, host)
 		if err != nil || len(ips) == 0 {
-			logger.LogPrintf("⚠️ DNS解析失败 %s: %v, 回落系统DNS", host, err)
+			// logger.LogPrintf("⚠️ DNS解析失败 %s: %v, 回落系统DNS", host, err)
 			return dialer.DialContext(ctx, network, addr)
 		}
 
 		ip := ips[0].IP.String()
 		target := net.JoinHostPort(ip, port)
-		logger.LogPrintf("✅ 自定义DNS解析 %s -> %s", host, ip)
+		// logger.LogPrintf("✅ 自定义DNS解析 %s -> %s", host, ip)
 
 		return dialer.DialContext(ctx, network, target)
 	}
