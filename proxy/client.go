@@ -3,9 +3,9 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"github.com/qist/tvgate/config"
-	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/logger"
 	conf "github.com/qist/tvgate/proxy/config"
 	httpclient "github.com/qist/tvgate/utils/http"
@@ -16,22 +16,12 @@ import (
 	"time"
 )
 
-// CreateProxyClient 根据代理配置和 IPv6 开关创建 http.Client
+// createProxyClient 根据代理配置和 IPv6 开关创建 http.Client
 func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig config.ProxyConfig, enableIPv6 bool) (*http.Client, error) {
-	// 标准化代理配置
 	NormalizeProxyConfig(&proxyConfig)
 
 	proxyType := strings.ToLower(proxyConfig.Type)
 	proxyAddr := fmt.Sprintf("%s:%d", proxyConfig.Server, proxyConfig.Port)
-
-	// 自定义 DNS 单例
-	resolver := dns.GetInstance()
-
-	// 基础拨号器
-	baseDialer := &net.Dialer{
-		Timeout:   10 * time.Second,
-		KeepAlive: 10 * time.Second,
-	}
 
 	transport := &http.Transport{
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
@@ -49,7 +39,6 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 
 	useStdProxyDialer := false
 
-	// -------- 标准 HTTP/HTTPS 代理 --------
 	if (proxyType == "http" || proxyType == "https") && proxyConfig.Username == "" && len(proxyConfig.Headers) == 0 {
 		var proxyURL *url.URL
 		var err error
@@ -66,49 +55,91 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 		useStdProxyDialer = true
 	}
 
-	var dialer conf.DialContextWrapper
 	if !useStdProxyDialer {
-		// 非标准库代理，创建自定义拨号器
-		baseDialerProxy, err := CreateProxyDialer(proxyConfig)
+		baseDialer, err := CreateProxyDialer(proxyConfig)
 		if err != nil {
 			return nil, fmt.Errorf("创建代理拨号器失败: %v", err)
 		}
-		dialer = conf.DialContextWrapper{Base: baseDialerProxy}
+
+		dialer := &conf.DialContextWrapper{Base: baseDialer, EnableIPv6: enableIPv6}
+
+		transport.DialContext = func(dialCtx context.Context, network, addr string) (net.Conn, error) {
+			if !enableIPv6 && (network == "tcp6" || network == "tcp") {
+				network = "tcp4"
+			}
+			// Step 1: 尝试通过代理拨号
+			conn, err := dialer.DialContext(dialCtx, network, addr)
+			if err != nil {
+				// 代理拨号失败，直接返回
+				return nil, fmt.Errorf("代理拨号失败: %w", err)
+			}
+
+			// Step 2: 拨号成功，但如果 Base 内部解析目标 host 失败，则在这里兜底
+			// 例如 Base.Dial 返回某种 "host not found" 错误
+			if isResolveError(err) {
+				// SafeDialContext 兜底解析
+				safeDial := conf.SafeDialContext(&net.Dialer{Timeout: 10 * time.Second}, enableIPv6)
+				fmt.Printf("⚠️ 代理拨号成功，但目标解析失败 (%v)，尝试本地解析 %s...\n", err, addr)
+				return safeDial(dialCtx, network, addr)
+			}
+
+			return conn, nil
+		}
+	} else {
+		baseDialer := &net.Dialer{Timeout: 10 * time.Second}
+		safeDial := conf.SafeDialContext(baseDialer, enableIPv6)
+
+		transport.DialContext = func(dialCtx context.Context, network, addr string) (net.Conn, error) {
+			if !enableIPv6 && (network == "tcp6" || network == "tcp") {
+				network = "tcp4"
+			}
+
+			if transport.Proxy != nil {
+				// 尝试通过代理拨号
+				conn, err := baseDialer.DialContext(dialCtx, network, addr)
+				if err != nil {
+					// 代理拨号失败，直接返回
+					return nil, fmt.Errorf("代理拨号失败: %w", err)
+				}
+
+				// 拨号成功，但如果解析失败，可以在这里判断
+				if isResolveError(err) {
+					// 目标 host 解析失败 → fallback 本地解析
+					fmt.Printf("⚠️ 代理拨号成功但目标解析失败 %s, 使用本地解析...\n", addr)
+					return safeDial(dialCtx, network, addr)
+				}
+
+				return conn, nil
+			}
+
+			// 没有代理，直接使用 SafeDialContext
+			return safeDial(dialCtx, network, addr)
+		}
+
 	}
-
-	// -------- 自定义 DialContext --------
-	transport.DialContext = func(dialCtx context.Context, network, addr string) (net.Conn, error) {
-		// IPv6 控制
-		if !enableIPv6 && (network == "tcp6" || network == "tcp") {
-			network = "tcp4"
-		}
-
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, err
-		}
-
-		// 1️⃣ 自定义 DNS 解析
-		ips, err := resolver.LookupIPAddr(dialCtx, host)
-		targetAddr := addr
-		if err == nil && len(ips) > 0 {
-			ip := ips[0].IP.String()
-			targetAddr = net.JoinHostPort(ip, port)
-			logger.LogPrintf("✅ DNS解析 %s -> %s", host, ip)
-		} else {
-			logger.LogPrintf("⚠️ 自定义DNS解析失败 %s: %v, 回落系统DNS", host, err)
-		}
-
-		// 2️⃣ 选择拨号器
-		if !useStdProxyDialer {
-			return dialer.DialContext(dialCtx, network, targetAddr)
-		}
-
-		// 3️⃣ 标准库拨号器
-		return baseDialer.DialContext(dialCtx, network, targetAddr)
-	}
-
-	// -------- 生成最终 HTTP Client --------
+	// 这里使用 NewHTTPClient 生成最终 client
 	client := httpclient.NewHTTPClient(cfg, transport)
+
 	return client, nil
+}
+
+// 判断错误是否属于解析失败
+func isResolveError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// 如果是 net.DNSError
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+
+	// 某些拨号器可能返回字符串错误
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "no such host") || strings.Contains(msg, "unknown host") {
+		return true
+	}
+
+	return false
 }
