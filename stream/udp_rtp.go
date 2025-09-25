@@ -68,13 +68,13 @@ func (r *RingBuffer) GetAll() [][]byte {
 // ----------------------
 var bufePool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 32*1024)
+		return make([]byte, 64*1024)
 	},
 }
 
 var framePool = sync.Pool{
 	New: func() interface{} {
-		return make([][]byte, 0, 1024) // 每次最多缓存1024帧，可根据实际情况调整
+		return make([][]byte, 0, 2048) // 每次最多缓存1024帧，可根据实际情况调整
 	},
 }
 
@@ -111,11 +111,11 @@ type StreamHub struct {
 	AddrList       []string
 	PacketCount    uint64
 	DropCount      uint64
-	hasSPS         bool
-	hasPPS         bool
-	state          int // 0: stopped, 1: playing, 2: error
-	stateCond      *sync.Cond
-	OnEmpty        func(h *StreamHub) // 当客户端数量为0时触发
+	// hasSPS         bool
+	// hasPPS         bool
+	state     int // 0: stopped, 1: playing, 2: error
+	stateCond *sync.Cond
+	OnEmpty   func(h *StreamHub) // 当客户端数量为0时触发
 }
 
 // ====================
@@ -131,9 +131,9 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		AddCh:       make(chan hubClient, 1024),
 		RemoveCh:    make(chan string, 1024),
 		UdpConns:    make([]*net.UDPConn, 0, len(addrs)),
-		CacheBuffer: NewRingBuffer(4096),
+		CacheBuffer: NewRingBuffer(8192), // 默认缓存8192帧
 		Closed:      make(chan struct{}),
-		BufPool:     &sync.Pool{New: func() any { return make([]byte, 32*1024) }},
+		BufPool:     &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
 		AddrList:    addrs,
 		state:       StatePlaying,
 	}
@@ -228,7 +228,7 @@ func listenMulticast(addr *net.UDPAddr, ifaces []*net.Interface) (*net.UDPConn, 
 		}
 	}
 
-	_ = conn.SetReadBuffer(8 * 1024 * 1024)
+	_ = conn.SetReadBuffer(16 * 1024 * 1024)
 	return conn, nil
 }
 
@@ -355,9 +355,24 @@ func (h *StreamHub) broadcast(data []byte) {
 	for _, client := range clients {
 		select {
 		case client.ch <- data:
+			// 正常发送
 		default:
 			h.Mu.Lock()
 			h.DropCount++
+			// 当丢帧过多时，尝试清空客户端缓冲区并发送关键帧
+			if h.DropCount%100 == 0 { // 每丢100帧尝试恢复
+				select {
+				case <-client.ch: // 清空一帧旧数据
+				default:
+				}
+				// 尝试发送关键帧恢复
+				if h.LastKeyFrame != nil {
+					select {
+					case client.ch <- h.LastKeyFrame:
+					default:
+					}
+				}
+			}
 			h.Mu.Unlock()
 		}
 	}
@@ -412,21 +427,18 @@ func (h *StreamHub) run() {
 // 新客户端发送初始化帧
 // ====================
 // sendInitial 发送初始化帧给新客户端，支持批量发送和智能丢帧
+// 修改 sendInitial 函数
 func (h *StreamHub) sendInitial(ch chan []byte) {
-	// 从 CacheBuffer 拷贝 slice，但复用对象池
 	h.Mu.Lock()
 	frames := framePool.Get().([][]byte)
 	frames = frames[:0]
-	frames = append(frames, h.CacheBuffer.GetAll()...) // 注意：此处只是复用 slice 容量，内部 byte slice 仍是原来的
+	frames = append(frames, h.CacheBuffer.GetAll()...)
 	detectedFormat := h.DetectedFormat
 	lastFrame := h.LastFrame
 	h.Mu.Unlock()
 
 	go func() {
-		defer func() {
-			// 发送完成后把 frames slice 放回池
-			framePool.Put(frames)
-		}()
+		defer framePool.Put(frames)
 
 		// 找最近关键帧
 		keyFrameIndex := -1
@@ -437,32 +449,30 @@ func (h *StreamHub) sendInitial(ch chan []byte) {
 			}
 		}
 
-		// 从关键帧开始发送，最近几帧
 		start := 0
 		if keyFrameIndex >= 0 {
 			start = keyFrameIndex
 		}
-		const lastFramesCount = 20
+
+		// 减少初始化帧数量，特别是4K流
+		const lastFramesCount = 8 // 从20减少到8
 		end := len(frames)
 		if end > start+lastFramesCount {
 			end = start + lastFramesCount
 		}
 
-		// 批量发送
-		const batchSize = 8
-		batch := make([][]byte, 0, batchSize)
+		// 增加发送间隔，避免突发流量
+		sendInterval := time.Millisecond * 2 // 2ms间隔
 		for _, f := range frames[start:end] {
-			batch = append(batch, f)
-			if len(batch) >= batchSize {
-				sendBatch(ch, batch)
-				batch = batch[:0]
+			select {
+			case ch <- f:
+				time.Sleep(sendInterval) // 控制发送速率
+			default:
+				// 缓冲区满时跳过
 			}
 		}
-		if len(batch) > 0 {
-			sendBatch(ch, batch)
-		}
 
-		// 发送最新一帧保证画面最新
+		// 发送最新帧
 		if lastFrame != nil {
 			select {
 			case ch <- lastFrame:
@@ -505,9 +515,9 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	ch := make(chan []byte, 1024)
 	h.AddCh <- hubClient{ch: ch, connID: connID}
 	defer func() { h.RemoveCh <- connID }()
-    w.Header().Set("Pragma", "no-cache")
-    w.Header().Set("ContentFeatures.DLNA.ORG", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
-    w.Header().Set("TransferMode.DLNA.ORG", "Streaming")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("ContentFeatures.DLNA.ORG", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
+	w.Header().Set("TransferMode.DLNA.ORG", "Streaming")
 	w.Header().Set("Content-Type", contentType)
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -517,7 +527,8 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 
 	ctx := r.Context()
 	bufferedBytes := 0
-	flushTicker := time.NewTicker(200 * time.Millisecond)
+	const maxBufferSize = 512 * 1024 // 512KB缓冲区
+	flushTicker := time.NewTicker(100 * time.Millisecond)
 	defer flushTicker.Stop()
 	activeTicker := time.NewTicker(5 * time.Second)
 	defer activeTicker.Stop()
@@ -537,6 +548,10 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 				return
 			}
 			bufferedBytes += n
+			if bufferedBytes >= maxBufferSize {
+				flusher.Flush()
+				bufferedBytes = 0
+			}
 		case <-flushTicker.C:
 			if bufferedBytes > 0 {
 				flusher.Flush()
@@ -999,7 +1014,14 @@ func isKeyFrameTS(pkt []byte) bool {
 		return false
 	}
 
+	// 更健壮的PID和适配字段处理
+	pid := (uint16(pkt[1]&0x1F) << 8) | uint16(pkt[2])
 	adaptation := (pkt[3] >> 4) & 0x03
+
+	// 只处理视频PID（通常为0x100-0x11FF）
+	if pid < 0x100 || pid > 0x11FF {
+		return false
+	}
 	payloadStart := 4
 	if adaptation == 2 || adaptation == 3 {
 		adaptLen := int(pkt[4])
