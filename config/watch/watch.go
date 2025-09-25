@@ -13,6 +13,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/qist/tvgate/auth"
+	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/update"
@@ -99,7 +100,8 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 			return
 		}
 		logger.LogPrintf("✅ 配置文件重新加载完成")
-
+		// 🔹 这里刷新 DNS 实例
+		dns.HandleConfigUpdate(	&config.Config{}, &config.Cfg)
 		config.CfgMu.RLock()
 		update.UpdateHubsOnConfigChange(config.Cfg.Server.MulticastIfaces)
 		config.CfgMu.RUnlock()
@@ -123,7 +125,7 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 		// 如果需要重启服务
 		if needRestart {
 			logger.LogPrintf("🔄 检测到关键配置变更，需要重启服务")
-			
+
 			// 先关闭旧服务
 			if httpCancel != nil {
 				logger.LogPrintf("🔄 正在通过上下文关闭旧服务...")
@@ -131,7 +133,7 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 				// 等待服务完全关闭
 				time.Sleep(500 * time.Millisecond)
 			}
-			
+
 			// 直接关闭所有服务器
 			logger.LogPrintf("🔄 正在直接关闭所有服务...")
 			server.CloseAllServers()
@@ -164,7 +166,7 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 		} else {
 			// 平滑更新路由
 			logger.LogPrintf("🔄 配置变更无需重启服务，进行平滑更新")
-			
+
 			// 构建地址列表
 			addrs := make(map[string]bool)
 			addrs[fmt.Sprintf(":%d", config.Cfg.Server.Port)] = true
@@ -174,7 +176,7 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 			if config.Cfg.Server.TLS.HTTPSPort > 0 {
 				addrs[fmt.Sprintf(":%d", config.Cfg.Server.TLS.HTTPSPort)] = true
 			}
-			
+
 			for addr := range addrs {
 				mux := server.RegisterMux(addr, &config.Cfg)
 				server.SetHTTPHandler(addr, mux)
