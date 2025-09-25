@@ -66,7 +66,7 @@ type QUIC struct {
 	PMTUD           bool
 	AddLengthPrefix bool
 
-	conn *quic.Conn
+	// conn *quic.Conn
 }
 
 // quicClient 是我们项目中使用的QUIC客户端
