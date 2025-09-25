@@ -391,6 +391,26 @@
                 notification.className = 'notification';
             }, 3000);
         }
+
+        // 添加主题同步功能
+        function syncTheme() {
+            fetch('{{.webPath}}sync-theme', {
+                method: 'GET'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.theme) {
+                    document.documentElement.setAttribute('data-theme', data.theme);
+                }
+            })
+            .catch(error => console.error('获取主题设置失败:', error));
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadConfig();
+            syncTheme(); // 同步主题
+        });
     </script>
 </body>
 
