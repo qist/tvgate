@@ -899,7 +899,6 @@ func (h *StreamHub) isKeyFrameTS(pkt []byte) bool {
 				h.hasPPS = true
 			case 5: // IDR
 				if h.hasSPS && h.hasPPS {
-					h.hasSPS, h.hasPPS = false, false
 					return true
 				}
 			}
