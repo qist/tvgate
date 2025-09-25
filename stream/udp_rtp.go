@@ -429,69 +429,66 @@ func (h *StreamHub) run() {
 // sendInitial 发送初始化帧给新客户端，支持批量发送和智能丢帧
 // 修改 sendInitial 函数
 func (h *StreamHub) sendInitial(ch chan []byte) {
-	h.Mu.Lock()
-	frames := framePool.Get().([][]byte)
-	frames = frames[:0]
-	frames = append(frames, h.CacheBuffer.GetAll()...)
-	detectedFormat := h.DetectedFormat
-	lastFrame := h.LastFrame
-	h.Mu.Unlock()
+    h.Mu.Lock()
+    frames := framePool.Get().([][]byte)
+    frames = frames[:0]
+    frames = append(frames, h.CacheBuffer.GetAll()...)
+    detectedFormat := h.DetectedFormat
+    h.Mu.Unlock()
 
-	go func() {
-		defer framePool.Put(frames)
+    go func() {
+        defer framePool.Put(frames)
+        
+        // Use a select with the hub's Closed channel to exit early if needed.
+        select {
+        case <-h.Closed:
+            return
+        default:
+            // Do nothing, continue with initial send.
+        }
 
-		// 找最近关键帧
-		keyFrameIndex := -1
-		for i := len(frames) - 1; i >= 0; i-- {
-			if h.isKeyFrameByFormat(frames[i], detectedFormat) {
-				keyFrameIndex = i
-				break
-			}
-		}
+        // 找最近关键帧
+        keyFrameIndex := -1
+        for i := len(frames) - 1; i >= 0; i-- {
+            if h.isKeyFrameByFormat(frames[i], detectedFormat) {
+                keyFrameIndex = i
+                break
+            }
+        }
 
-		start := 0
-		if keyFrameIndex >= 0 {
-			start = keyFrameIndex
-		}
+        start := 0
+        if keyFrameIndex >= 0 {
+            start = keyFrameIndex
+        }
 
-		// 减少初始化帧数量，特别是4K流
-		const lastFramesCount = 8 // 从20减少到8
-		end := len(frames)
-		if end > start+lastFramesCount {
-			end = start + lastFramesCount
-		}
+        // 移除帧数限制，发送从关键帧开始的所有缓存帧
+        end := len(frames)
 
-		// 增加发送间隔，避免突发流量
-		sendInterval := time.Millisecond * 2 // 2ms间隔
-		for _, f := range frames[start:end] {
-			select {
-			case ch <- f:
-				time.Sleep(sendInterval) // 控制发送速率
-			default:
-				// 缓冲区满时跳过
-			}
-		}
+        // 增加发送间隔，避免突发流量
+        sendInterval := time.Millisecond * 2 // 2ms间隔
+        for _, f := range frames[start:end] {
+            // Check for hub closure before sending
+            select {
+            case <-h.Closed:
+                return
+            default:
+            }
 
-		// 发送最新帧
-		if lastFrame != nil {
-			select {
-			case ch <- lastFrame:
-			default:
-			}
-		}
-	}()
+            // Attempt to send, gracefully handle a closed channel or full buffer.
+            select {
+            case ch <- f:
+                time.Sleep(sendInterval) // 控制发送速率
+            default:
+                // Channel is likely full or has been closed by another goroutine.
+                // We can't distinguish between these two states directly,
+                // so we assume the other goroutine will handle the client
+                // cleanup. Simply return to avoid a panic.
+                return
+            }
+        }
+    }()
 }
 
-// sendBatch 批量发送帧到客户端，队列满就丢帧
-func sendBatch(ch chan []byte, batch [][]byte) {
-	for _, f := range batch {
-		select {
-		case ch <- f:
-		default:
-			// 队列满就丢帧，不阻塞
-		}
-	}
-}
 
 // ====================
 // HTTP 播放
