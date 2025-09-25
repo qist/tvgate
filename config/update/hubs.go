@@ -20,7 +20,7 @@ func UpdateHubsOnConfigChange(newIfaces []string) {
 	for key, hub := range stream.GlobalMultiChannelHub.Hubs {
 		parts := strings.SplitN(key, "|", 2)
 		addr := parts[0]
-		newKey := stream.GlobalMultiChannelHub.HubKey(addr, newIfaces)
+		newKey := stream.GlobalMultiChannelHub.HubKey(addr)
 		if key == newKey {
 			continue
 		}

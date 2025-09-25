@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/qist/tvgate/logger"
+	"golang.org/x/net/ipv4"
 	"net"
 	"net/http"
 	"sync/atomic"
@@ -145,15 +146,14 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 					continue
 				}
 				conn, err := listenMulticast(udpAddr, []*net.Interface{iface})
-
 				if err == nil {
 					hub.UdpConns = append(hub.UdpConns, conn)
 					break
 				}
 				lastErr = err
 			}
-			logger.LogPrintf("Listening on %s via iface %s", udpAddr, ifaces[0])
 		}
+		logger.LogPrintf("🟢 Listening on %s via interfaces %v", udpAddr, ifaces)
 	}
 
 	if len(hub.UdpConns) == 0 {
@@ -168,8 +168,6 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 // ====================
 // 多播监听封装
 // ====================
-// listenMulticast 负责多播/单播监听逻辑
-// listenMulticast 负责多播/单播监听逻辑
 func listenMulticast(addr *net.UDPAddr, ifaces []*net.Interface) (*net.UDPConn, error) {
 	if addr == nil || addr.IP == nil || !isMulticast(addr.IP) {
 		return nil, fmt.Errorf("仅支持多播地址: %v", addr)
@@ -180,7 +178,6 @@ func listenMulticast(addr *net.UDPAddr, ifaces []*net.Interface) (*net.UDPConn, 
 	var err error
 
 	if len(ifaces) == 0 {
-		// 空网卡 → 所有接口
 		conn, err = net.ListenMulticastUDP("udp", nil, addr)
 		if err != nil {
 			logger.LogPrintf("⚠️ 多播监听失败，尝试回退单播: %v", err)
@@ -193,7 +190,6 @@ func listenMulticast(addr *net.UDPAddr, ifaces []*net.Interface) (*net.UDPConn, 
 			logger.LogPrintf("🟢 监听 %v (全部接口)", addr)
 		}
 	} else {
-		// 指定网卡
 		for _, iface := range ifaces {
 			if iface == nil {
 				continue
@@ -208,7 +204,6 @@ func listenMulticast(addr *net.UDPAddr, ifaces []*net.Interface) (*net.UDPConn, 
 		}
 
 		if conn == nil {
-			// 所有网卡失败 → 尝试单播
 			conn, err = net.ListenUDP("udp", addr)
 			if err != nil {
 				return nil, fmt.Errorf("所有网卡监听失败且单播监听失败: %v (last=%v)", err, lastErr)
@@ -217,9 +212,7 @@ func listenMulticast(addr *net.UDPAddr, ifaces []*net.Interface) (*net.UDPConn, 
 		}
 	}
 
-	// 设置 socket buffer
 	_ = conn.SetReadBuffer(8 * 1024 * 1024)
-
 	return conn, nil
 }
 
@@ -235,44 +228,49 @@ func isMulticast(ip net.IP) bool {
 // 启动 UDPConn readLoop
 // ====================
 func (h *StreamHub) startReadLoops() {
-	for _, conn := range h.UdpConns {
-		go h.readLoop(conn)
+	for idx, conn := range h.UdpConns {
+		hubAddr := h.AddrList[idx%len(h.AddrList)]
+		go h.readLoop(conn, hubAddr)
 	}
 }
 
-func (h *StreamHub) readLoop(conn *net.UDPConn) {
+func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 	if conn == nil {
-		logger.LogPrintf("❌ readLoop: conn is nil, hubKey=%s", h.UdpConns)
+		logger.LogPrintf("❌ readLoop: conn is nil, hubAddr=%s", hubAddr)
 		return
 	}
 
-	defer func() {
-		if r := recover(); r != nil {
-			logger.LogPrintf("readLoop recovered: %v (hubKey=%s)", r, h.UdpConns)
-		}
-	}()
+	udpAddr, _ := net.ResolveUDPAddr("udp", hubAddr)
+	dstIP := udpAddr.IP.String()
+	buf := make([]byte, 32*1024)
+
+	pconn := ipv4.NewPacketConn(conn)
+	_ = pconn.SetControlMessage(ipv4.FlagDst, true)
 
 	for {
 		select {
 		case <-h.Closed:
+			logger.LogPrintf("ℹ️ readLoop: hub closed, hubAddr=%s", hubAddr)
 			return
 		default:
 		}
 
-		buf := h.BufPool.Get().([]byte)
-		n, _, err := conn.ReadFromUDP(buf)
+		n, cm, _, err := pconn.ReadFrom(buf)
 		if err != nil {
-			h.BufPool.Put(buf)
 			if !errors.Is(err, net.ErrClosed) {
-				logger.LogPrintf("❌ ReadFromUDP failed: %v (hubKey=%s)", err, h.UdpConns)
+				logger.LogPrintf("❌ ReadFrom failed: %v, hubAddr=%s", err, hubAddr)
 			}
-			return // conn 已关闭，退出循环
+			return
+		}
+
+		if cm != nil && cm.Dst.String() != dstIP {
+			// logger.LogPrintf("⚠️ 数据来源 IP 不匹配: dst=%s, expected=%s, hubAddr=%s, n=%d",
+				// cm.Dst, dstIP, hubAddr, n)
+			continue
 		}
 
 		data := make([]byte, n)
 		copy(data, buf[:n])
-		h.BufPool.Put(buf)
-
 		h.broadcast(data)
 	}
 }
@@ -548,13 +546,13 @@ func NewMultiChannelHub() *MultiChannelHub {
 }
 
 // MD5(IP:Port) 作为 Hub key
-func (m *MultiChannelHub) HubKey(addr string, ifaces []string) string {
+func (m *MultiChannelHub) HubKey(addr string) string {
 	h := md5.Sum([]byte(addr))
 	return hex.EncodeToString(h[:])
 }
 
 func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*StreamHub, error) {
-	key := m.HubKey(udpAddr, ifaces)
+	key := m.HubKey(udpAddr)
 	logger.LogPrintf("🔑 GetOrCreateHub HubKey: %s", key)
 
 	m.Mu.RLock()
@@ -577,7 +575,7 @@ func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*Stre
 }
 
 func (m *MultiChannelHub) RemoveHub(udpAddr string) {
-	key := m.HubKey(udpAddr, nil)
+	key := m.HubKey(udpAddr)
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	if hub, ok := m.Hubs[key]; ok {
