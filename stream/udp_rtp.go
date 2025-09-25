@@ -265,7 +265,7 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 
 		if cm != nil && cm.Dst.String() != dstIP {
 			// logger.LogPrintf("⚠️ 数据来源 IP 不匹配: dst=%s, expected=%s, hubAddr=%s, n=%d",
-				// cm.Dst, dstIP, hubAddr, n)
+			// cm.Dst, dstIP, hubAddr, n)
 			continue
 		}
 
@@ -899,6 +899,7 @@ func (h *StreamHub) isKeyFrameTS(pkt []byte) bool {
 				h.hasPPS = true
 			case 5: // IDR
 				if h.hasSPS && h.hasPPS {
+					h.hasSPS, h.hasPPS = false, false
 					return true
 				}
 			}
