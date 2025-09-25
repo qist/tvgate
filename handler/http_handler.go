@@ -115,7 +115,7 @@ func Handler(client *http.Client) http.HandlerFunc {
 			w.Header().Set("Server", "TVGate")
 
 			msg := fmt.Sprintf(
-				"TVGate running\nVersion: %s\nProtocols: HTTP/1.1, HTTP/2, HTTP/3\n\n本工具仅供技术测试与研究之用，严禁用于任何侵权或非法活动。\n",
+				"TVGate running\nVersion: %s\nProtocols: HTTP/1.1, HTTP/2, HTTP/3\n",
 				config.Version,
 			)
 			_, _ = w.Write([]byte(msg))
