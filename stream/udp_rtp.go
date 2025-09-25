@@ -81,7 +81,7 @@ type hubClient struct {
 // )
 
 type StreamHub struct {
-	Mu             sync.Mutex
+	Mu             sync.RWMutex
 	Clients        map[string]hubClient // key = connID
 	AddCh          chan hubClient
 	RemoveCh       chan string
@@ -100,6 +100,7 @@ type StreamHub struct {
 	hasPPS         bool
 	state          int // 0: stopped, 1: playing, 2: error
 	stateCond      *sync.Cond
+	OnEmpty        func(h *StreamHub) // 当客户端数量为0时触发
 }
 
 // ====================
@@ -264,13 +265,21 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 		}
 
 		if cm != nil && cm.Dst.String() != dstIP {
-			// logger.LogPrintf("⚠️ 数据来源 IP 不匹配: dst=%s, expected=%s, hubAddr=%s, n=%d",
-			// cm.Dst, dstIP, hubAddr, n)
 			continue
 		}
 
+		// 拷贝数据
 		data := make([]byte, n)
 		copy(data, buf[:n])
+
+		// 安全广播
+		h.Mu.RLock()
+		closed := h.state == StateStopped || h.CacheBuffer == nil
+		h.Mu.RUnlock()
+		if closed {
+			return
+		}
+
 		h.broadcast(data)
 	}
 }
@@ -282,16 +291,23 @@ func (h *StreamHub) broadcast(data []byte) {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
+	if h.Closed == nil || h.CacheBuffer == nil || h.Clients == nil {
+		return
+	}
+
 	h.PacketCount++
 	h.LastFrame = data
 	h.CacheBuffer.Push(data)
 
+	// 检测流格式
 	if h.DetectedFormat == "" {
 		h.DetectedFormat = detectStreamFormat(data)
 	}
 
+	// 如果是关键帧，更新 LastKeyFrame 和 LastInitFrame
 	if h.isKeyFrameByFormat(data, h.DetectedFormat) {
 		h.LastKeyFrame = data
+		// 复制缓存中的所有帧作为初始化帧
 		h.LastInitFrame = append(h.LastInitFrame[:0], h.CacheBuffer.GetAll()...)
 	}
 
@@ -300,6 +316,7 @@ func (h *StreamHub) broadcast(data []byte) {
 		h.stateCond.Broadcast()
 	}
 
+	// 广播到所有客户端
 	for _, client := range h.Clients {
 		select {
 		case client.ch <- data:
@@ -313,30 +330,35 @@ func (h *StreamHub) broadcast(data []byte) {
 // 客户端管理循环
 // ====================
 func (h *StreamHub) run() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
 	for {
 		select {
-		// case <-ticker.C:
-		// 	GlobalMultiChannelHub.CheckIsolation()
 		case client := <-h.AddCh:
 			h.Mu.Lock()
 			h.Clients[client.connID] = client
+			curCount := len(h.Clients)
 			h.Mu.Unlock()
 			go h.sendInitial(client.ch)
+			logger.LogPrintf("➕ 客户端加入，当前客户端数量=%d", curCount)
+
 		case connID := <-h.RemoveCh:
 			h.Mu.Lock()
 			if client, ok := h.Clients[connID]; ok {
 				delete(h.Clients, connID)
 				close(client.ch)
+				curCount := len(h.Clients)
+				logger.LogPrintf("➖ 客户端离开，当前客户端数量=%d", curCount)
 			}
+
 			if len(h.Clients) == 0 {
 				h.Mu.Unlock()
 				h.Close()
+				if h.OnEmpty != nil {
+					h.OnEmpty(h) // 自动删除 hub
+				}
 				return
 			}
 			h.Mu.Unlock()
+
 		case <-h.Closed:
 			h.Mu.Lock()
 			for _, client := range h.Clients {
@@ -352,34 +374,66 @@ func (h *StreamHub) run() {
 // ====================
 // 新客户端发送初始化帧
 // ====================
+// sendInitial 发送初始化帧给新客户端，支持批量发送和智能丢帧
 func (h *StreamHub) sendInitial(ch chan []byte) {
 	h.Mu.Lock()
-	lastInit := append([][]byte(nil), h.LastInitFrame...)
+	frames := append([][]byte(nil), h.CacheBuffer.GetAll()...)
+	detectedFormat := h.DetectedFormat
+	lastFrame := h.LastFrame
 	h.Mu.Unlock()
 
-	if len(lastInit) > 0 {
-		for _, f := range lastInit {
+	go func() {
+		// 找最近关键帧
+		keyFrameIndex := -1
+		for i := len(frames) - 1; i >= 0; i-- {
+			if h.isKeyFrameByFormat(frames[i], detectedFormat) {
+				keyFrameIndex = i
+				break
+			}
+		}
+
+		// 从关键帧开始发送，最近几帧
+		start := 0
+		if keyFrameIndex >= 0 {
+			start = keyFrameIndex
+		}
+		const lastFramesCount = 20 // 最近帧数量，可调
+		end := len(frames)
+		if end > start+lastFramesCount {
+			end = start + lastFramesCount
+		}
+
+		// 批量发送
+		const batchSize = 8
+		batch := make([][]byte, 0, batchSize)
+		for _, f := range frames[start:end] {
+			batch = append(batch, f)
+			if len(batch) >= batchSize {
+				sendBatch(ch, batch)
+				batch = batch[:0]
+			}
+		}
+		if len(batch) > 0 {
+			sendBatch(ch, batch)
+		}
+
+		// 发送最新一帧保证画面最新
+		if lastFrame != nil {
 			select {
-			case ch <- f:
+			case ch <- lastFrame:
 			default:
 			}
 		}
-		return
-	}
+	}()
+}
 
-	h.Mu.Lock()
-	cache := h.CacheBuffer.GetAll()
-	h.Mu.Unlock()
-	var sentKey bool
-	for _, f := range cache {
-		if !sentKey && h.isKeyFrameByFormat(f, h.DetectedFormat) {
-			sentKey = true
-		}
-		if sentKey {
-			select {
-			case ch <- f:
-			default:
-			}
+// sendBatch 批量发送帧到客户端，队列满就丢帧
+func sendBatch(ch chan []byte, batch [][]byte) {
+	for _, f := range batch {
+		select {
+		case ch <- f:
+		default:
+			// 队列满就丢帧，不阻塞
 		}
 	}
 }
@@ -467,19 +521,35 @@ func (h *StreamHub) Close() {
 		close(h.Closed)
 	}
 
+	// 关闭 UDP 连接
 	for _, conn := range h.UdpConns {
-		_ = conn.Close()
+		if conn != nil {
+			_ = conn.Close()
+		}
 	}
 	h.UdpConns = nil
 
+	// 关闭所有客户端
 	for _, client := range h.Clients {
-		close(client.ch)
+		if client.ch != nil {
+			close(client.ch)
+		}
 	}
 	h.Clients = nil
-	h.CacheBuffer = nil
 
+	// 清理缓存
+	h.CacheBuffer = nil
+	h.LastFrame = nil
+	h.LastKeyFrame = nil
+	h.LastInitFrame = nil
+
+	// 状态更新并广播
 	h.state = StateStopped
-	h.stateCond.Broadcast()
+	if h.stateCond != nil {
+		h.stateCond.Broadcast()
+	}
+
+	logger.LogPrintf("UDP监听已关闭，端口已释放: %s", h.AddrList[0])
 }
 
 // ====================
@@ -568,6 +638,11 @@ func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*Stre
 		return nil, err
 	}
 
+	// 当客户端为0时自动删除 hub
+	newHub.OnEmpty = func(h *StreamHub) {
+		GlobalMultiChannelHub.RemoveHub(h.AddrList[0])
+	}
+
 	m.Mu.Lock()
 	m.Hubs[key] = newHub
 	m.Mu.Unlock()
@@ -594,13 +669,12 @@ func (m *MultiChannelHub) RemoveHub(udpAddr string) {
 // ====================
 // 更新 UDPConn 网络接口
 // ====================
+// ====================
+// 更新 Hub 的接口（只管 UDPConn 部分）
+// ====================
 func (h *StreamHub) UpdateInterfaces(ifaces []string) error {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
-
-	// if len(ifaces) == 0 {
-	// 	return errors.New("至少指定一个网卡")
-	// }
 
 	var newConns []*net.UDPConn
 	var lastErr error
@@ -611,6 +685,7 @@ func (h *StreamHub) UpdateInterfaces(ifaces []string) error {
 			lastErr = err
 			continue
 		}
+
 		var conn *net.UDPConn
 		for _, name := range ifaces {
 			iface, ierr := net.InterfaceByName(name)
@@ -618,15 +693,16 @@ func (h *StreamHub) UpdateInterfaces(ifaces []string) error {
 				lastErr = ierr
 				continue
 			}
-			conn, err := listenMulticast(udpAddr, []*net.Interface{iface})
+			conn, err = listenMulticast(udpAddr, []*net.Interface{iface})
 			if err == nil {
 				newConns = append(newConns, conn)
 				break
 			}
 			lastErr = err
 		}
+
+		// 最后尝试默认接口
 		if conn == nil {
-			// 最后尝试默认接口
 			conn, err = listenMulticast(udpAddr, nil)
 			if err != nil {
 				lastErr = err
@@ -640,15 +716,16 @@ func (h *StreamHub) UpdateInterfaces(ifaces []string) error {
 		return fmt.Errorf("所有网卡更新失败: %v", lastErr)
 	}
 
-	// 关闭旧连接
+	// 替换 UDPConns
 	for _, conn := range h.UdpConns {
 		_ = conn.Close()
 	}
 	h.UdpConns = newConns
 
-	// 启动新的 readLoop
+	// 重新启动 readLoops
 	h.startReadLoops()
-	logger.LogPrintf("✅ Hub UDPConn 已更新, 网卡=%v", ifaces)
+
+	logger.LogPrintf("✅ Hub UDPConn 已更新 (仅接口)，网卡=%v", ifaces)
 	return nil
 }
 
@@ -677,6 +754,16 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 	// 迁移客户端
 	for connID, client := range h.Clients {
 		newHub.Clients[connID] = client
+
+		// 发送最后关键帧序列
+		for _, frame := range h.LastInitFrame {
+			select {
+			case client.ch <- frame:
+			default:
+			}
+		}
+
+		// 再发送最后一帧数据，保证客户端能立即播放
 		if len(h.LastFrame) > 0 {
 			select {
 			case client.ch <- h.LastFrame:
@@ -684,6 +771,7 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 			}
 		}
 	}
+
 	h.Clients = make(map[string]hubClient)
 	logger.LogPrintf("🔄 客户端已迁移到新Hub，数量=%d", len(newHub.Clients))
 }
@@ -895,7 +983,9 @@ func (h *StreamHub) isKeyFrameTS(pkt []byte) bool {
 			case 8: // PPS
 				h.hasPPS = true
 			case 5: // IDR
-				return h.hasSPS && h.hasPPS
+				if h.hasSPS && h.hasPPS {
+					return true
+				}
 			}
 		}
 	}
@@ -954,13 +1044,11 @@ func (h *StreamHub) isKeyFrameRTP(pkt []byte) bool {
 	case 1: // 非IDR帧
 		return false
 	case 5: // 完整IDR
-		return h.hasSPS && h.hasPPS
+		return true
 	case 7: // SPS
 		h.hasSPS = true
-		return false
 	case 8: // PPS
 		h.hasPPS = true
-		return false
 	case 24: // STAP-A (多个NALU打包)
 		offset := 1
 		for offset+2 < len(payload) {

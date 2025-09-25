@@ -1,52 +1,37 @@
 package update
 
 import (
-	"strings"
-
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/stream"
 )
 
 // UpdateHubsOnConfigChange 根据配置变更更新Hubs
+// 配置变更时调用
 func UpdateHubsOnConfigChange(newIfaces []string) {
-	// 遍历所有Hub并更新它们的网络接口
-	stream.GlobalMultiChannelHub.Mu.RLock()
-	var pairs []struct {
-		key    string
-		hub    *stream.StreamHub
-		newKey string
-	}
+	for oldKey, hub := range stream.GlobalMultiChannelHub.Hubs {
+		// 生成新 key
+		newKey := stream.GlobalMultiChannelHub.HubKey(hub.AddrList[0])
 
-	for key, hub := range stream.GlobalMultiChannelHub.Hubs {
-		parts := strings.SplitN(key, "|", 2)
-		addr := parts[0]
-		newKey := stream.GlobalMultiChannelHub.HubKey(addr)
-		if key == newKey {
-			continue
-		}
-		pairs = append(pairs, struct {
-			key    string
-			hub    *stream.StreamHub
-			newKey string
-		}{key, hub, newKey})
-	}
-	stream.GlobalMultiChannelHub.Mu.RUnlock()
-
-	for _, p := range pairs {
-		logger.LogPrintf("♻️ 零丢包更新组播监听：%s → %s", p.key, p.newKey)
-
-		// 直接在旧Hub上更新网络接口
-		if err := p.hub.UpdateInterfaces(newIfaces); err != nil {
-			logger.LogPrintf("❌ 更新网络接口失败: %v", err)
+		if oldKey == newKey {
+			// key 没变，只更新接口
+			_ = hub.UpdateInterfaces(newIfaces)
 			continue
 		}
 
-		// 更新成功，更新MultiChannelHub映射中的键
+		// 创建新 Hub
+		newHub, err := stream.NewStreamHub(hub.AddrList, newIfaces)
+		if err != nil {
+			logger.LogPrintf("❌ 新 Hub 创建失败: %v", err)
+			continue
+		}
+
+		// 客户端迁移
+		hub.TransferClientsTo(newHub)
+
+		// 替换到 GlobalMultiChannelHub
 		stream.GlobalMultiChannelHub.Mu.Lock()
-		delete(stream.GlobalMultiChannelHub.Hubs, p.key)
-		stream.GlobalMultiChannelHub.Hubs[p.newKey] = p.hub
+		delete(stream.GlobalMultiChannelHub.Hubs, oldKey)
+		stream.GlobalMultiChannelHub.Hubs[newKey] = newHub
 		stream.GlobalMultiChannelHub.Mu.Unlock()
-
-		logger.LogPrintf("✅ 成功更新网络接口: %s", p.newKey)
 	}
 }
