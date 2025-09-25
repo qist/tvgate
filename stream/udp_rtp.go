@@ -11,10 +11,10 @@ import (
 	"golang.org/x/net/ipv4"
 	"net"
 	"net/http"
-	"sync/atomic"
+	// "sync/atomic"
 	// "sort"
 	"strconv"
-	"strings"
+	// "strings"
 	"sync"
 	"time"
 )
@@ -153,7 +153,7 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 				lastErr = err
 			}
 		}
-		logger.LogPrintf("🟢 Listening on %s via interfaces %v", udpAddr, ifaces)
+		// logger.LogPrintf("🟢 Listening on %s via interfaces %v", udpAddr, ifaces)
 	}
 
 	if len(hub.UdpConns) == 0 {
@@ -318,8 +318,8 @@ func (h *StreamHub) run() {
 
 	for {
 		select {
-		case <-ticker.C:
-			GlobalMultiChannelHub.CheckIsolation()
+		// case <-ticker.C:
+		// 	GlobalMultiChannelHub.CheckIsolation()
 		case client := <-h.AddCh:
 			h.Mu.Lock()
 			h.Clients[client.connID] = client
@@ -388,8 +388,8 @@ func (h *StreamHub) sendInitial(ch chan []byte) {
 // HTTP 播放
 // ====================
 func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentType string, updateActive func()) {
-	hubName := strings.Join(h.AddrList, ",")
-	logger.LogPrintf("DEBUG: Hub [%s] ServeHTTP 开始 - ClientIP: %s", hubName, r.RemoteAddr)
+	// hubName := strings.Join(h.AddrList, ",")
+	// logger.LogPrintf("DEBUG: Hub [%s] ServeHTTP 开始 - ClientIP: %s", hubName, r.RemoteAddr)
 
 	select {
 	case <-h.Closed:
@@ -553,7 +553,7 @@ func (m *MultiChannelHub) HubKey(addr string) string {
 
 func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 	key := m.HubKey(udpAddr)
-	logger.LogPrintf("🔑 GetOrCreateHub HubKey: %s", key)
+	// logger.LogPrintf("🔑 GetOrCreateHub HubKey: %s", key)
 
 	m.Mu.RLock()
 	hub, exists := m.Hubs[key]
@@ -585,11 +585,11 @@ func (m *MultiChannelHub) RemoveHub(udpAddr string) {
 	}
 }
 
-func (m *MultiChannelHub) CheckIsolation() {
-	m.Mu.RLock()
-	defer m.Mu.RUnlock()
-	// 串台检查可根据需要扩展
-}
+// func (m *MultiChannelHub) CheckIsolation() {
+// 	m.Mu.RLock()
+// 	defer m.Mu.RUnlock()
+// 	// 串台检查可根据需要扩展
+// }
 
 // ====================
 // 更新 UDPConn 网络接口
@@ -693,11 +693,11 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 // ====================
 // 改进的格式检测函数
 // 全局计数器，用于限制日志打印数量
-var (
-	keyFrameLogCount    int32
-	nonKeyFrameLogCount int32
-	maxLogCount         int32 = 10
-)
+// var (
+// 	keyFrameLogCount    int32
+// 	nonKeyFrameLogCount int32
+// 	maxLogCount         int32 = 10
+// )
 
 // 添加格式自动检测的辅助函数
 func detectStreamFormat(pkt []byte) string {
@@ -719,7 +719,7 @@ func detectStreamFormat(pkt []byte) string {
 
 func (h *StreamHub) isKeyFrameByFormat(pkt []byte, format string) bool {
 	var result bool
-	var frameType string
+	// var frameType string
 	switch format {
 	case "ts":
 		result = h.isKeyFrameTS(pkt)
@@ -735,125 +735,125 @@ func (h *StreamHub) isKeyFrameByFormat(pkt []byte, format string) bool {
 	}
 
 	// 确定帧类型
-	if result {
-		frameType = "关键帧"
-	} else {
-		frameType = "非关键帧"
-	}
+	// if result {
+	// 	frameType = "关键帧"
+	// } else {
+	// 	frameType = "非关键帧"
+	// }
 
 	// 限制日志打印数量
-	if result {
-		if count := atomic.LoadInt32(&keyFrameLogCount); count < maxLogCount {
-			if atomic.CompareAndSwapInt32(&keyFrameLogCount, count, count+1) {
-				h.logFrameDetection(pkt, format, frameType, count+1)
-			}
-		}
-	} else {
-		if count := atomic.LoadInt32(&nonKeyFrameLogCount); count < maxLogCount {
-			if atomic.CompareAndSwapInt32(&nonKeyFrameLogCount, count, count+1) {
-				h.logFrameDetection(pkt, format, frameType, count+1)
-			}
-		}
-	}
+	// if result {
+	// 	if count := atomic.LoadInt32(&keyFrameLogCount); count < maxLogCount {
+	// 		if atomic.CompareAndSwapInt32(&keyFrameLogCount, count, count+1) {
+	// 			h.logFrameDetection(pkt, format, frameType, count+1)
+	// 		}
+	// 	}
+	// } else {
+	// 	if count := atomic.LoadInt32(&nonKeyFrameLogCount); count < maxLogCount {
+	// 		if atomic.CompareAndSwapInt32(&nonKeyFrameLogCount, count, count+1) {
+	// 			h.logFrameDetection(pkt, format, frameType, count+1)
+	// 		}
+	// 	}
+	// }
 
 	return result
 }
 
 // 日志打印辅助函数
-func (h *StreamHub) logFrameDetection(pkt []byte, format, frameType string, count int32) {
-	pktLen := len(pkt)
-	var preview string
+// func (h *StreamHub) logFrameDetection(pkt []byte, format, frameType string, count int32) {
+// 	pktLen := len(pkt)
+// 	var preview string
 
-	// 生成数据预览（前16字节）
-	if pktLen > 0 {
-		previewBytes := make([]string, 0)
-		maxPreview := 16
-		if pktLen < maxPreview {
-			maxPreview = pktLen
-		}
-		for i := 0; i < maxPreview; i++ {
-			previewBytes = append(previewBytes, fmt.Sprintf("%02X", pkt[i]))
-		}
-		preview = strings.Join(previewBytes, " ")
-	}
+// 	// 生成数据预览（前16字节）
+// 	if pktLen > 0 {
+// 		previewBytes := make([]string, 0)
+// 		maxPreview := 16
+// 		if pktLen < maxPreview {
+// 			maxPreview = pktLen
+// 		}
+// 		for i := 0; i < maxPreview; i++ {
+// 			previewBytes = append(previewBytes, fmt.Sprintf("%02X", pkt[i]))
+// 		}
+// 		preview = strings.Join(previewBytes, " ")
+// 	}
 
-	// 提取更多调试信息
-	debugInfo := h.getFrameDebugInfo(pkt, format)
+// 	// 提取更多调试信息
+// 	debugInfo := h.getFrameDebugInfo(pkt, format)
 
-	logger.LogPrintf("🎯 帧检测 [%d/%d] 格式=%s 类型=%s 长度=%d 预览=%s %s",
-		count, maxLogCount, format, frameType, pktLen, preview, debugInfo)
-}
+// 	logger.LogPrintf("🎯 帧检测 [%d/%d] 格式=%s 类型=%s 长度=%d 预览=%s %s",
+// 		count, maxLogCount, format, frameType, pktLen, preview, debugInfo)
+// }
 
 // 获取帧调试信息
-func (h *StreamHub) getFrameDebugInfo(pkt []byte, format string) string {
-	switch format {
-	case "ts":
-		return h.getTSDebugInfo(pkt)
-	case "rtp":
-		return h.getRTPDebugInfo(pkt)
-	default:
-		return h.getAutoDebugInfo(pkt)
-	}
-}
+// func (h *StreamHub) getFrameDebugInfo(pkt []byte, format string) string {
+// 	switch format {
+// 	case "ts":
+// 		return h.getTSDebugInfo(pkt)
+// 	case "rtp":
+// 		return h.getRTPDebugInfo(pkt)
+// 	default:
+// 		return h.getAutoDebugInfo(pkt)
+// 	}
+// }
 
 // TS格式调试信息
-func (h *StreamHub) getTSDebugInfo(pkt []byte) string {
-	if len(pkt) < 4 || pkt[0] != 0x47 {
-		return "无效TS包"
-	}
+// func (h *StreamHub) getTSDebugInfo(pkt []byte) string {
+// 	if len(pkt) < 4 || pkt[0] != 0x47 {
+// 		return "无效TS包"
+// 	}
 
-	pid := uint16(pkt[1]&0x1F)<<8 | uint16(pkt[2])
-	adaptation := (pkt[3] >> 4) & 0x03
-	hasPayload := adaptation == 0x01 || adaptation == 0x03
+// 	pid := uint16(pkt[1]&0x1F)<<8 | uint16(pkt[2])
+// 	adaptation := (pkt[3] >> 4) & 0x03
+// 	hasPayload := adaptation == 0x01 || adaptation == 0x03
 
-	return fmt.Sprintf("PID=0x%04X 适配字段=%d 有负载=%v", pid, adaptation, hasPayload)
-}
+// 	return fmt.Sprintf("PID=0x%04X 适配字段=%d 有负载=%v", pid, adaptation, hasPayload)
+// }
 
 // RTP格式调试信息
-func (h *StreamHub) getRTPDebugInfo(pkt []byte) string {
-	if len(pkt) < 12 {
-		return "RTP包过短"
-	}
+// func (h *StreamHub) getRTPDebugInfo(pkt []byte) string {
+// 	if len(pkt) < 12 {
+// 		return "RTP包过短"
+// 	}
 
-	version := (pkt[0] >> 6) & 0x03
-	padding := (pkt[0] >> 5) & 0x01
-	extension := (pkt[0] >> 4) & 0x01
-	csrcCount := pkt[0] & 0x0F
+// 	version := (pkt[0] >> 6) & 0x03
+// 	padding := (pkt[0] >> 5) & 0x01
+// 	extension := (pkt[0] >> 4) & 0x01
+// 	csrcCount := pkt[0] & 0x0F
 
-	marker := (pkt[1] >> 7) & 0x01
-	payloadType := pkt[1] & 0x7F
-	sequence := uint16(pkt[2])<<8 | uint16(pkt[3])
-	timestamp := binary.BigEndian.Uint32(pkt[4:8])
-	ssrc := binary.BigEndian.Uint32(pkt[8:12])
+// 	marker := (pkt[1] >> 7) & 0x01
+// 	payloadType := pkt[1] & 0x7F
+// 	sequence := uint16(pkt[2])<<8 | uint16(pkt[3])
+// 	timestamp := binary.BigEndian.Uint32(pkt[4:8])
+// 	ssrc := binary.BigEndian.Uint32(pkt[8:12])
 
-	return fmt.Sprintf("版本=%d 填充=%d 扩展=%d CSRC数量=%d 标记=%d 负载类型=%d 序列号=%d 时间戳=%d SSRC=%d",
-		version, padding, extension, csrcCount, marker, payloadType, sequence, timestamp, ssrc)
-}
+// 	return fmt.Sprintf("版本=%d 填充=%d 扩展=%d CSRC数量=%d 标记=%d 负载类型=%d 序列号=%d 时间戳=%d SSRC=%d",
+// 		version, padding, extension, csrcCount, marker, payloadType, sequence, timestamp, ssrc)
+// }
 
 // 自动检测格式的调试信息
-func (h *StreamHub) getAutoDebugInfo(pkt []byte) string {
-	if len(pkt) < 1 {
-		return "空包"
-	}
+// func (h *StreamHub) getAutoDebugInfo(pkt []byte) string {
+// 	if len(pkt) < 1 {
+// 		return "空包"
+// 	}
 
-	// 尝试检测格式
-	if pkt[0] == 0x47 && len(pkt)%188 == 0 {
-		return "检测为TS格式"
-	}
+// 	// 尝试检测格式
+// 	if pkt[0] == 0x47 && len(pkt)%188 == 0 {
+// 		return "检测为TS格式"
+// 	}
 
-	version := (pkt[0] >> 6) & 0x03
-	if version == 2 {
-		return "检测为RTP格式"
-	}
+// 	version := (pkt[0] >> 6) & 0x03
+// 	if version == 2 {
+// 		return "检测为RTP格式"
+// 	}
 
-	return "格式未知"
-}
+// 	return "格式未知"
+// }
 
-// 重置日志计数器（可选，用于重新开始计数）
-func ResetFrameLogCounters() {
-	atomic.StoreInt32(&keyFrameLogCount, 0)
-	atomic.StoreInt32(&nonKeyFrameLogCount, 0)
-}
+// // 重置日志计数器（可选，用于重新开始计数）
+// func ResetFrameLogCounters() {
+// 	atomic.StoreInt32(&keyFrameLogCount, 0)
+// 	atomic.StoreInt32(&nonKeyFrameLogCount, 0)
+// }
 
 // 改进的TS关键帧检测
 func (h *StreamHub) isKeyFrameTS(pkt []byte) bool {
@@ -895,9 +895,7 @@ func (h *StreamHub) isKeyFrameTS(pkt []byte) bool {
 			case 8: // PPS
 				h.hasPPS = true
 			case 5: // IDR
-				if h.hasSPS && h.hasPPS {
-					return true
-				}
+				return h.hasSPS && h.hasPPS
 			}
 		}
 	}
@@ -956,11 +954,13 @@ func (h *StreamHub) isKeyFrameRTP(pkt []byte) bool {
 	case 1: // 非IDR帧
 		return false
 	case 5: // 完整IDR
-		return true
+		return h.hasSPS && h.hasPPS
 	case 7: // SPS
 		h.hasSPS = true
+		return false
 	case 8: // PPS
 		h.hasPPS = true
+		return false
 	case 24: // STAP-A (多个NALU打包)
 		offset := 1
 		for offset+2 < len(payload) {
