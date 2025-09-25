@@ -141,19 +141,7 @@ func (h *ConfigHandler) renderTemplate(w http.ResponseWriter, r *http.Request, t
 
 // RegisterRoutes 注册所有Web管理路由
 func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
-	// 获取配置的Web路径，默认为/web/
-	webPath := h.webConfig.Path
-	if webPath == "" {
-		webPath = "/web/"
-	}
-
-	// 确保webPath以/开头和结尾
-	if !strings.HasPrefix(webPath, "/") {
-		webPath = "/" + webPath
-	}
-	if !strings.HasSuffix(webPath, "/") {
-		webPath = webPath + "/"
-	}
+	webPath := h.getWebPath()
 
 	// 注册主题同步路由
 	mux.HandleFunc(webPath+"sync-theme", h.handleSyncTheme)
@@ -229,9 +217,20 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/backup/restore", h.cookieAuth(backupHandler.handleRestoreBackup))
 	mux.HandleFunc(webPath+"config/backup/download", h.cookieAuth(backupHandler.handleDownloadBackup))
 
-	// GitHub配置相关API路由
-	mux.HandleFunc(webPath+"api/github/config", h.cookieAuth(h.handleGithubConfig))
-	mux.HandleFunc(webPath+"api/github/config/save", h.cookieAuth(h.handleGithubConfigSave))
+	// GitHub 配置相关路由
+	mux.HandleFunc(webPath+"github", h.handleGithubEditor)
+	mux.HandleFunc(webPath+"api/github/config", h.handleGithubConfig)
+	mux.HandleFunc(webPath+"api/github/config/save", h.handleGithubConfigSave)
+
+	// DNS 配置相关路由
+	mux.HandleFunc(webPath+"dns", h.handleDnsEditor)
+	mux.HandleFunc(webPath+"api/dns/config", h.handleDnsConfig)
+	mux.HandleFunc(webPath+"api/dns/config/save", h.handleDnsConfigSave)
+
+	// 全局认证配置相关路由
+	// mux.HandleFunc(webPath+"globalauth", h.handleGlobalAuthEditor)
+	// mux.HandleFunc(webPath+"api/globalauth/config", h.handleGlobalAuthConfig)
+	// mux.HandleFunc(webPath+"api/globalauth/config/save", h.handleGlobalAuthConfigSave)
 
 }
 

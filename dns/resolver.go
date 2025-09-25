@@ -36,13 +36,15 @@ type plainDNSClient struct {
 }
 
 type dohClient struct {
-	server  string
-	timeout time.Duration
+	server   string
+	timeout  time.Duration
+	maxConns int
 }
 
 type doh3Client struct {
-	server  string
-	timeout time.Duration
+	server   string
+	timeout  time.Duration
+	maxConns int
 }
 
 type dnsCryptClient struct {
@@ -71,8 +73,9 @@ type QUIC struct {
 
 // quicClient 是我们项目中使用的QUIC客户端
 type quicClient struct {
-	server  string
-	timeout time.Duration
+	server   string
+	timeout  time.Duration
+	maxConns int
 }
 
 // --------------------------- DNS 解析器 ---------------------------
@@ -82,6 +85,7 @@ type Resolver struct {
 	systemResolver *net.Resolver
 	resolvers      []string
 	timeout        time.Duration
+	maxConns       int
 	mutex          sync.RWMutex
 }
 
@@ -113,8 +117,13 @@ func (r *Resolver) loadConfig() {
 	defer r.mutex.Unlock()
 
 	r.timeout = cfg.DNS.Timeout
+	r.maxConns = cfg.DNS.MaxConns
 	if r.timeout == 0 {
 		r.timeout = 5 * time.Second
+	}
+	
+	if r.maxConns <= 0 {
+		r.maxConns = 10 // 默认最大连接数
 	}
 
 	if len(cfg.DNS.Servers) > 0 {
@@ -123,7 +132,7 @@ func (r *Resolver) loadConfig() {
 
 		r.clients = make([]dnsClient, 0, len(cfg.DNS.Servers))
 		for _, resolver := range cfg.DNS.Servers {
-			client, err := createDNSClient(resolver, r.timeout)
+			client, err := createDNSClient(resolver, r.timeout, r.maxConns)
 			if err == nil {
 				r.clients = append(r.clients, client)
 			} else {
@@ -137,7 +146,7 @@ func (r *Resolver) loadConfig() {
 }
 
 // createDNSClient 根据服务器类型创建客户端
-func createDNSClient(server string, timeout time.Duration) (dnsClient, error) {
+func createDNSClient(server string, timeout time.Duration, maxConns int) (dnsClient, error) {
 	if isDNSStamp(server) {
 		stamp, err := dnsstamps.NewServerStampFromString(server)
 		if err != nil {
@@ -147,11 +156,11 @@ func createDNSClient(server string, timeout time.Duration) (dnsClient, error) {
 		case dnsstamps.StampProtoTypeDNSCrypt:
 			return &dnsCryptClient{server: server}, nil
 		case dnsstamps.StampProtoTypeDoH:
-			return &dohClient{server: "https://" + stamp.ProviderName, timeout: timeout}, nil
+			return &dohClient{server: "https://" + stamp.ProviderName, timeout: timeout, maxConns: maxConns}, nil
 		case dnsstamps.StampProtoTypeTLS:
 			return &dotClient{server: stamp.ServerAddrStr, timeout: timeout}, nil
 		case dnsstamps.StampProtoTypeDoQ:
-			return &quicClient{server: stamp.ServerAddrStr, timeout: timeout}, nil
+			return &quicClient{server: stamp.ServerAddrStr, timeout: timeout, maxConns: maxConns}, nil
 		default:
 			return &plainDNSClient{server: stamp.ServerAddrStr, timeout: timeout}, nil
 		}
@@ -161,10 +170,10 @@ func createDNSClient(server string, timeout time.Duration) (dnsClient, error) {
 	if err == nil {
 		switch parsedURL.Scheme {
 		case "https":
-			return &dohClient{server: server, timeout: timeout}, nil
+			return &dohClient{server: server, timeout: timeout, maxConns: maxConns}, nil
 		case "h3":
 			host := strings.TrimPrefix(server, "h3://")
-			return &doh3Client{server: "https://" + host, timeout: timeout}, nil
+			return &doh3Client{server: "https://" + host, timeout: timeout, maxConns: maxConns}, nil
 		case "sdns":
 			return &dnsCryptClient{server: server}, nil
 		case "tls":
@@ -174,7 +183,7 @@ func createDNSClient(server string, timeout time.Duration) (dnsClient, error) {
 		case "quic":
 			// QUIC客户端
 			host := strings.TrimPrefix(server, "quic://")
-			return &quicClient{server: host, timeout: timeout}, nil
+			return &quicClient{server: host, timeout: timeout, maxConns: maxConns}, nil
 		case "tcp", "udp":
 			return &plainDNSClient{server: server, timeout: timeout}, nil
 		}
@@ -514,7 +523,7 @@ func (c *dohClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr
 	b64 := base64.RawURLEncoding.EncodeToString(queryBytes)
 
 	// 发送DoH查询
-	respBytes, err := sendDoHQuery(ctx, c.server, b64, c.timeout)
+	respBytes, err := sendDoHQuery(ctx, c.server, b64, c.timeout, c.maxConns)
 	if err != nil {
 		return nil, fmt.Errorf("DoH查询失败: %w", err)
 	}
@@ -574,7 +583,7 @@ func (c *doh3Client) LookupIPAddr(ctx context.Context, host string) ([]net.IPAdd
 	b64 := base64.RawURLEncoding.EncodeToString(queryBytes)
 
 	// 发送DoH3查询
-	respBytes, err := sendH3Query(ctx, c.server, b64, c.timeout)
+	respBytes, err := sendH3Query(ctx, c.server, b64, c.timeout, c.maxConns)
 	if err != nil {
 		return nil, fmt.Errorf("DoH3查询失败: %w", err)
 	}
@@ -695,10 +704,9 @@ func (c *dotClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr
 	defer cancel()
 
 	// 创建TLS连接
+	tlsConfig := &tls.Config{InsecureSkipVerify: true}
 	dialer := &net.Dialer{Timeout: c.timeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp", serverAddr, &tls.Config{
-		InsecureSkipVerify: true,
-	})
+	conn, err := tls.DialWithDialer(dialer, "tcp", serverAddr, tlsConfig)
 	if err != nil {
 		return nil, fmt.Errorf("连接DoT服务器失败: %w", err)
 	}
@@ -814,11 +822,11 @@ func (c *quicClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAdd
 		dnsServer = "quic://" + c.server + ":853"
 	}
 	// 发送DoQ查询
-	resp, err := sendDoQQuery(ctx, dnsServer, b64)
+	resp, err := sendDoQQuery(ctx, dnsServer, b64, c.maxConns)
 	if err != nil {
 		return nil, fmt.Errorf("QUIC查询失败: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // 在这里可以安全地 defer
 
 	// 读取响应体
 	respBytes, err := io.ReadAll(resp.Body)
@@ -837,13 +845,18 @@ func (c *quicClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAdd
 
 // --------------------------- 网络请求实现 ---------------------------
 
-func sendDoHQuery(ctx context.Context, dnsServer, b64 string, timeout time.Duration) ([]byte, error) {
+func sendDoHQuery(ctx context.Context, dnsServer, b64 string, timeout time.Duration, maxConns int) ([]byte, error) {
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	
+	// 创建带连接数限制的传输器
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+		MaxConnsPerHost: maxConns,
+	}
+	
 	client := &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: tlsConfig,
-		},
+		Timeout:   timeout,
+		Transport: transport,
 	}
 
 	// 构建请求URL
@@ -862,7 +875,8 @@ func sendDoHQuery(ctx context.Context, dnsServer, b64 string, timeout time.Durat
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("DoH查询失败, 状态码: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body) // 尝试读取错误信息
+		return nil, fmt.Errorf("DoH查询失败, 状态码: %d, 响应体: %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -873,7 +887,7 @@ func sendDoHQuery(ctx context.Context, dnsServer, b64 string, timeout time.Durat
 	return body, nil
 }
 
-func sendH3Query(ctx context.Context, dnsServer, b64 string, timeout time.Duration) ([]byte, error) {
+func sendH3Query(ctx context.Context, dnsServer, b64 string, timeout time.Duration, maxConns int) ([]byte, error) {
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}
 
 	if strings.HasPrefix(dnsServer, "h3://") {
@@ -884,6 +898,9 @@ func sendH3Query(ctx context.Context, dnsServer, b64 string, timeout time.Durati
 	http3Transport := &http3.Transport{
 		TLSClientConfig: tlsConfig,
 	}
+	
+	// 注意：http3.Transport不直接支持MaxConnsPerHost，但可以通过其他方式限制
+	
 	client := &http.Client{
 		Timeout:   timeout,
 		Transport: http3Transport,
@@ -1049,7 +1066,7 @@ func executeDNSQuery(ctx context.Context, dnsServer string, query []byte, timeou
 }
 
 // sendDoQQuery 通过 QUIC DoQ 发送 DNS 查询，并返回 HTTP 响应
-func sendDoQQuery(ctx context.Context, dnsServer, b64Query string) (*http.Response, error) {
+func sendDoQQuery(ctx context.Context, dnsServer, b64Query string, maxConns int) (*http.Response, error) {
 	// 规范化 DNS 服务器地址
 	dnsServerAddr, err := normalizeDoQServer(dnsServer)
 	if err != nil {

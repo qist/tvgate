@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DNS 配置编辑器 - TVGate Web管理</title>
+    <link rel="stylesheet" href="{{.webPath}}static/common.css">
+    <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+    <style>
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--win11-bg);
+            color: var(--win11-text-primary);
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: var(--win11-surface);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px var(--win11-shadow);
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, box-shadow 0.3s;
+        }
+
+        h1 {
+            color: var(--win11-text-primary);
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .auth-section {
+            text-align: right;
+            margin-bottom: 20px;
+        }
+
+        .auth-section a {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: var(--win11-success);
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+
+        .auth-section a.logout {
+            background-color: var(--win11-danger);
+        }
+
+        .auth-section a:hover {
+            opacity: 0.9;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--win11-text-secondary);
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--win11-card);
+            border: 1px solid var(--win11-border);
+            border-radius: 4px;
+            color: var(--win11-text-primary);
+            box-sizing: border-box;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--win11-accent);
+            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            margin-right: 10px;
+            transform: scale(1.5);
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: var(--win11-accent);
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .btn:hover {
+            background-color: var(--win11-accent-hover);
+        }
+
+        .btn:disabled {
+            background-color: var(--win11-disabled);
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background-color: var(--win11-secondary);
+        }
+
+        .btn-secondary:hover {
+            background-color: var(--win11-secondary-hover);
+        }
+
+        .form-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .form-col {
+            flex: 1;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                flex-direction: column;
+                gap: 0;
+            }
+        }
+
+        .servers-container {
+            margin-top: 10px;
+        }
+
+        .server-item {
+            display: flex;
+            margin-bottom: 10px;
+        }
+
+        .server-item input {
+            flex: 1;
+            margin-right: 10px;
+        }
+
+        .server-item button {
+            background-color: var(--win11-danger);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 0 10px;
+        }
+
+        .add-server {
+            background-color: var(--win11-success);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 8px 12px;
+            margin-top: 5px;
+        }
+
+        .notification {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .notification.success {
+            background-color: var(--win11-success);
+            color: white;
+            display: block;
+        }
+
+        .notification.error {
+            background-color: var(--win11-danger);
+            color: white;
+            display: block;
+        }
+
+        .loading {
+            display: none;
+        }
+
+        .help-text {
+            font-size: 14px;
+            color: var(--win11-text-secondary);
+            margin-top: 5px;
+            line-height: 1.5;
+        }
+
+        .help-text strong {
+            color: var(--win11-text-primary);
+        }
+
+        .help-text code {
+            background-color: var(--win11-card);
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .help-text ul {
+            margin: 8px 0;
+            padding-left: 20px;
+        }
+
+        .help-text li {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>DNS 配置编辑器</h1>
+
+        <div class="auth-section">
+            <a href="{{.webPath}}" class="btn btn-secondary">返回主界面</a>
+            <a href="{{.webPath}}logout" class="btn logout">退出登录</a>
+        </div>
+
+        <div id="notification" class="notification"></div>
+
+        <form id="dnsConfigForm">
+            <div class="form-group">
+                <label>DNS 服务器列表</label>
+                <div class="help-text">
+                    <p>支持的DNS服务器类型：</p>
+                    <ul>
+                        <li><strong>标准DNS服务器</strong>：直接填写IP地址和端口，如 <code>8.8.8.8:53</code> 或 <code>1.1.1.1</code>（默认端口53）</li>
+                        <li><strong>TCP DNS服务器</strong>：在地址前添加 <code>tcp://</code> 前缀，如 <code>tcp://8.8.8.8:53</code></li>
+                        <li><strong>DoT (DNS over TLS) 服务器</strong>：在地址前添加 <code>tls://</code> 前缀，如 <code>tls://1.1.1.1:853</code></li>
+                        <li><strong>DoH (DNS over HTTPS) 服务器</strong>：填写完整的HTTPS URL，如 <code>https://unfiltered.adguard-dns.com/dns-query</code></li>
+                        <li><strong>DoH3 (DNS over HTTP/3) 服务器</strong>：在地址前添加 <code>h3://</code> 前缀，如 <code>h3://unfiltered.adguard-dns.com/dns-query</code></li>
+                        <li><strong>SDNS 加密DNS服务器</strong>：使用 <code>sdns://</code> 前缀的特殊DNS协议，如 <code>sdns://AQIAAAAAAAAAETk0LjE0MC4xNC4xNDo1NDQzINErR_JS3PLCu_iZEIbq95zkSV2LFsigxDIuUso_OQhzIjIuZG5zY3J5cHQuZGVmYXVsdC5uczEuYWRndWFyZC5jb20</code></li>
+                        <li><strong>DoQ (DNS over QUIC) 服务器</strong>：在地址前添加 <code>quic://</code> 前缀，如 <code>quic://unfiltered.adguard-dns.com</code></li>
+                    </ul>
+                    <p>提示：可以添加多个DNS服务器，系统会按顺序尝试查询，直到获得有效响应。</p>
+                </div>
+                <div class="servers-container" id="serversContainer">
+                    <!-- DNS服务器项将通过 JavaScript 动态添加 -->
+                </div>
+                <button type="button" class="add-server" id="addServer">添加DNS服务器</button>
+            </div>
+
+            <div class="form-row">
+                <div class="form-col">
+                    <div class="form-group">
+                        <label for="timeout">DNS查询超时时间</label>
+                        <input type="text" id="timeout" class="form-control" placeholder="例如: 5s">
+                        <div class="help-text">
+                            设置DNS查询的超时时间，支持单位：ns, us, ms, s, m, h。<br>
+                            例如：<code>5s</code> 表示5秒，<code>500ms</code> 表示500毫秒。
+                        </div>
+                    </div>
+                </div>
+                <div class="form-col">
+                    <div class="form-group">
+                        <label for="maxConns">最大连接数</label>
+                        <input type="number" id="maxConns" class="form-control" min="1" max="1000" placeholder="例如: 100">
+                        <div class="help-text">
+                            设置DNS客户端的最大并发连接数，用于控制资源使用。
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <button type="submit" class="btn" id="saveBtn">保存配置</button>
+                <button type="button" class="btn btn-secondary" id="resetBtn">重置</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // 全局变量
+        let servers = [];
+
+        // 页面加载完成后获取配置
+        document.addEventListener('DOMContentLoaded', function () {
+            loadConfig();
+            setupEventListeners();
+        });
+
+        // 设置事件监听器
+        function setupEventListeners() {
+            document.getElementById('dnsConfigForm').addEventListener('submit', saveConfig);
+            document.getElementById('resetBtn').addEventListener('click', loadConfig);
+            document.getElementById('addServer').addEventListener('click', addServerField);
+        }
+
+        // 加载配置
+        function loadConfig() {
+            fetch('{{.webPath}}api/dns/config')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('timeout').value = data.timeout || '';
+                    document.getElementById('maxConns').value = data.max_conns || 100;
+
+                    servers = data.servers || [];
+                    renderServers();
+                })
+                .catch(error => {
+                    showNotification('加载配置失败: ' + error.message, 'error');
+                });
+        }
+
+        // 渲染DNS服务器字段
+        function renderServers() {
+            const container = document.getElementById('serversContainer');
+            container.innerHTML = '';
+
+            servers.forEach((server, index) => {
+                const serverItem = document.createElement('div');
+                serverItem.className = 'server-item';
+                serverItem.innerHTML = `
+                    <input type="text" class="form-control server-input" value="${server}" data-index="${index}">
+                    <button type="button" class="remove-server" data-index="${index}">删除</button>
+                `;
+                container.appendChild(serverItem);
+            });
+
+            // 为删除按钮添加事件监听器
+            document.querySelectorAll('.remove-server').forEach(button => {
+                button.addEventListener('click', function () {
+                    const index = parseInt(this.getAttribute('data-index'));
+                    removeServer(index);
+                });
+            });
+
+            // 为输入框添加事件监听器
+            document.querySelectorAll('.server-input').forEach(input => {
+                input.addEventListener('change', function () {
+                    const index = parseInt(this.getAttribute('data-index'));
+                    servers[index] = this.value;
+                });
+            });
+        }
+
+        // 添加DNS服务器字段
+        function addServerField() {
+            servers.push('');
+            renderServers();
+        }
+
+        // 删除DNS服务器
+        function removeServer(index) {
+            servers.splice(index, 1);
+            renderServers();
+        }
+
+        // 保存配置
+        function saveConfig(event) {
+            event.preventDefault();
+
+            // 收集表单数据
+            const configData = {
+                servers: servers.filter(server => server.trim() !== ''),
+                timeout: document.getElementById('timeout').value,
+                max_conns: parseInt(document.getElementById('maxConns').value) || 100
+            };
+
+            // 显示加载状态
+            const saveBtn = document.getElementById('saveBtn');
+            const originalText = saveBtn.textContent;
+            saveBtn.textContent = '保存中...';
+            saveBtn.disabled = true;
+
+            // 发送保存请求
+            fetch('{{.webPath}}api/dns/config/save', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(configData)
+            })
+                .then(response => {
+                    if (response.ok) {
+                        return response.json();
+                    }
+                    throw new Error('保存失败');
+                })
+                .then(data => {
+                    showNotification('配置保存成功', 'success');
+                })
+                .catch(error => {
+                    showNotification('保存配置失败: ' + error.message, 'error');
+                })
+                .finally(() => {
+                    // 恢复按钮状态
+                    saveBtn.textContent = originalText;
+                    saveBtn.disabled = false;
+                });
+        }
+
+        // 显示通知
+        function showNotification(message, type) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = 'notification ' + type;
+
+            // 3秒后自动隐藏通知
+            setTimeout(() => {
+                notification.className = 'notification';
+            }, 3000);
+        }
+    </script>
+</body>
+
+</html>
