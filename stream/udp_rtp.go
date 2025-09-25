@@ -720,9 +720,6 @@ func detectStreamFormat(pkt []byte) string {
 func (h *StreamHub) isKeyFrameByFormat(pkt []byte, format string) bool {
 	var result bool
 	var frameType string
-	// 每次检测前重置全局状态
-	h.hasSPS = false
-	h.hasPPS = false
 	switch format {
 	case "ts":
 		result = h.isKeyFrameTS(pkt)
