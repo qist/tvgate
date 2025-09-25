@@ -78,5 +78,5 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 		monitor.ActiveClients.UpdateLastActive(connID, time.Now())
 	}
 
-	hub.ServeHTTP(w, r, "application/octet-stream", updateActive)
+	hub.ServeHTTP(w, r, "video/mpeg", updateActive)
 }

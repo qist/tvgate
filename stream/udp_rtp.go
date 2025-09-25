@@ -505,7 +505,9 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	ch := make(chan []byte, 1024)
 	h.AddCh <- hubClient{ch: ch, connID: connID}
 	defer func() { h.RemoveCh <- connID }()
-
+    w.Header().Set("Pragma", "no-cache")
+    w.Header().Set("ContentFeatures.DLNA.ORG", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
+    w.Header().Set("TransferMode.DLNA.ORG", "Streaming")
 	w.Header().Set("Content-Type", contentType)
 	flusher, ok := w.(http.Flusher)
 	if !ok {
