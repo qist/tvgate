@@ -19,7 +19,7 @@ import (
 	"github.com/jedisct1/go-dnsstamps"
 	"github.com/miekg/dns"
 	"github.com/qist/tvgate/config"
-	"github.com/qist/tvgate/logger"
+	// "github.com/qist/tvgate/logger"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 )
