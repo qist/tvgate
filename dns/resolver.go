@@ -20,8 +20,8 @@ import (
 	"github.com/miekg/dns"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
-	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 )
 
 // --------------------------- DNS 客户端接口 ---------------------------
@@ -255,7 +255,6 @@ func (r *Resolver) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr,
 	return ips, nil
 }
 
-
 // RefreshConfig 刷新配置
 func (r *Resolver) RefreshConfig() {
 	r.loadConfig()
@@ -390,7 +389,7 @@ func parseDNSResponse(respBytes []byte) ([]net.IPAddr, error) {
 	if len(addrs) == 0 {
 		return nil, fmt.Errorf("DNS查询成功但未返回任何IP地址")
 	}
-	logger.LogPrintf("999999DNS query via %v returned %d addresses", respMsg.Question, len(addrs))
+	// logger.LogPrintf("DNS query via %v returned %d addresses", respMsg.Question, len(addrs))
 	return addrs, nil
 }
 
@@ -400,6 +399,36 @@ func (c *plainDNSClient) LookupIPAddr(ctx context.Context, host string) ([]net.I
 	// 创建DNS查询
 	msg := &dns.Msg{}
 	msg.SetQuestion(dns.Fqdn(host), dns.TypeA)
+
+	// 添加EDNS0记录支持
+	// EDNS0允许更大的UDP数据包（4096字节），并支持DNSSEC等扩展功能
+	// 同时添加EDNS Client Subnet (ECS)选项，发送TVGate服务器所在IP地址
+	localIP, err := getLocalIP()
+	if err == nil && localIP != nil {
+		// 创建ECS选项
+		ecs := &dns.EDNS0_SUBNET{
+			Code:          dns.EDNS0SUBNET,
+			Family:        1, // IPv4
+			SourceNetmask: 24,
+			SourceScope:   0,
+			Address:       localIP,
+		}
+
+		// 创建OPT记录并添加ECS选项
+		opt := &dns.OPT{
+			Hdr: dns.RR_Header{
+				Name:   ".",
+				Rrtype: dns.TypeOPT,
+			},
+			Option: []dns.EDNS0{ecs},
+		}
+
+		// 将OPT记录添加到DNS查询的额外记录部分
+		msg.Extra = append(msg.Extra, opt)
+	} else {
+		// 如果无法获取本地IP，则只使用基本的EDNS0功能
+		msg.SetEdns0(4096, false)
+	}
 
 	// 将查询打包成字节
 	queryBytes, err := msg.Pack()
@@ -422,12 +451,58 @@ func (c *plainDNSClient) LookupIPAddr(ctx context.Context, host string) ([]net.I
 	return addrs, nil
 }
 
+// getLocalIP 获取本地IP地址，用于EDNS Client Subnet (ECS)
+func getLocalIP() (net.IP, error) {
+	// 准备多个备选地址
+	dnsServers := []string{"223.5.5.5:80", "223.6.6.6:80", "119.29.29.29:80"}
+
+	for _, server := range dnsServers {
+		conn, err := net.DialTimeout("udp", server, 2*time.Second)
+		if err != nil {
+			continue // 当前服务器失败，尝试下一个
+		}
+		defer conn.Close()
+		localAddr := conn.LocalAddr().(*net.UDPAddr)
+		return localAddr.IP, nil
+	}
+	return nil, fmt.Errorf("could not connect to any DNS server")
+}
+
 // --------------------------- dohClient ---------------------------
 
 func (c *dohClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
 	// 创建DNS查询
 	msg := &dns.Msg{}
 	msg.SetQuestion(dns.Fqdn(host), dns.TypeA)
+	// 添加EDNS0记录支持
+	// EDNS0允许更大的UDP数据包（4096字节），并支持DNSSEC等扩展功能
+	// 同时添加EDNS Client Subnet (ECS)选项，发送TVGate服务器所在IP地址
+	localIP, err := getLocalIP()
+	if err == nil && localIP != nil {
+		// 创建ECS选项
+		ecs := &dns.EDNS0_SUBNET{
+			Code:          dns.EDNS0SUBNET,
+			Family:        1, // IPv4
+			SourceNetmask: 24,
+			SourceScope:   0,
+			Address:       localIP,
+		}
+
+		// 创建OPT记录并添加ECS选项
+		opt := &dns.OPT{
+			Hdr: dns.RR_Header{
+				Name:   ".",
+				Rrtype: dns.TypeOPT,
+			},
+			Option: []dns.EDNS0{ecs},
+		}
+
+		// 将OPT记录添加到DNS查询的额外记录部分
+		msg.Extra = append(msg.Extra, opt)
+	} else {
+		// 如果无法获取本地IP，则只使用基本的EDNS0功能
+		msg.SetEdns0(4096, false)
+	}
 
 	// 将查询打包成字节
 	queryBytes, err := msg.Pack()
@@ -459,6 +534,35 @@ func (c *doh3Client) LookupIPAddr(ctx context.Context, host string) ([]net.IPAdd
 	// 创建DNS查询
 	msg := &dns.Msg{}
 	msg.SetQuestion(dns.Fqdn(host), dns.TypeA)
+	// 添加EDNS0记录支持
+	// EDNS0允许更大的UDP数据包（4096字节），并支持DNSSEC等扩展功能
+	// 同时添加EDNS Client Subnet (ECS)选项，发送TVGate服务器所在IP地址
+	localIP, err := getLocalIP()
+	if err == nil && localIP != nil {
+		// 创建ECS选项
+		ecs := &dns.EDNS0_SUBNET{
+			Code:          dns.EDNS0SUBNET,
+			Family:        1, // IPv4
+			SourceNetmask: 24,
+			SourceScope:   0,
+			Address:       localIP,
+		}
+
+		// 创建OPT记录并添加ECS选项
+		opt := &dns.OPT{
+			Hdr: dns.RR_Header{
+				Name:   ".",
+				Rrtype: dns.TypeOPT,
+			},
+			Option: []dns.EDNS0{ecs},
+		}
+
+		// 将OPT记录添加到DNS查询的额外记录部分
+		msg.Extra = append(msg.Extra, opt)
+	} else {
+		// 如果无法获取本地IP，则只使用基本的EDNS0功能
+		msg.SetEdns0(4096, false)
+	}
 
 	// 将查询打包成字节
 	queryBytes, err := msg.Pack()
@@ -490,6 +594,35 @@ func (c *dnsCryptClient) LookupIPAddr(ctx context.Context, host string) ([]net.I
 	// 创建DNS查询
 	msg := &dns.Msg{}
 	msg.SetQuestion(dns.Fqdn(host), dns.TypeA)
+	// 添加EDNS0记录支持
+	// EDNS0允许更大的UDP数据包（4096字节），并支持DNSSEC等扩展功能
+	// 同时添加EDNS Client Subnet (ECS)选项，发送TVGate服务器所在IP地址
+	localIP, err := getLocalIP()
+	if err == nil && localIP != nil {
+		// 创建ECS选项
+		ecs := &dns.EDNS0_SUBNET{
+			Code:          dns.EDNS0SUBNET,
+			Family:        1, // IPv4
+			SourceNetmask: 24,
+			SourceScope:   0,
+			Address:       localIP,
+		}
+
+		// 创建OPT记录并添加ECS选项
+		opt := &dns.OPT{
+			Hdr: dns.RR_Header{
+				Name:   ".",
+				Rrtype: dns.TypeOPT,
+			},
+			Option: []dns.EDNS0{ecs},
+		}
+
+		// 将OPT记录添加到DNS查询的额外记录部分
+		msg.Extra = append(msg.Extra, opt)
+	} else {
+		// 如果无法获取本地IP，则只使用基本的EDNS0功能
+		msg.SetEdns0(4096, false)
+	}
 
 	// 将查询打包成字节
 	queryBytes, err := msg.Pack()
@@ -515,6 +648,35 @@ func (c *dotClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr
 	// 创建DNS查询
 	msg := &dns.Msg{}
 	msg.SetQuestion(dns.Fqdn(host), dns.TypeA)
+	// 添加EDNS0记录支持
+	// EDNS0允许更大的UDP数据包（4096字节），并支持DNSSEC等扩展功能
+	// 同时添加EDNS Client Subnet (ECS)选项，发送TVGate服务器所在IP地址
+	localIP, err := getLocalIP()
+	if err == nil && localIP != nil {
+		// 创建ECS选项
+		ecs := &dns.EDNS0_SUBNET{
+			Code:          dns.EDNS0SUBNET,
+			Family:        1, // IPv4
+			SourceNetmask: 24,
+			SourceScope:   0,
+			Address:       localIP,
+		}
+
+		// 创建OPT记录并添加ECS选项
+		opt := &dns.OPT{
+			Hdr: dns.RR_Header{
+				Name:   ".",
+				Rrtype: dns.TypeOPT,
+			},
+			Option: []dns.EDNS0{ecs},
+		}
+
+		// 将OPT记录添加到DNS查询的额外记录部分
+		msg.Extra = append(msg.Extra, opt)
+	} else {
+		// 如果无法获取本地IP，则只使用基本的EDNS0功能
+		msg.SetEdns0(4096, false)
+	}
 
 	// 将查询打包成字节
 	queryBytes, err := msg.Pack()
@@ -607,6 +769,35 @@ func (c *quicClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAdd
 	// 创建DNS查询
 	msg := &dns.Msg{}
 	msg.SetQuestion(dns.Fqdn(host), dns.TypeA)
+	// 添加EDNS0记录支持
+	// EDNS0允许更大的UDP数据包（4096字节），并支持DNSSEC等扩展功能
+	// 同时添加EDNS Client Subnet (ECS)选项，发送TVGate服务器所在IP地址
+	localIP, err := getLocalIP()
+	if err == nil && localIP != nil {
+		// 创建ECS选项
+		ecs := &dns.EDNS0_SUBNET{
+			Code:          dns.EDNS0SUBNET,
+			Family:        1, // IPv4
+			SourceNetmask: 24,
+			SourceScope:   0,
+			Address:       localIP,
+		}
+
+		// 创建OPT记录并添加ECS选项
+		opt := &dns.OPT{
+			Hdr: dns.RR_Header{
+				Name:   ".",
+				Rrtype: dns.TypeOPT,
+			},
+			Option: []dns.EDNS0{ecs},
+		}
+
+		// 将OPT记录添加到DNS查询的额外记录部分
+		msg.Extra = append(msg.Extra, opt)
+	} else {
+		// 如果无法获取本地IP，则只使用基本的EDNS0功能
+		msg.SetEdns0(4096, false)
+	}
 
 	// 将查询打包成字节
 	queryBytes, err := msg.Pack()
