@@ -1,11 +1,13 @@
 package stream
 
 import (
+	// "bytes"
 	"context"
 	"crypto/md5"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	// "bytes"
 	"fmt"
 	"github.com/qist/tvgate/logger"
 	"golang.org/x/net/ipv4"
@@ -14,14 +16,80 @@ import (
 	// "sync/atomic"
 	// "sort"
 	"strconv"
-	// "strings"
+	"strings"
 	"sync"
 	"time"
 )
 
-// TS包同步字节
-const TS_SYNC_BYTE = 0x47
+// ====================
+// TS + RTP 高性能关键帧检测 + 缓存
+// 支持 H.264/H.265 (HEVC)
+// ====================
+
 const TS_PACKET_SIZE = 188
+const TS_SYNC_BYTE = 0x47
+
+// H.264 NALU 类型
+const (
+	H264_IDR  = 5
+	H264_SPS  = 7
+	H264_PPS  = 8
+	H264_STAP = 24
+	H264_FUA  = 28
+)
+
+// H.265 NALU 类型
+const (
+	HEVC_VPS   = 32
+	HEVC_SPS   = 33
+	HEVC_PPS   = 34
+	HEVC_IDR_W = 19
+	HEVC_IDR_N = 20
+	HEVC_FU    = 49
+)
+
+// ====================
+// 关键帧缓存结构
+// ====================
+type KeyFrameCache struct {
+	mu     sync.RWMutex
+	spspps map[byte][]byte
+	frames [][]byte
+	ts     []byte // 最近完整 TS 关键帧
+	rtp    []byte // 最近完整 RTP 关键帧
+	// sps     []byte
+	// pps     []byte
+	// vps     []byte // 如果是 H.265
+	// lastTS  int64  // 可选：时间戳
+	// lastRTP int64
+}
+
+// StreamFormat 封装类型 + 载荷类型
+type StreamFormat struct {
+	Container string // ts / rtp / ps / unknown
+	Payload   string // h264 / h265 / unknown
+}
+
+func NewKeyFrameCache() *KeyFrameCache {
+	return &KeyFrameCache{
+		spspps: make(map[byte][]byte),
+		frames: make([][]byte, 0, 16),
+	}
+}
+func (c *KeyFrameCache) AddSPSPPS(naluType byte, data []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.spspps[naluType] = append([]byte(nil), data...)
+}
+
+func (c *KeyFrameCache) AddFrame(data []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.frames = append(c.frames, append([]byte(nil), data...))
+	if len(c.frames) > 16 { // 限制缓存数量
+		c.frames = c.frames[len(c.frames)-16:]
+	}
+}
 
 // ====================
 // RingBuffer
@@ -107,15 +175,16 @@ type StreamHub struct {
 	LastKeyFrame   []byte
 	LastInitFrame  [][]byte
 	CacheBuffer    *RingBuffer
-	DetectedFormat string
+	DetectedFormat StreamFormat
 	AddrList       []string
 	PacketCount    uint64
 	DropCount      uint64
 	// hasSPS         bool
 	// hasPPS         bool
-	state     int // 0: stopped, 1: playing, 2: error
-	stateCond *sync.Cond
-	OnEmpty   func(h *StreamHub) // 当客户端数量为0时触发
+	state         int // 0: stopped, 1: playing, 2: error
+	stateCond     *sync.Cond
+	OnEmpty       func(h *StreamHub) // 当客户端数量为0时触发
+	KeyFrameCache *KeyFrameCache
 }
 
 // ====================
@@ -127,15 +196,16 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 	}
 
 	hub := &StreamHub{
-		Clients:     make(map[string]hubClient),
-		AddCh:       make(chan hubClient, 1024),
-		RemoveCh:    make(chan string, 1024),
-		UdpConns:    make([]*net.UDPConn, 0, len(addrs)),
-		CacheBuffer: NewRingBuffer(8192), // 默认缓存8192帧
-		Closed:      make(chan struct{}),
-		BufPool:     &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
-		AddrList:    addrs,
-		state:       StatePlaying,
+		Clients:       make(map[string]hubClient),
+		AddCh:         make(chan hubClient, 1024),
+		RemoveCh:      make(chan string, 1024),
+		UdpConns:      make([]*net.UDPConn, 0, len(addrs)),
+		CacheBuffer:   NewRingBuffer(8192), // 默认缓存8192帧
+		Closed:        make(chan struct{}),
+		BufPool:       &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
+		AddrList:      addrs,
+		state:         StatePlaying,
+		KeyFrameCache: NewKeyFrameCache(),
 	}
 	hub.stateCond = sync.NewCond(&hub.Mu)
 
@@ -281,7 +351,7 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 		}
 
 		if cm != nil && cm.Dst.String() != dstIP {
-			bufePool.Put(buf)
+			// bufePool.Put(buf)
 			continue
 		}
 
@@ -313,22 +383,28 @@ func (h *StreamHub) broadcast(data []byte) {
 		return
 	}
 
-	// 更新基本状态
+	// 更新状态
 	h.PacketCount++
 	h.LastFrame = data
 	h.CacheBuffer.Push(data)
 
-	// 检测流格式
-	if h.DetectedFormat == "" {
-		h.DetectedFormat = detectStreamFormat(data)
+	// 自动检测流格式
+	if h.DetectedFormat.Container == "" {
+		h.DetectedFormat = detectStreamFormatEnhanced(data)
 	}
 
-	// 关键帧处理
-	lastKeyFrame = h.isKeyFrameByFormat(data, h.DetectedFormat)
+	// 检测关键帧（使用缓存）
+	if h.KeyFrameCache == nil {
+		h.KeyFrameCache = NewKeyFrameCache()
+	}
+
+	lastKeyFrame = h.isKeyFrameByFormat(data, h.DetectedFormat, h.KeyFrameCache)
+
 	if lastKeyFrame {
+		logFrameInfo(h.DetectedFormat, data, true)
 		h.LastKeyFrame = data
 
-		// 复用 slice 池，避免频繁分配
+		// 更新初始化缓存（slice 池复用）
 		tmp := framePool.Get().([][]byte)
 		tmp = tmp[:0]
 		tmp = append(tmp, h.CacheBuffer.GetAll()...)
@@ -338,7 +414,7 @@ func (h *StreamHub) broadcast(data []byte) {
 		h.LastInitFrame = tmp
 	}
 
-	// 状态更新
+	// 播放状态更新
 	if h.state != StatePlaying {
 		h.state = StatePlaying
 		h.stateCond.Broadcast()
@@ -351,21 +427,23 @@ func (h *StreamHub) broadcast(data []byte) {
 	}
 	h.Mu.Unlock()
 
-	// 非阻塞广播
+	// 非阻塞广播数据
 	for _, client := range clients {
 		select {
 		case client.ch <- data:
-			// 正常发送
+			// 发送成功
 		default:
+			// 丢帧处理
 			h.Mu.Lock()
 			h.DropCount++
-			// 当丢帧过多时，尝试清空客户端缓冲区并发送关键帧
-			if h.DropCount%100 == 0 { // 每丢100帧尝试恢复
+			// 每丢100帧尝试恢复
+			if h.DropCount%100 == 0 {
+				// 清空一帧旧数据
 				select {
-				case <-client.ch: // 清空一帧旧数据
+				case <-client.ch:
 				default:
 				}
-				// 尝试发送关键帧恢复
+				// 发送关键帧恢复
 				if h.LastKeyFrame != nil {
 					select {
 					case client.ch <- h.LastKeyFrame:
@@ -427,68 +505,58 @@ func (h *StreamHub) run() {
 // 新客户端发送初始化帧
 // ====================
 // sendInitial 发送初始化帧给新客户端，支持批量发送和智能丢帧
-// 修改 sendInitial 函数
 func (h *StreamHub) sendInitial(ch chan []byte) {
-    h.Mu.Lock()
-    frames := framePool.Get().([][]byte)
-    frames = frames[:0]
-    frames = append(frames, h.CacheBuffer.GetAll()...)
-    detectedFormat := h.DetectedFormat
-    h.Mu.Unlock()
+	// 获取缓存快照，锁粒度最小化
+	h.Mu.Lock()
+	cachedFrames := h.CacheBuffer.GetAll()
+	detectedFormat := h.DetectedFormat
+	keyCache := h.KeyFrameCache
+	h.Mu.Unlock()
 
-    go func() {
-        defer framePool.Put(frames)
-        
-        // Use a select with the hub's Closed channel to exit early if needed.
-        select {
-        case <-h.Closed:
-            return
-        default:
-            // Do nothing, continue with initial send.
-        }
+	go func() {
+		// 从对象池取 slice
+		frames := framePool.Get().([][]byte)
+		defer framePool.Put(frames)
 
-        // 找最近关键帧
-        keyFrameIndex := -1
-        for i := len(frames) - 1; i >= 0; i-- {
-            if h.isKeyFrameByFormat(frames[i], detectedFormat) {
-                keyFrameIndex = i
-                break
-            }
-        }
+		// 清空并拷贝缓存
+		frames = frames[:0]
+		frames = append(frames, cachedFrames...)
 
-        start := 0
-        if keyFrameIndex >= 0 {
-            start = keyFrameIndex
-        }
+		// 找到最近关键帧索引
+		keyFrameIndex := -1
+		for i := len(frames) - 1; i >= 0; i-- {
+			if h.isKeyFrameByFormat(frames[i], detectedFormat, keyCache) {
+				keyFrameIndex = i
+				logFrameInfo(detectedFormat, frames[i], true)
+				break
+			}
+		}
 
-        // 移除帧数限制，发送从关键帧开始的所有缓存帧
-        end := len(frames)
+		start := 0
+		if keyFrameIndex >= 0 {
+			start = keyFrameIndex
+		}
 
-        // 增加发送间隔，避免突发流量
-        sendInterval := time.Millisecond * 2 // 2ms间隔
-        for _, f := range frames[start:end] {
-            // Check for hub closure before sending
-            select {
-            case <-h.Closed:
-                return
-            default:
-            }
+		// 从关键帧开始发送所有缓存帧
+		for _, f := range frames[start:] {
+			// 检查 hub 是否已关闭
+			select {
+			case <-h.Closed:
+				return
+			default:
+			}
 
-            // Attempt to send, gracefully handle a closed channel or full buffer.
-            select {
-            case ch <- f:
-                time.Sleep(sendInterval) // 控制发送速率
-            default:
-                // Channel is likely full or has been closed by another goroutine.
-                // We can't distinguish between these two states directly,
-                // so we assume the other goroutine will handle the client
-                // cleanup. Simply return to avoid a panic.
-                return
-            }
-        }
-    }()
+			// 非阻塞发送，防止 panic
+			select {
+			case ch <- f:
+				// 数据透传，无限速
+			default:
+				// channel 已满或已关闭，直接退出
+				return
+			}
+		}
+	}()
 }
-
 
 // ====================
 // HTTP 播放
@@ -509,13 +577,24 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 		connID = strconv.FormatInt(time.Now().UnixNano(), 10)
 	}
 
-	ch := make(chan []byte, 1024)
+	// 增加缓冲区大小，避免ExoPlayer等播放器卡顿
+	ch := make(chan []byte, 4096)
 	h.AddCh <- hubClient{ch: ch, connID: connID}
 	defer func() { h.RemoveCh <- connID }()
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("ContentFeatures.DLNA.ORG", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
 	w.Header().Set("TransferMode.DLNA.ORG", "Streaming")
 	w.Header().Set("Content-Type", contentType)
+
+	userAgent := r.Header.Get("User-Agent")
+	switch {
+	case strings.Contains(userAgent, "VLC"):
+		w.Header().Del("Transfer-Encoding")
+		w.Header().Set("Accept-Ranges", "none")
+	default:
+		w.Header().Set("Transfer-Encoding", "chunked")
+		w.Header().Set("Accept-Ranges", "none")
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
@@ -524,8 +603,10 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 
 	ctx := r.Context()
 	bufferedBytes := 0
-	const maxBufferSize = 512 * 1024 // 512KB缓冲区
-	flushTicker := time.NewTicker(100 * time.Millisecond)
+	// 减少缓冲区大小，提高实时性，减少延迟
+	const maxBufferSize = 128 * 1024 // 128KB缓冲区
+	// 缩短刷新间隔，提高实时性
+	flushTicker := time.NewTicker(50 * time.Millisecond)
 	defer flushTicker.Stop()
 	activeTicker := time.NewTicker(5 * time.Second)
 	defer activeTicker.Stop()
@@ -545,6 +626,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 				return
 			}
 			bufferedBytes += n
+			// 降低缓冲阈值，更快刷新数据
 			if bufferedBytes >= maxBufferSize {
 				flusher.Flush()
 				bufferedBytes = 0
@@ -847,63 +929,226 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 // )
 
 // 添加格式自动检测的辅助函数
-func detectStreamFormat(pkt []byte) string {
-	// 检查TS格式: 第一个字节是否为0x47且包长为188的倍数
-	if len(pkt) >= 1 && pkt[0] == TS_SYNC_BYTE && len(pkt)%TS_PACKET_SIZE == 0 {
-		return "ts"
+// func detectStreamFormat(pkt []byte) string {
+// 	// 检查TS格式: 第一个字节是否为0x47且包长为188的倍数
+// 	if len(pkt) >= 1 && pkt[0] == TS_SYNC_BYTE && len(pkt)%TS_PACKET_SIZE == 0 {
+// 		return "ts"
+// 	}
+
+// 	// 检查RTP格式: 版本字段为2
+// 	if len(pkt) >= 1 {
+// 		version := (pkt[0] >> 6) & 0x03
+// 		if version == 2 {
+// 			return "rtp"
+// 		}
+// 	}
+
+// 	return "ts" // 默认TS格式
+// }
+
+// detectStreamFormatEnhanced 检测封装和载荷（支持 TS/RTP/PS + H.264/H.265）
+// 全局限量打印计数（并发安全）
+// ====================
+// 全局限量打印计数（并发安全）
+// ====================
+var logCount = struct {
+	sync.Mutex
+	m map[string]int
+}{m: make(map[string]int)}
+
+// 打印帧日志的通用函数
+func logFrameInfo(format StreamFormat, pkt []byte, isKey bool) {
+	key := format.Container + "/" + format.Payload
+	logCount.Lock()
+	defer logCount.Unlock()
+
+	if logCount.m == nil {
+		logCount.m = make(map[string]int)
 	}
 
-	// 检查RTP格式: 版本字段为2
-	if len(pkt) >= 1 {
-		version := (pkt[0] >> 6) & 0x03
-		if version == 2 {
-			return "rtp"
+	if logCount.m[key] < 10 {
+		logCount.m[key]++
+
+		// 帧类型描述
+		frameType := "非关键帧"
+		if isKey {
+			frameType = "关键帧"
+		} else if format.Payload != "unknown" {
+			frameType = format.Payload
 		}
-	}
 
-	return "ts" // 默认TS格式
+		// RTP 包头信息
+		version, padding, extension := uint8(0), uint8(0), uint8(0)
+		csrcCount, marker, payloadType := 0, uint8(0), 0
+		sequence, timestamp, ssrc := uint16(0), uint32(0), uint32(0)
+		if len(pkt) >= 12 && format.Container == "rtp" {
+			version = (pkt[0] >> 6) & 0x03
+			padding = (pkt[0] >> 5) & 0x01
+			extension = (pkt[0] >> 4) & 0x01
+			csrcCount = int(pkt[0] & 0x0F)
+			marker = (pkt[1] >> 7) & 0x01
+			payloadType = int(pkt[1] & 0x7F)
+			sequence = binary.BigEndian.Uint16(pkt[2:4])
+			timestamp = binary.BigEndian.Uint32(pkt[4:8])
+			ssrc = binary.BigEndian.Uint32(pkt[8:12])
+		}
+
+		debugInfo := fmt.Sprintf("版本=%d 填充=%d 扩展=%d CSRC数量=%d 标记=%d 负载类型=%d 序列号=%d 时间戳=%d SSRC=%d",
+			version, padding, extension, csrcCount, marker, payloadType, sequence, timestamp, ssrc)
+
+		// 预览前16字节
+		previewLen := 16
+		if len(pkt) < previewLen {
+			previewLen = len(pkt)
+		}
+		preview := fmt.Sprintf("% X", pkt[:previewLen])
+
+		fmt.Printf("🎯 帧检测 [%d/10] 格式=%s 类型=%s 长度=%d 预览=%s %s\n",
+			logCount.m[key], format, frameType, len(pkt), preview, debugInfo)
+	}
 }
 
-func (h *StreamHub) isKeyFrameByFormat(pkt []byte, format string) bool {
-	var result bool
-	// var frameType string
-	switch format {
-	case "ts":
-		result = isKeyFrameTS(pkt)
-	case "rtp":
-		result = isKeyFrameRTP(pkt)
+// ====================
+// 流格式检测
+// ====================
+func detectStreamFormatEnhanced(pkt []byte) StreamFormat {
+	format := StreamFormat{
+		Container: "unknown",
+		Payload:   "unknown",
+	}
+
+	// ======== 检测封装 ========
+	switch {
+	case isMPEGTS(pkt):
+		format.Container = "ts"
+	case isRTP(pkt):
+		format.Container = "rtp"
+	case isMPEGPS(pkt):
+		format.Container = "ps"
 	default:
-		// 自动检测格式
-		if isKeyFrameTS(pkt) {
-			result = true
-		} else {
-			result = isKeyFrameRTP(pkt)
+		format.Container = "unknown"
+	}
+
+	// ======== 检测载荷 ========
+	if isH265(pkt) {
+		format.Payload = "h265"
+	} else if isH264(pkt) {
+		format.Payload = "h264"
+	} else {
+		format.Payload = "unknown"
+	}
+
+	// 打印检测日志（非关键帧）
+	logFrameInfo(format, pkt, false)
+
+	return format
+}
+
+// ======== TS 检测 ========
+func isMPEGTS(pkt []byte) bool {
+	if len(pkt) < TS_PACKET_SIZE*5 {
+		return false
+	}
+	for i := 0; i < 5; i++ {
+		if pkt[i*TS_PACKET_SIZE] != TS_SYNC_BYTE {
+			return false
+		}
+	}
+	return true
+}
+
+// ======== RTP 检测 ========
+func isRTP(pkt []byte) bool {
+	if len(pkt) < 12 {
+		return false
+	}
+	version := (pkt[0] >> 6) & 0x03
+	return version == 2
+}
+
+// ======== H.264 检测 ========
+func isH264(pkt []byte) bool {
+	if len(pkt) < 4 {
+		return false
+	}
+
+	for i := 0; i < len(pkt)-4; i++ {
+		if pkt[i] == 0x00 && pkt[i+1] == 0x00 {
+			var naluType byte
+			if pkt[i+2] == 0x01 {
+				naluType = pkt[i+3] & 0x1F
+			} else if pkt[i+2] == 0x00 && pkt[i+3] == 0x01 {
+				naluType = pkt[i+4] & 0x1F
+			} else {
+				continue
+			}
+			switch naluType {
+			case H264_SPS, H264_PPS, H264_IDR, H264_FUA, H264_STAP:
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ======== H.265 检测 ========
+func isH265(pkt []byte) bool {
+	if len(pkt) < 5 {
+		return false
+	}
+
+	for i := 0; i < len(pkt)-5; i++ {
+		if pkt[i] == 0x00 && pkt[i+1] == 0x00 {
+			var naluType byte
+			if pkt[i+2] == 0x01 {
+				naluType = (pkt[i+3] >> 1) & 0x3F
+			} else if pkt[i+2] == 0x00 && pkt[i+3] == 0x01 {
+				naluType = (pkt[i+4] >> 1) & 0x3F
+			} else {
+				continue
+			}
+			switch naluType {
+			case HEVC_VPS, HEVC_SPS, HEVC_PPS, HEVC_IDR_W, HEVC_IDR_N, HEVC_FU:
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ======== MPEG-PS 检测 ========
+func isMPEGPS(pkt []byte) bool {
+	if len(pkt) < 4 {
+		return false
+	}
+	return pkt[0] == 0x00 && pkt[1] == 0x00 && pkt[2] == 0x01 && pkt[3] == 0xBA
+}
+
+// 关键帧检测统一接口
+func (h *StreamHub) isKeyFrameByFormat(pkt []byte, format StreamFormat, cache *KeyFrameCache) bool {
+	var isKey bool
+	switch format.Container {
+	case "ts":
+		isKey = isKeyFrameTS(pkt, cache)
+	case "rtp":
+		isKey = isKeyFrameRTP(pkt, cache)
+	default:
+		switch format.Payload {
+		case "h264":
+			isKey = isKeyFrameH264(pkt, cache)
+		case "h265":
+			isKey = isKeyFrameH265(pkt, cache)
+		default:
+			isKey = false
 		}
 	}
 
-	// 确定帧类型
-	// if result {
-	// 	frameType = "关键帧"
-	// } else {
-	// 	frameType = "非关键帧"
-	// }
+	// 打印关键帧日志
+	if isKey {
+		logFrameInfo(format, pkt, true)
+	}
 
-	// 限制日志打印数量
-	// if result {
-	// 	if count := atomic.LoadInt32(&keyFrameLogCount); count < maxLogCount {
-	// 		if atomic.CompareAndSwapInt32(&keyFrameLogCount, count, count+1) {
-	// 			h.logFrameDetection(pkt, format, frameType, count+1)
-	// 		}
-	// 	}
-	// } else {
-	// 	if count := atomic.LoadInt32(&nonKeyFrameLogCount); count < maxLogCount {
-	// 		if atomic.CompareAndSwapInt32(&nonKeyFrameLogCount, count, count+1) {
-	// 			h.logFrameDetection(pkt, format, frameType, count+1)
-	// 		}
-	// 	}
-	// }
-
-	return result
+	return isKey
 }
 
 // 日志打印辅助函数
@@ -1002,23 +1247,152 @@ func (h *StreamHub) isKeyFrameByFormat(pkt []byte, format string) bool {
 // 	atomic.StoreInt32(&nonKeyFrameLogCount, 0)
 // }
 
-// 高性能 TS 关键帧检测（无结构体写入）
-func isKeyFrameTS(pkt []byte) bool {
-	const TS_PACKET_SIZE = 188
-	const TS_SYNC_BYTE = 0x47
+// 添加缓存
+// 保存关键帧到缓存
+func (h *StreamHub) cacheKeyFrame(pkt []byte, format string) {
+	h.KeyFrameCache.mu.Lock()
+	defer h.KeyFrameCache.mu.Unlock()
 
+	switch format {
+	case "ts":
+		h.KeyFrameCache.ts = append([]byte(nil), pkt...)
+	case "rtp":
+		h.KeyFrameCache.rtp = append([]byte(nil), pkt...)
+	}
+	// 可在 isKeyFrameTS / isKeyFrameRTP 内部更新 SPS/PPS/VPS
+}
+
+// 获取缓存关键帧
+// func (h *StreamHub) getCachedKeyFrame(format string) []byte {
+// 	h.KeyFrameCache.mu.RLock()
+// 	defer h.KeyFrameCache.mu.RUnlock()
+
+// 	switch format {
+// 	case "ts":
+// 		return append([]byte(nil), h.KeyFrameCache.ts...)
+// 	case "rtp":
+// 		return append([]byte(nil), h.KeyFrameCache.rtp...)
+// 	default:
+// 		return nil
+// 	}
+// }
+
+// ====================
+// ====================
+// TS 关键帧检测（H.264/H.265）
+// ====================
+// ====================
+// ====================
+// 打印关键帧日志
+// ====================
+func logKeyFrame(format StreamFormat, pkt []byte) {
+	logFrameInfo(format, pkt, true)
+}
+
+// ====================
+// H.264 关键帧检测（TS/RTP 内部使用）
+// ====================
+func isKeyFrameH264(pkt []byte, cache *KeyFrameCache) bool {
+	if len(pkt) < 4 {
+		return false
+	}
+
+	hasSPS, hasPPS := false, false
+
+	for i := 0; i < len(pkt)-4; i++ {
+		if pkt[i] != 0x00 || pkt[i+1] != 0x00 {
+			continue
+		}
+
+		var naluType byte
+		var nalu []byte
+		if pkt[i+2] == 0x01 {
+			naluType = pkt[i+3] & 0x1F
+			nalu = pkt[i+3:]
+		} else if pkt[i+2] == 0x00 && pkt[i+3] == 0x01 {
+			naluType = pkt[i+4] & 0x1F
+			nalu = pkt[i+4:]
+		} else {
+			continue
+		}
+
+		switch naluType {
+		case H264_SPS, H264_PPS:
+			cache.AddSPSPPS(naluType, nalu)
+			if naluType == H264_SPS {
+				hasSPS = true
+			} else if naluType == H264_PPS {
+				hasPPS = true
+			}
+		case H264_IDR:
+			if hasSPS && hasPPS {
+				cache.AddFrame(pkt)
+				logKeyFrame(StreamFormat{Container: "unknown", Payload: "h264"}, pkt)
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// ====================
+// H.265 关键帧检测（TS/RTP 内部使用）
+// ====================
+func isKeyFrameH265(pkt []byte, cache *KeyFrameCache) bool {
+	if len(pkt) < 5 {
+		return false
+	}
+
+	hasSPS, hasPPS := false, false
+
+	for i := 0; i < len(pkt)-5; i++ {
+		if pkt[i] != 0x00 || pkt[i+1] != 0x00 {
+			continue
+		}
+
+		var naluType byte
+		var nalu []byte
+		if pkt[i+2] == 0x01 {
+			naluType = (pkt[i+3] >> 1) & 0x3F
+			nalu = pkt[i+3:]
+		} else if pkt[i+2] == 0x00 && pkt[i+3] == 0x01 {
+			naluType = (pkt[i+4] >> 1) & 0x3F
+			nalu = pkt[i+4:]
+		} else {
+			continue
+		}
+
+		switch naluType {
+		case HEVC_VPS, HEVC_SPS, HEVC_PPS:
+			cache.AddSPSPPS(naluType, nalu)
+			if naluType == HEVC_SPS {
+				hasSPS = true
+			} else if naluType == HEVC_PPS {
+				hasPPS = true
+			}
+		case HEVC_IDR_W, HEVC_IDR_N:
+			if hasSPS && hasPPS {
+				cache.AddFrame(pkt)
+				logKeyFrame(StreamFormat{Container: "unknown", Payload: "h265"}, pkt)
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// ====================
+// 3️⃣ TS 封装关键帧检测
+// ====================
+func isKeyFrameTS(pkt []byte, cache *KeyFrameCache) bool {
+	// 复用你之前的 TS 关键帧检测逻辑
 	if len(pkt) != TS_PACKET_SIZE || pkt[0] != TS_SYNC_BYTE {
 		return false
 	}
 
-	// 更健壮的PID和适配字段处理
-	pid := (uint16(pkt[1]&0x1F) << 8) | uint16(pkt[2])
 	adaptation := (pkt[3] >> 4) & 0x03
-
-	// 只处理视频PID（通常为0x100-0x11FF）
-	if pid < 0x100 || pid > 0x11FF {
-		return false
-	}
 	payloadStart := 4
 	if adaptation == 2 || adaptation == 3 {
 		adaptLen := int(pkt[4])
@@ -1029,51 +1403,58 @@ func isKeyFrameTS(pkt []byte) bool {
 	}
 
 	payload := pkt[payloadStart:]
-	if len(payload) < 4 {
+	if len(payload) < 1 {
 		return false
 	}
 
 	hasSPS, hasPPS := false, false
+
 	for i := 0; i < len(payload)-4; i++ {
 		if payload[i] != 0x00 || payload[i+1] != 0x00 {
 			continue
 		}
+
 		var naluType byte
+		var nalu []byte
+
 		if payload[i+2] == 0x01 {
 			naluType = payload[i+3] & 0x1F
+			nalu = payload[i+3:]
 		} else if payload[i+2] == 0x00 && payload[i+3] == 0x01 {
 			naluType = payload[i+4] & 0x1F
+			nalu = payload[i+4:]
 		} else {
 			continue
 		}
 
 		switch naluType {
-		case 7:
-			hasSPS = true
-		case 8:
-			hasPPS = true
-		case 5:
+		case H264_SPS, H264_PPS, HEVC_SPS, HEVC_PPS, HEVC_VPS:
+			cache.AddSPSPPS(naluType, nalu)
+			if naluType == H264_SPS || naluType == HEVC_SPS {
+				hasSPS = true
+			}
+			if naluType == H264_PPS || naluType == HEVC_PPS {
+				hasPPS = true
+			}
+		case H264_IDR, HEVC_IDR_W, HEVC_IDR_N:
 			if hasSPS && hasPPS {
+				cache.AddFrame(pkt)
 				return true
 			}
 		}
-		// 如果已拥有 SPS 和 PPS，但还没遇到 IDR，则可以提前退出扫描前半部分
-		if hasSPS && hasPPS && naluType != 5 {
-			break
-		}
 	}
+
 	return false
 }
 
-// 高性能 RTP 关键帧检测（TS over RTP + H.264）
-// 纯函数，无结构体状态修改，可并发安全
-func isKeyFrameRTP(pkt []byte) bool {
-	const TS_PACKET_SIZE = 188
-	const TS_SYNC_BYTE = 0x47
-
+// ====================
+// 4️⃣ RTP 封装关键帧检测
+// ====================
+func isKeyFrameRTP(pkt []byte, cache *KeyFrameCache) bool {
 	if len(pkt) < 12 {
 		return false
 	}
+
 	version := (pkt[0] >> 6) & 0x03
 	if version != 2 {
 		return false
@@ -1081,8 +1462,8 @@ func isKeyFrameRTP(pkt []byte) bool {
 
 	csrcCount := int(pkt[0] & 0x0F)
 	extension := (pkt[0] >> 4) & 0x01
-	payloadType := pkt[1] & 0x7F
 	headerLen := 12 + 4*csrcCount
+
 	if extension == 1 {
 		if len(pkt) < headerLen+4 {
 			return false
@@ -1090,17 +1471,23 @@ func isKeyFrameRTP(pkt []byte) bool {
 		extLen := int(binary.BigEndian.Uint16(pkt[headerLen+2:headerLen+4])) * 4
 		headerLen += 4 + extLen
 	}
+
 	if len(pkt) <= headerLen {
 		return false
 	}
 
 	payload := pkt[headerLen:]
+	if len(payload) < 1 {
+		return false
+	}
+
+	payloadType := pkt[1] & 0x7F
 
 	// TS over RTP
-	if payloadType == 33 {
+	if payloadType == 33 && len(payload) >= TS_PACKET_SIZE {
 		for i := 0; i+TS_PACKET_SIZE <= len(payload); i += TS_PACKET_SIZE {
 			if payload[i] == TS_SYNC_BYTE {
-				if isKeyFrameTS(payload[i : i+TS_PACKET_SIZE]) {
+				if isKeyFrameTS(payload[i:i+TS_PACKET_SIZE], cache) {
 					return true
 				}
 			}
@@ -1108,21 +1495,14 @@ func isKeyFrameRTP(pkt []byte) bool {
 		return false
 	}
 
-	// H.264
-	if len(payload) < 1 {
-		return false
-	}
-	hasSPS, hasPPS := false, false
+	// H.264 / H.265 裸NALU
 	naluType := payload[0] & 0x1F
 
 	switch naluType {
-	case 5: // IDR
+	case H264_IDR:
+		cache.AddFrame(pkt)
 		return true
-	case 7:
-		hasSPS = true
-	case 8:
-		hasPPS = true
-	case 24: // STAP-A
+	case H264_STAP:
 		offset := 1
 		for offset+2 < len(payload) {
 			nalSize := int(binary.BigEndian.Uint16(payload[offset : offset+2]))
@@ -1130,26 +1510,31 @@ func isKeyFrameRTP(pkt []byte) bool {
 			if offset+nalSize > len(payload) {
 				break
 			}
-			nalu := payload[offset]
-			nt := nalu & 0x1F
-			if nt == 7 {
-				hasSPS = true
-			} else if nt == 8 {
-				hasPPS = true
-			} else if nt == 5 && hasSPS && hasPPS {
+			nt := payload[offset] & 0x1F
+			if nt == H264_IDR {
+				cache.AddFrame(pkt)
 				return true
 			}
 			offset += nalSize
 		}
-	case 28: // FU-A
-		if len(payload) < 2 {
-			return false
+	case H264_FUA:
+		if len(payload) >= 2 && (payload[1]>>7)&0x01 == 1 && (payload[1]&0x1F) == H264_IDR {
+			cache.AddFrame(pkt)
+			return true
 		}
-		startBit := (payload[1] >> 7) & 0x01
-		if startBit == 1 {
-			fragNaluType := payload[1] & 0x1F
-			if fragNaluType == 5 && hasSPS && hasPPS {
-				return true
+	default:
+		// H.265
+		nt := (payload[0] >> 1) & 0x3F
+		switch nt {
+		case HEVC_IDR_W, HEVC_IDR_N:
+			cache.AddFrame(pkt)
+			return true
+		case HEVC_FU:
+			if len(payload) >= 3 && (payload[2]>>7)&0x01 == 1 {
+				if (payload[2]&0x3F) == HEVC_IDR_W || (payload[2]&0x3F) == HEVC_IDR_N {
+					cache.AddFrame(pkt)
+					return true
+				}
 			}
 		}
 	}

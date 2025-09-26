@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/qist/tvgate/config"
 	"net/http"
+	"strings"
 )
 
 func SecurityHeaders(next http.Handler) http.Handler {
@@ -24,8 +25,18 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		// w.Header().Set("Expires", "0")
 		// r.Header.Set("Connection", "close")
 		// 3️⃣ 智能关闭 HTTP/1.1 keep-alive
-		if r.ProtoMajor == 1 {
-			w.Header().Set("Connection", "close")
+
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/udp/"):
+
+		case strings.HasPrefix(r.URL.Path, "/rtp/"):
+
+		case strings.HasPrefix(r.URL.Path, "/rtsp/"):
+
+		default:
+			if r.ProtoMajor == 1 {
+				w.Header().Set("Connection", "close")
+			}
 		}
 
 		// 4️⃣ 调用下一个 handler
