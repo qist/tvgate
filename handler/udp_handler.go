@@ -18,6 +18,9 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 	// 全局 token 验证
 	if auth.GetGlobalTokenManager() != nil {
 		tokenParam := "my_token"
+		if auth.GetGlobalTokenManager().TokenParamName != "" {
+			tokenParam = auth.GetGlobalTokenManager().TokenParamName
+		}
 		token := r.URL.Query().Get(tokenParam)
 
 		if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
@@ -50,11 +53,10 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 		config.CfgMu.RUnlock()
 	}
 
-
 	// 使用 MultiChannelHub 获取或创建 Hub
 	hub, err := stream.GlobalMultiChannelHub.GetOrCreateHub(addr, ifaces)
 	if err != nil {
-		
+
 		http.Error(w, "Failed to listen UDP: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

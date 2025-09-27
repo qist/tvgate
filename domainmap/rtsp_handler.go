@@ -29,11 +29,11 @@ import (
 
 
 
-func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
+func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request,tokenParamName string) {
 	// 全局token验证
 	clientIP := monitor.GetClientIP(r)
 	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	tokenParamName := "my_token" // 默认参数名
+	// tokenParamName := "my_token" // 默认参数名
 	path := strings.TrimPrefix(r.URL.Path, "/rtsp/")
 	if path == "" {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
@@ -50,7 +50,6 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		streamPath = "/" + parts[1]
 	}
 
-	// 构建RTSP URL
 	// 构建RTSP URL
 	rtspURL := fmt.Sprintf("rtsp://%s%s", hostPort, streamPath)
 

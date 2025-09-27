@@ -28,10 +28,13 @@ import (
 func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	clientIP := monitor.GetClientIP(r)
 	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	tokenParam := "my_token"
 
 	// 全局 token 验证
 	if auth.GetGlobalTokenManager() != nil {
+		tokenParam := "my_token"
+		if auth.GetGlobalTokenManager().TokenParamName != "" {
+			tokenParam = auth.GetGlobalTokenManager().TokenParamName
+		}
 		token := r.URL.Query().Get(tokenParam)
 		if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
@@ -59,6 +62,10 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	rtspURL := fmt.Sprintf("rtsp://%s%s", hostPort, streamPath)
 	if r.URL.RawQuery != "" {
 		if auth.GetGlobalTokenManager() != nil {
+			tokenParam := "my_token"
+			if auth.GetGlobalTokenManager().TokenParamName != "" {
+				tokenParam = auth.GetGlobalTokenManager().TokenParamName
+			}
 			// 去掉 token
 			query := r.URL.RawQuery
 			newParts := []string{}

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	// "go/token"
 	"io"
 	"net"
 	"net/http"
@@ -177,7 +178,7 @@ func (rh *RedirectHandler) redirectPolicy(req *http.Request, via []*http.Request
 // URL 替换 + Token
 // ---------------------------
 
-func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendScheme, frontendHost string, tm *auth.TokenManager) (string, bool, string) {
+func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendScheme, frontendHost string, tm *auth.TokenManager, tokenParam string) (string, bool, string) {
 	originalHost := parsedURL.Host
 	innerPath := parsedURL.Path
 
@@ -202,10 +203,10 @@ func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendSche
 
 	// 添加 token
 	if tm != nil && tm.Enabled {
-		tokenParam := tm.TokenParamName
-		if tokenParam == "" {
-			tokenParam = "token"
-		}
+		// tokenParam := tm.TokenParamName
+		// if tokenParam == "" {
+		// 	tokenParam = "token"
+		// }
 
 		// 动态 token
 		if tm.DynamicConfig != nil {
@@ -234,10 +235,12 @@ func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendSche
 	} else {
 		// 如果没有特定的token管理器，检查全局授权
 		if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled {
-			tokenParam := globalTm.TokenParamName
-			if tokenParam == "" {
-				tokenParam = "token"
-			}
+
+			// tokenParam := globalTm.TokenParamName
+
+			// if tokenParam == "" {
+			// 	tokenParam = "token"
+			// }
 
 			// 优先尝试生成动态token
 			if globalTm.DynamicConfig != nil {
@@ -477,20 +480,22 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dm.next.ServeHTTP(w, r)
 		return
 	}
-
+	cfg := dm.GetDomainConfig(r.Host)
+	if cfg == nil {
+		dm.next.ServeHTTP(w, r)
+		return
+	}
+	tokenParam := cfg.Auth.TokenParamName
+	if tokenParam == "" {
+		tokenParam = "token"
+	}
+	token := r.URL.Query().Get(tokenParam)
 	// 如果协议是RTSP，则转发给RTSP处理器
 	if protocol == "rtsp" {
 		// 构造新的URL路径，格式为 /rtsp/{targetHost}{原始路径}
 		newPath := "/rtsp/" + targetHost + r.URL.Path
-		cfg := dm.GetDomainConfig(r.Host)
-		// RTSP授权验证
-		// 1. 首先检查domainmap配置中的授权信息
-		tokenParam := cfg.Auth.TokenParamName
-		if tokenParam == "" {
-			tokenParam = "token"
-		}
 
-		token := r.URL.Query().Get(tokenParam)
+		// RTSP授权验证
 		clientIP := monitor.GetClientIP(r)
 		connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 
@@ -542,16 +547,11 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		newReq.URL.RawQuery = r.URL.RawQuery
 
 		// 转发给下一个处理器（即RTSP处理器）
-		RtspToHTTPHandler(w, newReq)
+		RtspToHTTPHandler(w, newReq, tokenParam)
 		return
 	}
 
-	cfg := dm.GetDomainConfig(r.Host)
-	if cfg == nil {
-		dm.next.ServeHTTP(w, r)
-		return
-	}
-
+	// cfg := dm.GetDomainConfig(r.Host)
 	frontendScheme := getRequestScheme(r)
 	targetURL := &url.URL{
 		Scheme:   chooseScheme(protocol, r),
@@ -578,12 +578,12 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// token 校验
-	tokenParam := cfg.Auth.TokenParamName
-	if tokenParam == "" {
-		tokenParam = "token"
-	}
-	// 使用Query().Get()已经会自动URL解码，但为了确保Base64字符不被破坏，我们直接从RawQuery解析
-	token := r.URL.Query().Get(tokenParam)
+	// tokenParam := cfg.Auth.TokenParamName
+	// if tokenParam == "" {
+	// 	tokenParam = "token"
+	// }
+	// // 使用Query().Get()已经会自动URL解码，但为了确保Base64字符不被破坏，我们直接从RawQuery解析
+	// token := r.URL.Query().Get(tokenParam)
 	var tm *auth.TokenManager
 
 	// 获取或创建对应域名映射的TokenManager实例
@@ -753,7 +753,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			targetReq.Header.Set("Host", targetHost)
 
-			resp, err = dm.doWithRedirect(clientToUse, targetReq, 10, frontendScheme, r.Host)
+			resp, err = dm.doWithRedirect(clientToUse, targetReq, 10, frontendScheme, r.Host, tokenParam)
 			if err == nil {
 				break
 			}
@@ -780,7 +780,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		targetReq.Header.Set("Host", targetHost)
 
-		resp, err = dm.doWithRedirect(client, targetReq, 10, frontendScheme, r.Host)
+		resp, err = dm.doWithRedirect(client, targetReq, 10, frontendScheme, r.Host, tokenParam)
 		if err != nil {
 			http.Error(w, "无法连接目标服务器: "+err.Error(), http.StatusBadGateway)
 			return
@@ -837,7 +837,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // 处理 301/302 重定向
 // ---------------------------
 
-func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, maxRedirect int, frontendScheme, frontendHost string) (*http.Response, error) {
+func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, maxRedirect int, frontendScheme, frontendHost string, tokenParam string) (*http.Response, error) {
 	defer dm.CleanTokenManagers()
 	reqBodyBytes, _ := io.ReadAll(req.Body)
 	// req.Body.Close()
@@ -861,7 +861,7 @@ func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, m
 				return resp, nil
 			}
 
-			newLoc, replaced, _ := dm.replaceSpecialNestedURL(parsedURL, frontendScheme, frontendHost, nil)
+			newLoc, replaced, _ := dm.replaceSpecialNestedURL(parsedURL, frontendScheme, frontendHost, nil, tokenParam)
 			if !replaced {
 				hostMapped, protocolMapped, found := dm.MapDomain(parsedURL.Host)
 				if found {
