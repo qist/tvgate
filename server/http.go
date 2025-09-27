@@ -71,106 +71,118 @@ func StartHTTPServer(ctx context.Context, addr string, upgrader *tableflip.Upgra
 
 // StartHTTPServerWithConfig 启动HTTP服务器并使用指定配置
 func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *tableflip.Upgrader, cfg *config.Config) error {
-    mux := RegisterMux(addr, cfg)
+	mux := RegisterMux(addr, cfg)
 
-    tlsConfig, certFile, keyFile := GetTLSConfig(addr, cfg)
-    enableH3 := tlsConfig != nil && addr == fmt.Sprintf(":%d", cfg.Server.TLS.HTTPSPort) && cfg.Server.TLS.EnableH3
+	tlsConfig, certFile, keyFile := GetTLSConfig(addr, cfg)
+	enableH3 := tlsConfig != nil && addr == fmt.Sprintf(":%d", cfg.Server.TLS.HTTPSPort) && cfg.Server.TLS.EnableH3
 
-    srv := &http.Server{
-        Handler:           mux,
-        ReadTimeout:       0,
-        WriteTimeout:      0,
-        IdleTimeout:       60 * time.Second,
-        ReadHeaderTimeout: 10 * time.Second,
-        MaxHeaderBytes:    1 << 20,
-        TLSConfig:         tlsConfig,
-    }
+	srv := &http.Server{
+		Handler:           mux,
+		ReadTimeout:       0,
+		WriteTimeout:      0,
+		IdleTimeout:       60 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+		TLSConfig:         tlsConfig,
+	}
 
-    // TCP listener
-    var ln net.Listener
-    var err error
-    if upgrader != nil {
-        ln, err = upgrader.Listen("tcp", addr)
-    } else {
-        ln, err = reuseport.Listen("tcp", addr)
-    }
-    if err != nil {
-        return fmt.Errorf("❌ 创建 TCP listener 失败: %w", err)
-    }
+	// ==================== TCP Listener ====================
+	var ln net.Listener
+	var err error
+	if upgrader != nil {
+		ln, err = upgrader.Listen("tcp", addr)
+		if err != nil {
+			// fallback reuseport
+			ln, err = reuseport.Listen("tcp", addr)
+		}
+	} else {
+		ln, err = reuseport.Listen("tcp", addr)
+	}
+	if err != nil {
+		return fmt.Errorf("❌ 创建 TCP listener 失败: %w", err)
+	}
 
-    // HTTP/3
-    var udpLn net.PacketConn
-    var h3srv *http3.Server
-    if enableH3 {
-        if upgrader != nil {
-            udpLn, err = upgrader.ListenPacket("udp", addr)
-        } else {
-            udpLn, err = net.ListenPacket("udp", addr)
-        }
-        if err != nil {
-            return fmt.Errorf("❌ 创建 UDP listener 失败: %w", err)
-        }
+	// ==================== HTTP/3 UDP Listener ====================
+	var udpLn net.PacketConn
+	var h3srv *http3.Server
+	if enableH3 {
+		if upgrader != nil {
+			udpLn, err = upgrader.ListenPacket("udp", addr)
+			if err != nil {
+				udpLn, err = net.ListenPacket("udp", addr)
+			}
+		} else {
+			udpLn, err = net.ListenPacket("udp", addr)
+		}
+		if err != nil {
+			return fmt.Errorf("❌ 创建 UDP listener 失败: %w", err)
+		}
 
-        h3srv = &http3.Server{
-            Addr:        addr,
-            Handler:     mux,
-            TLSConfig:   tlsConfig,
-            IdleTimeout: 60 * time.Second,
-            QUICConfig: &quic.Config{
-                Allow0RTT:          true,
-                MaxIdleTimeout:     60 * time.Second,
-                KeepAlivePeriod:    20 * time.Second,
-                MaxIncomingStreams: 10000,
-                EnableDatagrams:    true,
-            },
-        }
+		h3srv = &http3.Server{
+			Addr:        addr,
+			Handler:     mux,
+			TLSConfig:   tlsConfig,
+			IdleTimeout: 60 * time.Second,
+			QUICConfig: &quic.Config{
+				Allow0RTT:          true,
+				MaxIdleTimeout:     60 * time.Second,
+				KeepAlivePeriod:    20 * time.Second,
+				MaxIncomingStreams: 10000,
+				EnableDatagrams:    true,
+			},
+		}
 
-        go func() {
-            logger.LogPrintf("🚀 启动 HTTP/3 %s", addr)
-            if err := h3srv.Serve(udpLn); err != nil && err != http.ErrServerClosed {
-                logger.LogPrintf("❌ HTTP/3 错误: %v", err)
-            }
-        }()
-    }
+		go func() {
+			logger.LogPrintf("🚀 启动 HTTP/3 %s", addr)
+			if err := h3srv.Serve(udpLn); err != nil && err != http.ErrServerClosed {
+				logger.LogPrintf("❌ HTTP/3 错误: %v", err)
+			}
+		}()
+	}
 
-    // 保存到全局 map
-    serverMu.Lock()
-    servers[addr] = srv
-    if h3srv != nil {
-        h3servers[addr] = h3srv
-    }
-    serverMu.Unlock()
+	// ==================== 保存到全局 Map ====================
+	serverMu.Lock()
+	servers[addr] = srv
+	if h3srv != nil {
+		h3servers[addr] = h3srv
+	}
+	serverMu.Unlock()
 
-    // 启动 HTTP/1.x + HTTP/2
-    go func() {
-        if tlsConfig != nil {
-            _ = http2.ConfigureServer(srv, &http2.Server{})
-            logger.LogPrintf("🚀 启动 HTTPS H1/H2 %s", addr)
-            if err := srv.ServeTLS(ln, certFile, keyFile); err != nil && err != http.ErrServerClosed {
-                logger.LogPrintf("❌ HTTPS 错误: %v", err)
-            }
-        } else {
-            logger.LogPrintf("🚀 启动 HTTP/1.1 %s", addr)
-            if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-                logger.LogPrintf("❌ HTTP 错误: %v", err)
-            }
-        }
-    }()
+	// ==================== 启动 HTTP/1.x + HTTP/2 ====================
+	go func() {
+		if tlsConfig != nil {
+			_ = http2.ConfigureServer(srv, &http2.Server{})
+			logger.LogPrintf("🚀 启动 HTTPS H1/H2 %s", addr)
+			if err := srv.ServeTLS(ln, certFile, keyFile); err != nil && err != http.ErrServerClosed {
+				logger.LogPrintf("❌ HTTPS 错误: %v", err)
+			}
+		} else {
+			logger.LogPrintf("🚀 启动 HTTP/1.1 %s", addr)
+			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+				logger.LogPrintf("❌ HTTP 错误: %v", err)
+			}
+		}
+	}()
 
-    // 等待退出
-    go func() {
-        <-ctx.Done()
-        shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-        defer cancel()
-        _ = srv.Shutdown(shutdownCtx)
-        if h3srv != nil {
-            _ = h3srv.Shutdown(shutdownCtx)
-        }
-        logger.LogPrintf("✅ 端口 %s 已关闭", addr)
-    }()
+	// ==================== 等待退出 ====================
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			logger.LogPrintf("❌ 关闭 HTTP 服务器失败 %s: %v", addr, err)
+		}
+		if h3srv != nil {
+			if err := h3srv.Shutdown(shutdownCtx); err != nil {
+				logger.LogPrintf("❌ 关闭 HTTP/3 服务器失败 %s: %v", addr, err)
+			}
+		}
+		logger.LogPrintf("✅ 端口 %s 已关闭", addr)
+	}()
 
-    return nil
+	return nil
 }
+
 
 
 // 平滑替换所有端口的 Handler
