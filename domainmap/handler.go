@@ -427,9 +427,24 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 				cleanedParts = append(cleanedParts, p)
 				last = p
 			}
-			u.Path = strings.Join(cleanedParts[1:], "/")
+			
+			// 确保端口和路径之间有正确的分隔
+			if len(cleanedParts) > 1 {
+				// 检查是否端口和路径之间缺少斜杠
+				hostPart := cleanedParts[0]
+				pathPart := strings.Join(cleanedParts[1:], "/")
+				if !strings.HasSuffix(hostPart, "/") && !strings.HasPrefix(pathPart, "/") {
+					u.Path = "/" + pathPart
+				} else {
+					u.Path = pathPart
+				}
+			} else {
+				u.Path = ""
+			}
+			
+			// 确保Host部分正确（不包含路径）
+			u.Host = cleanedParts[0]
 			u.Scheme = frontendScheme
-			u.Host = frontendHost
 
 			// 添加 token（不 encode）
 			if token != "" {
@@ -448,7 +463,7 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 				}
 			}
 
-			newLine = u.Scheme + "://" + u.Host + "/" + u.Path
+			newLine = u.Scheme + "://" + u.Host + u.Path
 			if u.RawQuery != "" {
 				newLine += "?" + u.RawQuery
 			}
