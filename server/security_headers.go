@@ -31,8 +31,6 @@ func SecurityHeaders(next http.Handler) http.Handler {
 
 		case strings.HasPrefix(r.URL.Path, "/rtp/"):
 
-		case strings.HasPrefix(r.URL.Path, "/rtsp/"):
-
 		default:
 			if r.ProtoMajor == 1 {
 				w.Header().Set("Connection", "close")

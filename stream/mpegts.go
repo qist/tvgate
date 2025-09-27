@@ -138,7 +138,7 @@ func HandleMpegtsStream(
 	w.Header().Set("Content-Type", "video/mp2t")
 	flusher, _ := w.(http.Flusher)
 
-	flushTicker := time.NewTicker(100 * time.Millisecond) // 定时 flush
+	flushTicker := time.NewTicker(200 * time.Millisecond) // 定时 flush
 	defer flushTicker.Stop()
 
 	activeTicker := time.NewTicker(5 * time.Second) // 定时更新活跃

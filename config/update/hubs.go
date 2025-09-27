@@ -10,7 +10,7 @@ import (
 func UpdateHubsOnConfigChange(newIfaces []string) {
 	for oldKey, hub := range stream.GlobalMultiChannelHub.Hubs {
 		// 生成新 key
-		newKey := stream.GlobalMultiChannelHub.HubKey(hub.AddrList[0])
+		newKey := stream.GlobalMultiChannelHub.HubKey(hub.AddrList[0],newIfaces)
 
 		if oldKey == newKey {
 			// key 没变，只更新接口

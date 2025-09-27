@@ -187,7 +187,7 @@ func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []by
 	}
 
 	// flush 定时器（降低延迟）
-	flushTicker := time.NewTicker(100 * time.Millisecond)
+	flushTicker := time.NewTicker(200 * time.Millisecond)
 	defer flushTicker.Stop()
 
 	// 是否支持 http flush
