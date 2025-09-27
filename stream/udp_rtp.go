@@ -88,21 +88,25 @@ type hubClient struct {
 // StreamHub 流转发核心
 // ====================
 type StreamHub struct {
-	Mu          sync.RWMutex
-	Clients     map[string]hubClient // key = connID
-	AddCh       chan hubClient
-	RemoveCh    chan string
-	UdpConns    []*net.UDPConn
-	Closed      chan struct{}
-	BufPool     *sync.Pool
-	LastFrame   []byte
-	CacheBuffer *RingBuffer
-	AddrList    []string
-	PacketCount uint64
-	DropCount   uint64
-	state       int // 0: stopped, 1: playing, 2: error
-	stateCond   *sync.Cond
-	OnEmpty     func(h *StreamHub) // 当客户端数量为0时触发
+	Mu              sync.RWMutex
+	Clients         map[string]hubClient // key = connID
+	AddCh           chan hubClient
+	RemoveCh        chan string
+	UdpConns        []*net.UDPConn
+	Closed          chan struct{}
+	BufPool         *sync.Pool
+	LastFrame       []byte
+	CacheBuffer     *RingBuffer
+	AddrList        []string
+	PacketCount     uint64
+	DropCount       uint64
+	state           int // 0: stopped, 1: playing, 2: error
+	stateCond       *sync.Cond
+	OnEmpty         func(h *StreamHub) // 当客户端数量为0时触发
+	lastRTPSequence uint16
+	lastRTPSSRC     uint32
+	rtpBuffer       []byte // RTP拼接缓存
+	lastCCMap       map[int]byte
 }
 
 // ====================
@@ -347,13 +351,20 @@ func rtpPayloadGet(buf []byte) (startOff, endOff int, err error) {
 	return startOff, endOff, nil
 }
 
-
+func makeNullTS() []byte {
+	ts := make([]byte, 188)
+	ts[0] = 0x47
+	ts[1] = 0x1F
+	ts[2] = 0xFF
+	ts[3] = 0x10
+	return ts
+}
 // ====================
 // 处理RTP包，提取有效载荷
 // ====================
 func (h *StreamHub) processRTPPacket(data []byte) []byte {
 	// 检查数据包大小
-	if len(data) < 188 { 
+	if len(data) < 188 {
 		return data
 	}
 
@@ -373,6 +384,22 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 		return data
 	}
 
+	// ✅ 新增：RTP序列号去重检查
+	if len(data) >= 4 {
+		sequence := binary.BigEndian.Uint16(data[2:4])
+		ssrc := binary.BigEndian.Uint32(data[8:12])
+
+		// 如果是同一个SSRC的重复序列号，认为是重复包
+		if h.lastRTPSSRC == ssrc && h.lastRTPSequence == sequence {
+			// 记录日志便于调试
+			fmt.Printf("⚠️ 检测到重复RTP包: SSRC=%d, Seq=%d\n", ssrc, sequence)
+			return nil // 返回nil表示丢弃该包
+		}
+
+		h.lastRTPSequence = sequence
+		h.lastRTPSSRC = ssrc
+	}
+
 	// 提取RTP有效载荷位置和大小
 	startOff, endOff, err := rtpPayloadGet(data)
 	if err != nil {
@@ -386,6 +413,7 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 			startOff += 4
 		}
 	}
+	// payloadType=33(MP2T)保持原样
 
 	// 返回有效载荷部分
 	if startOff < len(data) && endOff < len(data) && startOff < len(data)-endOff {
@@ -395,7 +423,7 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 		payload := make([]byte, len(data)-startOff-endOff)
 		copy(payload, data[startOff:len(data)-endOff])
 
-		// ✅ 新增兜底逻辑：必须对齐188字节，否则回退原始数据
+		// ✅ 兜底逻辑：必须对齐188字节，否则回退原始数据
 		if payload[0] != 0x47 || len(payload)%188 != 0 {
 			return data
 		}
@@ -405,8 +433,6 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 
 	return data
 }
-
-
 
 // ====================
 // 广播到所有客户端
