@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/binary"
@@ -22,11 +23,11 @@ import (
 // ====================
 
 const (
-	StateStoppeds = 0
-	StatePlayings = 1
-	StateErrors   = 2
-
-	MAX_BUFFER_SIZE = 65536 // 缓存最大值
+	StateStoppeds   = 0
+	StatePlayings   = 1
+	StateErrors     = 2
+	NULL_PID        = 0x1FFF // TS 空包 PID
+	MAX_BUFFER_SIZE = 65536  // 缓存最大值
 
 	// MPEG payload-type constants - adopted from VLC 0.8.6
 	P_MPGA = 0x0E // MPEG audio
@@ -34,6 +35,16 @@ const (
 
 	// RTP constants
 	RTP_VERSION = 2
+)
+
+type rtpSeqEntry struct {
+	sequences  []uint16
+	lastActive time.Time
+}
+
+const (
+	rtpSequenceWindow = 200
+	rtpSSRCExpire     = 30 * time.Second // 超过30秒未收到包就清理
 )
 
 // ====================
@@ -103,10 +114,11 @@ type StreamHub struct {
 	state           int // 0: stopped, 1: playing, 2: error
 	stateCond       *sync.Cond
 	OnEmpty         func(h *StreamHub) // 当客户端数量为0时触发
-	lastRTPSequence uint16
-	lastRTPSSRC     uint32
+	// lastRTPSequence uint16
+	// lastRTPSSRC     uint32
 	rtpBuffer       []byte // RTP拼接缓存
 	lastCCMap       map[int]byte
+	rtpSequenceMap  map[uint32]*rtpSeqEntry
 }
 
 // ====================
@@ -127,6 +139,7 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		BufPool:     &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
 		AddrList:    addrs,
 		state:       StatePlayings,
+		lastCCMap:   make(map[int]byte),
 	}
 	hub.stateCond = sync.NewCond(&hub.Mu)
 
@@ -302,6 +315,14 @@ func hexdumpPreview(buf []byte, n int) string {
 	return hex.EncodeToString(buf)
 }
 
+func (h *StreamHub) cleanupOldSSRCs() {
+	now := time.Now()
+	for ssrc, entry := range h.rtpSequenceMap {
+		if now.Sub(entry.lastActive) > rtpSSRCExpire {
+			delete(h.rtpSequenceMap, ssrc)
+		}
+	}
+}
 // rtpPayloadGet 从RTP包中提取有效载荷位置和大小
 func rtpPayloadGet(buf []byte) (startOff, endOff int, err error) {
 	if len(buf) < 12 {
@@ -359,79 +380,131 @@ func makeNullTS() []byte {
 	ts[3] = 0x10
 	return ts
 }
+
 // ====================
 // 处理RTP包，提取有效载荷
 // ====================
 func (h *StreamHub) processRTPPacket(data []byte) []byte {
-	// 检查数据包大小
-	if len(data) < 188 {
+	// 已经是完整 TS 包直接返回（兼容非 RTP 流）
+	if len(data) >= 188 && data[0] == 0x47 {
 		return data
 	}
 
-	// 首先检查是否为MPEG-TS包 (同步字节0x47)
-	if data[0] == 0x47 {
-		return data
-	}
-
-	// 检查是否为RTP包
+	// RTP Header 最小长度检查
 	if len(data) < 12 {
 		return data
 	}
 
-	// RTP版本检查
 	version := (data[0] >> 6) & 0x03
 	if version != RTP_VERSION {
 		return data
 	}
 
-	// ✅ 新增：RTP序列号去重检查
-	if len(data) >= 4 {
-		sequence := binary.BigEndian.Uint16(data[2:4])
-		ssrc := binary.BigEndian.Uint32(data[8:12])
+	sequence := binary.BigEndian.Uint16(data[2:4])
+	ssrc := binary.BigEndian.Uint32(data[8:12])
 
-		// 如果是同一个SSRC的重复序列号，认为是重复包
-		if h.lastRTPSSRC == ssrc && h.lastRTPSequence == sequence {
-			// 记录日志便于调试
-			fmt.Printf("⚠️ 检测到重复RTP包: SSRC=%d, Seq=%d\n", ssrc, sequence)
-			return nil // 返回nil表示丢弃该包
+	if h.rtpSequenceMap == nil {
+		h.rtpSequenceMap = make(map[uint32]*rtpSeqEntry)
+	}
+
+	entry, ok := h.rtpSequenceMap[ssrc]
+	if !ok {
+		entry = &rtpSeqEntry{}
+		h.rtpSequenceMap[ssrc] = entry
+	}
+
+	// 去重检查
+	duplicate := false
+	for _, seq := range entry.sequences {
+		if seq == sequence {
+			duplicate = true
+			break
 		}
-
-		h.lastRTPSequence = sequence
-		h.lastRTPSSRC = ssrc
+	}
+	if duplicate {
+		return nil
 	}
 
-	// 提取RTP有效载荷位置和大小
+	entry.sequences = append(entry.sequences, sequence)
+	if len(entry.sequences) > rtpSequenceWindow {
+		entry.sequences = entry.sequences[len(entry.sequences)-rtpSequenceWindow:]
+	}
+	entry.lastActive = time.Now()
+
+	h.cleanupOldSSRCs()
+
+	// 提取 RTP Payload
 	startOff, endOff, err := rtpPayloadGet(data)
-	if err != nil {
-		return data
+	if err != nil || startOff >= len(data)-endOff {
+		return data // ✅ 兜底逻辑，返回原始数据
 	}
 
-	// 检查负载类型是否为MPEG音频或视频
 	payloadType := data[1] & 0x7F
 	if payloadType == P_MPGA || payloadType == P_MPGV {
 		if startOff+4 < len(data)-endOff {
 			startOff += 4
 		}
 	}
-	// payloadType=33(MP2T)保持原样
 
-	// 返回有效载荷部分
-	if startOff < len(data) && endOff < len(data) && startOff < len(data)-endOff {
-		if len(data)-startOff-endOff < 188 {
-			return data
-		}
-		payload := make([]byte, len(data)-startOff-endOff)
-		copy(payload, data[startOff:len(data)-endOff])
+	payload := data[startOff : len(data)-endOff]
 
-		// ✅ 兜底逻辑：必须对齐188字节，否则回退原始数据
-		if payload[0] != 0x47 || len(payload)%188 != 0 {
-			return data
-		}
-
-		return payload
+	// ✅ 兜底检查，必须对齐 188
+	if len(payload) < 188 || payload[0] != 0x47 || len(payload)%188 != 0 {
+		return data
 	}
 
-	return data
+	// 拼接缓存，处理分片
+	h.rtpBuffer = append(h.rtpBuffer, payload...)
+	if len(h.rtpBuffer) < 188 {
+		return nil
+	}
+
+	if h.rtpBuffer[0] != 0x47 {
+		idx := bytes.IndexByte(h.rtpBuffer, 0x47)
+		if idx < 0 {
+			h.rtpBuffer = nil
+			return nil
+		}
+		h.rtpBuffer = h.rtpBuffer[idx:]
+		if len(h.rtpBuffer) < 188 {
+			return nil
+		}
+	}
+
+	alignedSize := (len(h.rtpBuffer) / 188) * 188
+	chunk := h.rtpBuffer[:alignedSize]
+	if alignedSize < len(h.rtpBuffer) {
+		h.rtpBuffer = append([]byte{}, h.rtpBuffer[alignedSize:]...)
+	} else {
+		h.rtpBuffer = nil
+	}
+
+	out := make([]byte, 0, alignedSize)
+	for i := 0; i < len(chunk); i += 188 {
+		ts := chunk[i : i+188]
+		if ts[0] != 0x47 {
+			continue
+		}
+
+		pid := ((int(ts[1]) & 0x1F) << 8) | int(ts[2])
+		tsCC := ts[3] & 0x0F
+
+		if pid != NULL_PID {
+			if last, ok := h.lastCCMap[pid]; ok {
+				diff := (int(tsCC) - int(last) + 16) & 0x0F
+				if diff > 1 {
+					for j := 1; j < diff; j++ {
+						out = append(out, makeNullTS()...)
+					}
+				}
+			}
+			h.lastCCMap[pid] = tsCC
+		}
+
+		out = append(out, ts...)
+	}
+
+	return out
 }
 
 // ====================
