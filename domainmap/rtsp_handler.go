@@ -15,8 +15,6 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	// "github.com/pion/rtp"
-
-	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/lb"
 	"github.com/qist/tvgate/logger"
@@ -29,7 +27,7 @@ import (
 
 
 
-func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request,tokenParamName string) {
+func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	// 全局token验证
 	clientIP := monitor.GetClientIP(r)
 	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -52,26 +50,6 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request,tokenParamName str
 
 	// 构建RTSP URL
 	rtspURL := fmt.Sprintf("rtsp://%s%s", hostPort, streamPath)
-
-	if r.URL.RawQuery != "" {
-		if auth.GetGlobalTokenManager() != nil {
-			// ✅ 全局认证启用，删除 token 参数
-			query := r.URL.RawQuery
-			parts := strings.Split(query, "&")
-			newParts := []string{}
-			for _, kv := range parts {
-				if !strings.HasPrefix(kv, tokenParamName+"=") {
-					newParts = append(newParts, kv)
-				}
-			}
-			if len(newParts) > 0 {
-				rtspURL += "?" + strings.Join(newParts, "&")
-			}
-		} else {
-			// ✅ 全局认证未启用，保留原始 query
-			rtspURL += "?" + r.URL.RawQuery
-		}
-	}
 
 	logger.LogPrintf("RTSP → HTTP request: %s", rtspURL)
 

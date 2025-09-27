@@ -448,7 +448,7 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 				}
 			}
 
-			newLine = u.Scheme + "://" + u.Host + u.Path
+			newLine = u.Scheme + "://" + u.Host + "/" + u.Path
 			if u.RawQuery != "" {
 				newLine += "?" + u.RawQuery
 			}
@@ -485,69 +485,126 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dm.next.ServeHTTP(w, r)
 		return
 	}
-	tokenParam := cfg.Auth.TokenParamName
-	if tokenParam == "" {
-		tokenParam = "token"
-	}
-	token := r.URL.Query().Get(tokenParam)
-	// 如果协议是RTSP，则转发给RTSP处理器
-	if protocol == "rtsp" {
-		// 构造新的URL路径，格式为 /rtsp/{targetHost}{原始路径}
-		newPath := "/rtsp/" + targetHost + r.URL.Path
 
-		// RTSP授权验证
-		clientIP := monitor.GetClientIP(r)
-		connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	// 确定使用哪个token参数名和token值
+	tokenParam := ""
+	token := ""
 
-		// 检查domainmap是否开启了授权
-		if cfg.Auth.TokensEnabled {
-			// 如果domainmap配置了授权且启用了tokens，则进行验证
-			if cfg.Auth.DynamicTokens.EnableDynamic || cfg.Auth.StaticTokens.EnableStatic {
-				var tm *auth.TokenManager
-
-				// 使用host作为key来获取TokenManager
-				host := r.Host
-				if existingTm, ok := dm.tokenManagers[host]; ok {
-					tm = existingTm
-				} else {
-					tm = auth.NewTokenManagerFromConfig(cfg)
-					dm.tokenManagers[host] = tm
+	// 优先使用domainmap本地配置，没有配置才是全局认证配置
+	if cfg.Auth.TokensEnabled && (cfg.Auth.DynamicTokens.EnableDynamic || cfg.Auth.StaticTokens.EnableStatic) {
+		// 使用domainmap本地配置
+		tokenParam = cfg.Auth.TokenParamName
+		if tokenParam == "" {
+			tokenParam = "token"
+		}
+		token = r.URL.Query().Get(tokenParam)
+	} else if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled && (globalTm.DynamicConfig != nil || len(globalTm.StaticTokens) > 0) {
+		// 使用全局token管理器的参数名
+		tokenParam = globalTm.TokenParamName
+		if tokenParam == "" {
+			tokenParam = "my_token" // 全局默认参数名
+		}
+		token = r.URL.Query().Get(tokenParam)
+	} else {
+		// 默认情况，尝试获取token但不进行验证
+		// 先尝试本地参数名
+		tokenParam = cfg.Auth.TokenParamName
+		if tokenParam == "" {
+			// 再尝试全局参数名
+			if globalTm := auth.GetGlobalTokenManager(); globalTm != nil {
+				tokenParam = globalTm.TokenParamName
+				if tokenParam == "" {
+					tokenParam = "my_token"
 				}
+			} else {
+				tokenParam = "token"
+			}
+		}
+		token = r.URL.Query().Get(tokenParam)
+	}
 
-				// 验证token时使用原始路径而不是RTSP路径
-				if !tm.ValidateToken(token, r.URL.Path, connID) {
+	// 统一认证逻辑
+	clientIP := monitor.GetClientIP(r)
+	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+
+	// 验证token - 统一处理HTTP和RTSP
+	if cfg.Auth.TokensEnabled {
+		// 如果domainmap配置了授权且启用了tokens，则进行验证
+		if cfg.Auth.DynamicTokens.EnableDynamic || cfg.Auth.StaticTokens.EnableStatic {
+			var tm *auth.TokenManager
+
+			// 使用host作为key来获取TokenManager
+			host := r.Host
+			if existingTm, ok := dm.tokenManagers[host]; ok {
+				tm = existingTm
+			} else {
+				tm = auth.NewTokenManagerFromConfig(cfg)
+				dm.tokenManagers[host] = tm
+			}
+
+			// 验证token
+			if !tm.ValidateToken(token, r.URL.Path, connID) {
+				http.Error(w, "Forbidden", http.StatusUnauthorized)
+				return
+			}
+
+			// 更新token活跃状态
+			tm.KeepAlive(token, connID, clientIP, r.URL.Path)
+		}
+	} else {
+		// 2. 只有当domainmap没有开启授权时，才检查全局认证
+		if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled {
+			// 如果全局认证启用且配置了动态或静态token，则进行验证
+			if globalTm.DynamicConfig != nil || len(globalTm.StaticTokens) > 0 {
+				// 验证token
+				if !globalTm.ValidateToken(token, r.URL.Path, connID) {
 					http.Error(w, "Forbidden", http.StatusUnauthorized)
 					return
 				}
 
 				// 更新token活跃状态
-				tm.KeepAlive(token, connID, clientIP, r.URL.Path)
+				globalTm.KeepAlive(token, connID, clientIP, r.URL.Path)
 			}
-		} else {
-			// 2. 只有当domainmap没有开启授权时，才检查全局认证
-			if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled {
-				// 如果全局认证启用且配置了动态或静态token，则进行验证
-				if globalTm.DynamicConfig != nil || len(globalTm.StaticTokens) > 0 {
-					// 验证token时使用原始路径而不是RTSP路径
-					if !globalTm.ValidateToken(token, r.URL.Path, connID) {
-						http.Error(w, "Forbidden", http.StatusUnauthorized)
-						return
-					}
-
-					// 更新token活跃状态
-					globalTm.KeepAlive(token, connID, clientIP, r.URL.Path)
-				}
-			}
-			// 3. 如果都没有配置授权，则不进行认证
 		}
+		// 3. 如果都没有配置授权，则不进行认证
+	}
+
+	// 如果协议是RTSP，则转发给RTSP处理器
+	if protocol == "rtsp" {
+		// 构造新的URL路径，格式为 /rtsp/{targetHost}{原始路径}
+		newPath := "/rtsp/" + targetHost + r.URL.Path
 
 		// 创建新的请求
 		newReq := r.Clone(r.Context())
 		newReq.URL.Path = newPath
-		newReq.URL.RawQuery = r.URL.RawQuery
+
+		// 处理查询参数，移除token参数
+		if r.URL.RawQuery != "" {
+			tokenParamToRemove := "my_token"
+			// 优先使用domainmap本地配置
+			if cfg.Auth.TokenParamName != "" {
+				tokenParamToRemove = cfg.Auth.TokenParamName
+			} else if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.TokenParamName != "" {
+				tokenParamToRemove = globalTm.TokenParamName
+			}
+
+			// 去掉 token
+			query := r.URL.RawQuery
+			newParts := []string{}
+			for _, kv := range strings.Split(query, "&") {
+				if !strings.HasPrefix(kv, tokenParamToRemove+"=") {
+					newParts = append(newParts, kv)
+				}
+			}
+			if len(newParts) > 0 {
+				newReq.URL.RawQuery = strings.Join(newParts, "&")
+			}
+		} else {
+			newReq.URL.RawQuery = r.URL.RawQuery
+		}
 
 		// 转发给下一个处理器（即RTSP处理器）
-		RtspToHTTPHandler(w, newReq, tokenParam)
+		RtspToHTTPHandler(w, newReq)
 		return
 	}
 
@@ -563,9 +620,9 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	reqBodyBytes, _ := io.ReadAll(r.Body)
 	r.Body.Close()
 
-	clientIP := monitor.GetClientIP(r)
+	clientIP = monitor.GetClientIP(r)
 	hash := md5.Sum([]byte(fmt.Sprintf("%s://%s", targetURL.Scheme, targetURL.Host)))
-	connID := clientIP + "_" + hex.EncodeToString(hash[:])
+	connID = clientIP + "_" + hex.EncodeToString(hash[:])
 
 	// 校验 client headers
 	if len(cfg.ClientHeaders) > 0 {
@@ -576,14 +633,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-
-	// token 校验
-	// tokenParam := cfg.Auth.TokenParamName
-	// if tokenParam == "" {
-	// 	tokenParam = "token"
-	// }
-	// // 使用Query().Get()已经会自动URL解码，但为了确保Base64字符不被破坏，我们直接从RawQuery解析
-	// token := r.URL.Query().Get(tokenParam)
+	// token 校验已移至统一认证逻辑处理
 	var tm *auth.TokenManager
 
 	// 获取或创建对应域名映射的TokenManager实例
@@ -604,28 +654,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				tm = auth.NewTokenManagerFromConfig(cfg)
 				dm.tokenManagers[host] = tm
 			}
-
-			// logger.LogPrintf("token: %v", cfg)
-			if !tm.ValidateToken(token, r.URL.Path, connID) {
-				http.Error(w, "Forbidden", http.StatusUnauthorized)
-				return
-			}
 		}
-	} else {
-		// 2. 只有当domainmap没有开启授权时，才检查全局认证
-		if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled {
-			// 如果全局认证启用且配置了动态或静态token，则进行验证
-			if globalTm.DynamicConfig != nil || len(globalTm.StaticTokens) > 0 {
-				if !globalTm.ValidateToken(token, r.URL.Path, connID) {
-					http.Error(w, "Forbidden", http.StatusUnauthorized)
-					return
-				}
-
-				// 更新token活跃状态
-				globalTm.KeepAlive(token, connID, clientIP, r.URL.Path)
-			}
-		}
-		// 3. 如果都没有配置授权，则不进行认证
 	}
 	monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
 		IP:             clientIP,
@@ -655,6 +684,35 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			targetReqURL.RawQuery = strings.Join(rawQueryParts, "&")
 		} else {
 			targetReqURL.RawQuery = ""
+		}
+	} else {
+		// 使用全局认证配置处理token参数
+		if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled {
+			// 如果全局认证启用且配置了动态或静态token，则移除token参数
+			if globalTm.DynamicConfig != nil || len(globalTm.StaticTokens) > 0 {
+				q := targetReqURL.Query()
+				tokenParamToRemove := "my_token"
+				// 优先使用domainmap本地配置
+				if cfg.Auth.TokenParamName != "" {
+					tokenParamToRemove = cfg.Auth.TokenParamName
+				} else if globalTm.TokenParamName != "" {
+					tokenParamToRemove = globalTm.TokenParamName
+				}
+				q.Del(tokenParamToRemove)
+
+				// 直接构建 RawQuery，不使用 Encode()，保持原始格式
+				rawQueryParts := []string{}
+				for k, vals := range q {
+					for _, v := range vals {
+						rawQueryParts = append(rawQueryParts, k+"="+v)
+					}
+				}
+				if len(rawQueryParts) > 0 {
+					targetReqURL.RawQuery = strings.Join(rawQueryParts, "&")
+				} else {
+					targetReqURL.RawQuery = ""
+				}
+			}
 		}
 	}
 
