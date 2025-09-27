@@ -22,9 +22,9 @@ import (
 // ====================
 
 const (
-	// StateStopped = 0
-	// StatePlaying = 1
-	// StateError   = 2
+	StateStoppeds = 0
+	StatePlayings = 1
+	StateErrors   = 2
 
 	MAX_BUFFER_SIZE = 65536 // 缓存最大值
 
@@ -122,7 +122,7 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		Closed:      make(chan struct{}),
 		BufPool:     &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
 		AddrList:    addrs,
-		state:       StatePlaying,
+		state:       StatePlayings,
 	}
 	hub.stateCond = sync.NewCond(&hub.Mu)
 
@@ -272,7 +272,7 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 		h.BufPool.Put(buf)
 
 		h.Mu.RLock()
-		closed := h.state == StateStopped || h.CacheBuffer == nil
+		closed := h.state == StateStoppeds || h.CacheBuffer == nil
 		h.Mu.RUnlock()
 		if closed {
 			return
@@ -290,6 +290,14 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 // RTP处理相关函数
 // ====================
 
+// hexdumpPreview 返回前 n 个字节的十六进制预览
+func hexdumpPreview(buf []byte, n int) string {
+	if len(buf) > n {
+		buf = buf[:n]
+	}
+	return hex.EncodeToString(buf)
+}
+
 // rtpPayloadGet 从RTP包中提取有效载荷位置和大小
 func rtpPayloadGet(buf []byte) (startOff, endOff int, err error) {
 	if len(buf) < 12 {
@@ -299,7 +307,7 @@ func rtpPayloadGet(buf []byte) (startOff, endOff int, err error) {
 	// RTP版本检查
 	version := (buf[0] >> 6) & 0x03
 	if version != RTP_VERSION {
-		return 0, 0, errors.New("invalid RTP version")
+		return 0, 0, fmt.Errorf("invalid RTP version=%d", version)
 	}
 
 	// 计算头部大小
@@ -328,21 +336,29 @@ func rtpPayloadGet(buf []byte) (startOff, endOff int, err error) {
 		return 0, 0, errors.New("invalid RTP packet structure")
 	}
 
+	// 保留兜底逻辑（不打印日志）
+	payloadLen := len(buf) - startOff - endOff
+	if payloadLen > 0 {
+		if buf[startOff] != 0x47 || payloadLen%188 != 0 {
+			// 只是检查，不做打印
+		}
+	}
+
 	return startOff, endOff, nil
 }
+
 
 // ====================
 // 处理RTP包，提取有效载荷
 // ====================
 func (h *StreamHub) processRTPPacket(data []byte) []byte {
 	// 检查数据包大小
-	if len(data) < 188 { // MPEG2_TS_PKT_SIZE_MIN
-		return data // 数据包太小，直接返回
+	if len(data) < 188 { 
+		return data
 	}
 
 	// 首先检查是否为MPEG-TS包 (同步字节0x47)
 	if data[0] == 0x47 {
-		// 是MPEG-TS包，直接返回
 		return data
 	}
 
@@ -366,7 +382,6 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 	// 检查负载类型是否为MPEG音频或视频
 	payloadType := data[1] & 0x7F
 	if payloadType == P_MPGA || payloadType == P_MPGV {
-		// MPEG音频或视频类型，跳过RTP头部4字节
 		if startOff+4 < len(data)-endOff {
 			startOff += 4
 		}
@@ -374,17 +389,24 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 
 	// 返回有效载荷部分
 	if startOff < len(data) && endOff < len(data) && startOff < len(data)-endOff {
-		// 检查处理后的数据包大小
-		if len(data)-startOff-endOff < 188 { // MPEG2_TS_PKT_SIZE_MIN
-			return data // 处理后的数据包太小，返回原始数据
+		if len(data)-startOff-endOff < 188 {
+			return data
 		}
 		payload := make([]byte, len(data)-startOff-endOff)
 		copy(payload, data[startOff:len(data)-endOff])
+
+		// ✅ 新增兜底逻辑：必须对齐188字节，否则回退原始数据
+		if payload[0] != 0x47 || len(payload)%188 != 0 {
+			return data
+		}
+
 		return payload
 	}
 
 	return data
 }
+
+
 
 // ====================
 // 广播到所有客户端
@@ -404,8 +426,8 @@ func (h *StreamHub) broadcast(data []byte) {
 	h.CacheBuffer.Push(data)
 
 	// 播放状态更新
-	if h.state != StatePlaying {
-		h.state = StatePlaying
+	if h.state != StatePlayings {
+		h.state = StatePlayings
 		h.stateCond.Broadcast()
 	}
 
@@ -634,7 +656,7 @@ func (h *StreamHub) Close() {
 	h.LastFrame = nil
 
 	// 状态更新并广播
-	h.state = StateStopped
+	h.state = StateStoppeds
 	if h.stateCond != nil {
 		h.stateCond.Broadcast()
 	}
@@ -661,14 +683,14 @@ func (h *StreamHub) WaitForPlaying(ctx context.Context) bool {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
-	if h.IsClosed() || h.state == StateError {
+	if h.IsClosed() || h.state == StateErrors {
 		return false
 	}
-	if h.state == StatePlaying {
+	if h.state == StatePlayings {
 		return true
 	}
 
-	for h.state == StateStopped && !h.IsClosed() {
+	for h.state == StateStoppeds && !h.IsClosed() {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
@@ -676,17 +698,17 @@ func (h *StreamHub) WaitForPlaying(ctx context.Context) bool {
 		}()
 		select {
 		case <-done:
-			if h.state == StateError {
+			if h.state == StateErrors {
 				return false
 			}
-			if h.state == StatePlaying {
+			if h.state == StatePlayings {
 				return true
 			}
 		case <-ctx.Done():
 			return false
 		}
 	}
-	return !h.IsClosed() && h.state == StatePlaying
+	return !h.IsClosed() && h.state == StatePlayings
 }
 
 // ====================
