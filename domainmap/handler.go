@@ -711,7 +711,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			newReq.URL.RawQuery = r.URL.RawQuery
 		}
-		newReq.URL.RawQuery = r.URL.RawQuery
+		// newReq.URL.RawQuery = r.URL.RawQuery
 		// logger.LogPrintf("RTSP → HTTP request: %s", newReq.URL.String())
 		// logger.LogPrintf("RTSP → HTTP request: %s", connID)
 		// 转发给下一个处理器（即RTSP处理器）
