@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	// "go/token"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qist/tvgate/auth"
@@ -71,6 +71,8 @@ type DomainMapper struct {
 	next            http.Handler
 	redirectHandler *RedirectHandler
 	tokenManagers   map[string]*auth.TokenManager
+	realHostMap     map[string]string // 真实地址映射表
+	realHostMapMu   sync.RWMutex      // 保护realHostMap的互斥锁
 }
 
 type RedirectHandler struct {
@@ -94,10 +96,14 @@ func NewDomainMapper(mappings auth.DomainMapList, client *http.Client, next http
 		client:        client,
 		next:          next,
 		tokenManagers: make(map[string]*auth.TokenManager),
+		realHostMap:   make(map[string]string), // 初始化真实地址映射表
 	}
 
 	// 初始化时清理tokenManagers
 	dm.CleanTokenManagers()
+
+	// 启动缓存清理器
+	StartCacheCleaner()
 
 	dm.redirectHandler = &RedirectHandler{
 		domainMapper: dm,
@@ -136,6 +142,31 @@ func (dm *DomainMapper) GetDomainConfig(host string) *auth.DomainMapConfig {
 		}
 	}
 	return nil
+}
+
+// ReverseMapDomain 反向映射域名，将target转换为source
+func (dm *DomainMapper) ReverseMapDomain(targetHost string) (string, string, bool) {
+	for _, mapping := range dm.mappings {
+		if mapping.Target == targetHost {
+			return mapping.Source, mapping.Protocol, true
+		}
+	}
+	return "", "", false
+}
+
+// ShouldReplaceURL 检查是否应该替换URL
+func (dm *DomainMapper) ShouldReplaceURL(host string) bool {
+	_, _, found := dm.MapDomain(host)
+	return found
+}
+
+// GetOriginalHost 获取原始主机名
+func (dm *DomainMapper) GetOriginalHost(frontendHost string) string {
+	originalHost, _, found := dm.ReverseMapDomain(frontendHost)
+	if found {
+		return originalHost
+	}
+	return frontendHost
 }
 
 // ---------------------------
@@ -190,7 +221,8 @@ func (dm *DomainMapper) replaceSpecialNestedURL(parsedURL *url.URL, frontendSche
 		}
 	}
 
-	// 构造新 URL（不改变查询参数）
+	// 构造新 URL（不改变查询参数）用于前端显示
+	// 始终使用传入的 frontendScheme 和 frontendHost 作为前端显示地址
 	newURL := &url.URL{
 		Scheme:   frontendScheme,
 		Host:     frontendHost,
@@ -302,13 +334,39 @@ func (dm *DomainMapper) CleanTokenManagers() {
 	}
 }
 
+// AddRealHostMapping 添加真实地址映射
+func (dm *DomainMapper) AddRealHostMapping(realHost, sourceHost string) {
+	dm.realHostMapMu.Lock()
+	defer dm.realHostMapMu.Unlock()
+
+	// logger.LogPrintf("DEBUG: 添加映射关系到缓存 - RealHost: %s -> SourceHost: %s", realHost, sourceHost)
+	dm.realHostMap[realHost] = sourceHost
+}
+
+// GetSourceHost 获取source地址
+func (dm *DomainMapper) GetSourceHost(realHost string) (string, bool) {
+	dm.realHostMapMu.RLock()
+	defer dm.realHostMapMu.RUnlock()
+
+	sourceHost, exists := dm.realHostMap[realHost]
+	// logger.LogPrintf("DEBUG: 查找映射关系 - RealHost: %s, Found: %t, SourceHost: %s", realHost, exists, sourceHost)
+	return sourceHost, exists
+}
+
+// RemoveRealHostMapping 移除真实地址映射
+func (dm *DomainMapper) RemoveRealHostMapping(realHost string) {
+	dm.realHostMapMu.Lock()
+	defer dm.realHostMapMu.Unlock()
+	delete(dm.realHostMap, realHost)
+}
+
 // ---------------------------
 // M3U8 处理辅助函数
 // ---------------------------
 
 func (dm *DomainMapper) replaceSpecialNestedURLClean(
 	line string,
-	frontendScheme, frontendHost string,
+	frontendScheme, frontendHost, sourceHost string,
 	tm *auth.TokenManager,
 	tokenParam string,
 	seen map[string]struct{},
@@ -416,18 +474,26 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 		// 完整 URL，替换 host 并加 token
 		u, err := url.Parse(newLine)
 		if err == nil {
+			// 记录原始URL信息用于调试
+			originalHost := u.Host
+			logger.LogPrintf("DEBUG: 处理URL: %s, 原始Host: %s", newLine, originalHost)
+
+			// 前端显示始终为 source 地址（如 192.168.0.151:8888）
+			u.Host = sourceHost
+			logger.LogPrintf("DEBUG: 替换Host: %s -> %s", originalHost, u.Host)
+
+			u.Scheme = frontendScheme
+
 			// 清理重复 host
 			parts := strings.Split(u.Host+u.Path, "/")
 			cleanedParts := []string{}
-			last := ""
 			for _, p := range parts {
-				if p == last && strings.Contains(p, ".") {
-					continue
+				if p == "" {
+					continue // 可以选择是否过滤掉空的
 				}
 				cleanedParts = append(cleanedParts, p)
-				last = p
 			}
-			
+
 			// 确保端口和路径之间有正确的分隔
 			if len(cleanedParts) > 1 {
 				// 检查是否端口和路径之间缺少斜杠
@@ -441,10 +507,9 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 			} else {
 				u.Path = ""
 			}
-			
+
 			// 确保Host部分正确（不包含路径）
 			u.Host = cleanedParts[0]
-			u.Scheme = frontendScheme
 
 			// 添加 token（不 encode）
 			if token != "" {
@@ -467,6 +532,7 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 			if u.RawQuery != "" {
 				newLine += "?" + u.RawQuery
 			}
+			// logger.LogPrintf("DEBUG: 最终URL: %s", newLine)
 		}
 	} else {
 		// 相对路径，只加 token
@@ -500,6 +566,13 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dm.next.ServeHTTP(w, r)
 		return
 	}
+
+	// 获取sourceHost（即r.Host对应的source地址）
+	sourceHost := r.Host
+
+	// 打印调试信息
+	// logger.LogPrintf("DEBUG: 请求处理开始 - Host: %s, TargetHost: %s, Protocol: %s, SourceHost: %s",
+	// r.Host, targetHost, protocol, sourceHost)
 
 	// 确定使用哪个token参数名和token值
 	tokenParam := ""
@@ -541,7 +614,15 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 统一认证逻辑
 	clientIP := monitor.GetClientIP(r)
 	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-
+	// 校验 client headers
+	if len(cfg.ClientHeaders) > 0 {
+		for k, v := range cfg.ClientHeaders {
+			if r.Header.Get(k) != v {
+				http.Error(w, "Forbidden", http.StatusUnauthorized)
+				return
+			}
+		}
+	}
 	// 验证token - 统一处理HTTP和RTSP
 	if cfg.Auth.TokensEnabled {
 		// 如果domainmap配置了授权且启用了tokens，则进行验证
@@ -623,54 +704,66 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// cfg := dm.GetDomainConfig(r.Host)
+	// 获取前端显示用的 scheme (http 或 https)
 	frontendScheme := getRequestScheme(r)
+
+	// 检查是否在真实地址映射表中存在映射关系
+	// 如果存在，则使用映射表中的target地址进行后端请求
+	backendHost := targetHost
+	if mappedHost, exists := dm.GetSourceHost(sourceHost); exists {
+		backendHost = mappedHost
+		// logger.LogPrintf("DEBUG: 找到映射关系 - SourceHost: %s -> BackendHost: %s", sourceHost, backendHost)
+	} else {
+		// logger.LogPrintf("DEBUG: 未找到映射关系，使用默认TargetHost: %s", targetHost)
+	}
+
+	// targetURL 是用于前端显示的URL（始终显示为source地址）
 	targetURL := &url.URL{
-		Scheme:   chooseScheme(protocol, r),
-		Host:     targetHost,
+		Scheme:   frontendScheme,
+		Host:     sourceHost, // 使用source地址作为前端显示地址
 		Path:     r.URL.Path,
 		RawQuery: r.URL.RawQuery,
 	}
 
-	reqBodyBytes, _ := io.ReadAll(r.Body)
-	r.Body.Close()
+	// originalURL 是用于后端请求的真实URL（使用target地址或映射后的地址）
+	originalURL := &url.URL{
+		Scheme:   chooseScheme(protocol, r),
+		Host:     backendHost, // 使用映射后的target地址或默认target地址
+		Path:     r.URL.Path,
+		RawQuery: r.URL.RawQuery,
+	}
+
+	// 记录真实地址映射 (source地址 -> target地址)
+	dm.AddRealHostMapping(sourceHost, targetHost)
+	// logger.LogPrintf("DEBUG: 添加映射关系 - SourceHost: %s -> TargetHost: %s", sourceHost, targetHost)
+
+	// 打印URL信息
+	// logger.LogPrintf("DEBUG: TargetURL (前端显示): %s", targetURL.String())
+	// logger.LogPrintf("DEBUG: OriginalURL (后端请求): %s", originalURL.String())
 
 	clientIP = monitor.GetClientIP(r)
 	hash := md5.Sum([]byte(fmt.Sprintf("%s://%s", targetURL.Scheme, targetURL.Host)))
 	connID = clientIP + "_" + hex.EncodeToString(hash[:])
-
-	// 校验 client headers
-	if len(cfg.ClientHeaders) > 0 {
-		for k, v := range cfg.ClientHeaders {
-			if r.Header.Get(k) != v {
-				http.Error(w, "Forbidden", http.StatusUnauthorized)
-				return
-			}
-		}
-	}
-	// token 校验已移至统一认证逻辑处理
 	var tm *auth.TokenManager
 
-	// 获取或创建对应域名映射的TokenManager实例
-	if cfg.Auth.TokensEnabled {
-		if cfg.Auth.DynamicTokens.EnableDynamic || cfg.Auth.StaticTokens.EnableStatic {
-			// 检查是否启用了静态token但没有提供token参数
-			if cfg.Auth.StaticTokens.EnableStatic && !cfg.Auth.DynamicTokens.EnableDynamic && token == "" {
-				// 如果只启用了静态token但没有提供token参数，则拒绝访问
-				http.Error(w, "Forbidden", http.StatusUnauthorized)
-				return
-			}
+	if cfg.Auth.TokensEnabled && (cfg.Auth.DynamicTokens.EnableDynamic || cfg.Auth.StaticTokens.EnableStatic) {
+		// 检查是否启用了静态token但没有提供token参数
+		if cfg.Auth.StaticTokens.EnableStatic && !cfg.Auth.DynamicTokens.EnableDynamic && token == "" {
+			// 如果只启用了静态token但没有提供token参数，则拒绝访问
+			http.Error(w, "Forbidden", http.StatusUnauthorized)
+			return
+		}
 
-			// 使用host作为key来获取TokenManager
-			host := r.Host
-			if existingTm, ok := dm.tokenManagers[host]; ok {
-				tm = existingTm
-			} else {
-				tm = auth.NewTokenManagerFromConfig(cfg)
-				dm.tokenManagers[host] = tm
-			}
+		// 使用host作为key来获取TokenManager
+		host := r.Host
+		if existingTm, ok := dm.tokenManagers[host]; ok {
+			tm = existingTm
+		} else {
+			tm = auth.NewTokenManagerFromConfig(cfg)
+			dm.tokenManagers[host] = tm
 		}
 	}
+
 	monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
 		IP:             clientIP,
 		URL:            targetURL.String(),
@@ -683,9 +776,17 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	updateActive := func() {
 		monitor.ActiveClients.UpdateLastActive(connID, time.Now())
 	}
-	targetReqURL := *targetURL
+
+	// 读取请求体（如果有的话）
+	var reqBodyBytes []byte
+	if r.Body != nil {
+		reqBodyBytes, _ = io.ReadAll(r.Body)
+	}
+
+	// 创建一个副本用于实际的 HTTP 请求，避免影响原始的 originalURL 变量
+	originalReqURL := *originalURL
 	if cfg.Auth.TokensEnabled {
-		q := targetReqURL.Query()
+		q := originalReqURL.Query()
 		q.Del(tokenParam)
 
 		// 直接构建 RawQuery，不使用 Encode()，保持原始格式
@@ -696,16 +797,16 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(rawQueryParts) > 0 {
-			targetReqURL.RawQuery = strings.Join(rawQueryParts, "&")
+			originalReqURL.RawQuery = strings.Join(rawQueryParts, "&")
 		} else {
-			targetReqURL.RawQuery = ""
+			originalReqURL.RawQuery = ""
 		}
 	} else {
 		// 使用全局认证配置处理token参数
 		if globalTm := auth.GetGlobalTokenManager(); globalTm != nil && globalTm.Enabled {
 			// 如果全局认证启用且配置了动态或静态token，则移除token参数
 			if globalTm.DynamicConfig != nil || len(globalTm.StaticTokens) > 0 {
-				q := targetReqURL.Query()
+				q := originalReqURL.Query()
 				tokenParamToRemove := "my_token"
 				// 优先使用domainmap本地配置
 				if cfg.Auth.TokenParamName != "" {
@@ -723,9 +824,9 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if len(rawQueryParts) > 0 {
-					targetReqURL.RawQuery = strings.Join(rawQueryParts, "&")
+					originalReqURL.RawQuery = strings.Join(rawQueryParts, "&")
 				} else {
-					targetReqURL.RawQuery = ""
+					originalReqURL.RawQuery = ""
 				}
 			}
 		}
@@ -783,7 +884,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ---------- 处理代理或直连 ----------
-	pg := rules.ChooseProxyGroup(targetURL.Hostname(), targetHost)
+	pg := rules.ChooseProxyGroup(originalURL.Hostname(), targetHost)
 	var resp *http.Response
 	var err error
 
@@ -796,7 +897,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			forceTest := attempt > 0
-			selectedProxy := lb.SelectProxy(pg, targetReqURL.String(), forceTest)
+			selectedProxy := lb.SelectProxy(pg, originalReqURL.String(), forceTest)
 
 			clientToUse := client
 			if selectedProxy != nil {
@@ -809,7 +910,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			targetReq, _ := http.NewRequest(r.Method, targetReqURL.String(), bytes.NewReader(reqBodyBytes))
+			targetReq, _ := http.NewRequest(r.Method, originalReqURL.String(), bytes.NewReader(reqBodyBytes))
 			for name, values := range r.Header {
 				if strings.ToLower(name) == "host" {
 					continue
@@ -837,7 +938,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(retryDelay)
 		}
 	} else {
-		targetReq, _ := http.NewRequest(r.Method, targetReqURL.String(), bytes.NewReader(reqBodyBytes))
+		targetReq, _ := http.NewRequest(r.Method, originalReqURL.String(), bytes.NewReader(reqBodyBytes))
 		for name, values := range r.Header {
 			if strings.ToLower(name) == "host" {
 				continue
@@ -871,16 +972,40 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 
 	contentType := resp.Header.Get("Content-Type")
-	bufSize := buffer.GetOptimalBufferSize(contentType, targetReqURL.Path)
+	bufSize := buffer.GetOptimalBufferSize(contentType, originalReqURL.Path)
 	isM3U8 := strings.Contains(contentType, "mpegurl")
 
 	if isM3U8 {
+		logger.LogPrintf("DEBUG: 检测到M3U8内容，开始处理...")
 		reader := bufio.NewReader(resp.Body)
 		seen := make(map[string]struct{})
 		for {
 			line, err := reader.ReadBytes('\n')
 			if len(line) > 0 {
-				newLine := dm.replaceSpecialNestedURLClean(string(line), frontendScheme, r.Host, tm, tokenParam, seen)
+				// 解析行中的URL，记录真实地址映射
+				lineStr := string(line)
+				if strings.Contains(lineStr, "http://") || strings.Contains(lineStr, "https://") {
+					// logger.LogPrintf("DEBUG: 在M3U8中发现URL行: %s", strings.TrimSpace(lineStr))
+					// 提取URL并记录映射关系
+					re := regexp.MustCompile(`https?://[^/\s]+`)
+					matches := re.FindAllString(lineStr, -1)
+					for _, match := range matches {
+						if parsedURL, err := url.Parse(match); err == nil {
+							// logger.LogPrintf("DEBUG: 解析出URL Host: %s", parsedURL.Host)
+							// 记录M3U8中出现的地址映射到sourceHost
+							// 映射关系: M3U8中的地址 -> source地址 (用于前端显示)
+							dm.AddRealHostMapping(parsedURL.Host, sourceHost)
+							// logger.LogPrintf("DEBUG: 添加M3U8映射 - ParsedHost: %s -> SourceHost: %s", parsedURL.Host, sourceHost)
+
+							// 同时记录sourceHost到M3U8中地址的映射
+							// 用于后端请求时找到真实的target地址
+							dm.AddRealHostMapping(sourceHost, parsedURL.Host)
+							// logger.LogPrintf("DEBUG: 添加源映射 - SourceHost: %s -> M3U8 Host: %s", sourceHost, parsedURL.Host)
+						}
+					}
+				}
+
+				newLine := dm.replaceSpecialNestedURLClean(string(line), frontendScheme, r.Host, sourceHost, tm, tokenParam, seen)
 				if newLine != nil {
 					w.Write(newLine)
 				}
@@ -903,7 +1028,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		stream.CopyWithContext(r.Context(), w, resp.Body, buf, updateActive)
 	}
 
-	logger.LogRequestAndResponse(r, targetReqURL.String(), resp)
+	logger.LogRequestAndResponse(r, originalReqURL.String(), resp)
 }
 
 // ---------------------------
@@ -934,24 +1059,22 @@ func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, m
 				return resp, nil
 			}
 
-			newLoc, replaced, _ := dm.replaceSpecialNestedURL(parsedURL, frontendScheme, frontendHost, nil, tokenParam)
-			if !replaced {
-				hostMapped, protocolMapped, found := dm.MapDomain(parsedURL.Host)
-				if found {
-					newURL := &url.URL{
-						Scheme:   chooseScheme(protocolMapped, nil),
-						Host:     hostMapped,
-						Path:     parsedURL.Path,
-						RawQuery: parsedURL.RawQuery,
-						Fragment: parsedURL.Fragment,
-					}
-					newLoc = newURL.String()
-				} else {
-					newLoc = parsedURL.String()
+			// 保持原始重定向URL，后端请求需要使用真实的URL
+			finalLoc := loc
+
+			// 检查是否需要进行域名映射替换
+			if hostMapped, protocolMapped, found := dm.MapDomain(parsedURL.Host); found {
+				newURL := &url.URL{
+					Scheme:   chooseScheme(protocolMapped, nil),
+					Host:     hostMapped,
+					Path:     parsedURL.Path,
+					RawQuery: parsedURL.RawQuery,
+					Fragment: parsedURL.Fragment,
 				}
+				finalLoc = newURL.String()
 			}
 
-			req, err = http.NewRequest(req.Method, newLoc, bytes.NewReader(reqBodyBytes))
+			req, err = http.NewRequest(req.Method, finalLoc, bytes.NewReader(reqBodyBytes))
 			if err != nil {
 				return nil, err
 			}
