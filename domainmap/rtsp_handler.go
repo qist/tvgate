@@ -6,7 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
+	// "strconv"
 	"strings"
 	"time"
 
@@ -25,13 +25,12 @@ import (
 	// "github.com/qist/tvgate/utils/worker"
 )
 
-
-
-func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
+func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request, connID string) {
 	// 全局token验证
 	clientIP := monitor.GetClientIP(r)
-	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	// connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	// tokenParamName := "my_token" // 默认参数名
+	logger.LogPrintf(connID)
 	path := strings.TrimPrefix(r.URL.Path, "/rtsp/")
 	if path == "" {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
@@ -50,7 +49,7 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 构建RTSP URL
 	rtspURL := fmt.Sprintf("rtsp://%s%s", hostPort, streamPath)
-
+	rtspURL += "?" + r.URL.RawQuery
 	logger.LogPrintf("RTSP → HTTP request: %s", rtspURL)
 
 	parsedURL, err := url.Parse(rtspURL)
@@ -149,7 +148,7 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		// 	Path:     parsedURL.Path,
 		// 	RawQuery: parsedURL.RawQuery,
 		// }
-		parsedURL, _:= base.ParseURL(rtspURL)
+		parsedURL, _ := base.ParseURL(rtspURL)
 		_, err = client.Options(parsedURL)
 		if err != nil {
 			http.Error(w, "RTSP OPTIONS error: "+err.Error(), 500)

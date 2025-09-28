@@ -475,12 +475,12 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 		u, err := url.Parse(newLine)
 		if err == nil {
 			// 记录原始URL信息用于调试
-			originalHost := u.Host
-			logger.LogPrintf("DEBUG: 处理URL: %s, 原始Host: %s", newLine, originalHost)
+			// originalHost := u.Host
+			// logger.LogPrintf("DEBUG: 处理URL: %s, 原始Host: %s", newLine, originalHost)
 
 			// 前端显示始终为 source 地址（如 192.168.0.151:8888）
 			u.Host = sourceHost
-			logger.LogPrintf("DEBUG: 替换Host: %s -> %s", originalHost, u.Host)
+			// logger.LogPrintf("DEBUG: 替换Host: %s -> %s", originalHost, u.Host)
 
 			u.Scheme = frontendScheme
 
@@ -577,7 +577,8 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 确定使用哪个token参数名和token值
 	tokenParam := ""
 	token := ""
-
+	clientIP := ""
+	connID := ""
 	// 优先使用domainmap本地配置，没有配置才是全局认证配置
 	if cfg.Auth.TokensEnabled && (cfg.Auth.DynamicTokens.EnableDynamic || cfg.Auth.StaticTokens.EnableStatic) {
 		// 使用domainmap本地配置
@@ -610,10 +611,22 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		token = r.URL.Query().Get(tokenParam)
 	}
+	if protocol == "rtsp" {
+		// 统一认证逻辑
+		clientIP := monitor.GetClientIP(r)
+		connID = clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 
-	// 统一认证逻辑
-	clientIP := monitor.GetClientIP(r)
-	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	} else {
+		clientIP := monitor.GetClientIP(r)
+		frontendScheme := getRequestScheme(r)
+		// targetURL 是用于前端显示的URL（始终显示为source地址）
+		targetURL := &url.URL{
+			Scheme: frontendScheme,
+			Host:   sourceHost, // 使用source地址作为前端显示地址
+		}
+		hash := md5.Sum([]byte(fmt.Sprintf("%s://%s", targetURL.Scheme, targetURL.Host)))
+		connID = clientIP + "_" + hex.EncodeToString(hash[:])
+	}
 	// 校验 client headers
 	if len(cfg.ClientHeaders) > 0 {
 		for k, v := range cfg.ClientHeaders {
@@ -698,9 +711,11 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			newReq.URL.RawQuery = r.URL.RawQuery
 		}
-
+		newReq.URL.RawQuery = r.URL.RawQuery
+		// logger.LogPrintf("RTSP → HTTP request: %s", newReq.URL.String())
+		// logger.LogPrintf("RTSP → HTTP request: %s", connID)
 		// 转发给下一个处理器（即RTSP处理器）
-		RtspToHTTPHandler(w, newReq)
+		RtspToHTTPHandler(w, newReq, connID)
 		return
 	}
 
@@ -741,9 +756,6 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// logger.LogPrintf("DEBUG: TargetURL (前端显示): %s", targetURL.String())
 	// logger.LogPrintf("DEBUG: OriginalURL (后端请求): %s", originalURL.String())
 
-	clientIP = monitor.GetClientIP(r)
-	hash := md5.Sum([]byte(fmt.Sprintf("%s://%s", targetURL.Scheme, targetURL.Host)))
-	connID = clientIP + "_" + hex.EncodeToString(hash[:])
 	var tm *auth.TokenManager
 
 	if cfg.Auth.TokensEnabled && (cfg.Auth.DynamicTokens.EnableDynamic || cfg.Auth.StaticTokens.EnableStatic) {
@@ -763,7 +775,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			dm.tokenManagers[host] = tm
 		}
 	}
-
+	// logger.LogPrintf("connID: %s", connID)
 	monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
 		IP:             clientIP,
 		URL:            targetURL.String(),
@@ -976,7 +988,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isM3U8 := strings.Contains(contentType, "mpegurl")
 
 	if isM3U8 {
-		logger.LogPrintf("DEBUG: 检测到M3U8内容，开始处理...")
+		// logger.LogPrintf("DEBUG: 检测到M3U8内容，开始处理...")
 		reader := bufio.NewReader(resp.Body)
 		seen := make(map[string]struct{})
 		for {
