@@ -14,13 +14,20 @@
             </div>
         </a>
     </div>
-    
+
+    <div class="sidebar-item" data-href="{{.webPath}}web-editor">
+        <a href="{{.webPath}}web-editor" style="color: inherit; text-decoration: none;">
+            <p>修改用户名和密码，及访问路径。</p>
+            <h3>用户设置</h3>
+        </a>
+    </div>
+
     <div class="sidebar-item" data-href="{{.webPath}}node">
         <a href="{{.webPath}}node" style="color: inherit; text-decoration: none;">
             <h3>功能面板</h3>
         </a>
     </div>
-    
+
     {{if .hasDomainMap}}
     <div class="sidebar-item" data-href="{{.webPath}}domainmap-editor">
         <a href="{{.webPath}}domainmap-editor" style="color: inherit; text-decoration: none;">
@@ -28,7 +35,7 @@
         </a>
     </div>
     {{end}}
-    
+
     {{if .hasProxyGroups}}
     <div class="sidebar-item" data-href="{{.webPath}}proxygroups-editor">
         <a href="{{.webPath}}proxygroups-editor" style="color: inherit; text-decoration: none;">
@@ -36,7 +43,7 @@
         </a>
     </div>
     {{end}}
-    
+
     <div class="sidebar-item" data-href="{{.webPath}}logout">
         <a href="{{.webPath}}logout" style="color: inherit; text-decoration: none;">
             <h3>退出登录</h3>
@@ -46,26 +53,26 @@
 
 <script>
     // 修复sidebar链接点击问题
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function () {
         const sidebarItems = document.querySelectorAll('.sidebar-item');
         sidebarItems.forEach(item => {
             // 获取链接地址
             const href = item.getAttribute('data-href');
-            
+
             // 添加点击事件监听器
-            item.addEventListener('click', function(e) {
+            item.addEventListener('click', function (e) {
                 if (href) {
                     window.location.href = href;
                 }
             });
-            
+
             // 添加键盘事件支持
-            item.addEventListener('keydown', function(e) {
+            item.addEventListener('keydown', function (e) {
                 if (e.key === 'Enter' && href) {
                     window.location.href = href;
                 }
             });
-            
+
             // 添加焦点样式
             item.setAttribute('tabindex', '0');
         });
