@@ -56,6 +56,7 @@ func Stop() {
 	}
 }
 
+
 // convertConfig converts the config types to publisher types
 func convertConfig(cfg *config.PublisherConfig) *Config {
 	if cfg == nil {
@@ -73,6 +74,13 @@ func convertConfig(cfg *config.PublisherConfig) *Config {
 	for name, streamItem := range cfg.Streams {
 		log.Printf("Processing stream: %s", name)
 		log.Printf("Stream protocol: %s, enabled: %t", streamItem.Protocol, streamItem.Enabled)
+		
+		// 生成streamKey
+		streamKey := streamItem.StreamKey.Value
+		if streamKey == "" && streamItem.StreamKey.Type == "random" {
+			// 简单生成一个随机key用于测试
+			streamKey = "test_stream_key"
+		}
 		
 		stream := &Stream{
 			BufferSize: streamItem.BufferSize,
