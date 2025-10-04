@@ -22,6 +22,7 @@ import (
 	"github.com/qist/tvgate/groupstats"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
+	"github.com/qist/tvgate/publisher"
 	"github.com/qist/tvgate/server"
 	"github.com/qist/tvgate/web"
 )
@@ -99,6 +100,13 @@ func main() {
 		group.Stats = &config.GroupStats{
 			ProxyStats: make(map[string]*config.ProxyStats),
 		}
+	}
+
+	// -------------------------
+	// 初始化 publisher 模块
+	// -------------------------
+	if err := publisher.Init(); err != nil {
+		log.Printf("初始化 publisher 模块失败: %v", err)
 	}
 
 	// -------------------------
@@ -264,6 +272,9 @@ func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActive
 		if config.Cancel != nil {
 			config.Cancel()
 		}
+
+		// Stop publisher module
+		publisher.Stop()
 
 		close(stopCleaner)
 		close(stopAccessCleaner)

@@ -19,6 +19,7 @@ import (
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	httpclient "github.com/qist/tvgate/utils/http"
+	"github.com/qist/tvgate/publisher"
 	"github.com/qist/tvgate/web"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
@@ -296,6 +297,10 @@ func RegisterMonitorWebMux(mux *http.ServeMux, cfg *config.Config) {
 		configHandler := web.NewConfigHandler(webConfig)
 		configHandler.RegisterRoutes(mux)
 	}
+
+	// 添加 publisher 路由
+	mux.Handle("/publisher/", SecurityHeaders(http.StripPrefix("/publisher", publisher.GetHandler())))
+	mux.Handle("/publisher", SecurityHeaders(http.RedirectHandler("/publisher/", http.StatusMovedPermanently)))
 }
 
 // jx + 默认代理
