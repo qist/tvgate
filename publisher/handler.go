@@ -1,10 +1,11 @@
 package publisher
 
 import (
+	"encoding/json"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
-	"path/filepath"
 	"strings"
 )
 
@@ -22,167 +23,270 @@ func NewHandler(manager *Manager) *Handler {
 
 // ServeHTTP handles HTTP requests
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Remove the prefix to get the actual path
-	path := strings.TrimPrefix(r.URL.Path, "/publisher")
+	path := strings.TrimPrefix(r.URL.Path, "/")
 	
 	// Handle different paths
-	if path == "/play" || path == "/play/" {
-		h.handleListStreams(w, r)
-		return
+	switch {
+	case path == "" || path == "index.html":
+		h.serveIndex(w, r)
+	case strings.HasPrefix(path, "play/"):
+		h.servePlay(w, r, path)
+	case strings.HasPrefix(path, "api/"):
+		h.serveAPI(w, r, path)
+	default:
+		http.NotFound(w, r)
 	}
-	
-	// Try to match a stream
-	if h.handleStreamPlay(w, r, path) {
-		return
-	}
-	
-	// If no match, return 404
-	http.NotFound(w, r)
 }
 
-// handleListStreams lists all streams
-func (h *Handler) handleListStreams(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	
-	var html strings.Builder
-	html.WriteString("<html><head><title>Publisher Streams</title></head><body>")
-	html.WriteString("<h1>Available Streams</h1>")
-	html.WriteString("<ul>")
+// serveIndex serves the index page
+func (h *Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
+	// Get stream information
+	streams := make(map[string]interface{})
 	
 	h.manager.mutex.RLock()
 	for name, streamManager := range h.manager.streams {
-		if streamManager.stream.Enabled {
-			streamKey, _ := streamManager.stream.GenerateStreamKey()
-			html.WriteString(fmt.Sprintf("<li><a href=\"/publisher/play/%s\">%s</a> (key: %s)</li>", name, name, streamKey))
+		stream := streamManager.stream
+		streamKey := streamManager.GetStreamKey()
+		
+		// 构建本地播放URL
+		localPlayURLs := make(map[string]string)
+		if stream.Stream.LocalPlayUrls.Flv != "" {
+			localPlayURLs["flv"] = stream.BuildLocalPlayURL(stream.Stream.LocalPlayUrls.Flv, streamKey, "flv")
+		}
+		if stream.Stream.LocalPlayUrls.Hls != "" {
+			localPlayURLs["hls"] = stream.BuildLocalPlayURL(stream.Stream.LocalPlayUrls.Hls, streamKey, "hls")
+		}
+		
+		// 构建接收端播放URL
+		receiverPlayURLs := make(map[string]map[string]string)
+		receivers := stream.Stream.GetReceivers()
+		for i, receiver := range receivers {
+			receiverPlayURLs[fmt.Sprintf("receiver_%d", i+1)] = make(map[string]string)
+			if receiver.PlayUrls.Flv != "" {
+				receiverPlayURLs[fmt.Sprintf("receiver_%d", i+1)]["flv"] = receiver.BuildReceiverPlayURL(receiver.PlayUrls.Flv, streamKey, "flv")
+			}
+			if receiver.PlayUrls.Hls != "" {
+				receiverPlayURLs[fmt.Sprintf("receiver_%d", i+1)]["hls"] = receiver.BuildReceiverPlayURL(receiver.PlayUrls.Hls, streamKey, "hls")
+			}
+		}
+		
+		streams[name] = map[string]interface{}{
+			"streamKey":        streamKey,
+			"localPlayURLs":    localPlayURLs,
+			"receiverPlayURLs": receiverPlayURLs,
+			"enabled":          stream.Enabled,
+			"protocol":         stream.Protocol,
 		}
 	}
 	h.manager.mutex.RUnlock()
 	
-	html.WriteString("</ul>")
-	html.WriteString("</body></html>")
+	// Render the index page
+	data := map[string]interface{}{
+		"streams": streams,
+	}
 	
-	_, err := w.Write([]byte(html.String()))
+	// Simple HTML template
+	tmpl := `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TVGate Publisher</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .stream { border: 1px solid #ccc; margin: 10px 0; padding: 10px; }
+        .stream-name { font-weight: bold; font-size: 1.2em; }
+        .urls { margin: 10px 0; }
+        .url { margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <h1>TVGate Publisher</h1>
+    {{range $name, $stream := .streams}}
+    <div class="stream">
+        <div class="stream-name">{{$name}}</div>
+        <div>Stream Key: {{$stream.streamKey}}</div>
+        <div>Enabled: {{$stream.enabled}}</div>
+        <div>Protocol: {{$stream.protocol}}</div>
+        
+        <div class="urls">
+            <h3>Local Play URLs:</h3>
+            {{range $protocol, $url := $stream.localPlayURLs}}
+            <div class="url">{{$protocol}}: <a href="{{$url}}">{{$url}}</a></div>
+            {{end}}
+        </div>
+        
+        <div class="urls">
+            <h3>Receiver Play URLs:</h3>
+            {{range $receiver, $urls := $stream.receiverPlayURLs}}
+            <div>
+                <strong>{{$receiver}}:</strong>
+                {{range $protocol, $url := $urls}}
+                <div class="url">{{$protocol}}: <a href="{{$url}}">{{$url}}</a></div>
+                {{end}}
+            </div>
+            {{end}}
+        </div>
+    </div>
+    {{else}}
+    <p>No streams configured</p>
+    {{end}}
+</body>
+</html>
+`
+	
+	t, err := template.New("index").Parse(tmpl)
 	if err != nil {
-		log.Printf("Error writing response: %v", err)
+		http.Error(w, "Failed to parse template", http.StatusInternalServerError)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := t.Execute(w, data); err != nil {
+		log.Printf("Failed to execute template: %v", err)
 	}
 }
 
-// handleStreamPlay handles playing a specific stream
-func (h *Handler) handleStreamPlay(w http.ResponseWriter, r *http.Request, path string) bool {
-	// Extract stream name from path
-	// Expected format: /play/{streamName} or /play/{streamName}/flv or /play/{streamName}/hls
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) < 2 {
-		return false
+// servePlay serves the play page
+func (h *Handler) servePlay(w http.ResponseWriter, r *http.Request, path string) {
+	// Extract stream ID
+	streamID := strings.TrimPrefix(path, "play/")
+	if streamID == "" {
+		http.Error(w, "Stream ID is required", http.StatusBadRequest)
+		return
 	}
 	
-	streamName := parts[1]
-	
+	// Find the stream
 	h.manager.mutex.RLock()
-	streamManager, exists := h.manager.streams[streamName]
+	streamManager, exists := h.manager.streams[streamID]
 	h.manager.mutex.RUnlock()
 	
-	if !exists || !streamManager.stream.Enabled {
-		return false
+	if !exists {
+		http.Error(w, "Stream not found", http.StatusNotFound)
+		return
 	}
 	
-	// Generate stream key
-	streamKey, err := streamManager.stream.GenerateStreamKey()
+	// Get stream key
+	streamKey := streamManager.GetStreamKey()
+	stream := streamManager.stream
+	
+	// 构建播放URL
+	playURLs := make(map[string]string)
+	if stream.Stream.LocalPlayUrls.Flv != "" {
+		playURLs["flv"] = stream.BuildLocalPlayURL(stream.Stream.LocalPlayUrls.Flv, streamKey, "flv")
+	}
+	if stream.Stream.LocalPlayUrls.Hls != "" {
+		playURLs["hls"] = stream.BuildLocalPlayURL(stream.Stream.LocalPlayUrls.Hls, streamKey, "hls")
+	}
+	
+	// Simple play page
+	tmpl := `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Play Stream - {{.streamID}}</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .player { margin: 20px 0; }
+        .url { margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>Play Stream: {{.streamID}}</h1>
+    <div>Stream Key: {{.streamKey}}</div>
+    
+    {{range $protocol, $url := .playURLs}}
+    <div class="player">
+        <h2>{{$protocol | ToUpper}} Player</h2>
+        <div class="url"><a href="{{$url}}">{{$url}}</a></div>
+        {{if eq $protocol "flv"}}
+        <video controls width="640" height="360">
+            <source src="{{$url}}" type="video/x-flv">
+            Your browser does not support FLV video.
+        </video>
+        {{else if eq $protocol "hls"}}
+        <video controls width="640" height="360">
+            <source src="{{$url}}" type="application/x-mpegURL">
+            Your browser does not support HLS video.
+        </video>
+        {{end}}
+    </div>
+    {{end}}
+</body>
+</html>
+`
+	
+	t, err := template.New("play").Parse(tmpl)
 	if err != nil {
-		http.Error(w, "Failed to generate stream key", http.StatusInternalServerError)
-		return true
+		http.Error(w, "Failed to parse template", http.StatusInternalServerError)
+		return
 	}
 	
-	// Determine the type of request
-	if len(parts) >= 3 {
-		switch parts[2] {
-		case "flv":
-			// Redirect to FLV stream URL
-			flvURL := streamManager.stream.Stream.LocalPlayUrls.Flv
-			if flvURL != "" {
-				if !strings.HasSuffix(flvURL, "/") {
-					flvURL = flvURL + "/"
-				}
-				http.Redirect(w, r, flvURL+streamKey+".flv", http.StatusFound)
-				return true
-			}
-		case "hls":
-			// Redirect to HLS stream URL
-			hlsURL := streamManager.stream.Stream.LocalPlayUrls.Hls
-			if hlsURL != "" {
-				if !strings.HasSuffix(hlsURL, "/") {
-					hlsURL = hlsURL + "/"
-				}
-				http.Redirect(w, r, hlsURL+streamKey+".m3u8", http.StatusFound)
-				return true
-			}
-		}
+	data := map[string]interface{}{
+		"streamID":  streamID,
+		"streamKey": streamKey,
+		"playURLs":  playURLs,
 	}
 	
-	// Default stream page
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	
-	var html strings.Builder
-	html.WriteString("<html><head><title>Stream: " + streamName + "</title></head><body>")
-	html.WriteString("<h1>Stream: " + streamName + "</h1>")
-	html.WriteString("<p>Stream Key: " + streamKey + "</p>")
-	
-	// Add links to available formats
-	flvURL := streamManager.stream.Stream.LocalPlayUrls.Flv
-	hlsURL := streamManager.stream.Stream.LocalPlayUrls.Hls
-	
-	if flvURL != "" {
-		html.WriteString(fmt.Sprintf("<p><a href=\"/publisher/play/%s/flv\">Play FLV</a></p>", streamName))
+	if err := t.Execute(w, data); err != nil {
+		log.Printf("Failed to execute template: %v", err)
 	}
-	
-	if hlsURL != "" {
-		html.WriteString(fmt.Sprintf("<p><a href=\"/publisher/play/%s/hls\">Play HLS</a></p>", streamName))
-	}
-	
-	html.WriteString("</body></html>")
-	
-	_, err = w.Write([]byte(html.String()))
-	if err != nil {
-		log.Printf("Error writing response: %v", err)
-	}
-	
-	return true
 }
 
-// MatchPath checks if the given path matches any configured stream paths
-func (h *Handler) MatchPath(requestPath string) (string, string, bool) {
-	// Check if the request path starts with the publisher path
-	if !strings.HasPrefix(requestPath, "/live") {
-		return "", "", false
+// serveAPI serves the API endpoints
+func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request, path string) {
+	switch strings.TrimPrefix(path, "api/") {
+	case "streams":
+		h.serveStreamsAPI(w, r)
+	default:
+		http.Error(w, "API endpoint not found", http.StatusNotFound)
 	}
+}
+
+// serveStreamsAPI serves the streams API
+func (h *Handler) serveStreamsAPI(w http.ResponseWriter, r *http.Request) {
+	streams := make(map[string]interface{})
 	
-	// Extract the stream key from the path
-	// Expected format: /live/{streamKey} or /live/{streamKey}.flv or /live/{streamKey}.m3u8
-	trimmedPath := strings.TrimPrefix(requestPath, "/live")
-	trimmedPath = strings.TrimPrefix(trimmedPath, "/")
-	
-	// Handle different formats
-	ext := filepath.Ext(trimmedPath)
-	streamKey := strings.TrimSuffix(trimmedPath, ext)
-	
-	// Look for a stream with this key
 	h.manager.mutex.RLock()
-	defer h.manager.mutex.RUnlock()
-	
 	for name, streamManager := range h.manager.streams {
-		if !streamManager.stream.Enabled {
-			continue
+		stream := streamManager.stream
+		streamKey := streamManager.GetStreamKey()
+		
+		// 构建本地播放URL
+		localPlayURLs := make(map[string]string)
+		if stream.Stream.LocalPlayUrls.Flv != "" {
+			localPlayURLs["flv"] = stream.BuildLocalPlayURL(stream.Stream.LocalPlayUrls.Flv, streamKey, "flv")
+		}
+		if stream.Stream.LocalPlayUrls.Hls != "" {
+			localPlayURLs["hls"] = stream.BuildLocalPlayURL(stream.Stream.LocalPlayUrls.Hls, streamKey, "hls")
 		}
 		
-		generatedKey, err := streamManager.stream.GenerateStreamKey()
-		if err != nil {
-			continue
+		// 构建接收端播放URL
+		receiverPlayURLs := make(map[string]map[string]string)
+		receivers := stream.Stream.GetReceivers()
+		for i, receiver := range receivers {
+			receiverPlayURLs[fmt.Sprintf("receiver_%d", i+1)] = make(map[string]string)
+			if receiver.PlayUrls.Flv != "" {
+				receiverPlayURLs[fmt.Sprintf("receiver_%d", i+1)]["flv"] = receiver.BuildReceiverPlayURL(receiver.PlayUrls.Flv, streamKey, "flv")
+			}
+			if receiver.PlayUrls.Hls != "" {
+				receiverPlayURLs[fmt.Sprintf("receiver_%d", i+1)]["hls"] = receiver.BuildReceiverPlayURL(receiver.PlayUrls.Hls, streamKey, "hls")
+			}
 		}
 		
-		if generatedKey == streamKey {
-			return name, ext, true
+		streams[name] = map[string]interface{}{
+			"streamKey":        streamKey,
+			"localPlayURLs":    localPlayURLs,
+			"receiverPlayURLs": receiverPlayURLs,
+			"enabled":          stream.Enabled,
+			"protocol":         stream.Protocol,
 		}
 	}
+	h.manager.mutex.RUnlock()
 	
-	return "", "", false
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(streams); err != nil {
+		log.Printf("Failed to encode JSON: %v", err)
+		http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
+	}
 }

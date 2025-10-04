@@ -4,39 +4,42 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"log"
 	"math/big"
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // GenerateStreamKey generates a stream key based on the configuration
 func (s *Stream) GenerateStreamKey() (string, error) {
-	// 如果没有配置streamkey，则生成默认的随机密钥
-	if s.StreamKey.Type == "" && s.StreamKey.Value == "" && s.StreamKey.Length == 0 {
-		// 生成默认的随机密钥
-		return generateRandomString(16)
+	// 如果已经配置了固定的stream key值，直接使用它
+	if s.StreamKey.Type == "fixed" && s.StreamKey.Value != "" {
+		return s.StreamKey.Value, nil
 	}
 	
-	switch s.StreamKey.Type {
-	case "random":
+	// 如果是随机类型或者没有指定类型但有长度配置
+	if s.StreamKey.Type == "random" || (s.StreamKey.Type == "" && s.StreamKey.Length > 0) {
 		length := s.StreamKey.Length
 		if length <= 0 {
 			length = 16 // 默认长度
 		}
 		return generateRandomString(length)
-	case "fixed":
-		return s.StreamKey.Value, nil
-	case "":
-		// 如果类型为空但有值，则使用固定值
-		if s.StreamKey.Value != "" {
-			return s.StreamKey.Value, nil
-		}
-		// 否则生成随机值
-		return generateRandomString(16)
-	default:
-		return "", fmt.Errorf("unknown stream key type: %s", s.StreamKey.Type)
 	}
+	
+	// 如果没有配置streamkey，则生成默认的随机密钥
+	if s.StreamKey.Type == "" && s.StreamKey.Value == "" && s.StreamKey.Length == 0 {
+		return generateRandomString(16)
+	}
+	
+	// 其他情况使用配置的值
+	if s.StreamKey.Value != "" {
+		return s.StreamKey.Value, nil
+	}
+	
+	// 默认生成随机密钥
+	return generateRandomString(16)
 }
 
 // generateRandomString generates a random string of specified length
@@ -94,9 +97,30 @@ func (s *Stream) BuildFFmpegCommand() []string {
 		case strings.Contains(s.Stream.Source.URL, "rtsp://"):
 			// RTSP流的默认参数
 			cmd = append(cmd, "-rtsp_transport", "tcp")
-		case strings.Contains(s.Stream.Source.URL, "http://") || strings.Contains(s.Stream.Source.URL, "https://"):
-			// HTTP流的默认参数
-			cmd = append(cmd, "-user_agent", "TVGate/1.0")
+		}
+	}
+	
+	// Add User-Agent if configured in FFmpegOptions
+	if s.FFmpegOptions != nil && s.FFmpegOptions.UserAgent != "" {
+		cmd = append(cmd, "-user_agent", s.FFmpegOptions.UserAgent)
+	}
+	
+	// Add custom headers
+	if s.FFmpegOptions != nil && len(s.FFmpegOptions.Headers) > 0 {
+		for _, header := range s.FFmpegOptions.Headers {
+			cmd = append(cmd, "-headers", header+"\r\n")
+		}
+	} else if s.Stream.Source.Headers != nil && len(s.Stream.Source.Headers) > 0 {
+		// 兼容旧的source.headers配置
+		var headersBuilder strings.Builder
+		for key, value := range s.Stream.Source.Headers {
+			headersBuilder.WriteString(key)
+			headersBuilder.WriteString(": ")
+			headersBuilder.WriteString(value)
+			headersBuilder.WriteString("\r\n")
+		}
+		if headersBuilder.Len() > 0 {
+			cmd = append(cmd, "-headers", headersBuilder.String())
 		}
 	}
 	
@@ -190,11 +214,76 @@ func (r *Receiver) BuildFFmpegPushCommand(baseCmd []string, streamKey string) []
 	
 	// Add push URL with stream key
 	pushURL := r.PushURL
-	if streamKey != "" && !strings.HasSuffix(pushURL, "/") {
-		pushURL = pushURL + "/" + streamKey
-	} else if streamKey != "" {
-		pushURL = pushURL + streamKey
+	// 如果URL中已经包含密钥，则替换它
+	if streamKey != "" {
+		// 从URL中提取可能的旧密钥
+		oldKey := ""
+		// 处理RTMP URL
+		if strings.HasPrefix(pushURL, "rtmp://") {
+			// 从路径中提取密钥
+			parts := strings.Split(pushURL, "/")
+			if len(parts) > 0 {
+				// 密钥通常是最后一个部分
+				lastPart := parts[len(parts)-1]
+				// 如果包含查询参数，去掉查询参数
+				if strings.Contains(lastPart, "?") {
+					lastPart = strings.Split(lastPart, "?")[0]
+				}
+				oldKey = lastPart
+			}
+		}
+		
+		// 处理HTTP URL
+		if strings.Contains(pushURL, "http://") || strings.Contains(pushURL, "https://") {
+			// 从路径中提取密钥
+			parts := strings.Split(pushURL, "/")
+			if len(parts) > 0 {
+				// 密钥通常是最后一个部分（去除可能的文件扩展名）
+				lastPart := parts[len(parts)-1]
+				// 如果包含查询参数，去掉查询参数
+				if strings.Contains(lastPart, "?") {
+					lastPart = strings.Split(lastPart, "?")[0]
+				}
+				// 如果以.flv或.m3u8结尾，去掉扩展名
+				if strings.HasSuffix(lastPart, ".flv") {
+					lastPart = strings.TrimSuffix(lastPart, ".flv")
+				} else if strings.HasSuffix(lastPart, ".m3u8") {
+					lastPart = strings.TrimSuffix(lastPart, ".m3u8")
+				}
+				oldKey = lastPart
+			}
+		}
+		
+		// 如果找到了旧密钥，则替换它
+		if oldKey != "" {
+			// 替换URL中的旧密钥为新密钥
+			if strings.HasSuffix(pushURL, oldKey) {
+				pushURL = strings.TrimSuffix(pushURL, oldKey) + streamKey
+			} else if strings.Contains(pushURL, "/"+oldKey+"/") {
+				// 处理路径中包含密钥的情况 (如: /path/oldkey/oldkey)
+				pushURL = strings.Replace(pushURL, "/"+oldKey+"/"+oldKey, "/"+streamKey+"/"+streamKey, 1)
+			} else if strings.Contains(pushURL, "/"+oldKey+".flv") {
+				pushURL = strings.Replace(pushURL, "/"+oldKey+".flv", "/"+streamKey+".flv", 1)
+			} else if strings.Contains(pushURL, "/"+oldKey+".m3u8") {
+				pushURL = strings.Replace(pushURL, "/"+oldKey+".m3u8", "/"+streamKey+".m3u8", 1)
+			} else {
+				// 如果无法匹配特定模式，则在末尾添加新密钥
+				if !strings.HasSuffix(pushURL, "/") {
+					pushURL = pushURL + "/" + streamKey
+				} else {
+					pushURL = pushURL + streamKey
+				}
+			}
+		} else {
+			// 如果没有找到旧密钥，则在末尾添加新密钥
+			if !strings.HasSuffix(pushURL, "/") {
+				pushURL = pushURL + "/" + streamKey
+			} else {
+				pushURL = pushURL + streamKey
+			}
+		}
 	}
+	
 	cmd = append(cmd, pushURL)
 	
 	// Add push post arguments
@@ -226,4 +315,95 @@ func (s *Stream) ExecuteFFmpeg(ctx context.Context, args []string) error {
 	}
 	
 	return nil
+}
+
+// BuildLocalPlayURL 构建本地播放URL，根据协议类型添加streamkey和扩展名
+func (s *Stream) BuildLocalPlayURL(baseURL string, streamKey string, protocol string) string {
+	if baseURL == "" {
+		return ""
+	}
+	
+	// 确保URL以/结尾
+	if !strings.HasSuffix(baseURL, "/") {
+		baseURL = baseURL + "/"
+	}
+	
+	switch protocol {
+	case "flv":
+		return baseURL + streamKey + ".flv"
+	case "hls":
+		// 可以是 streamkey.m3u8 或 streamkey/index.m3u8
+		return baseURL + streamKey + ".m3u8"
+	default:
+		return baseURL + streamKey
+	}
+}
+
+// BuildReceiverPlayURL 构建接收端播放URL
+func (r *Receiver) BuildReceiverPlayURL(baseURL string, streamKey string, protocol string) string {
+	if baseURL == "" {
+		return ""
+	}
+	
+	// 确保URL以/结尾
+	if !strings.HasSuffix(baseURL, "/") {
+		baseURL = baseURL + "/"
+	}
+	
+	switch protocol {
+	case "flv":
+		return baseURL + streamKey + ".flv"
+	case "hls":
+		// 可以是 streamkey.m3u8 或 streamkey/index.m3u8
+		// 这里我们使用更常见的格式
+		if strings.HasSuffix(baseURL, "/index.m3u8") {
+			// 如果已经配置了完整的路径
+			return baseURL
+		}
+		return baseURL + streamKey + "/index.m3u8"
+	default:
+		return baseURL + streamKey
+	}
+}
+
+// CheckStreamKeyExpiration 检查stream key是否过期
+func (s *Stream) CheckStreamKeyExpiration(streamKey string, createdAt time.Time) bool {
+	log.Printf("Checking stream key expiration: type=%s, value=%s, expiration=%s, created=%v", 
+		s.StreamKey.Type, streamKey, s.StreamKey.Expiration, createdAt)
+	
+	// 如果是固定密钥，永不过期
+	if s.StreamKey.Type == "fixed" && s.StreamKey.Value != "" {
+		log.Printf("Fixed stream key, never expires")
+		return false
+	}
+	
+	// 检查创建时间是否有效
+	if createdAt.IsZero() {
+		log.Printf("Stream key creation time is zero, treating as expired")
+		return true
+	}
+	
+	// 如果配置了过期时间，则检查是否过期
+	if s.StreamKey.Expiration != "" {
+		// 解析时间字符串
+		duration, err := time.ParseDuration(s.StreamKey.Expiration)
+		if err != nil {
+			// 如果解析失败，使用默认24小时
+			log.Printf("Failed to parse expiration duration '%s', using default 24h: %v", s.StreamKey.Expiration, err)
+			duration = 24 * time.Hour
+		}
+		expired := time.Since(createdAt) > duration
+		log.Printf("Stream key age: %v, expiration: %v, expired: %t", time.Since(createdAt), duration, expired)
+		return expired
+	}
+	
+	// 默认24小时过期
+	expired := time.Since(createdAt) > 24*time.Hour
+	log.Printf("Using default expiration (24h): age=%v, expired=%t", time.Since(createdAt), expired)
+	return expired
+}
+
+// UpdateStreamKey 更新stream key
+func (s *Stream) UpdateStreamKey() (string, error) {
+	return s.GenerateStreamKey()
 }

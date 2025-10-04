@@ -1,5 +1,7 @@
 package publisher
 
+import "time"
+
 // Config represents the publisher configuration
 type Config struct {
 	Path    string              `yaml:"path"`
@@ -18,9 +20,11 @@ type Stream struct {
 
 // StreamKey represents the stream key configuration
 type StreamKey struct {
-	Type   string `yaml:"type"`   // "random" or "fixed"
-	Value  string `yaml:"value"`  // for fixed type
-	Length int    `yaml:"length"` // for random type
+	Type       string        `yaml:"type"`                // "random" or "fixed"
+	Value      string        `yaml:"value"`               // for fixed type
+	Length     int           `yaml:"length"`              // for random type
+	Expiration string        `yaml:"expiration,omitempty"` // 过期时间（支持字符串格式，如"24h"）
+	CreatedAt  time.Time     `yaml:"created_at,omitempty"` // 创建时间
 }
 
 // FFmpegOptions represents flexible ffmpeg options configuration
@@ -39,6 +43,8 @@ type FFmpegOptions struct {
 	OutputPreArgs  []string       `yaml:"output_pre_args,omitempty"`  // 输出前参数
 	OutputPostArgs []string       `yaml:"output_post_args,omitempty"` // 输出后参数
 	CustomArgs     []string       `yaml:"custom_args,omitempty"`      // 自定义参数
+	UserAgent      string         `yaml:"user_agent,omitempty"`       // User-Agent
+	Headers        []string       `yaml:"headers,omitempty"`          // 自定义请求头
 }
 
 // FilterOptions represents video and audio filter configurations
