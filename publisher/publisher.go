@@ -6,13 +6,10 @@ import (
 	"fmt"
 	"log"
 	"math/big"
-	"os"
 	"os/exec"
 	"strings"
 	"syscall"
 	"time"
-	
-	"gopkg.in/yaml.v3"
 )
 
 // GenerateStreamKey generates a stream key based on the configuration
@@ -411,58 +408,3 @@ func (s *Stream) UpdateStreamKey() (string, error) {
 	return s.GenerateStreamKey()
 }
 
-// SaveStreamKeyToConfig 将生成的streamkey保存到配置文件中
-func (s *Stream) SaveStreamKeyToConfig(configPath string, streamID string) error {
-	// 如果没有配置文件路径，则不保存
-	if configPath == "" {
-		return nil
-	}
-	
-	// 读取原始配置文件
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return fmt.Errorf("读取配置文件失败: %v", err)
-	}
-	
-	// 解析YAML
-	var rootConfig map[string]interface{}
-	if err := yaml.Unmarshal(data, &rootConfig); err != nil {
-		return fmt.Errorf("解析配置文件失败: %v", err)
-	}
-	
-	// 更新publisher配置
-	if publisher, ok := rootConfig["publisher"].(map[string]interface{}); ok {
-		if streamConfig, ok := publisher[streamID].(map[string]interface{}); ok {
-			// 更新streamkey的值和生成时间，但不覆盖expiration配置
-			if streamKey, ok := streamConfig["streamkey"].(map[string]interface{}); ok {
-				// 只有当value不为空时才更新
-				if s.StreamKey.Value != "" {
-					streamKey["value"] = s.StreamKey.Value
-				}
-				
-				// 更新生成时间
-				streamKey["created_at"] = time.Now().Format(time.RFC3339)
-				
-				// expiration参数应该从外部配置读取，不要写入默认值
-				// 只有在原来没有配置expiration时才设置默认值
-				if _, exists := streamKey["expiration"]; !exists {
-					streamKey["expiration"] = "24h"
-				}
-			}
-			
-			// 将更新后的配置写回文件
-			updatedData, err := yaml.Marshal(rootConfig)
-			if err != nil {
-				return fmt.Errorf("序列化配置失败: %v", err)
-			}
-			
-			if err := os.WriteFile(configPath, updatedData, 0644); err != nil {
-				return fmt.Errorf("写入配置文件失败: %v", err)
-			}
-			
-			fmt.Printf("Stream key for %s saved to config file\n", streamID)
-		}
-	}
-	
-	return nil
-}

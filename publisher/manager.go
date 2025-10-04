@@ -16,6 +16,9 @@ type Manager struct {
 	config *Config
 	streams map[string]*StreamManager
 	mutex   sync.RWMutex
+	// 添加定时器相关字段
+	expirationChecker *time.Ticker
+	done              chan struct{}
 }
 
 // StreamManager manages a single stream
@@ -37,6 +40,7 @@ func NewManager(config *Config) *Manager {
 	return &Manager{
 		config:  config,
 		streams: make(map[string]*StreamManager),
+		done:    make(chan struct{}), // 初始化done通道
 	}
 }
 
@@ -46,6 +50,9 @@ func (m *Manager) Start() error {
 	defer m.mutex.Unlock()
 
 	log.Printf("Starting publisher manager")
+
+	// 启动过期检查器
+	m.startExpirationChecker()
 
 	if m.config.Streams == nil {
 		log.Println("No streams configured")
@@ -158,12 +165,82 @@ func (m *Manager) Start() error {
 	return nil
 }
 
+// startExpirationChecker 启动过期检查器
+func (m *Manager) startExpirationChecker() {
+	// 每分钟检查一次密钥是否过期
+	m.expirationChecker = time.NewTicker(1 * time.Minute)
+	go func() {
+		for {
+			select {
+			case <-m.expirationChecker.C:
+				m.checkStreamKeyExpiration()
+			case <-m.done:
+				return
+			}
+		}
+	}()
+}
+
+// checkStreamKeyExpiration 检查所有流的密钥是否过期
+func (m *Manager) checkStreamKeyExpiration() {
+	m.mutex.RLock()
+	streams := make([]*StreamManager, 0, len(m.streams))
+	for _, stream := range m.streams {
+		streams = append(streams, stream)
+	}
+	m.mutex.RUnlock()
+	
+	// 检查每个流的密钥是否过期
+	for _, stream := range streams {
+		stream.mutex.RLock()
+		streamKey := stream.streamKey
+		createdAt := stream.createdAt
+		stream.mutex.RUnlock()
+		
+		log.Printf("Checking if stream key expired for %s (created at: %v)", stream.name, createdAt)
+		if stream.stream.CheckStreamKeyExpiration(streamKey, createdAt) {
+			log.Printf("Stream key for %s expired, generating new key", stream.name)
+			// 更新stream key
+			newStreamKey, err := stream.stream.UpdateStreamKey()
+			if err != nil {
+				log.Printf("Failed to generate new stream key for %s: %v", stream.name, err)
+			} else {
+				stream.mutex.Lock()
+				oldKey := stream.streamKey
+				stream.oldStreamKey = oldKey // 保存旧密钥
+				stream.streamKey = newStreamKey
+				stream.createdAt = time.Now()
+				stream.mutex.Unlock()
+				log.Printf("Generated new stream key for %s: %s (was: %s)", stream.name, newStreamKey, oldKey)
+				
+				// 回写配置到YAML文件
+				log.Printf("Updating config file for %s with new stream key", stream.name)
+				if err := stream.updateConfigFile(newStreamKey); err != nil {
+					log.Printf("Failed to update config file for %s: %v", stream.name, err)
+				} else {
+					log.Printf("Successfully updated config file for %s", stream.name)
+				}
+				
+				// 重新构建命令并重启推流
+				stream.restartStreaming()
+			}
+		}
+	}
+}
+
 // Stop stops the publisher manager and all streams
 func (m *Manager) Stop() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
 	log.Printf("Stopping publisher manager with %d streams", len(m.streams))
+	
+	// 停止过期检查器
+	if m.expirationChecker != nil {
+		m.expirationChecker.Stop()
+	}
+	close(m.done)
+	
 	for _, streamManager := range m.streams {
 		streamManager.Stop()
 	}
@@ -281,6 +358,9 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 						} else {
 							log.Printf("Receiver index %d out of range, cannot rebuild command", receiverIndex)
 						}
+						
+						// 继续循环使用新密钥进行推流
+						continue
 					}
 				} else {
 					log.Printf("Stream key for %s not expired, will retry in 5 seconds", sm.name)
@@ -301,6 +381,30 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 			}
 		}
 	}
+}
+
+// restartStreaming 重启推流
+func (sm *StreamManager) restartStreaming() {
+	log.Printf("Restarting streaming for %s", sm.name)
+	
+	// 停止当前推流
+	sm.Stop()
+	
+	// 等待一小段时间确保推流已停止
+	time.Sleep(100 * time.Millisecond)
+	
+	// 重新创建context
+	sm.mutex.Lock()
+	ctx, cancel := context.WithCancel(context.Background())
+	sm.cancel = cancel
+	sm.ctx = ctx
+	sm.running = true
+	sm.mutex.Unlock()
+	
+	// 启动新的推流
+	go sm.startStreaming()
+	
+	log.Printf("Restarted streaming for %s", sm.name)
 }
 
 // isRunning checks if the stream manager is still running
@@ -372,13 +476,11 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 			if streamKey, ok := stream["streamkey"].(map[string]interface{}); ok {
 				oldValue := streamKey["value"]
 				streamKey["value"] = newStreamKey
-				// 设置24小时后过期
-				streamKey["expiration"] = "24h"
-				// 更新生成时间
+				// 仅更新生成时间，不修改expiration参数
 				streamKey["generated"] = time.Now().Format(time.RFC3339)
 				// 更新创建时间
 				streamKey["created_at"] = sm.createdAt.Format(time.RFC3339)
-				log.Printf("Updated streamkey for %s: old_value=%v, new_value=%s, expiration=%s", sm.name, oldValue, newStreamKey, "24h")
+				log.Printf("Updated streamkey for %s: old_value=%v, new_value=%s", sm.name, oldValue, newStreamKey)
 			} else {
 				log.Printf("Failed to find streamkey config for %s", sm.name)
 			}

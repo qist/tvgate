@@ -87,9 +87,10 @@ func convertConfig(cfg *config.PublisherConfig) *Config {
 			Protocol:   streamItem.Protocol,
 			Enabled:    streamItem.Enabled,
 			StreamKey:  StreamKey{ // 使用配置中的streamkey
-				Type:   streamItem.StreamKey.Type,
-				Value:  streamItem.StreamKey.Value,
-				Length: streamItem.StreamKey.Length,
+				Type:       streamItem.StreamKey.Type,
+				Value:      streamItem.StreamKey.Value,
+				Length:     streamItem.StreamKey.Length,
+				Expiration: streamItem.StreamKey.Expiration, // 添加Expiration字段
 			},
 			Stream: StreamConfig{
 				Source: Source{
