@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	
+	"github.com/shirou/gopsutil/v3/process"
 )
 
 // GenerateStreamKey generates a stream key based on the configuration
@@ -315,6 +317,103 @@ func (s *Stream) ExecuteFFmpeg(ctx context.Context, args []string) error {
 	}
 	
 	return nil
+}
+
+// ExecuteFFmpegWithMonitoring executes the ffmpeg command with monitoring capabilities
+func (s *Stream) ExecuteFFmpegWithMonitoring(ctx context.Context, args []string, onStarted func(int32, *process.Process), onStatsUpdate func(uint64)) error {
+	// Create the command
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	
+	// Set process group ID to allow killing child processes
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+	
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start ffmpeg: %v", err)
+	}
+	
+	// If we have a callback for when the process starts, call it
+	if onStarted != nil && cmd.Process != nil {
+		// Wrap the process with gopsutil
+		proc, err := process.NewProcess(int32(cmd.Process.Pid))
+		if err == nil {
+			onStarted(int32(cmd.Process.Pid), proc)
+		}
+	}
+	
+	// Channel to signal when the process has finished
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	
+	// Monitor the process if we have callbacks
+	if (onStarted != nil || onStatsUpdate != nil) && cmd.Process != nil {
+		pid := int32(cmd.Process.Pid)
+		go s.monitorFFmpegProcess(ctx, pid, onStatsUpdate)
+	}
+	
+	// Wait for the command to finish or context to be cancelled
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("ffmpeg execution failed: %v", err)
+		}
+		return nil
+	case <-ctx.Done():
+		// Kill the process group when context is cancelled
+		if cmd.Process != nil {
+			// Kill the entire process group
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return ctx.Err()
+	}
+}
+
+// monitorFFmpegProcess monitors an FFmpeg process and provides stats updates
+func (s *Stream) monitorFFmpegProcess(ctx context.Context, pid int32, onStatsUpdate func(uint64)) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	
+	var lastIOCounters *process.IOCountersStat
+	
+	// Get process object
+	proc, err := process.NewProcess(pid)
+	if err != nil {
+		log.Printf("Failed to get process %d: %v", pid, err)
+		return
+	}
+	
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Get IO counters to track bytes transferred
+			ioCounters, err := proc.IOCounters()
+			if err != nil {
+				// Process might have exited
+				return
+			}
+			
+			// Calculate bytes transferred since last check
+			var bytesTransferred uint64
+			if lastIOCounters != nil {
+				// Sum of read and write bytes
+				bytesTransferred = (ioCounters.ReadBytes - lastIOCounters.ReadBytes) + 
+					(ioCounters.WriteBytes - lastIOCounters.WriteBytes)
+			}
+			
+			lastIOCounters = ioCounters
+			
+			// Call the stats update callback if provided
+			if onStatsUpdate != nil {
+				onStatsUpdate(bytesTransferred)
+			}
+		}
+	}
 }
 
 // BuildLocalPlayURL 构建本地播放URL，根据协议类型添加streamkey和扩展名

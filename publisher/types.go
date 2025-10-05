@@ -1,6 +1,8 @@
 package publisher
 
-import "time"
+import (
+	"time"
+)
 
 // Config represents the publisher configuration
 type Config struct {
@@ -45,6 +47,26 @@ type FFmpegOptions struct {
 	CustomArgs     []string       `yaml:"custom_args,omitempty"`      // 自定义参数
 	UserAgent      string         `yaml:"user_agent,omitempty"`       // User-Agent
 	Headers        []string       `yaml:"headers,omitempty"`          // 自定义请求头
+}
+
+// FFmpegProcessStats represents statistics for an FFmpeg process
+type FFmpegProcessStats struct {
+	StreamName       string    `json:"stream_name"`
+	ReceiverIndex    int       `json:"receiver_index"`
+	PID              int32     `json:"pid"`
+	StartTime        time.Time `json:"start_time"`
+	CPUPercent       float64   `json:"cpu_percent"`
+	MemoryRSS        uint64    `json:"memory_rss"`
+	LastUpdate       time.Time `json:"last_update"`
+	Running          bool      `json:"running"`
+	LastError        string    `json:"last_error,omitempty"`
+	Restarts         int       `json:"restarts"`
+	
+	// 码流和累计推流数据统计
+	BytesTransferred uint64  `json:"bytes_transferred"`  // 累计传输字节数
+	CurrentBitrate   uint64  `json:"current_bitrate"`    // 当前码率 (bps)
+	AvgBitrate       uint64  `json:"avg_bitrate"`        // 平均码率 (bps)
+	Duration         float64 `json:"duration"`           // 运行时长 (秒)
 }
 
 // FilterOptions represents video and audio filter configurations
