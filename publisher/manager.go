@@ -305,50 +305,6 @@ func (m *Manager) StopAll() {
 	log.Printf("All streams stopped")
 }
 
-// UpdateConfig updates the manager configuration and restarts streams if needed
-func (m *Manager) UpdateConfig(newConfig *Config) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	
-	log.Printf("Updating manager config from %d to %d streams", len(m.config.Streams), len(newConfig.Streams))
-	
-	// 保存旧配置用于比较
-	oldConfig := m.config
-	m.config = newConfig
-	
-	// 检查每个流是否需要重启
-	for name, newStream := range newConfig.Streams {
-		if oldStream, exists := oldConfig.Streams[name]; exists {
-			// 流已存在，检查是否需要重启
-			if m.streams[name] != nil && m.shouldRestartStream(oldStream, newStream) {
-				log.Printf("Stream %s configuration changed, restarting", name)
-				// 停止旧流
-				m.streams[name].Stop()
-				// 创建新流
-				m.startStream(name, newStream)
-			}
-		} else {
-			// 新增流
-			log.Printf("Adding new stream %s", name)
-			m.startStream(name, newStream)
-		}
-	}
-	
-	// 检查是否有流被删除
-	for name := range oldConfig.Streams {
-		if _, exists := newConfig.Streams[name]; !exists {
-			// 流被删除
-			if stream, exists := m.streams[name]; exists {
-				log.Printf("Removing stream %s", name)
-				stream.Stop()
-				delete(m.streams, name)
-			}
-		}
-	}
-	
-	log.Printf("Publisher config updated successfully")
-}
-
 // shouldRestartStream checks if a stream needs to be restarted based on configuration changes
 func (m *Manager) shouldRestartStream(oldStream, newStream *Stream) bool {
 	// 检查基本配置是否变化
@@ -403,6 +359,13 @@ func (m *Manager) startStream(name string, stream *Stream) {
 	if !stream.Enabled {
 		log.Printf("Stream %s is disabled, skipping", name)
 		return
+	}
+
+	// 检查流是否已经存在，如果存在则先停止它
+	if existingStream, exists := m.streams[name]; exists {
+		log.Printf("Stream %s already exists, stopping it first", name)
+		existingStream.Stop()
+		delete(m.streams, name)
 	}
 
 	// Create context for this stream
@@ -500,6 +463,76 @@ func (m *Manager) startStream(name string, stream *Stream) {
 			log.Printf("Successfully updated config file for %s", name)
 		}
 	}
+}
+
+// UpdateConfig updates the manager configuration and restarts streams if needed
+func (m *Manager) UpdateConfig(newConfig *Config) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	
+	log.Printf("Updating manager config from %d to %d streams", len(m.config.Streams), len(newConfig.Streams))
+	
+	// 保存旧配置用于比较
+	oldConfig := m.config
+	m.config = newConfig
+	
+	// 检查每个流是否需要重启或者启停
+	for name, newStream := range newConfig.Streams {
+		log.Printf("Processing stream %s during config update", name)
+		if oldStream, exists := oldConfig.Streams[name]; exists {
+			log.Printf("Stream %s already exists, checking if it needs to be restarted", name)
+			// 流已存在，检查是否需要重启
+			needRestart := m.shouldRestartStream(oldStream, newStream)
+			log.Printf("Stream %s needRestart: %t", name, needRestart)
+			if m.streams[name] != nil && needRestart {
+				log.Printf("Stream %s configuration changed, handling appropriately", name)
+				// 如果enabled状态发生变化
+				if oldStream.Enabled != newStream.Enabled {
+					if newStream.Enabled {
+						// 从禁用变为启用，启动流
+						log.Printf("Stream %s enabled, starting", name)
+						m.startStream(name, newStream)
+					} else {
+						// 从启用变为禁用，停止流
+						log.Printf("Stream %s disabled, stopping", name)
+						m.streams[name].Stop()
+						delete(m.streams, name)
+					}
+				} else {
+					// 其他配置变化，重启流
+					log.Printf("Stream %s configuration changed, restarting", name)
+					// 停止旧流
+					m.streams[name].Stop()
+					// 创建新流
+					m.startStream(name, newStream)
+				}
+			} else if m.streams[name] == nil && newStream.Enabled {
+				// 流管理器不存在但流应该启用，启动流
+				log.Printf("Stream %s manager not found but stream is enabled, starting", name)
+				m.startStream(name, newStream)
+			} else {
+				log.Printf("Stream %s no change or not enabled, skipping", name)
+			}
+		} else {
+			// 新增流
+			log.Printf("Adding new stream %s", name)
+			m.startStream(name, newStream)
+		}
+	}
+	
+	// 检查是否有流被删除
+	for name := range oldConfig.Streams {
+		if _, exists := newConfig.Streams[name]; !exists {
+			// 流被删除
+			if stream, exists := m.streams[name]; exists {
+				log.Printf("Removing stream %s", name)
+				stream.Stop()
+				delete(m.streams, name)
+			}
+		}
+	}
+	
+	log.Printf("Publisher config updated successfully")
 }
 
 // startStreaming starts the streaming process for a single stream
