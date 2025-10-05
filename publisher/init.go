@@ -37,6 +37,11 @@ func Init() error {
 			return
 		}
 
+		// 启动配置文件监控
+		if config.ConfigFilePath != nil {
+			go WatchConfigFile(*config.ConfigFilePath)
+		}
+
 		log.Println("Publisher module initialized successfully")
 	})
 

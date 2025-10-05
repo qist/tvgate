@@ -304,6 +304,203 @@ func (m *Manager) StopAll() {
 	log.Printf("All streams stopped")
 }
 
+// UpdateConfig updates the manager configuration and restarts streams if needed
+func (m *Manager) UpdateConfig(newConfig *Config) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	
+	log.Printf("Updating manager config from %d to %d streams", len(m.config.Streams), len(newConfig.Streams))
+	
+	// 保存旧配置用于比较
+	oldConfig := m.config
+	m.config = newConfig
+	
+	// 检查每个流是否需要重启
+	for name, newStream := range newConfig.Streams {
+		if oldStream, exists := oldConfig.Streams[name]; exists {
+			// 流已存在，检查是否需要重启
+			if m.streams[name] != nil && m.shouldRestartStream(oldStream, newStream) {
+				log.Printf("Stream %s configuration changed, restarting", name)
+				// 停止旧流
+				m.streams[name].Stop()
+				// 创建新流
+				m.startStream(name, newStream)
+			}
+		} else {
+			// 新增流
+			log.Printf("Adding new stream %s", name)
+			m.startStream(name, newStream)
+		}
+	}
+	
+	// 检查是否有流被删除
+	for name := range oldConfig.Streams {
+		if _, exists := newConfig.Streams[name]; !exists {
+			// 流被删除
+			if stream, exists := m.streams[name]; exists {
+				log.Printf("Removing stream %s", name)
+				stream.Stop()
+				delete(m.streams, name)
+			}
+		}
+	}
+	
+	log.Printf("Publisher config updated successfully")
+}
+
+// shouldRestartStream checks if a stream needs to be restarted based on configuration changes
+func (m *Manager) shouldRestartStream(oldStream, newStream *Stream) bool {
+	// 检查基本配置是否变化
+	if oldStream.Enabled != newStream.Enabled {
+		return true
+	}
+	
+	if oldStream.Protocol != newStream.Protocol {
+		return true
+	}
+	
+	// 检查源URL是否变化
+	if oldStream.Stream.Source.URL != newStream.Stream.Source.URL {
+		return true
+	}
+	
+	if oldStream.Stream.Source.BackupURL != newStream.Stream.Source.BackupURL {
+		return true
+	}
+	
+	// 检查接收者配置是否变化
+	if len(oldStream.Stream.Receivers.All) != len(newStream.Stream.Receivers.All) {
+		return true
+	}
+	
+	for i, oldReceiver := range oldStream.Stream.Receivers.All {
+		if i >= len(newStream.Stream.Receivers.All) {
+			return true
+		}
+		newReceiver := newStream.Stream.Receivers.All[i]
+		if oldReceiver.PushURL != newReceiver.PushURL {
+			return true
+		}
+	}
+	
+	// 检查推流URL是否变化
+	if oldStream.Stream.LocalPlayUrls.Flv != newStream.Stream.LocalPlayUrls.Flv {
+		return true
+	}
+	
+	if oldStream.Stream.LocalPlayUrls.Hls != newStream.Stream.LocalPlayUrls.Hls {
+		return true
+	}
+	
+	// 如果以上都没有变化，则不需要重启
+	return false
+}
+
+// startStream starts a single stream
+func (m *Manager) startStream(name string, stream *Stream) {
+	log.Printf("Starting stream: %s, enabled: %t", name, stream.Enabled)
+	if !stream.Enabled {
+		log.Printf("Stream %s is disabled, skipping", name)
+		return
+	}
+
+	// Create context for this stream
+	ctx, cancel := context.WithCancel(context.Background())
+	
+	// 以配置文件中的streamkey.value为准，只在密钥过期或为空时才生成新密钥
+	var streamKey string
+	var createdAt time.Time
+	needUpdateConfig := false
+	
+	if stream.StreamKey.Value != "" {
+		// 如果配置中有stream key值，使用配置文件中的值和时间
+		streamKey = stream.StreamKey.Value
+		createdAt = stream.StreamKey.CreatedAt
+		
+		// 检查创建时间是否有效
+		if createdAt.IsZero() {
+			// 如果创建时间为零值，使用当前时间作为创建时间
+			createdAt = time.Now()
+			log.Printf("Stream key creation time is zero, using current time: %v", createdAt)
+		}
+		
+		// 检查密钥是否过期
+		if stream.CheckStreamKeyExpiration(streamKey, createdAt) {
+			// 已过期，生成新的stream key
+			log.Printf("Existing stream key for %s expired, generating new key", name)
+			var err error
+			streamKey, err = stream.GenerateStreamKey()
+			if err != nil {
+				log.Printf("Failed to generate stream key for %s: %v", name, err)
+				cancel()
+				return
+			}
+			// 重置创建时间为当前时间
+			createdAt = time.Now()
+			needUpdateConfig = true
+		} else {
+			log.Printf("Using existing stream key for %s: %s", name, streamKey)
+			// 即使密钥未过期，也要确保createdAt有效
+			if createdAt.IsZero() {
+				createdAt = time.Now()
+			}
+		}
+	} else {
+		// 没有stream key，生成新的
+		log.Printf("No existing stream key for %s, generating new key", name)
+		var err error
+		streamKey, err = stream.GenerateStreamKey()
+		if err != nil {
+			log.Printf("Failed to generate stream key for %s: %v", name, err)
+			cancel()
+			return
+		}
+		createdAt = time.Now()
+		needUpdateConfig = true
+	}
+	
+	// 从URL中提取旧密钥，用于替换
+	oldStreamKey := ""
+	if stream.Stream.Receivers.All != nil && len(stream.Stream.Receivers.All) > 0 {
+		// 从第一个receiver的push_url中提取旧密钥
+		if stream.Stream.Receivers.All[0].PushURL != "" {
+			oldStreamKey = m.extractStreamKeyFromURL(stream.Stream.Receivers.All[0].PushURL)
+			log.Printf("Extracted old stream key from push_url for %s: %s", name, oldStreamKey)
+		}
+	} else if stream.Stream.Receivers.Primary != nil {
+		// 从primary receiver的push_url中提取旧密钥
+		if stream.Stream.Receivers.Primary.PushURL != "" {
+			oldStreamKey = m.extractStreamKeyFromURL(stream.Stream.Receivers.Primary.PushURL)
+			log.Printf("Extracted old stream key from primary push_url for %s: %s", name, oldStreamKey)
+		}
+	}
+	
+	streamManager := &StreamManager{
+		name:            name,
+		stream:          stream,
+		streamKey:       streamKey,
+		oldStreamKey:    oldStreamKey,
+		createdAt:       createdAt,
+		cancel:          cancel,
+		ctx:             ctx,
+		running:         true,
+		ffmpegProcesses: make(map[int]*FFmpegProcessInfo),
+	}
+
+	m.streams[name] = streamManager
+	go streamManager.startStreaming()
+	
+	// 如果需要更新配置文件（新生成密钥的情况），则更新配置文件
+	if needUpdateConfig {
+		log.Printf("Updating config file for %s with new stream key", name)
+		if err := streamManager.updateConfigFile(streamKey); err != nil {
+			log.Printf("Failed to update config file for %s: %v", name, err)
+		} else {
+			log.Printf("Successfully updated config file for %s", name)
+		}
+	}
+}
+
 // startStreaming starts the streaming process for a single stream
 func (sm *StreamManager) startStreaming() {
 	log.Printf("Starting stream %s with key %s", sm.name, sm.streamKey)
@@ -539,14 +736,14 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 	}
 }
 
-// restartStreaming 重启推流
+// restartStreaming 重新启动推流
 func (sm *StreamManager) restartStreaming() {
 	log.Printf("Restarting streaming for %s", sm.name)
 	
-	// 停止当前推流
+	// 先停止当前推流
 	sm.Stop()
 	
-	// 等待一小段时间确保推流已停止
+	// 等待一小段时间确保旧的推流完全停止
 	time.Sleep(100 * time.Millisecond)
 	
 	// 重新创建context
@@ -707,9 +904,36 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 							}
 						}
 					}
-				} else if receivers, ok := streamData["receivers"].([]interface{}); ok {
+					
 					// 处理all模式
-					log.Printf("Found all receivers config with %d receivers", len(receivers))
+					if allReceivers, ok := receivers["all"].([]interface{}); ok {
+						log.Printf("Found all receivers config with %d receivers", len(allReceivers))
+						for i, receiver := range allReceivers {
+							if rec, ok := receiver.(map[string]interface{}); ok {
+								if pushURL, ok := rec["push_url"].(string); ok {
+									// 替换旧的密钥为新的密钥
+									pushURL = sm.replaceStreamKeyInURL(pushURL, newStreamKey)
+									rec["push_url"] = pushURL
+									log.Printf("Updated receiver %d push_url to: %s", i, pushURL)
+								}
+								
+								// 更新receiver play_urls
+								if playURLs, ok := rec["play_urls"].(map[string]interface{}); ok {
+									for format, url := range playURLs {
+										if urlStr, ok := url.(string); ok {
+											// 替换旧的密钥为新的密钥
+											urlStr = sm.replaceStreamKeyInURL(urlStr, newStreamKey)
+											playURLs[format] = urlStr
+											log.Printf("Updated receiver %d play_urls.%s to: %s", i, format, urlStr)
+										}
+									}
+								}
+							}
+						}
+					}
+				} else if receivers, ok := streamData["receivers"].([]interface{}); ok {
+					// 处理直接数组格式的receivers（兼容旧格式）
+					log.Printf("Found direct receivers array config with %d receivers", len(receivers))
 					for i, receiver := range receivers {
 						if rec, ok := receiver.(map[string]interface{}); ok {
 							if pushURL, ok := rec["push_url"].(string); ok {
