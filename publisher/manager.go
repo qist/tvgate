@@ -630,6 +630,9 @@ func (sm *StreamManager) isPrimaryHealthy() bool {
 func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 	log.Printf("Starting FFmpeg stream routine for %s receiver %d", sm.name, receiverIndex)
 	
+	// 添加一个标志来跟踪是否已经尝试过backup_url
+	useBackup := false
+	
 	for {
 		// 检查stream manager是否仍在运行
 		if !sm.isRunning() {
@@ -701,6 +704,24 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 					return
 				}
 				
+				// 如果主URL失败且有backup_url且尚未尝试过backup_url，则切换到backup_url
+				if !useBackup && sm.stream.Stream.Source.BackupURL != "" {
+					log.Printf("Switching to backup URL for stream %s receiver %d", sm.name, receiverIndex)
+					useBackup = true
+					
+					// 重新构建使用backup_url的命令
+					backupCmd := sm.buildFFmpegCommandWithBackup(true)
+					receivers := sm.stream.Stream.GetReceivers()
+					if receiverIndex <= len(receivers) {
+						cmd = receivers[receiverIndex-1].BuildFFmpegPushCommand(backupCmd, sm.streamKey)
+						log.Printf("Rebuilt FFmpeg command with backup URL for %s receiver %d", sm.name, receiverIndex)
+						log.Printf("New command: ffmpeg %s", strings.Join(cmd, " "))
+						
+						// 继续循环使用backup_url进行推流
+						continue
+					}
+				}
+				
 				// 检查stream key是否过期
 				sm.mutex.RLock()
 				streamKey := sm.streamKey
@@ -733,6 +754,10 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 						
 						// 重新构建命令
 						ffmpegCmd := sm.stream.BuildFFmpegCommand()
+						// 如果之前使用的是backup_url，继续使用backup_url
+						if useBackup {
+							ffmpegCmd = sm.buildFFmpegCommandWithBackup(true)
+						}
 						receivers := sm.stream.Stream.GetReceivers()
 						if receiverIndex <= len(receivers) {
 							cmd = receivers[receiverIndex-1].BuildFFmpegPushCommand(ffmpegCmd, newStreamKey)
@@ -742,11 +767,16 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 							log.Printf("Receiver index %d out of range, cannot rebuild command", receiverIndex)
 						}
 						
+						// 重置backup标志，以便在新的流密钥下可以重新尝试backup_url
+						useBackup = false
+						
 						// 继续循环使用新密钥进行推流
 						continue
 					}
 				} else {
 					log.Printf("Stream key for %s not expired, will retry in 5 seconds", sm.name)
+					// 重置backup标志，以便下次可以重新尝试backup_url
+					useBackup = false
 				}
 				
 				// 等待后重启
@@ -779,10 +809,157 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 				case <-time.After(1 * time.Second):
 					// 继续循环
 					log.Printf("Restarting stream %s receiver %d after normal finish", sm.name, receiverIndex)
+					// 重置backup标志，以便下次可以重新尝试backup_url
+					useBackup = false
 				}
 			}
 		}
 	}
+}
+
+// buildFFmpegCommandWithBackup builds the ffmpeg command with primary/backup URL support
+// This is a local implementation since the Stream method might not be accessible
+func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
+	s := sm.stream
+	
+	// Start with base command - manually build it
+	var cmd []string
+	
+	// Add global arguments - 默认参数
+	if s.FFmpegOptions == nil || len(s.FFmpegOptions.GlobalArgs) == 0 {
+		// 默认全局参数
+		cmd = append(cmd, "-re", "-fflags", "+genpts")
+	} else if s.FFmpegOptions != nil && len(s.FFmpegOptions.GlobalArgs) > 0 {
+		cmd = append(cmd, s.FFmpegOptions.GlobalArgs...)
+	}
+	
+	// Add input pre arguments - 默认输入前参数
+	if s.FFmpegOptions != nil && len(s.FFmpegOptions.InputPreArgs) > 0 {
+		cmd = append(cmd, s.FFmpegOptions.InputPreArgs...)
+	} else {
+		// 默认输入前参数
+		switch {
+		case strings.Contains(s.Stream.Source.URL, "rtsp://"):
+			// RTSP流的默认参数
+			cmd = append(cmd, "-rtsp_transport", "tcp")
+		}
+	}
+	
+	// Add User-Agent if configured in FFmpegOptions
+	if s.FFmpegOptions != nil && s.FFmpegOptions.UserAgent != "" {
+		cmd = append(cmd, "-user_agent", s.FFmpegOptions.UserAgent)
+	} else {
+		// 默认User-Agent
+		cmd = append(cmd, "-user_agent", "TVGate/1.0")
+	}
+	
+	// Add custom headers
+	var headersBuilder strings.Builder
+	hasHeaders := false
+	
+	if s.FFmpegOptions != nil && len(s.FFmpegOptions.Headers) > 0 {
+		for _, header := range s.FFmpegOptions.Headers {
+			headersBuilder.WriteString(header)
+			headersBuilder.WriteString("\r\n")
+			hasHeaders = true
+		}
+	} else if s.Stream.Source.Headers != nil && len(s.Stream.Source.Headers) > 0 {
+		// 兼容旧的source.headers配置
+		for key, value := range s.Stream.Source.Headers {
+			headersBuilder.WriteString(key)
+			headersBuilder.WriteString(": ")
+			headersBuilder.WriteString(value)
+			headersBuilder.WriteString("\r\n")
+			hasHeaders = true
+		}
+	}
+	
+	if hasHeaders {
+		cmd = append(cmd, "-headers", headersBuilder.String())
+	}
+	
+	// Add source URL - 根据useBackup参数决定使用主URL还是备份URL
+	if useBackup && s.Stream.Source.BackupURL != "" {
+		cmd = append(cmd, "-i", s.Stream.Source.BackupURL)
+		log.Printf("Stream %s: Using backup URL: %s", sm.name, s.Stream.Source.BackupURL)
+	} else {
+		cmd = append(cmd, "-i", s.Stream.Source.URL)
+		log.Printf("Stream %s: Using primary URL: %s", sm.name, s.Stream.Source.URL)
+	}
+	
+	// Add input post arguments
+	if s.FFmpegOptions != nil && len(s.FFmpegOptions.InputPostArgs) > 0 {
+		cmd = append(cmd, s.FFmpegOptions.InputPostArgs...)
+	}
+	
+	// Add filter arguments
+	if s.FFmpegOptions != nil && s.FFmpegOptions.Filters != nil {
+		if len(s.FFmpegOptions.Filters.VideoFilters) > 0 {
+			cmd = append(cmd, "-vf", strings.Join(s.FFmpegOptions.Filters.VideoFilters, ","))
+		}
+		if len(s.FFmpegOptions.Filters.AudioFilters) > 0 {
+			cmd = append(cmd, "-af", strings.Join(s.FFmpegOptions.Filters.AudioFilters, ","))
+		}
+	}
+	
+	// Add video codec - 默认视频编码器
+	videoCodec := "libx264"
+	if s.FFmpegOptions != nil && s.FFmpegOptions.VideoCodec != "" {
+		videoCodec = s.FFmpegOptions.VideoCodec
+	}
+	cmd = append(cmd, "-c:v", videoCodec)
+	
+	// Add audio codec - 默认音频编码器
+	audioCodec := "aac"
+	if s.FFmpegOptions != nil && s.FFmpegOptions.AudioCodec != "" {
+		audioCodec = s.FFmpegOptions.AudioCodec
+	}
+	cmd = append(cmd, "-c:a", audioCodec)
+	
+	// Add video bitrate - 默认视频码率
+	videoBitrate := "2M"
+	if s.FFmpegOptions != nil && s.FFmpegOptions.VideoBitrate != "" {
+		videoBitrate = s.FFmpegOptions.VideoBitrate
+	}
+	cmd = append(cmd, "-b:v", videoBitrate)
+	
+	// Add audio bitrate - 默认音频码率
+	audioBitrate := "128k"
+	if s.FFmpegOptions != nil && s.FFmpegOptions.AudioBitrate != "" {
+		audioBitrate = s.FFmpegOptions.AudioBitrate
+	}
+	cmd = append(cmd, "-b:a", audioBitrate)
+	
+	// Add preset - 默认编码预设
+	preset := "ultrafast"
+	if s.FFmpegOptions != nil && s.FFmpegOptions.Preset != "" {
+		preset = s.FFmpegOptions.Preset
+	}
+	cmd = append(cmd, "-preset", preset)
+	
+	// Add CRF
+	if s.FFmpegOptions != nil && s.FFmpegOptions.CRF > 0 {
+		cmd = append(cmd, "-crf", fmt.Sprintf("%d", s.FFmpegOptions.CRF))
+	}
+	
+	// Add output format - 默认输出格式
+	outputFormat := "flv"
+	if s.FFmpegOptions != nil && s.FFmpegOptions.OutputFormat != "" {
+		outputFormat = s.FFmpegOptions.OutputFormat
+	}
+	cmd = append(cmd, "-f", outputFormat)
+	
+	// Add output pre arguments
+	if s.FFmpegOptions != nil && len(s.FFmpegOptions.OutputPreArgs) > 0 {
+		cmd = append(cmd, s.FFmpegOptions.OutputPreArgs...)
+	}
+	
+	// Add custom arguments after input
+	if s.FFmpegOptions != nil && len(s.FFmpegOptions.CustomArgs) > 0 {
+		cmd = append(cmd, s.FFmpegOptions.CustomArgs...)
+	}
+	
+	return cmd
 }
 
 // restartStreaming 重新启动推流
