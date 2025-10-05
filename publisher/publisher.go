@@ -145,14 +145,14 @@ func (s *Stream) BuildFFmpegCommand() []string {
 	}
 	
 	// Add video codec - 默认视频编码器
-	videoCodec := "copy"
+	videoCodec := "libx264"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.VideoCodec != "" {
 		videoCodec = s.FFmpegOptions.VideoCodec
 	}
 	cmd = append(cmd, "-c:v", videoCodec)
 	
 	// Add audio codec - 默认音频编码器
-	audioCodec := "copy"
+	audioCodec := "aac"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.AudioCodec != "" {
 		audioCodec = s.FFmpegOptions.AudioCodec
 	}
