@@ -66,9 +66,8 @@ func (sc *StreamConfig) GetReceivers() []Receiver {
 		if sc.Receivers.Primary != nil {
 			receivers = append(receivers, *sc.Receivers.Primary)
 		}
-		if sc.Receivers.Backup != nil {
-			receivers = append(receivers, *sc.Receivers.Backup)
-		}
+		// 只有在明确需要 backup 时才添加 backup receiver
+		// 这将在实际检测到 primary 失效时在运行时动态添加
 		return receivers
 	case "all":
 		return sc.Receivers.All

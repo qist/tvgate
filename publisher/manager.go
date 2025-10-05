@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"strings"
@@ -562,6 +563,36 @@ func (sm *StreamManager) startStreaming() {
 		}(i, receiver)
 	}
 	
+	// 对于 primary-backup 模式，额外处理 backup receiver
+	if sm.stream.Stream.Mode == "primary-backup" && sm.stream.Stream.Receivers.Backup != nil {
+		// 等待一段时间观察 primary 是否正常工作
+		go func() {
+			// 等待一段时间让 primary 先启动
+			time.Sleep(5 * time.Second)
+			
+			// 检查 primary 是否正常运行
+			if sm.isPrimaryHealthy() {
+				log.Printf("Primary receiver for stream %s is healthy, not starting backup", sm.name)
+			} else {
+				log.Printf("Primary receiver for stream %s is unhealthy, starting backup", sm.name)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					// 使用当前的streamKey而不是启动时的streamKey
+					sm.mutex.RLock()
+					currentStreamKey := sm.streamKey
+					sm.mutex.RUnlock()
+					
+					// 构建 backup receiver 的 FFmpeg 命令
+					cmd := sm.stream.Stream.Receivers.Backup.BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
+					log.Printf("Full FFmpeg command for stream %s backup receiver: ffmpeg %s", sm.name, strings.Join(cmd, " "))
+					// index 为 2，因为 primary 是 1，backup 是 2
+					sm.runFFmpegStream(cmd, 2)
+				}()
+			}
+		}()
+	}
+	
 	// 等待所有接收器完成或上下文取消
 	done := make(chan struct{})
 	go func() {
@@ -575,6 +606,24 @@ func (sm *StreamManager) startStreaming() {
 	case <-done:
 		log.Printf("Stream %s finished", sm.name)
 	}
+}
+
+// isPrimaryHealthy 检查 primary receiver 是否健康
+func (sm *StreamManager) isPrimaryHealthy() bool {
+	// 检查索引为1的 FFmpeg 进程状态（primary receiver）
+	manager := GetManager()
+	if manager == nil {
+		return false
+	}
+	
+	// 获取 FFmpeg 统计信息
+	stats := manager.GetFFmpegStats(sm.name, 1) // primary receiver 是索引 1
+	if stats == nil {
+		return false
+	}
+	
+	// 检查进程是否正在运行且没有错误
+	return stats.Running && stats.LastError == ""
 }
 
 // runFFmpegStream runs the ffmpeg stream with restart capability
@@ -1151,6 +1200,21 @@ func (m *Manager) updateFFmpegStats(streamName string, receiverIndex int, pid in
 	} else {
 		stat.LastError = ""
 	}
+}
+
+// GetFFmpegStats 获取指定流和接收器的FFmpeg统计信息
+func (m *Manager) GetFFmpegStats(streamName string, receiverIndex int) *FFmpegProcessStats {
+	m.statsMutex.RLock()
+	defer m.statsMutex.RUnlock()
+	
+	key := fmt.Sprintf("%s_%d", streamName, receiverIndex)
+	if stat, exists := m.ffmpegStats[key]; exists {
+		// 返回副本以避免并发问题
+		statCopy := *stat
+		return &statCopy
+	}
+	
+	return nil
 }
 
 // updateFFmpegProcessInfo 更新FFmpeg进程信息
