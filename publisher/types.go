@@ -22,7 +22,7 @@ type Stream struct {
 
 // StreamKey represents the stream key configuration
 type StreamKey struct {
-	Type       string        `yaml:"type"`                // "random" or "fixed"
+	Type       string        `yaml:"type"`                // "random", "fixed" or "external"
 	Value      string        `yaml:"value"`               // for fixed type
 	Length     int           `yaml:"length"`              // for random type
 	Expiration string        `yaml:"expiration,omitempty"` // 过期时间（支持字符串格式，如"24h"）

@@ -16,6 +16,11 @@ import (
 
 // GenerateStreamKey generates a stream key based on the configuration
 func (s *Stream) GenerateStreamKey() (string, error) {
+	// 如果是external类型，则不生成stream key，直接返回空字符串
+	if s.StreamKey.Type == "external" {
+		return "", nil
+	}
+	
 	// 如果已经配置了固定的stream key值，直接使用它
 	if s.StreamKey.Type == "fixed" && s.StreamKey.Value != "" {
 		return s.StreamKey.Value, nil
@@ -216,6 +221,7 @@ func (r *Receiver) BuildFFmpegPushCommand(baseCmd []string, streamKey string) []
 	// Add push URL with stream key
 	pushURL := r.PushURL
 	// 如果URL中已经包含密钥，则替换它
+	// 但如果是external类型，则不进行替换
 	if streamKey != "" {
 		// 从URL中提取可能的旧密钥
 		oldKey := ""
@@ -284,6 +290,7 @@ func (r *Receiver) BuildFFmpegPushCommand(baseCmd []string, streamKey string) []
 			}
 		}
 	}
+	// 如果streamKey为空（external类型），则使用原始pushURL
 	
 	cmd = append(cmd, pushURL)
 	
@@ -468,6 +475,12 @@ func (r *Receiver) BuildReceiverPlayURL(baseURL string, streamKey string, protoc
 func (s *Stream) CheckStreamKeyExpiration(streamKey string, createdAt time.Time) bool {
 	log.Printf("Checking stream key expiration: type=%s, value=%s, expiration=%s, created=%v", 
 		s.StreamKey.Type, streamKey, s.StreamKey.Expiration, createdAt)
+	
+	// 如果是external类型，永不过期
+	if s.StreamKey.Type == "external" {
+		log.Printf("External stream key, never expires")
+		return false
+	}
 	
 	// 如果是固定密钥，永不过期
 	if s.StreamKey.Type == "fixed" && s.StreamKey.Value != "" {
