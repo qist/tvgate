@@ -48,6 +48,10 @@ type FFmpegOptions struct {
 	CustomArgs     []string       `yaml:"custom_args,omitempty"`      // 自定义参数
 	UserAgent      string         `yaml:"user_agent,omitempty"`       // User-Agent
 	Headers        []string       `yaml:"headers,omitempty"`          // 自定义请求头
+	StreamCopy     bool           `yaml:"stream_copy,omitempty"`      // 流复制模式（不重新编码）
+	UseReFlag      bool           `yaml:"use_re_flag,omitempty"`      // 是否使用-re参数（以本地帧速率读取输入）
+	PixFmt         string         `yaml:"pix_fmt,omitempty"`          // 像素格式，如 yuv420p
+	GopSize        int            `yaml:"gop_size,omitempty"`         // GOP大小
 }
 
 // FFmpegProcessStats represents statistics for an FFmpeg process

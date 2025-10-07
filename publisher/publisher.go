@@ -89,12 +89,28 @@ func (sc *StreamConfig) GetReceivers() []Receiver {
 func (s *Stream) BuildFFmpegCommand() []string {
 	var cmd []string
 	
-	// Add global arguments - 默认参数
+	// 处理全局参数和-re标志
 	if s.FFmpegOptions == nil || len(s.FFmpegOptions.GlobalArgs) == 0 {
-		// 默认全局参数
+		// 使用默认全局参数（包含-re）
 		cmd = append(cmd, "-re", "-fflags", "+genpts")
-	} else if s.FFmpegOptions != nil && len(s.FFmpegOptions.GlobalArgs) > 0 {
+	} else {
+		// 使用配置的全局参数
 		cmd = append(cmd, s.FFmpegOptions.GlobalArgs...)
+		
+		// 如果UseReFlag为true但全局参数中没有-re，则添加
+		if s.FFmpegOptions.UseReFlag {
+			// 检查是否已经包含-re
+			hasRe := false
+			for _, arg := range s.FFmpegOptions.GlobalArgs {
+				if arg == "-re" {
+					hasRe = true
+					break
+				}
+			}
+			if !hasRe {
+				cmd = append(cmd, "-re")
+			}
+		}
 	}
 	
 	// Add input pre arguments - 默认输入前参数
@@ -106,6 +122,9 @@ func (s *Stream) BuildFFmpegCommand() []string {
 		case strings.Contains(s.Stream.Source.URL, "rtsp://"):
 			// RTSP流的默认参数
 			cmd = append(cmd, "-rtsp_transport", "tcp")
+		case strings.Contains(s.Stream.Source.URL, "http://") || strings.Contains(s.Stream.Source.URL, "https://"):
+			// HTTP流的默认参数
+			cmd = append(cmd, "-user_agent", "TVGate/1.0")
 		}
 	}
 	
@@ -156,39 +175,65 @@ func (s *Stream) BuildFFmpegCommand() []string {
 	if s.FFmpegOptions != nil && s.FFmpegOptions.VideoCodec != "" {
 		videoCodec = s.FFmpegOptions.VideoCodec
 	}
-	cmd = append(cmd, "-c:v", videoCodec)
+	// 如果使用copy模式，确保不添加其他视频参数
+	if videoCodec != "copy" {
+		cmd = append(cmd, "-c:v", videoCodec)
+	} else {
+		cmd = append(cmd, "-c:v", "copy")
+	}
 	
 	// Add audio codec - 默认音频编码器
 	audioCodec := "aac"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.AudioCodec != "" {
 		audioCodec = s.FFmpegOptions.AudioCodec
 	}
-	cmd = append(cmd, "-c:a", audioCodec)
-	
-	// Add video bitrate - 默认视频码率
-	videoBitrate := "2M"
-	if s.FFmpegOptions != nil && s.FFmpegOptions.VideoBitrate != "" {
-		videoBitrate = s.FFmpegOptions.VideoBitrate
+	// 如果使用copy模式，确保不添加其他音频参数
+	if audioCodec != "copy" {
+		cmd = append(cmd, "-c:a", audioCodec)
+	} else {
+		cmd = append(cmd, "-c:a", "copy")
 	}
-	cmd = append(cmd, "-b:v", videoBitrate)
 	
-	// Add audio bitrate - 默认音频码率
-	audioBitrate := "128k"
-	if s.FFmpegOptions != nil && s.FFmpegOptions.AudioBitrate != "" {
-		audioBitrate = s.FFmpegOptions.AudioBitrate
+	// Only add video bitrate if not using copy codec
+	if videoCodec != "copy" {
+		videoBitrate := "2M"
+		if s.FFmpegOptions != nil && s.FFmpegOptions.VideoBitrate != "" {
+			videoBitrate = s.FFmpegOptions.VideoBitrate
+		}
+		cmd = append(cmd, "-b:v", videoBitrate)
 	}
-	cmd = append(cmd, "-b:a", audioBitrate)
 	
-	// Add preset - 默认编码预设
-	preset := "ultrafast"
-	if s.FFmpegOptions != nil && s.FFmpegOptions.Preset != "" {
-		preset = s.FFmpegOptions.Preset
+	// Only add audio bitrate if not using copy codec
+	if audioCodec != "copy" {
+		audioBitrate := "128k"
+		if s.FFmpegOptions != nil && s.FFmpegOptions.AudioBitrate != "" {
+			audioBitrate = s.FFmpegOptions.AudioBitrate
+		}
+		cmd = append(cmd, "-b:a", audioBitrate)
 	}
-	cmd = append(cmd, "-preset", preset)
 	
-	// Add CRF
-	if s.FFmpegOptions != nil && s.FFmpegOptions.CRF > 0 {
+	// Add preset - 默认编码预设 (only if not using copy)
+	if videoCodec != "copy" {
+		preset := "ultrafast"
+		if s.FFmpegOptions != nil && s.FFmpegOptions.Preset != "" {
+			preset = s.FFmpegOptions.Preset
+		}
+		cmd = append(cmd, "-preset", preset)
+	}
+	
+	// Add CRF (only if not using copy)
+	if videoCodec != "copy" && s.FFmpegOptions != nil && s.FFmpegOptions.CRF > 0 {
 		cmd = append(cmd, "-crf", fmt.Sprintf("%d", s.FFmpegOptions.CRF))
+	}
+	
+	// Add pixel format if specified
+	if s.FFmpegOptions != nil && s.FFmpegOptions.PixFmt != "" {
+		cmd = append(cmd, "-pix_fmt", s.FFmpegOptions.PixFmt)
+	}
+	
+	// Add GOP size if specified
+	if s.FFmpegOptions != nil && s.FFmpegOptions.GopSize > 0 {
+		cmd = append(cmd, "-g", fmt.Sprintf("%d", s.FFmpegOptions.GopSize))
 	}
 	
 	// Add output format - 默认输出格式
@@ -203,7 +248,7 @@ func (s *Stream) BuildFFmpegCommand() []string {
 		cmd = append(cmd, s.FFmpegOptions.OutputPreArgs...)
 	}
 	
-	// Add custom arguments
+	// Add custom arguments after input
 	if s.FFmpegOptions != nil && len(s.FFmpegOptions.CustomArgs) > 0 {
 		cmd = append(cmd, s.FFmpegOptions.CustomArgs...)
 	}
@@ -579,4 +624,35 @@ func (s *Stream) ServeFLV(w http.ResponseWriter, r *http.Request, streamName, st
 	}
 	
 	log.Printf("FLV stream request finished for stream %s", streamName)
+}
+
+// HandleLocalPlay 处理本地播放请求
+func (sm *StreamManager) HandleLocalPlay(w http.ResponseWriter, r *http.Request) {
+	// 根据请求路径确定播放类型
+	path := r.URL.Path
+	var contentType string
+	
+	switch {
+	case strings.HasSuffix(path, ".m3u8"):
+		contentType = "application/x-mpegURL"
+	case strings.HasSuffix(path, ".flv"):
+		contentType = "video/x-flv"
+	default:
+		http.Error(w, "Unsupported format", http.StatusBadRequest)
+		return
+	}
+	
+	// 设置响应头
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	
+	// 从流缓冲区读取数据并发送给客户端
+	// 使用pipeForwarder提供FLV流服务
+	if sm.pipeForwarder != nil {
+		sm.pipeForwarder.ServeFLV(w, r)
+	} else {
+		http.Error(w, "Local play not available", http.StatusServiceUnavailable)
+		return
+	}
 }

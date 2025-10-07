@@ -47,14 +47,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		
-		// 检查管道转发器是否存在
-		if streamManager.pipeForwarder == nil {
-			http.Error(w, "FLV streaming not available for this stream", http.StatusNotFound)
-			return
-		}
-		
 		// 提供FLV流服务
-		streamManager.pipeForwarder.ServeFLV(w, r)
+		streamManager.stream.ServeFLV(w, r, streamManager.name, streamManager.GetStreamKey())
 	case strings.HasPrefix(path, "api/"):
 		h.serveAPI(w, r, path)
 	default:
