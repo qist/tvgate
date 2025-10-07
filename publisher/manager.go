@@ -67,6 +67,7 @@ type StreamManager struct {
 	running           bool
 	ffmpegProcesses   map[int]*FFmpegProcessInfo // 按receiver index存储FFmpeg进程信息
 	processesMutex    sync.Mutex                 // 保护ffmpegProcesses访问
+	pipeForwarder     *PipeForwarder             // 用于本地播放的管道转发器
 }
 
 // NewManager creates a new publisher manager
@@ -308,7 +309,7 @@ func (m *Manager) Stop() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	log.Printf("Stopping publisher manager with %d streams", len(m.streams))
+	log.Printf("Stopping publisher manager with %d streams")
 	
 	// 停止过期检查器
 	if m.expirationChecker != nil {
@@ -628,6 +629,40 @@ func (sm *StreamManager) startStreaming() {
 	
 	// Build FFmpeg command
 	ffmpegCmd := sm.stream.BuildFFmpegCommand()
+	
+	// 检查是否配置了本地播放URL，如果配置了则启动管道转发器
+	localPlayUrls := sm.stream.Stream.LocalPlayUrls
+	if localPlayUrls.Flv != "" || localPlayUrls.Hls != "" {
+		// 获取第一个receiver的RTMP URL作为管道转发器的目标
+		var rtmpURL string
+		receivers := sm.stream.Stream.GetReceivers()
+		if len(receivers) > 0 {
+			// 使用当前的streamKey而不是启动时的streamKey
+			sm.mutex.RLock()
+			currentStreamKey := sm.streamKey
+			sm.mutex.RUnlock()
+			
+			// 构建 receiver 的 FFmpeg 推流命令以提取 RTMP URL
+			receiverCmd := receivers[0].BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
+			if len(receiverCmd) > 0 {
+				// RTMP URL通常是命令的最后一个参数
+				rtmpURL = receiverCmd[len(receiverCmd)-1]
+			}
+		}
+		
+		// 构建管道路径
+		pipePath := sm.stream.BuildPipePath(sm.name, streamKey)
+		
+		// 创建PipeForwarder，传入RTMP URL
+		sm.pipeForwarder = NewPipeForwarder(pipePath, sm.name, rtmpURL, true)
+		
+		// 启动管道转发器
+		go func() {
+			if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
+				log.Printf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
+			}
+		}()
+	}
 	
 	// Get receivers
 	receivers := sm.stream.Stream.GetReceivers()
@@ -1082,19 +1117,30 @@ func (sm *StreamManager) isRunning() bool {
 	}
 }
 
-// Stop stops the stream manager
+// Stop stops the stream
 func (sm *StreamManager) Stop() {
-	log.Printf("Stopping stream manager for stream: %s", sm.name)
+	log.Printf("Stopping stream manager for %s", sm.name)
 	
 	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
-	
-	if sm.running {
-		sm.running = false
-		if sm.cancel != nil {
-			sm.cancel()
-		}
+	if !sm.running {
+		sm.mutex.Unlock()
+		log.Printf("Stream manager for %s already stopped", sm.name)
+		return
 	}
+	sm.running = false
+	sm.mutex.Unlock()
+	
+	// Cancel the context to stop all operations
+	if sm.cancel != nil {
+		sm.cancel()
+	}
+	
+	// 停止管道转发器
+	if sm.pipeForwarder != nil {
+		sm.pipeForwarder.Stop()
+	}
+	
+	log.Printf("Stream manager for %s stopped", sm.name)
 }
 
 // GetStreamKey returns the current stream key

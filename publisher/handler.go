@@ -30,7 +30,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case path == "" || path == "index.html":
 		h.serveIndex(w, r)
 	case strings.HasPrefix(path, "play/"):
-		h.servePlay(w, r, path)
+		// 提取流ID并提供FLV流服务
+		streamID := strings.TrimPrefix(path, "play/")
+		if streamID == "" {
+			http.Error(w, "Stream ID is required", http.StatusBadRequest)
+			return
+		}
+		
+		// 查找流管理器
+		h.manager.mutex.RLock()
+		streamManager, exists := h.manager.streams[streamID]
+		h.manager.mutex.RUnlock()
+		
+		if !exists {
+			http.Error(w, "Stream not found", http.StatusNotFound)
+			return
+		}
+		
+		// 检查管道转发器是否存在
+		if streamManager.pipeForwarder == nil {
+			http.Error(w, "FLV streaming not available for this stream", http.StatusNotFound)
+			return
+		}
+		
+		// 提供FLV流服务
+		streamManager.pipeForwarder.ServeFLV(w, r)
 	case strings.HasPrefix(path, "api/"):
 		h.serveAPI(w, r, path)
 	default:

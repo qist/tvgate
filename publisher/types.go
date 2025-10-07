@@ -12,12 +12,13 @@ type Config struct {
 
 // Stream represents a single stream configuration
 type Stream struct {
-	BufferSize    int            `yaml:"buffer_size,omitempty"`
-	Protocol      string         `yaml:"protocol"`
-	Enabled       bool           `yaml:"enabled"`
-	StreamKey     StreamKey      `yaml:"streamkey,omitempty"`
-	Stream        StreamConfig   `yaml:"stream"`
-	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"`
+	BufferSize     int            `yaml:"buffer_size,omitempty"`
+	Protocol       string         `yaml:"protocol"`
+	Enabled        bool           `yaml:"enabled"`
+	StreamKey      StreamKey      `yaml:"streamkey,omitempty"`
+	Stream         StreamConfig   `yaml:"stream"`
+	FFmpegOptions  *FFmpegOptions `yaml:"ffmpeg_options,omitempty"`
+	PipeForwarder  *PipeForwarder `yaml:"pipe_forwarder,omitempty"` // 命名管道转发配置
 }
 
 // StreamKey represents the stream key configuration
@@ -111,3 +112,4 @@ type Receiver struct {
 	PushPreArgs   []string `yaml:"push_pre_args,omitempty"`   // 推流前参数
 	PushPostArgs  []string `yaml:"push_post_args,omitempty"`  // 推流后参数
 }
+

@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
+	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -519,3 +522,61 @@ func (s *Stream) UpdateStreamKey() (string, error) {
 	return s.GenerateStreamKey()
 }
 
+// BuildPipePath 根据流名称和密钥构建管道路径
+func (s *Stream) BuildPipePath(streamName, streamKey string) string {
+	// 使用临时目录和流名称构建管道路径
+	return fmt.Sprintf("/tmp/tvgate_%s_%s.pipe", streamName, streamKey)
+}
+
+// ServeFLV serves FLV stream via HTTP by reading from the pipe
+func (s *Stream) ServeFLV(w http.ResponseWriter, r *http.Request, streamName, streamKey string) {
+	// 构建管道路径
+	pipePath := s.BuildPipePath(streamName, streamKey)
+	
+	if pipePath == "" {
+		http.Error(w, "FLV streaming not configured for this stream", http.StatusNotFound)
+		return
+	}
+	
+	// Check if pipe file exists
+	if _, err := os.Stat(pipePath); os.IsNotExist(err) {
+		http.Error(w, "Stream pipe not available", http.StatusServiceUnavailable)
+		return
+	}
+	
+	// Set appropriate headers for FLV streaming
+	w.Header().Set("Content-Type", "video/x-flv")
+	w.Header().Set("Connection", "close")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Transfer-Encoding", "chunked")
+	
+	// Notify client that stream is starting
+	w.WriteHeader(http.StatusOK)
+	
+	// Create a context that cancels when the request is done
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	
+	// Open pipe for reading
+	pipe, err := os.OpenFile(pipePath, os.O_RDONLY, os.ModeNamedPipe)
+	if err != nil {
+		log.Printf("Failed to open pipe %s for reading: %v", pipePath, err)
+		return
+	}
+	defer pipe.Close()
+	
+	// Copy data from pipe to HTTP response
+	go func() {
+		<-ctx.Done()
+		log.Printf("Client disconnected or request cancelled for stream %s", streamName)
+	}()
+	
+	_, err = io.Copy(w, pipe)
+	if err != nil && err != io.EOF {
+		log.Printf("Error serving FLV stream for %s: %v", streamName, err)
+	}
+	
+	log.Printf("FLV stream request finished for stream %s", streamName)
+}

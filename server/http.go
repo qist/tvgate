@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,8 +19,8 @@ import (
 	"github.com/qist/tvgate/jx"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
-	httpclient "github.com/qist/tvgate/utils/http"
 	"github.com/qist/tvgate/publisher"
+	httpclient "github.com/qist/tvgate/utils/http"
 	"github.com/qist/tvgate/web"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
@@ -27,9 +28,9 @@ import (
 )
 
 var (
-    serverMu sync.Mutex
-    servers  = make(map[string]*http.Server)
-    h3servers = make(map[string]*http3.Server)
+	serverMu  sync.Mutex
+	servers   = make(map[string]*http.Server)
+	h3servers = make(map[string]*http3.Server)
 )
 
 // CloseAllServers 关闭所有正在运行的服务器
@@ -47,7 +48,7 @@ func CloseAllServers() {
 		}
 		cancel()
 	}
-	
+
 	// 关闭所有HTTP/3服务器
 	for addr, srv := range h3servers {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -67,7 +68,7 @@ func CloseAllServers() {
 // ==================== HTTP/TLS 服务器 ====================
 
 func StartHTTPServer(ctx context.Context, addr string, upgrader *tableflip.Upgrader) error {
-    return StartHTTPServerWithConfig(ctx, addr, upgrader, &config.Cfg)
+	return StartHTTPServerWithConfig(ctx, addr, upgrader, &config.Cfg)
 }
 
 // StartHTTPServerWithConfig 启动HTTP服务器并使用指定配置
@@ -184,8 +185,6 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 	return nil
 }
 
-
-
 // 平滑替换所有端口的 Handler
 func SetHTTPHandler(addr string, h http.Handler) {
 	serverMu.Lock()
@@ -200,8 +199,6 @@ func SetHTTPHandler(addr string, h http.Handler) {
 		logger.LogPrintf("🔄 HTTP/3 Handler 已平滑替换 [%s]", addr)
 	}
 }
-
-
 
 // getTLSConfig 根据端口自动选择对应的 TLS 配置
 func GetTLSConfig(addr string, cfg *config.Config) (*tls.Config, string, string) {
@@ -236,7 +233,6 @@ func GetTLSConfig(addr string, cfg *config.Config) (*tls.Config, string, string)
 
 	return makeTLSConfig(certFile, keyFile, minVersion, maxVersion, cipherSuites, curves), certFile, keyFile
 }
-
 
 func RegisterMux(addr string, cfg *config.Config) *http.ServeMux {
 	mux := http.NewServeMux()
@@ -297,10 +293,6 @@ func RegisterMonitorWebMux(mux *http.ServeMux, cfg *config.Config) {
 		configHandler := web.NewConfigHandler(webConfig)
 		configHandler.RegisterRoutes(mux)
 	}
-
-	// 添加 publisher 路由
-	mux.Handle("/publisher/", SecurityHeaders(http.StripPrefix("/publisher", publisher.GetHandler())))
-	mux.Handle("/publisher", SecurityHeaders(http.RedirectHandler("/publisher/", http.StatusMovedPermanently)))
 }
 
 // jx + 默认代理
@@ -311,6 +303,19 @@ func RegisterJXAndProxyMux(mux *http.ServeMux, cfg *config.Config) {
 		jxPath = "/jx"
 	}
 	mux.Handle(jxPath, SecurityHeaders(http.HandlerFunc(jxHandler.Handle)))
+	
+	// 添加 publisher 路由（如果配置了publisher）
+	if cfg.Publisher != nil && cfg.Publisher.Path != "" {
+		publisherPath := cfg.Publisher.Path
+		if !strings.HasSuffix(publisherPath, "/") {
+			publisherPath = publisherPath + "/"
+		}
+		// 确保不会注册重复的路径
+		if publisherPath != "/" {
+			mux.Handle(publisherPath, SecurityHeaders(http.StripPrefix(strings.TrimSuffix(publisherPath, "/"), publisher.GetHandler())))
+			mux.Handle(strings.TrimSuffix(publisherPath, "/"), SecurityHeaders(http.RedirectHandler(publisherPath, http.StatusMovedPermanently)))
+		}
+	}
 
 	client := httpclient.NewHTTPClient(cfg, nil)
 	defaultHandler := SecurityHeaders(http.HandlerFunc(h.Handler(client)))
@@ -334,6 +339,7 @@ func RegisterJXAndProxyMux(mux *http.ServeMux, cfg *config.Config) {
 	} else {
 		mux.Handle("/", defaultHandler)
 	}
+
 }
 
 // 全功能 = monitor/web + jx + 默认代理
