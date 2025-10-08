@@ -15,7 +15,7 @@ require (
 	github.com/pion/rtp v1.8.23
 	github.com/quic-go/quic-go v0.55.0
 	github.com/shirou/gopsutil/v3 v3.24.5
-	golang.org/x/net v0.44.0
+	golang.org/x/net v0.45.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 	h12.io/socks v1.0.3
