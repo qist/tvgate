@@ -413,15 +413,22 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Pragma", "no-cache")
+	
+	// 减少缓冲以提高响应速度
+	w.Header().Set("X-Accel-Buffering", "no")
+	
+	// 立即写入响应头
 	w.WriteHeader(http.StatusOK)
 
 	// 如果已经捕获到 header，先写 header 到响应（确保客户端能立即解析）
+	headerWritten := false
 	pf.headerMutex.Lock()
 	if pf.headerCaptured && pf.headerBuf.Len() > 0 {
 		if _, err := w.Write(pf.headerBuf.Bytes()); err != nil {
 			pf.headerMutex.Unlock()
 			return
 		}
+		headerWritten = true
 		// 刷新 header 后仍继续，让客户端接收后续 tag（hub 广播）
 		if fl, ok := w.(http.Flusher); ok {
 			fl.Flush()
@@ -429,8 +436,8 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 	}
 	pf.headerMutex.Unlock()
 
-	// 创建 ringbuffer 作为 client 通道（1MB）
-	clientBuffer, err := ringbuffer.New(1024 * 1024)
+	// 创建 ringbuffer 作为 client 通道（减小缓冲区大小以提高响应速度）
+	clientBuffer, err := ringbuffer.New(256 * 1024)
 	if err != nil {
 		log.Printf("[%s] Failed to create ring buffer for client: %v", pf.streamName, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -463,8 +470,16 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 				if _, err := w.Write(chunk); err != nil {
 					return
 				}
+				
+				// 写入 header 后立即刷新，提高响应速度
 				if fl, ok := w.(http.Flusher); ok {
-					fl.Flush()
+					if headerWritten {
+						fl.Flush()
+					} else {
+						// 第一次刷新确保 header 被发送
+						fl.Flush()
+						headerWritten = true
+					}
 				}
 			} else {
 				// 非预期类型则忽略

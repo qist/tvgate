@@ -31,10 +31,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveIndex(w, r)
 	case strings.HasPrefix(path, "play/"):
 		// 提取流ID并提供FLV流服务
-		streamID := strings.TrimPrefix(path, "play/")
-		if streamID == "" {
+		streamPath := strings.TrimPrefix(path, "play/")
+		if streamPath == "" {
 			http.Error(w, "Stream ID is required", http.StatusBadRequest)
 			return
+		}
+		
+		// 从路径中提取流名称，支持带扩展名的URL
+		streamID := streamPath
+		if strings.Contains(streamPath, ".") {
+			parts := strings.Split(streamPath, ".")
+			streamID = parts[0]
 		}
 		
 		// 查找流管理器
@@ -47,7 +54,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		
-		// 提供FLV流服务
+		// 提供FLV流服务（暂时不支持HLS）
 		streamManager.stream.ServeFLV(w, r, streamManager.name, streamManager.GetStreamKey())
 	case strings.HasPrefix(path, "api/"):
 		h.serveAPI(w, r, path)
@@ -66,25 +73,19 @@ func (h *Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 		stream := streamManager.stream
 		streamKey := streamManager.GetStreamKey()
 		
-		// 构建本地播放URL
+		// 构建本地播放URL（只支持FLV）
 		localPlayURLs := make(map[string]string)
 		if stream.Stream.LocalPlayUrls.Flv != "" {
 			localPlayURLs["flv"] = stream.BuildLocalPlayURL(stream.Stream.LocalPlayUrls.Flv, streamKey, "flv")
 		}
-		if stream.Stream.LocalPlayUrls.Hls != "" {
-			localPlayURLs["hls"] = stream.BuildLocalPlayURL(stream.Stream.LocalPlayUrls.Hls, streamKey, "hls")
-		}
 		
-		// 构建接收端播放URL
+		// 构建接收端播放URL（只支持FLV）
 		receiverPlayURLs := make(map[string]map[string]string)
 		receivers := stream.Stream.GetReceivers()
 		for i, receiver := range receivers {
 			receiverPlayURLs[fmt.Sprintf("receiver_%d", i+1)] = make(map[string]string)
 			if receiver.PlayUrls.Flv != "" {
 				receiverPlayURLs[fmt.Sprintf("receiver_%d", i+1)]["flv"] = receiver.BuildReceiverPlayURL(receiver.PlayUrls.Flv, streamKey, "flv")
-			}
-			if receiver.PlayUrls.Hls != "" {
-				receiverPlayURLs[fmt.Sprintf("receiver_%d", i+1)]["hls"] = receiver.BuildReceiverPlayURL(receiver.PlayUrls.Hls, streamKey, "hls")
 			}
 		}
 		
@@ -270,25 +271,19 @@ func (h *Handler) serveStreamsAPI(w http.ResponseWriter, r *http.Request) {
 		stream := streamManager.stream
 		streamKey := streamManager.GetStreamKey()
 		
-		// 构建本地播放URL
+		// 构建本地播放URL（只支持FLV）
 		localPlayURLs := make(map[string]string)
 		if stream.Stream.LocalPlayUrls.Flv != "" {
 			localPlayURLs["flv"] = stream.BuildLocalPlayURL(stream.Stream.LocalPlayUrls.Flv, streamKey, "flv")
 		}
-		if stream.Stream.LocalPlayUrls.Hls != "" {
-			localPlayURLs["hls"] = stream.BuildLocalPlayURL(stream.Stream.LocalPlayUrls.Hls, streamKey, "hls")
-		}
 		
-		// 构建接收端播放URL
+		// 构建接收端播放URL（只支持FLV）
 		receiverPlayURLs := make(map[string]map[string]string)
 		receivers := stream.Stream.GetReceivers()
 		for i, receiver := range receivers {
 			receiverPlayURLs[fmt.Sprintf("receiver_%d", i+1)] = make(map[string]string)
 			if receiver.PlayUrls.Flv != "" {
 				receiverPlayURLs[fmt.Sprintf("receiver_%d", i+1)]["flv"] = receiver.BuildReceiverPlayURL(receiver.PlayUrls.Flv, streamKey, "flv")
-			}
-			if receiver.PlayUrls.Hls != "" {
-				receiverPlayURLs[fmt.Sprintf("receiver_%d", i+1)]["hls"] = receiver.BuildReceiverPlayURL(receiver.PlayUrls.Hls, streamKey, "hls")
 			}
 		}
 		
