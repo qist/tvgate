@@ -258,24 +258,21 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				// 在 header 未捕获时缓存前段数据
 				pf.headerMutex.Lock()
 				if !pf.headerCaptured {
-					const MaxHeaderCaptureBytes = 128 * 1024
-					const RequiredHeaderSize = 4 * 1024 // 恢复一个更合理的较小阈值，例如 4KB
-
-					if pf.headerBuf.Len() < MaxHeaderCaptureBytes {
+					// 限制 header 缓存大小，避免无限增长
+					if pf.headerBuf.Len() < 128*1024 {
 						pf.headerBuf.Write(chunk)
 					}
-
+					// 当缓存长度足够并且包含 FLV 文件头时判定为已捕获
 					b := pf.headerBuf.Bytes()
-
-					// 只需要 FLV 签名检测 + 9 字节长度，或者达到最小数据量
-					if len(b) >= 9 && bytes.HasPrefix(b, []byte("FLV")) {
-						// 确保数据量至少达到 4KB（通常包含所有 Sequence Headers）
-						if pf.headerBuf.Len() >= RequiredHeaderSize {
-							pf.headerCaptured = true
-							log.Printf("[%s] FLV header and metadata captured (%d bytes)", pf.streamName, pf.headerBuf.Len())
-						}
+					if len(b) >= 13 && bytes.HasPrefix(b, []byte("FLV")) {
+						// FLV header 最少 9 字节，后面通常还有 FirstPrevTagSize（4 bytes），所以 13 是安全的短阈值
+						pf.headerCaptured = true
+						log.Printf("[%s] FLV header captured (%d bytes)", pf.streamName, pf.headerBuf.Len())
+					} else if pf.headerBuf.Len() >= 64*1024 {
+						// 超过阈值仍未发现 FLV 开头，则放弃进一步检测，避免无限等待
+						pf.headerCaptured = true
+						log.Printf("[%s] Header capture limit reached (%d bytes) — marking captured", pf.streamName, pf.headerBuf.Len())
 					}
-					// 不需要 else if pf.headerBuf.Len() >= RequiredHeaderSize 的逻辑，因为没有 FLV 签名的数据是无效的。
 				}
 				pf.headerMutex.Unlock()
 
@@ -404,51 +401,51 @@ func (pf *PipeForwarder) IsRunning() bool {
 
 // ServeFLV 提供 HTTP-FLV 播放（每个连接创建一个 ring buffer 客户端）
 // 为了保证中途加入的客户端能解码，先把捕获到的 FLV header 写到 ResponseWriter，然后注册 client 接收后续数据
-// 修改 ServeFLV 方法，立即开始发送数据
 func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 	if !pf.enabled {
 		http.Error(w, "Pipe forwarder disabled", http.StatusNotFound)
 		return
 	}
 
-	// 设置响应头
+	// 基本响应头
 	w.Header().Set("Content-Type", "video/x-flv")
 	w.Header().Set("Connection", "close")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Pragma", "no-cache")
-
-	// 立即刷新响应头
 	w.WriteHeader(http.StatusOK)
-	if fl, ok := w.(http.Flusher); ok {
-		fl.Flush()
-	}
 
-	// 创建更小的缓冲区以提高响应速度
-	clientBuffer, err := ringbuffer.New(64 * 1024) // 减小缓冲区大小
-	if err != nil {
-		log.Printf("[%s] Failed to create ring buffer for client: %v", pf.streamName, err)
-		return
-	}
-
-	// 立即注册客户端，不等待头数据
-	pf.hub.AddClient(clientBuffer)
-	defer pf.hub.RemoveClient(clientBuffer)
-
-	// 如果有缓存的头数据，立即发送
+	// 如果已经捕获到 header，先写 header 到响应（确保客户端能立即解析）
 	pf.headerMutex.Lock()
 	if pf.headerCaptured && pf.headerBuf.Len() > 0 {
 		if _, err := w.Write(pf.headerBuf.Bytes()); err != nil {
 			pf.headerMutex.Unlock()
 			return
 		}
+		// 刷新 header 后仍继续，让客户端接收后续 tag（hub 广播）
 		if fl, ok := w.(http.Flusher); ok {
 			fl.Flush()
 		}
 	}
 	pf.headerMutex.Unlock()
 
-	// 持续发送数据
+	// 创建 ringbuffer 作为 client 通道（1MB）
+	clientBuffer, err := ringbuffer.New(1024 * 1024)
+	if err != nil {
+		log.Printf("[%s] Failed to create ring buffer for client: %v", pf.streamName, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// 注册 client 到 hub
+	pf.hub.AddClient(clientBuffer)
+
+	// 确保在返回前移除 client
+	defer func() {
+		pf.hub.RemoveClient(clientBuffer)
+	}()
+
+	// 从 ringbuffer 读取并写入 HTTP 响应
 	for {
 		select {
 		case <-r.Context().Done():
@@ -458,16 +455,20 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 		default:
 			data, ok := clientBuffer.PullWithContext(r.Context())
 			if !ok {
+				// buffer 关闭或客户端断开
 				return
 			}
+			// PullWithContext 返回 interface{}，我们假定是 []byte（与原代码一致）
 			if chunk, ok := data.([]byte); ok {
 				if _, err := w.Write(chunk); err != nil {
 					return
 				}
-				// 每次写入后都刷新
 				if fl, ok := w.(http.Flusher); ok {
 					fl.Flush()
 				}
+			} else {
+				// 非预期类型则忽略
+				continue
 			}
 		}
 	}
