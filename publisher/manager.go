@@ -682,6 +682,9 @@ func (sm *StreamManager) startStreaming() {
 				log.Printf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
 			}
 		}()
+		
+		// 如果使用PipeForwarder，则不启动传统的推流方式
+		return
 	}
 	
 	// Get receivers
