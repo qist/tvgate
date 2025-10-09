@@ -278,8 +278,21 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 
 				// 写入 RTMP 推流进程 stdin（如果有）
 				if ffIn != nil {
-					if _, werr := ffIn.Write(chunk); werr != nil {
-						log.Printf("[%s] Error writing to RTMP stdin: %v — closing ffIn", pf.streamName, werr)
+					wDone := make(chan error, 1)
+					go func() {
+						_, werr := ffIn.Write(chunk)
+						wDone <- werr
+					}()
+
+					select {
+					case werr := <-wDone:
+						if werr != nil {
+							log.Printf("[%s] Error writing to RTMP stdin: %v — closing ffIn", pf.streamName, werr)
+							_ = ffIn.Close()
+							ffIn = nil
+						}
+					case <-time.After(5 * time.Second):
+						log.Printf("[%s] Timeout writing to RTMP stdin — closing ffIn", pf.streamName)
 						_ = ffIn.Close()
 						ffIn = nil
 					}
