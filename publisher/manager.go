@@ -182,32 +182,55 @@ func (m *Manager) Start() error {
 				log.Printf("Extracted old stream key from primary push_url for %s: %s", name, oldStreamKey)
 			}
 		}
-		
-		streamManager := &StreamManager{
-			name:            name,
-			stream:          stream,
-			streamKey:       streamKey,
-			oldStreamKey:    oldStreamKey,
-			createdAt:       createdAt,
-			cancel:          cancel,
-			ctx:             ctx,
-			running:         true,
-			ffmpegProcesses: make(map[int]*FFmpegProcessInfo),
-		}
+	
+	streamManager := &StreamManager{
+		name:            name,
+		stream:          stream,
+		streamKey:       streamKey,
+		oldStreamKey:    oldStreamKey,
+		createdAt:       createdAt,
+		cancel:          cancel,
+		ctx:             ctx,
+		running:         true,
+		ffmpegProcesses: make(map[int]*FFmpegProcessInfo),
+	}
 
-		m.streams[name] = streamManager
-		go streamManager.startStreaming()
+	// 如果启用了pipe forwarder，则创建并启动它
+	if stream.PipeForwarder != nil && stream.PipeForwarder.enabled {
+		log.Printf("Starting pipe forwarder for stream %s", name)
 		
-		// 如果需要更新配置文件（新生成密钥的情况），则更新配置文件
-		// 对于fixed类型，即使密钥未过期也需要更新配置以确保URL中的streamkey与value一致
-		if needUpdateConfig {
-			log.Printf("Updating config file for %s with stream key", name)
-			if err := streamManager.updateConfigFile(streamKey); err != nil {
-				log.Printf("Failed to update config file for %s: %v", name, err)
-			} else {
-				log.Printf("Successfully updated config file for %s", name)
-			}
+		// 创建PipeForwarder实例
+		streamManager.pipeForwarder = NewPipeForwarder(
+			streamManager.name,
+			stream.PipeForwarder.rtmpURL,
+			stream.PipeForwarder.enabled,
+		)
+		
+		// 构建FFmpeg命令
+		ffmpegArgs := stream.BuildFFmpegCommand()
+		
+		// 启动PipeForwarder
+		if err := streamManager.pipeForwarder.Start(ffmpegArgs); err != nil {
+			log.Printf("Failed to start pipe forwarder for stream %s: %v", name, err)
+			return err
 		}
+		
+		log.Printf("Pipe forwarder started successfully for stream %s", name)
+	}
+
+	m.streams[name] = streamManager
+	go streamManager.startStreaming()
+	
+	// 如果需要更新配置文件（新生成密钥的情况），则更新配置文件
+	// 对于fixed类型，即使密钥未过期也需要更新配置以确保URL中的streamkey与value一致
+	if needUpdateConfig {
+		log.Printf("Updating config file for %s with stream key", name)
+		if err := streamManager.updateConfigFile(streamKey); err != nil {
+			log.Printf("Failed to update config file for %s: %v", name, err)
+		} else {
+			log.Printf("Successfully updated config file for %s", name)
+		}
+	}
 	}
 
 	log.Printf("Publisher manager started with %d active streams", len(m.streams))
@@ -650,11 +673,8 @@ func (sm *StreamManager) startStreaming() {
 			}
 		}
 		
-		// 构建管道路径
-		pipePath := sm.stream.BuildPipePath(sm.name, streamKey)
-		
 		// 创建PipeForwarder，传入RTMP URL
-		sm.pipeForwarder = NewPipeForwarder(pipePath, sm.name, rtmpURL, true)
+		sm.pipeForwarder = NewPipeForwarder(sm.name, rtmpURL, true)
 		
 		// 启动管道转发器
 		go func() {

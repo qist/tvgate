@@ -1,6 +1,7 @@
 package publisher
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -12,32 +13,43 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	
+
 	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
 )
 
-// PipeForwarder 实现将FFmpeg输出到FIFO，然后Go进程读取FIFO并分发到RTMP和HTTP
+// PipeForwarder 将 FFmpeg 的输出写入 io.Pipe，然后 Go 程序读取并分发到 HTTP-FLV 客户端和可选 RTMP 推流
 type PipeForwarder struct {
-	pipePath     string
-	streamName   string
-	rtmpURL      string
-	enabled      bool
-	ffmpegCmd    *exec.Cmd
-	ctx          context.Context
-	cancel       context.CancelFunc
-	mutex        sync.Mutex
-	isRunning    bool
-	onStarted    func()
-	onStopped    func()
-	hub          *stream.StreamHubs
+	streamName string
+	rtmpURL    string
+	enabled    bool
+
+	ffmpegCmd *exec.Cmd
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	mutex     sync.Mutex
+	isRunning bool
+
+	onStarted func()
+	onStopped func()
+
+	hub *stream.StreamHubs
+
+	pipeReader *io.PipeReader
+	pipeWriter *io.PipeWriter
+
+	// header 缓存（用于补发给中途加入的 HTTP-FLV 客户端）
+	headerBuf      bytes.Buffer
+	headerCaptured bool
+	headerMutex    sync.Mutex
 }
 
-// NewPipeForwarder 创建一个新的PipeForwarder实例
-func NewPipeForwarder(pipePath, streamName string, rtmpURL string, enabled bool) *PipeForwarder {
+// NewPipeForwarder 创建新的 PipeForwarder
+func NewPipeForwarder(streamName string, rtmpURL string, enabled bool) *PipeForwarder {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &PipeForwarder{
-		pipePath:   pipePath,
 		streamName: streamName,
 		rtmpURL:    rtmpURL,
 		enabled:    enabled,
@@ -47,198 +59,250 @@ func NewPipeForwarder(pipePath, streamName string, rtmpURL string, enabled bool)
 	}
 }
 
-// SetCallbacks 设置启动和停止的回调函数
+// SetCallbacks 设置启动和停止回调
 func (pf *PipeForwarder) SetCallbacks(onStarted, onStopped func()) {
 	pf.onStarted = onStarted
 	pf.onStopped = onStopped
 }
 
-// Start 启动管道转发器
+// Start 启动 PipeForwarder 并运行 FFmpeg（args 是原始 ffmpeg 参数切片，不应包含 pipe:1 输出）
 func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 	pf.mutex.Lock()
 	defer pf.mutex.Unlock()
 
 	if !pf.enabled {
-		log.Printf("PipeForwarder for stream %s is disabled", pf.streamName)
+		log.Printf("[%s] PipeForwarder disabled, skipping start", pf.streamName)
 		return nil
 	}
 	if pf.isRunning {
-		log.Printf("PipeForwarder for stream %s is already running", pf.streamName)
+		log.Printf("[%s] PipeForwarder already running", pf.streamName)
 		return nil
 	}
 
-	// 创建FIFO
-	if err := pf.createPipe(); err != nil {
-		return fmt.Errorf("failed to create pipe: %v", err)
-	}
+	// 创建 io.Pipe
+	pf.pipeReader, pf.pipeWriter = io.Pipe()
 
-	// 修改FFmpeg命令
-	ffmpegCmd := pf.modifyFFmpegCommand(ffmpegArgs)
+	// 修改 ffmpeg 命令，确保输出为 pipe:1
+	modArgs := pf.modifyFFmpegCommand(ffmpegArgs)
 
-	// 启动FFmpeg写入管道
-	pf.ffmpegCmd = exec.CommandContext(pf.ctx, "ffmpeg", ffmpegCmd...)
+	// 启动 ffmpeg（主进程，输出到 pipe:1）
+	pf.ffmpegCmd = exec.CommandContext(pf.ctx, "ffmpeg", modArgs...)
 	pf.ffmpegCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	pf.ffmpegCmd.Stderr = os.Stderr
-	pf.ffmpegCmd.Stdout = os.Stdout
+	pf.ffmpegCmd.Stdout = pf.pipeWriter
 
 	if err := pf.ffmpegCmd.Start(); err != nil {
+		// 启动失败，清理 pipe
+		_ = pf.pipeReader.Close()
+		_ = pf.pipeWriter.Close()
+		pf.pipeReader = nil
+		pf.pipeWriter = nil
 		return fmt.Errorf("failed to start ffmpeg: %v", err)
 	}
 
 	pf.isRunning = true
-	log.Printf("Started PipeForwarder for stream %s, writing to pipe: %s", pf.streamName, pf.pipePath)
-	log.Printf("Full FFmpeg command: ffmpeg %s", strings.Join(ffmpegCmd, " "))
+	log.Printf("[%s] Started PipeForwarder, ffmpeg pid=%d", pf.streamName, pf.ffmpegCmd.Process.Pid)
+	log.Printf("[%s] Full FFmpeg command: ffmpeg %s", pf.streamName, strings.Join(modArgs, " "))
 
-	// 等待管道写入FLV头部
+	// 清空 header 缓存状态
+	pf.headerMutex.Lock()
+	pf.headerBuf.Reset()
+	pf.headerCaptured = false
+	pf.headerMutex.Unlock()
+
+	// 启动数据转发 goroutine
 	go pf.forwardDataFromPipe()
 
+	// 启动 wait goroutine，等待 ffmpeg 退出并清理
+	go pf.wait()
+
+	// 触发启动回调
 	if pf.onStarted != nil {
 		go pf.onStarted()
 	}
 
-	// 等待FFmpeg进程结束
-	go pf.wait()
-
 	return nil
 }
 
-// Stop 停止管道转发器
-func (pf *PipeForwarder) Stop() {
-	pf.mutex.Lock()
-	defer pf.mutex.Unlock()
-	if !pf.isRunning {
-		return
-	}
-
-	pf.isRunning = false
-	pf.cancel()
-
-	if pf.ffmpegCmd != nil && pf.ffmpegCmd.Process != nil {
-		syscall.Kill(-pf.ffmpegCmd.Process.Pid, syscall.SIGKILL)
-	}
-
-	pf.hub.Close()
-
-	if pf.onStopped != nil {
-		pf.onStopped()
-	}
-
-	log.Printf("Stopped PipeForwarder for stream %s", pf.streamName)
-}
-
-func (pf *PipeForwarder) IsRunning() bool {
-	pf.mutex.Lock()
-	defer pf.mutex.Unlock()
-	return pf.isRunning
-}
-
-// createPipe 创建FIFO
-func (pf *PipeForwarder) createPipe() error {
-	if _, err := os.Stat(pf.pipePath); err == nil {
-		os.Remove(pf.pipePath)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	return syscall.Mkfifo(pf.pipePath, 0666)
-}
-
-// modifyFFmpegCommand 修改FFmpeg命令以输出到管道
+// modifyFFmpegCommand 修改 ffmpeg 参数，剔除输出 URL、确保输出到 pipe:1，并保证 flv 输出格式
+// 说明：期望输入 args 包含 -i ... 等参数，但可能也存在输出 target，本函数会尝试移除输出 target。
 func (pf *PipeForwarder) modifyFFmpegCommand(args []string) []string {
-	// 如果参数为空，直接返回
 	if len(args) == 0 {
-		return args
+		return []string{"-f", "flv", "pipe:1"}
 	}
-	
-	// 创建结果切片
-	result := make([]string, 0, len(args)+5)
-	
-	// 添加-y参数（覆盖输出文件）
-	result = append(result, "-y")
-	
-	// 添加除最后一个参数外的所有参数（移除原始输出URL）
-	// 同时查找并移除任何现有的-f参数对和-flvflags参数对
-	for i := 0; i < len(args)-1; i++ {
-		// 跳过-f参数及其后续参数
-		if args[i] == "-f" {
-			i++ // 跳过下一个参数
+
+	result := make([]string, 0, len(args)+4)
+	skipNext := false
+	// lastWasInput := false
+
+	for i := 0; i < len(args); i++ {
+		if skipNext {
+			skipNext = false
 			continue
 		}
-		// 跳过-flvflags参数及其后续参数
-		if args[i] == "-flvflags" {
-			i++ // 跳过下一个参数
+		arg := args[i]
+
+		switch arg {
+		case "-f", "-flvflags", "-y":
+			// 跳过这些选项及其潜在值（-y 没值，-f/-flvflags 后面有值）
+			if arg == "-f" || arg == "-flvflags" {
+				// 跳过参数和值
+				skipNext = true
+			}
+			// don't append
+			// lastWasInput = false
 			continue
-		}
-		// 跳过-fflags参数及其后续参数（避免重复）
-		if args[i] == "-fflags" {
-			i++ // 跳过下一个参数
+
+		case "-i":
+			// 保留输入标识和输入地址
+			result = append(result, arg)
+			if i+1 < len(args) {
+				result = append(result, args[i+1])
+				skipNext = true
+			}
+			// lastWasInput = true
 			continue
+
+		default:
+			// 若不是以 - 开头的项，且前面不是 -i（也就是不是输入），这很可能是输出 URL -> 跳过
+			// if !strings.HasPrefix(arg, "-") && !lastWasInput {
+			// 	// 跳过疑似输出 URL
+			// 	lastWasInput = false
+			// 	continue
+			// }
+			// 否则保留该参数
+			result = append(result, arg)
+			// lastWasInput = false
 		}
-		result = append(result, args[i])
 	}
-	
-	// 添加-f flv参数（确保只添加一次）
-	result = append(result, "-f", "flv")
-	
-	// 添加管道路径作为输出
-	result = append(result, pf.pipePath)
-	
+
+	// 强制设置音频编码为 aac（可选，但更兼容浏览器播放），如果用户已在 args 指定则不会重复影响
+	// 这里不强行覆盖用户设置，只在没有显式 -c:a 的情况下追加
+	hasCA := false
+	for i := 0; i < len(result); i++ {
+		if result[i] == "-c:a" {
+			hasCA = true
+			break
+		}
+	}
+	if !hasCA {
+		// 采用 aac，44100Hz，双声道
+		result = append(result, "-c:a", "aac", "-ar", "44100", "-ac", "2")
+	}
+
+	// 最终输出到 stdout 的 FLV
+	result = append(result, "-f", "flv", "pipe:1")
 	return result
 }
 
-// forwardDataFromPipe 从管道读取并分发
+// forwardDataFromPipe 从 pipeReader 读取数据并分发到 hub 与可选 RTMP 推流
 func (pf *PipeForwarder) forwardDataFromPipe() {
 	var ffmpegPush *exec.Cmd
 	var ffIn io.WriteCloser
+	var pushWg sync.WaitGroup
 
+	// 如果配置了 rtmpURL，则启用 ffmpegPush：读取 stdin（pipe:0）并推送到 rtmp
 	if pf.rtmpURL != "" {
-		ffmpegPush = exec.CommandContext(pf.ctx, "ffmpeg", "-re", "-i", "pipe:0", "-c", "copy", "-f", "flv", pf.rtmpURL)
+		// 不使用 -re（对 pipe:0 不需要节流）
+		ffmpegPush = exec.CommandContext(pf.ctx, "ffmpeg", "-i", "pipe:0", "-c", "copy", "-f", "flv", pf.rtmpURL)
 		var err error
 		ffIn, err = ffmpegPush.StdinPipe()
 		if err != nil {
-			log.Printf("Failed to create stdin pipe: %v", err)
-			return
-		}
-		ffmpegPush.Stderr = os.Stderr
-		ffmpegPush.Stdout = os.Stdout
-		if err := ffmpegPush.Start(); err != nil {
-			log.Printf("Failed to start RTMP push: %v", err)
-			return
+			log.Printf("[%s] Failed to create stdin pipe for RTMP push: %v", pf.streamName, err)
+			ffIn = nil
+		} else {
+			ffmpegPush.Stderr = os.Stderr
+			ffmpegPush.Stdout = os.Stdout
+
+			if err := ffmpegPush.Start(); err != nil {
+				log.Printf("[%s] Failed to start RTMP push: %v", pf.streamName, err)
+				_ = ffIn.Close()
+				ffIn = nil
+			} else {
+				log.Printf("[%s] Started RTMP push to %s (pid=%d)", pf.streamName, pf.rtmpURL, ffmpegPush.Process.Pid)
+				// 等待 ffmpegPush 退出的 goroutine
+				pushWg.Add(1)
+				go func() {
+					defer pushWg.Done()
+					if err := ffmpegPush.Wait(); err != nil && pf.ctx.Err() == nil {
+						log.Printf("[%s] RTMP push ffmpeg exited with error: %v", pf.streamName, err)
+					} else {
+						log.Printf("[%s] RTMP push ffmpeg exited normally", pf.streamName)
+					}
+				}()
+			}
 		}
 	}
 
-	pipe, err := os.OpenFile(pf.pipePath, os.O_RDONLY, os.ModeNamedPipe)
-	if err != nil {
-		log.Printf("Failed to open pipe: %v", err)
-		return
-	}
-	defer pipe.Close()
-
-	// 设置hub为播放状态
+	// 标记 hub 为播放状态
 	pf.hub.SetPlaying()
 
-	buf := make([]byte, 8192)
+	buf := make([]byte, 32*1024)
 	for {
 		select {
 		case <-pf.ctx.Done():
+			log.Printf("[%s] context canceled, stopping forwardDataFromPipe", pf.streamName)
+			if ffIn != nil {
+				_ = ffIn.Close()
+				ffIn = nil
+			}
+			// 等待推流进程退出
+			pushWg.Wait()
 			return
 		default:
-			n, err := pipe.Read(buf)
+			n, err := pf.pipeReader.Read(buf)
 			if n > 0 {
-				// 创建数据副本以避免竞态条件
 				chunk := make([]byte, n)
 				copy(chunk, buf[:n])
-				
-				// 将数据写入RTMP推流（如果配置了RTMP URL）
-				if ffIn != nil {
-					_, _ = ffIn.Write(chunk)
+
+				// 在 header 未捕获时缓存前段数据
+				pf.headerMutex.Lock()
+				if !pf.headerCaptured {
+					// 限制 header 缓存大小，避免无限增长
+					if pf.headerBuf.Len() < 128*1024 {
+						pf.headerBuf.Write(chunk)
+					}
+					// 当缓存长度足够并且包含 FLV 文件头时判定为已捕获
+					b := pf.headerBuf.Bytes()
+					if len(b) >= 13 && bytes.HasPrefix(b, []byte("FLV")) {
+						// FLV header 最少 9 字节，后面通常还有 FirstPrevTagSize（4 bytes），所以 13 是安全的短阈值
+						pf.headerCaptured = true
+						log.Printf("[%s] FLV header captured (%d bytes)", pf.streamName, pf.headerBuf.Len())
+					} else if pf.headerBuf.Len() >= 64*1024 {
+						// 超过阈值仍未发现 FLV 开头，则放弃进一步检测，避免无限等待
+						pf.headerCaptured = true
+						log.Printf("[%s] Header capture limit reached (%d bytes) — marking captured", pf.streamName, pf.headerBuf.Len())
+					}
 				}
-				
-				// 将数据广播到hub
+				pf.headerMutex.Unlock()
+
+				// 写入 RTMP 推流进程 stdin（如果有）
+				if ffIn != nil {
+					if _, werr := ffIn.Write(chunk); werr != nil {
+						log.Printf("[%s] Error writing to RTMP stdin: %v — closing ffIn", pf.streamName, werr)
+						_ = ffIn.Close()
+						ffIn = nil
+					}
+				}
+
+				// 广播到 hub（所有已注册客户端）
 				pf.hub.Broadcast(chunk)
 			}
+
 			if err != nil {
-				if err != io.EOF && pf.ctx.Err() == nil {
-					log.Printf("Pipe read error: %v", err)
+				if err == io.EOF {
+					log.Printf("[%s] pipe EOF reached", pf.streamName)
+					if ffIn != nil {
+						_ = ffIn.Close()
+						ffIn = nil
+					}
+					// 等待可选的推流进程退出
+					pushWg.Wait()
+					return
+				}
+				// 记录并短暂休眠，继续循环以便响应 ctx.Done()
+				if pf.ctx.Err() == nil {
+					log.Printf("[%s] pipe read error: %v", pf.streamName, err)
 				}
 				time.Sleep(10 * time.Millisecond)
 			}
@@ -246,39 +310,91 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 	}
 }
 
-// wait 等待FFmpeg结束
+// wait 等待主 ffmpeg 进程退出并清理管道
 func (pf *PipeForwarder) wait() {
 	if pf.ffmpegCmd == nil {
 		return
 	}
+
 	err := pf.ffmpegCmd.Wait()
+
+	// 置状态并关闭 pipeWriter 以通知读取方 EOF
 	pf.mutex.Lock()
 	pf.isRunning = false
-	pf.mutex.Unlock()
-	if err != nil && pf.ctx.Err() != context.Canceled {
-		log.Printf("FFmpeg exited with error: %v", err)
-	} else {
-		log.Printf("FFmpeg exited normally")
+	if pf.pipeWriter != nil {
+		_ = pf.pipeWriter.Close()
+		pf.pipeWriter = nil
 	}
+	pf.mutex.Unlock()
+
+	if err != nil && pf.ctx.Err() == nil {
+		log.Printf("[%s] FFmpeg exited with error: %v", pf.streamName, err)
+	} else {
+		log.Printf("[%s] FFmpeg exited normally", pf.streamName)
+	}
+
+	// 触发停止回调
 	if pf.onStopped != nil {
 		pf.onStopped()
 	}
 }
 
+// Stop 停止 PipeForwarder：取消上下文、尝试杀死 ffmpeg 进程、关闭管道，清理 hub
+func (pf *PipeForwarder) Stop() {
+	pf.mutex.Lock()
+	if !pf.isRunning {
+		pf.mutex.Unlock()
+		return
+	}
+	pf.isRunning = false
+	pf.mutex.Unlock()
 
-// broadcast 函数已移除，由 stream.StreamHubs 替代
+	// 取消上下文
+	pf.cancel()
 
-// ServeFLV 提供HTTP FLV流
+	// 杀掉 ffmpeg 进程组（如果存在）
+	if pf.ffmpegCmd != nil && pf.ffmpegCmd.Process != nil {
+		// 使用负 pid 向进程组发送信号（Setpgid 在 Start 时已设置）
+		_ = syscall.Kill(-pf.ffmpegCmd.Process.Pid, syscall.SIGKILL)
+	}
+
+	// 关闭 pipe
+	if pf.pipeWriter != nil {
+		_ = pf.pipeWriter.Close()
+		pf.pipeWriter = nil
+	}
+	if pf.pipeReader != nil {
+		_ = pf.pipeReader.Close()
+		pf.pipeReader = nil
+	}
+
+	// 关闭 hub，清理客户端
+	pf.hub.Close()
+
+	// 回调
+	if pf.onStopped != nil {
+		pf.onStopped()
+	}
+
+	log.Printf("[%s] Stopped PipeForwarder", pf.streamName)
+}
+
+// IsRunning 返回当前运行状态
+func (pf *PipeForwarder) IsRunning() bool {
+	pf.mutex.Lock()
+	defer pf.mutex.Unlock()
+	return pf.isRunning
+}
+
+// ServeFLV 提供 HTTP-FLV 播放（每个连接创建一个 ring buffer 客户端）
+// 为了保证中途加入的客户端能解码，先把捕获到的 FLV header 写到 ResponseWriter，然后注册 client 接收后续数据
 func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 	if !pf.enabled {
 		http.Error(w, "Pipe forwarder disabled", http.StatusNotFound)
 		return
 	}
-	if _, err := os.Stat(pf.pipePath); os.IsNotExist(err) {
-		http.Error(w, "Pipe not ready", http.StatusServiceUnavailable)
-		return
-	}
 
+	// 基本响应头
 	w.Header().Set("Content-Type", "video/x-flv")
 	w.Header().Set("Connection", "close")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -286,23 +402,37 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(http.StatusOK)
 
-	// 创建一个新的ring buffer作为客户端通道
-	clientBuffer, err := ringbuffer.New(1024 * 1024) // 1MB缓冲区
+	// 如果已经捕获到 header，先写 header 到响应（确保客户端能立即解析）
+	pf.headerMutex.Lock()
+	if pf.headerCaptured && pf.headerBuf.Len() > 0 {
+		if _, err := w.Write(pf.headerBuf.Bytes()); err != nil {
+			pf.headerMutex.Unlock()
+			return
+		}
+		// 刷新 header 后仍继续，让客户端接收后续 tag（hub 广播）
+		if fl, ok := w.(http.Flusher); ok {
+			fl.Flush()
+		}
+	}
+	pf.headerMutex.Unlock()
+
+	// 创建 ringbuffer 作为 client 通道（1MB）
+	clientBuffer, err := ringbuffer.New(1024 * 1024)
 	if err != nil {
-		log.Printf("Failed to create ring buffer: %v", err)
+		log.Printf("[%s] Failed to create ring buffer for client: %v", pf.streamName, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	// 注册客户端到hub
+	// 注册 client 到 hub
 	pf.hub.AddClient(clientBuffer)
 
-	// 确保在函数退出时清理客户端
+	// 确保在返回前移除 client
 	defer func() {
 		pf.hub.RemoveClient(clientBuffer)
 	}()
 
-	// 从ring buffer读取数据并发送到HTTP响应
+	// 从 ringbuffer 读取并写入 HTTP 响应
 	for {
 		select {
 		case <-r.Context().Done():
@@ -312,17 +442,20 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 		default:
 			data, ok := clientBuffer.PullWithContext(r.Context())
 			if !ok {
-				// buffer已关闭或客户端断开连接
+				// buffer 关闭或客户端断开
 				return
 			}
-
-			// 将FFmpeg输出的原始FLV数据写入HTTP响应
-			if _, err := w.Write(data.([]byte)); err != nil {
-				return
-			}
-
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
+			// PullWithContext 返回 interface{}，我们假定是 []byte（与原代码一致）
+			if chunk, ok := data.([]byte); ok {
+				if _, err := w.Write(chunk); err != nil {
+					return
+				}
+				if fl, ok := w.(http.Flusher); ok {
+					fl.Flush()
+				}
+			} else {
+				// 非预期类型则忽略
+				continue
 			}
 		}
 	}

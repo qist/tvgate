@@ -2,17 +2,17 @@ package publisher
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
-	"io"
 	"log"
-	"math/big"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
-	"syscall"
 	"time"
+	
+	"crypto/rand"
+	"math/big"
+	
+	"os/exec"
+	"syscall"
 	
 	"github.com/shirou/gopsutil/v3/process"
 )
@@ -519,40 +519,31 @@ func (r *Receiver) BuildReceiverPlayURL(baseURL string, streamKey string, protoc
 	}
 }
 
-// CheckStreamKeyExpiration 检查stream key是否过期
+// CheckStreamKeyExpiration checks if a stream key has expired
 func (s *Stream) CheckStreamKeyExpiration(streamKey string, createdAt time.Time) bool {
-	log.Printf("Checking stream key expiration: type=%s, value=%s, expiration=%s, created=%v", 
-		s.StreamKey.Type, streamKey, s.StreamKey.Expiration, createdAt)
-	
-	// 如果是external类型，永不过期
-	if s.StreamKey.Type == "external" {
-		log.Printf("External stream key, never expires")
-		return false
-	}
-	
-	// 如果是固定密钥，永不过期
-	if s.StreamKey.Type == "fixed" && s.StreamKey.Value != "" {
-		log.Printf("Fixed stream key, never expires")
-		return false
-	}
-	
-	// 检查创建时间是否有效
-	if createdAt.IsZero() {
-		log.Printf("Stream key creation time is zero, treating as expired")
+	if streamKey == "" {
+		log.Printf("Stream key is empty, considering as expired")
 		return true
 	}
 	
-	// 如果配置了过期时间，则检查是否过期
-	if s.StreamKey.Expiration != "" {
-		// 解析时间字符串
-		duration, err := time.ParseDuration(s.StreamKey.Expiration)
+	// 如果CreatedAt为零值，设置为当前时间
+	if createdAt.IsZero() {
+		log.Printf("CreatedAt is zero, setting to current time")
+		createdAt = time.Now()
+	}
+	
+	// 检查是否配置了过期时间
+	if s.StreamKey.Expiration != "" && s.StreamKey.Expiration != "0" {
+		// 解析过期时间
+		expiration, err := time.ParseDuration(s.StreamKey.Expiration)
 		if err != nil {
-			// 如果解析失败，使用默认24小时
-			log.Printf("Failed to parse expiration duration '%s', using default 24h: %v", s.StreamKey.Expiration, err)
-			duration = 24 * time.Hour
+			log.Printf("Failed to parse expiration duration '%s': %v, using default 24h", s.StreamKey.Expiration, err)
+			expiration = 24 * time.Hour
 		}
-		expired := time.Since(createdAt) > duration
-		log.Printf("Stream key age: %v, expiration: %v, expired: %t", time.Since(createdAt), duration, expired)
+		
+		// 检查是否过期
+		expired := time.Since(createdAt) > expiration
+		log.Printf("Stream key created at %v, expiration %v, expired: %t", createdAt, expiration, expired)
 		return expired
 	}
 	
@@ -567,63 +558,33 @@ func (s *Stream) UpdateStreamKey() (string, error) {
 	return s.GenerateStreamKey()
 }
 
-// BuildPipePath 根据流名称和密钥构建管道路径
-func (s *Stream) BuildPipePath(streamName, streamKey string) string {
-	// 使用临时目录和流名称构建管道路径
-	return fmt.Sprintf("/tmp/tvgate_%s_%s.pipe", streamName, streamKey)
-}
-
 // ServeFLV serves FLV stream via HTTP by reading from the pipe
 func (s *Stream) ServeFLV(w http.ResponseWriter, r *http.Request, streamName, streamKey string) {
-	// 构建管道路径
-	pipePath := s.BuildPipePath(streamName, streamKey)
-	
-	if pipePath == "" {
-		http.Error(w, "FLV streaming not configured for this stream", http.StatusNotFound)
+	// 获取流管理器
+	manager := GetManager()
+	if manager == nil {
+		http.Error(w, "Publisher manager not available", http.StatusServiceUnavailable)
 		return
 	}
 	
-	// Check if pipe file exists
-	if _, err := os.Stat(pipePath); os.IsNotExist(err) {
-		http.Error(w, "Stream pipe not available", http.StatusServiceUnavailable)
+	// 获取流管理器实例
+	manager.mutex.RLock()
+	streamManager, exists := manager.streams[streamName]
+	manager.mutex.RUnlock()
+	
+	if !exists {
+		http.Error(w, "Stream not found", http.StatusNotFound)
 		return
 	}
 	
-	// Set appropriate headers for FLV streaming
-	w.Header().Set("Content-Type", "video/x-flv")
-	w.Header().Set("Connection", "close")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Transfer-Encoding", "chunked")
-	
-	// Notify client that stream is starting
-	w.WriteHeader(http.StatusOK)
-	
-	// Create a context that cancels when the request is done
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	
-	// Open pipe for reading
-	pipe, err := os.OpenFile(pipePath, os.O_RDONLY, os.ModeNamedPipe)
-	if err != nil {
-		log.Printf("Failed to open pipe %s for reading: %v", pipePath, err)
+	// 检查管道转发器是否可用
+	if streamManager.pipeForwarder == nil {
+		http.Error(w, "Pipe forwarder not available", http.StatusServiceUnavailable)
 		return
 	}
-	defer pipe.Close()
 	
-	// Copy data from pipe to HTTP response
-	go func() {
-		<-ctx.Done()
-		log.Printf("Client disconnected or request cancelled for stream %s", streamName)
-	}()
-	
-	_, err = io.Copy(w, pipe)
-	if err != nil && err != io.EOF {
-		log.Printf("Error serving FLV stream for %s: %v", streamName, err)
-	}
-	
-	log.Printf("FLV stream request finished for stream %s", streamName)
+	// 使用管道转发器提供FLV流服务
+	streamManager.pipeForwarder.ServeFLV(w, r)
 }
 
 // HandleLocalPlay 处理本地播放请求

@@ -21,6 +21,7 @@ type Stream struct {
 	PipeForwarder  *PipeForwarder `yaml:"pipe_forwarder,omitempty"` // 命名管道转发配置
 }
 
+
 // StreamKey represents the stream key configuration
 type StreamKey struct {
 	Type       string        `yaml:"type"`                // "random", "fixed" or "external"
