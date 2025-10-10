@@ -42,9 +42,11 @@ type PipeForwarder struct {
 	pipeWriter *io.PipeWriter
 
 	// header 缓存（用于补发给中途加入的 HTTP-FLV 客户端）
+	firstTagBuf    bytes.Buffer
 	headerBuf      bytes.Buffer
 	headerCaptured bool
 	headerMutex    sync.Mutex
+	firstTagOnce   sync.Once
 	// 用于从hub读取数据的客户端缓冲区
 	clientBuffer *ringbuffer.RingBuffer
 }
@@ -230,6 +232,8 @@ func (pf *PipeForwarder) modifyFFmpegCommand(args []string) []string {
 	appendIfMissing("-avioflags", "direct")
 	appendIfMissing("-flush_packets", "1")
 	appendIfMissing("-flvflags", "no_duration_filesize")
+	appendIfMissing("-g", "25")
+	appendIfMissing("-keyint_min", "1")
 	// 最终输出到 stdout 的 FLV
 	result = append(result, "-f", "flv", "pipe:1")
 	return result
@@ -301,11 +305,14 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					// 在 header 未捕获时缓存前段数据
 					pf.headerMutex.Lock()
 					if !pf.headerCaptured {
-						if pf.headerBuf.Len() < 4*1024 { // 4KB 足够
+						// 确保缓冲区不超过4KB
+						if pf.headerBuf.Len() < 4*1024 {
 							pf.headerBuf.Write(chunk)
 						}
+
+						// 当缓冲区数据足够且以"FLV"开头时，标记header已捕获
 						b := pf.headerBuf.Bytes()
-						if len(b) >= 9 && bytes.HasPrefix(b, []byte("FLV")) {
+						if len(b) >= 9 && b[0] == 'F' && b[1] == 'L' && b[2] == 'V' {
 							pf.headerCaptured = true
 							log.Printf("[%s] FLV header captured (%d bytes)", pf.streamName, pf.headerBuf.Len())
 						}
@@ -336,6 +343,8 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 
 					// 广播到 hub（所有已注册客户端）
 					pf.hub.Broadcast(chunk)
+					// isVideo, isKeyFrame := pf.parseFLVTags(chunk)
+					// pf.WriteChunk(chunk, isVideo, isKeyFrame)
 				}
 
 				if err != nil {
@@ -415,6 +424,8 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 								ffIn = nil
 							}
 						}
+						// isVideo, isKeyFrame := pf.parseFLVTags(chunk)
+						// pf.WriteChunk(chunk, isVideo, isKeyFrame)
 					}
 				}
 			}
@@ -505,52 +516,49 @@ func (pf *PipeForwarder) IsRunning() bool {
 }
 
 // ServeFLV 提供 HTTP-FLV 播放（每个连接创建一个 ring buffer 客户端）
-// 为了保证中途加入的客户端能解码，先把捕获到的 FLV header 写到 ResponseWriter，然后注册 client 接收后续数据
 func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 	if !pf.enabled {
 		http.Error(w, "Pipe forwarder disabled", http.StatusNotFound)
 		return
 	}
 
-	// 基本响应头
+	// 设置响应头
 	w.Header().Set("Content-Type", "video/x-flv")
 	w.Header().Set("Connection", "close")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Transfer-Encoding", "chunked")
+
+	// 立即发送响应头
 	w.WriteHeader(http.StatusOK)
 
-	// 如果已经捕获到 header，先写 header 到响应（确保客户端能立即解析）
 	pf.headerMutex.Lock()
-	if pf.headerCaptured && pf.headerBuf.Len() > 0 {
-		if _, err := w.Write(pf.headerBuf.Bytes()); err != nil {
-			pf.headerMutex.Unlock()
-			return
-		}
-		// 刷新 header 后仍继续，让客户端接收后续 tag（hub 广播）
-		if fl, ok := w.(http.Flusher); ok {
-			fl.Flush()
-		}
+	if pf.headerBuf.Len() > 0 {
+		w.Write(pf.headerBuf.Bytes())
+	} else {
+		// 备用标准 header
+		w.Write([]byte{'F', 'L', 'V', 0x01, 0x05, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00})
+	}
+
+	// 发送首帧关键帧
+	if pf.firstTagBuf.Len() > 0 {
+		w.Write(pf.firstTagBuf.Bytes())
 	}
 	pf.headerMutex.Unlock()
 
-	// 创建 ringbuffer 作为 client 通道（1MB）
-	clientBuffer, err := ringbuffer.New(1024 * 1024)
-	if err != nil {
-		log.Printf("[%s] Failed to create ring buffer for client: %v", pf.streamName, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+	if fl, ok := w.(http.Flusher); ok {
+		fl.Flush()
 	}
 
-	// 注册 client 到 hub
+	// 创建客户端 ringbuffer 并注册 hub
+	clientBuffer, _ := ringbuffer.New(4 * 1024 * 1024)
 	pf.hub.AddClient(clientBuffer)
+	defer pf.hub.RemoveClient(clientBuffer)
 
-	// 确保在返回前移除 client
-	defer func() {
-		pf.hub.RemoveClient(clientBuffer)
-	}()
-
-	// 从 ringbuffer 读取并写入 HTTP 响应
+	// 正常拉取后续数据
+	sendBuffer := make([]byte, 0, 32*1024)
+	bufferSize := 0
 	for {
 		select {
 		case <-r.Context().Done():
@@ -560,21 +568,70 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 		default:
 			data, ok := clientBuffer.PullWithContext(r.Context())
 			if !ok {
-				// buffer 关闭或客户端断开
 				return
 			}
-			// PullWithContext 返回 interface{}，我们假定是 []byte（与原代码一致）
-			if chunk, ok := data.([]byte); ok {
-				if _, err := w.Write(chunk); err != nil {
-					return
-				}
+			chunk, ok := data.([]byte)
+			if !ok || len(chunk) == 0 {
+				continue
+			}
+
+			sendBuffer = append(sendBuffer, chunk...)
+			bufferSize += len(chunk)
+			if bufferSize >= 32*1024 {
+				w.Write(sendBuffer)
 				if fl, ok := w.(http.Flusher); ok {
 					fl.Flush()
 				}
-			} else {
-				// 非预期类型则忽略
-				continue
+				sendBuffer = sendBuffer[:0]
+				bufferSize = 0
 			}
 		}
 	}
+}
+
+// parseFLVTags 解析 chunk 中的所有 FLV tag，返回是否包含视频关键帧
+func (pf *PipeForwarder) parseFLVTags(data []byte) (isVideo, isKeyFrame bool) {
+	pos := 0
+	for pos+11 <= len(data) { // 至少要有 tag header
+		tagType := data[pos] & 0x1F
+		dataSize := int(data[pos+1])<<16 | int(data[pos+2])<<8 | int(data[pos+3])
+		tagTotalLen := 11 + dataSize + 4 // 11字节header + 数据 + 4字节 PreviousTagSize
+
+		if pos+tagTotalLen > len(data) {
+			break // 不完整 tag
+		}
+
+		if tagType == 9 { // 视频
+			isVideo = true
+			frameByte := data[pos+11]
+			frameType := (frameByte & 0xF0) >> 4
+			if frameType == 1 { // 关键帧
+				isKeyFrame = true
+				break // 找到首个关键帧即可
+			}
+		}
+		pos += tagTotalLen
+	}
+	return
+}
+
+func (pf *PipeForwarder) WriteChunk(chunk []byte, isVideo bool, isKeyFrame bool) {
+	pf.headerMutex.Lock()
+	defer pf.headerMutex.Unlock()
+
+	// 保存 header
+	if !pf.headerCaptured && len(chunk) >= 13 {
+		pf.headerBuf.Reset()
+		pf.headerBuf.Write(chunk[:13])
+		pf.headerCaptured = true
+	}
+
+	// 保存首帧关键帧
+	if isVideo && isKeyFrame && pf.firstTagBuf.Len() == 0 {
+		pf.firstTagBuf.Reset()
+		pf.firstTagBuf.Write(chunk)
+	}
+
+	// 广播到 hub
+	pf.hub.Broadcast(chunk)
 }
