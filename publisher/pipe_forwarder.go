@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -49,6 +50,12 @@ type PipeForwarder struct {
 	firstTagOnce   sync.Once
 	// 用于从hub读取数据的客户端缓冲区
 	clientBuffer *ringbuffer.RingBuffer
+	
+	// HLS支持
+	hlsManager *HLSSegmentManager
+	
+	// PAT/PMT缓存，确保每个HLS片段都包含这些信息
+	patPmtBuf bytes.Buffer
 }
 
 // NewPipeForwarder 创建新的 PipeForwarder
@@ -61,6 +68,15 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 	} else {
 		h = stream.NewStreamHubs()
 	}
+	
+	// 初始化 HLS 管理器
+	segmentPath := filepath.Join("/tmp/hls", streamName)
+	os.MkdirAll(segmentPath, 0755)
+	
+	hlsManager := NewHLSSegmentManager(ctx, streamName, segmentPath, 5) // 5秒片段时长
+	hlsManager.SetHub(h)
+	hlsManager.SetNeedPull(needPull) // 设置needPull标志
+	
 	return &PipeForwarder{
 		streamName: streamName,
 		rtmpURL:    rtmpURL,
@@ -69,6 +85,7 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 		ctx:        ctx,
 		cancel:     cancel,
 		hub:        h,
+		hlsManager: hlsManager,
 	}
 }
 
@@ -135,7 +152,11 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 	pf.headerMutex.Lock()
 	pf.headerBuf.Reset()
 	pf.headerCaptured = false
+	pf.patPmtBuf.Reset()
 	pf.headerMutex.Unlock()
+
+	// 启动 HLS 管理器
+	pf.hlsManager.Start()
 
 	// 启动数据转发 goroutine
 	go pf.forwardDataFromPipe()
@@ -344,6 +365,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					// 广播到 hub（所有已注册客户端）
 					pf.hub.Broadcast(chunk)
 					// isVideo, isKeyFrame := pf.parseFLVTags(chunk)
+					pf.hlsManager.WriteData(chunk)
 					// pf.WriteChunk(chunk, isVideo, isKeyFrame)
 				}
 
@@ -499,6 +521,9 @@ func (pf *PipeForwarder) Stop() {
 
 	// 关闭 hub，清理客户端
 	pf.hub.Close()
+	
+	// 停止HLS管理器
+	pf.hlsManager.Stop()
 
 	// 回调
 	if pf.onStopped != nil {
@@ -634,4 +659,35 @@ func (pf *PipeForwarder) WriteChunk(chunk []byte, isVideo bool, isKeyFrame bool)
 
 	// 广播到 hub
 	pf.hub.Broadcast(chunk)
+}
+
+// ServeHLS 提供HLS播放服务
+func (pf *PipeForwarder) ServeHLS(w http.ResponseWriter, r *http.Request) {
+	if !pf.enabled {
+		http.Error(w, "Pipe forwarder disabled", http.StatusNotFound)
+		return
+	}
+	
+	// 解析URL路径确定请求类型
+	path := r.URL.Path
+	
+	// 如果是播放列表请求
+	if strings.HasSuffix(path, ".m3u8") {
+		pf.hlsManager.ServePlaylist(w, r)
+		return
+	}
+	
+	// 如果是片段请求
+	if strings.HasSuffix(path, ".ts") {
+		// 从路径中提取片段名称
+		segments := strings.Split(path, "/")
+		if len(segments) > 0 {
+			segmentName := segments[len(segments)-1]
+			pf.hlsManager.ServeSegment(w, r, segmentName)
+			return
+		}
+	}
+	
+	// 默认提供播放列表
+	pf.hlsManager.ServePlaylist(w, r)
 }
