@@ -558,7 +558,6 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 				// buffer 关闭或客户端断开
 				return
 			}
-			// PullWithContext 返回 interface{}，我们假定是 []byte（与原代码一致）
 			if chunk, ok := data.([]byte); ok {
 				if _, err := w.Write(chunk); err != nil {
 					return
