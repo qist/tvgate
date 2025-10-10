@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v3"
 	"github.com/qist/tvgate/config"
 	"github.com/shirou/gopsutil/v3/process"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -35,13 +35,13 @@ func GetManager() *Manager {
 
 // Manager manages all publisher streams
 type Manager struct {
-	config *Config
+	config  *Config
 	streams map[string]*StreamManager
 	mutex   sync.RWMutex
 	// 添加定时器相关字段
 	expirationChecker *time.Ticker
 	done              chan struct{}
-	
+
 	// FFmpeg进程统计
 	ffmpegStats map[string]*FFmpegProcessStats
 	statsMutex  sync.RWMutex
@@ -56,18 +56,18 @@ type FFmpegProcessInfo struct {
 
 // StreamManager manages a single stream
 type StreamManager struct {
-	name              string
-	stream            *Stream
-	streamKey         string
-	oldStreamKey      string // 从URL中提取的旧密钥
-	createdAt         time.Time
-	cancel            context.CancelFunc
-	ctx               context.Context
-	mutex             sync.RWMutex
-	running           bool
-	ffmpegProcesses   map[int]*FFmpegProcessInfo // 按receiver index存储FFmpeg进程信息
-	processesMutex    sync.Mutex                 // 保护ffmpegProcesses访问
-	pipeForwarder     *PipeForwarder             // 用于本地播放的管道转发器
+	name            string
+	stream          *Stream
+	streamKey       string
+	oldStreamKey    string // 从URL中提取的旧密钥
+	createdAt       time.Time
+	cancel          context.CancelFunc
+	ctx             context.Context
+	mutex           sync.RWMutex
+	running         bool
+	ffmpegProcesses map[int]*FFmpegProcessInfo // 按receiver index存储FFmpeg进程信息
+	processesMutex  sync.Mutex                 // 保护ffmpegProcesses访问
+	pipeForwarder   *PipeForwarder             // 用于本地播放的管道转发器
 }
 
 // NewManager creates a new publisher manager
@@ -87,7 +87,7 @@ func (m *Manager) Start() error {
 	defer m.mutex.Unlock()
 
 	log.Printf("Starting publisher manager")
-	
+
 	// 设置全局manager实例
 	SetManager(m)
 
@@ -110,24 +110,24 @@ func (m *Manager) Start() error {
 
 		// Create context for this stream
 		ctx, cancel := context.WithCancel(context.Background())
-		
+
 		// 以配置文件中的streamkey.value为准，只在密钥过期或为空时才生成新密钥
 		var streamKey string
 		var createdAt time.Time
 		needUpdateConfig := false
-		
+
 		if stream.StreamKey.Value != "" {
 			// 如果配置中有stream key值，使用配置文件中的值和时间
 			streamKey = stream.StreamKey.Value
 			createdAt = stream.StreamKey.CreatedAt
-			
+
 			// 检查创建时间是否有效
 			if createdAt.IsZero() {
 				// 如果创建时间为零值，使用当前时间作为创建时间
 				createdAt = time.Now()
 				log.Printf("Stream key creation time is zero, using current time: %v", createdAt)
 			}
-			
+
 			// 检查密钥是否过期
 			if stream.CheckStreamKeyExpiration(streamKey, createdAt) {
 				// 已过期，生成新的stream key
@@ -166,7 +166,7 @@ func (m *Manager) Start() error {
 			createdAt = time.Now()
 			needUpdateConfig = true
 		}
-		
+
 		// 从URL中提取旧密钥，用于替换
 		oldStreamKey := ""
 		if stream.Stream.Receivers.All != nil && len(stream.Stream.Receivers.All) > 0 {
@@ -182,55 +182,57 @@ func (m *Manager) Start() error {
 				log.Printf("Extracted old stream key from primary push_url for %s: %s", name, oldStreamKey)
 			}
 		}
-	
-	streamManager := &StreamManager{
-		name:            name,
-		stream:          stream,
-		streamKey:       streamKey,
-		oldStreamKey:    oldStreamKey,
-		createdAt:       createdAt,
-		cancel:          cancel,
-		ctx:             ctx,
-		running:         true,
-		ffmpegProcesses: make(map[int]*FFmpegProcessInfo),
-	}
 
-	// 如果启用了pipe forwarder，则创建并启动它
-	if stream.PipeForwarder != nil && stream.PipeForwarder.enabled {
-		log.Printf("Starting pipe forwarder for stream %s", name)
-		
-		// 创建PipeForwarder实例
-		streamManager.pipeForwarder = NewPipeForwarder(
-			streamManager.name,
-			stream.PipeForwarder.rtmpURL,
-			stream.PipeForwarder.enabled,
-		)
-		
-		// 构建FFmpeg命令
-		ffmpegArgs := stream.BuildFFmpegCommand()
-		
-		// 启动PipeForwarder
-		if err := streamManager.pipeForwarder.Start(ffmpegArgs); err != nil {
-			log.Printf("Failed to start pipe forwarder for stream %s: %v", name, err)
-			return err
+		streamManager := &StreamManager{
+			name:            name,
+			stream:          stream,
+			streamKey:       streamKey,
+			oldStreamKey:    oldStreamKey,
+			createdAt:       createdAt,
+			cancel:          cancel,
+			ctx:             ctx,
+			running:         true,
+			ffmpegProcesses: make(map[int]*FFmpegProcessInfo),
 		}
-		
-		log.Printf("Pipe forwarder started successfully for stream %s", name)
-	}
 
-	m.streams[name] = streamManager
-	go streamManager.startStreaming()
-	
-	// 如果需要更新配置文件（新生成密钥的情况），则更新配置文件
-	// 对于fixed类型，即使密钥未过期也需要更新配置以确保URL中的streamkey与value一致
-	if needUpdateConfig {
-		log.Printf("Updating config file for %s with stream key", name)
-		if err := streamManager.updateConfigFile(streamKey); err != nil {
-			log.Printf("Failed to update config file for %s: %v", name, err)
-		} else {
-			log.Printf("Successfully updated config file for %s", name)
+		// 如果启用了pipe forwarder，则创建并启动它
+		if stream.PipeForwarder != nil && stream.PipeForwarder.enabled {
+			log.Printf("Starting pipe forwarder for stream %s", name)
+
+			// 创建PipeForwarder实例
+			streamManager.pipeForwarder = NewPipeForwarder(
+				streamManager.name,
+				stream.PipeForwarder.rtmpURL,
+				stream.PipeForwarder.enabled,
+				stream.PipeForwarder.needPull,
+				stream.PipeForwarder.hub,
+			)
+
+			// 构建FFmpeg命令
+			ffmpegArgs := stream.BuildFFmpegCommand()
+
+			// 启动PipeForwarder
+			if err := streamManager.pipeForwarder.Start(ffmpegArgs); err != nil {
+				log.Printf("Failed to start pipe forwarder for stream %s: %v", name, err)
+				return err
+			}
+
+			log.Printf("Pipe forwarder started successfully for stream %s", name)
 		}
-	}
+
+		m.streams[name] = streamManager
+		go streamManager.startStreaming()
+
+		// 如果需要更新配置文件（新生成密钥的情况），则更新配置文件
+		// 对于fixed类型，即使密钥未过期也需要更新配置以确保URL中的streamkey与value一致
+		if needUpdateConfig {
+			log.Printf("Updating config file for %s with stream key", name)
+			if err := streamManager.updateConfigFile(streamKey); err != nil {
+				log.Printf("Failed to update config file for %s: %v", name, err)
+			} else {
+				log.Printf("Successfully updated config file for %s", name)
+			}
+		}
 	}
 
 	log.Printf("Publisher manager started with %d active streams", len(m.streams))
@@ -261,14 +263,14 @@ func (m *Manager) checkStreamKeyExpiration() {
 		streams = append(streams, stream)
 	}
 	m.mutex.RUnlock()
-	
+
 	// 检查每个流的密钥是否过期
 	for _, stream := range streams {
 		stream.mutex.RLock()
 		streamKey := stream.streamKey
 		createdAt := stream.createdAt
 		stream.mutex.RUnlock()
-		
+
 		log.Printf("Checking if stream key expired for %s (created at: %v)", stream.name, createdAt)
 		if stream.stream.CheckStreamKeyExpiration(streamKey, createdAt) {
 			log.Printf("Stream key for %s expired, generating new key", stream.name)
@@ -284,7 +286,7 @@ func (m *Manager) checkStreamKeyExpiration() {
 				stream.createdAt = time.Now()
 				stream.mutex.Unlock()
 				log.Printf("Generated new stream key for %s: %s (was: %s)", stream.name, newStreamKey, oldKey)
-				
+
 				// 回写配置到YAML文件
 				log.Printf("Updating config file for %s with new stream key", stream.name)
 				if err := stream.updateConfigFile(newStreamKey); err != nil {
@@ -292,7 +294,7 @@ func (m *Manager) checkStreamKeyExpiration() {
 				} else {
 					log.Printf("Successfully updated config file for %s", stream.name)
 				}
-				
+
 				// 重新构建命令并重启推流
 				stream.restartStreaming()
 			}
@@ -301,7 +303,7 @@ func (m *Manager) checkStreamKeyExpiration() {
 			currentKey := stream.streamKey
 			expectedKey := stream.stream.StreamKey.Value
 			stream.mutex.Unlock()
-			
+
 			// 如果当前密钥与期望的固定密钥不一致，则更新
 			if currentKey != expectedKey {
 				log.Printf("Stream key for %s (fixed type) mismatch, updating from %s to %s", stream.name, currentKey, expectedKey)
@@ -311,7 +313,7 @@ func (m *Manager) checkStreamKeyExpiration() {
 				stream.streamKey = expectedKey
 				stream.createdAt = time.Now()
 				stream.mutex.Unlock()
-				
+
 				// 回写配置到YAML文件
 				log.Printf("Updating config file for %s with fixed stream key", stream.name)
 				if err := stream.updateConfigFile(expectedKey); err != nil {
@@ -319,7 +321,7 @@ func (m *Manager) checkStreamKeyExpiration() {
 				} else {
 					log.Printf("Successfully updated config file for %s", stream.name)
 				}
-				
+
 				// 重新构建命令并重启推流
 				stream.restartStreaming()
 			}
@@ -333,13 +335,13 @@ func (m *Manager) Stop() {
 	defer m.mutex.Unlock()
 
 	log.Printf("Stopping publisher manager with %d streams")
-	
+
 	// 停止过期检查器
 	if m.expirationChecker != nil {
 		m.expirationChecker.Stop()
 	}
 	close(m.done)
-	
+
 	for _, streamManager := range m.streams {
 		streamManager.Stop()
 	}
@@ -350,14 +352,14 @@ func (m *Manager) Stop() {
 func (m *Manager) StopAll() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	
+
 	log.Printf("Stopping all streams")
-	
+
 	for name, streamManager := range m.streams {
 		log.Printf("Stopping stream: %s", name)
 		streamManager.Stop()
 	}
-	
+
 	log.Printf("All streams stopped")
 }
 
@@ -367,25 +369,25 @@ func (m *Manager) shouldRestartStream(oldStream, newStream *Stream) bool {
 	if oldStream.Enabled != newStream.Enabled {
 		return true
 	}
-	
+
 	if oldStream.Protocol != newStream.Protocol {
 		return true
 	}
-	
+
 	// 检查源URL是否变化
 	if oldStream.Stream.Source.URL != newStream.Stream.Source.URL {
 		return true
 	}
-	
+
 	if oldStream.Stream.Source.BackupURL != newStream.Stream.Source.BackupURL {
 		return true
 	}
-	
+
 	// 检查接收者配置是否变化
 	if len(oldStream.Stream.Receivers.All) != len(newStream.Stream.Receivers.All) {
 		return true
 	}
-	
+
 	for i, oldReceiver := range oldStream.Stream.Receivers.All {
 		if i >= len(newStream.Stream.Receivers.All) {
 			return true
@@ -395,33 +397,33 @@ func (m *Manager) shouldRestartStream(oldStream, newStream *Stream) bool {
 			return true
 		}
 	}
-	
+
 	// 检查推流URL是否变化
 	if oldStream.Stream.LocalPlayUrls.Flv != newStream.Stream.LocalPlayUrls.Flv {
 		return true
 	}
-	
+
 	if oldStream.Stream.LocalPlayUrls.Hls != newStream.Stream.LocalPlayUrls.Hls {
 		return true
 	}
-	
+
 	// 检查streamkey配置是否变化
 	if oldStream.StreamKey.Type != newStream.StreamKey.Type {
 		return true
 	}
-	
+
 	if oldStream.StreamKey.Value != newStream.StreamKey.Value {
 		return true
 	}
-	
+
 	if oldStream.StreamKey.Length != newStream.StreamKey.Length {
 		return true
 	}
-	
+
 	if oldStream.StreamKey.Expiration != newStream.StreamKey.Expiration {
 		return true
 	}
-	
+
 	// 如果以上都没有变化，则不需要重启
 	return false
 }
@@ -443,24 +445,24 @@ func (m *Manager) startStream(name string, stream *Stream) {
 
 	// Create context for this stream
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// 以配置文件中的streamkey.value为准，只在密钥过期或为空时才生成新密钥
 	var streamKey string
 	var createdAt time.Time
 	needUpdateConfig := false
-	
+
 	if stream.StreamKey.Value != "" {
 		// 如果配置中有stream key值，使用配置文件中的值和时间
 		streamKey = stream.StreamKey.Value
 		createdAt = stream.StreamKey.CreatedAt
-		
+
 		// 检查创建时间是否有效
 		if createdAt.IsZero() {
 			// 如果创建时间为零值，使用当前时间作为创建时间
 			createdAt = time.Now()
 			log.Printf("Stream key creation time is zero, using current time: %v", createdAt)
 		}
-		
+
 		// 检查密钥是否过期
 		if stream.CheckStreamKeyExpiration(streamKey, createdAt) {
 			// 已过期，生成新的stream key
@@ -499,7 +501,7 @@ func (m *Manager) startStream(name string, stream *Stream) {
 		createdAt = time.Now()
 		needUpdateConfig = true
 	}
-	
+
 	// 从URL中提取旧密钥，用于替换
 	oldStreamKey := ""
 	if stream.Stream.Receivers.All != nil && len(stream.Stream.Receivers.All) > 0 {
@@ -515,7 +517,7 @@ func (m *Manager) startStream(name string, stream *Stream) {
 			log.Printf("Extracted old stream key from primary push_url for %s: %s", name, oldStreamKey)
 		}
 	}
-	
+
 	streamManager := &StreamManager{
 		name:            name,
 		stream:          stream,
@@ -530,7 +532,7 @@ func (m *Manager) startStream(name string, stream *Stream) {
 
 	m.streams[name] = streamManager
 	go streamManager.startStreaming()
-	
+
 	// 如果需要更新配置文件（新生成密钥的情况），则更新配置文件
 	// 对于fixed类型，即使密钥未过期也需要更新配置以确保URL中的streamkey与value一致
 	if needUpdateConfig {
@@ -547,13 +549,13 @@ func (m *Manager) startStream(name string, stream *Stream) {
 func (m *Manager) UpdateConfig(newConfig *Config) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	
+
 	log.Printf("Updating manager config from %d to %d streams", len(m.config.Streams), len(newConfig.Streams))
-	
+
 	// 保存旧配置用于比较
 	oldConfig := m.config
 	m.config = newConfig
-	
+
 	// 检查每个流是否需要重启或者启停
 	for name, newStream := range newConfig.Streams {
 		log.Printf("Processing stream %s during config update", name)
@@ -597,7 +599,7 @@ func (m *Manager) UpdateConfig(newConfig *Config) {
 			m.startStream(name, newStream)
 		}
 	}
-	
+
 	// 检查是否有流被删除
 	for name := range oldConfig.Streams {
 		if _, exists := newConfig.Streams[name]; !exists {
@@ -609,21 +611,21 @@ func (m *Manager) UpdateConfig(newConfig *Config) {
 			}
 		}
 	}
-	
+
 	log.Printf("Publisher config updated successfully")
 }
 
 // startStreaming starts the streaming process for a single stream
 func (sm *StreamManager) startStreaming() {
 	log.Printf("Starting stream %s with key %s", sm.name, sm.streamKey)
-	
+
 	// 确保即使密钥未过期也能正常启动推流
 	// 检查密钥是否过期，如果过期则生成新密钥
 	sm.mutex.RLock()
 	streamKey := sm.streamKey
 	createdAt := sm.createdAt
 	sm.mutex.RUnlock()
-	
+
 	if sm.stream.CheckStreamKeyExpiration(streamKey, createdAt) {
 		log.Printf("Stream key for %s expired at start, generating new key", sm.name)
 		// 更新stream key
@@ -632,7 +634,7 @@ func (sm *StreamManager) startStreaming() {
 			log.Printf("Failed to generate new stream key for %s: %v", sm.name, err)
 			return
 		}
-		
+
 		sm.mutex.Lock()
 		oldKey := sm.streamKey
 		sm.oldStreamKey = oldKey // 保存旧密钥
@@ -640,7 +642,7 @@ func (sm *StreamManager) startStreaming() {
 		sm.createdAt = time.Now()
 		sm.mutex.Unlock()
 		log.Printf("Generated new stream key for %s: %s (was: %s)", sm.name, newStreamKey, oldKey)
-		
+
 		// 回写配置到YAML文件
 		log.Printf("Updating config file for %s with new stream key", sm.name)
 		if err := sm.updateConfigFile(newStreamKey); err != nil {
@@ -649,48 +651,130 @@ func (sm *StreamManager) startStreaming() {
 			log.Printf("Successfully updated config file for %s", sm.name)
 		}
 	}
-	
+
 	// Build FFmpeg command
 	ffmpegCmd := sm.stream.BuildFFmpegCommand()
-	
+
 	// 检查是否配置了本地播放URL，如果配置了则启动管道转发器
 	localPlayUrls := sm.stream.Stream.LocalPlayUrls
 	if localPlayUrls.Flv != "" || localPlayUrls.Hls != "" {
-		// 获取第一个receiver的RTMP URL作为管道转发器的目标
-		var rtmpURL string
 		receivers := sm.stream.Stream.GetReceivers()
-		if len(receivers) > 0 {
-			// 使用当前的streamKey而不是启动时的streamKey
-			sm.mutex.RLock()
-			currentStreamKey := sm.streamKey
-			sm.mutex.RUnlock()
-			
-			// 构建 receiver 的 FFmpeg 推流命令以提取 RTMP URL
+		if len(receivers) == 0 {
+			log.Printf("[%s] No receivers found, skip pipe forwarder", sm.name)
+			return
+		}
+
+		// 使用当前的 streamKey
+		sm.mutex.RLock()
+		currentStreamKey := sm.streamKey
+		sm.mutex.RUnlock()
+
+		// 根据模式确定如何处理管道转发器
+		if sm.stream.Stream.Mode == "all" {
+			// 在 all 模式下，为每个接收器创建一个管道转发器
+			for i, receiver := range receivers {
+				// 构建接收器的 FFmpeg 推流命令以提取 RTMP URL
+				receiverCmd := receiver.BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
+				var rtmpURL string
+				if len(receiverCmd) > 0 {
+					// RTMP URL通常是命令的最后一个参数
+					rtmpURL = receiverCmd[len(receiverCmd)-1]
+				}
+
+				// 为每个接收器创建独立的管道转发器
+				pipeName := fmt.Sprintf("%s_receiver_%d", sm.name, i+1)
+				if i == 0 {
+					// 第一个接收器使用主名称
+					pipeName = sm.name
+					sm.pipeForwarder = NewPipeForwarder(pipeName, rtmpURL, true, true, nil)
+
+					// 启动主管道转发器
+					go func() {
+						if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
+							log.Printf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
+						}
+					}()
+				} else {
+					// 其他接收器创建独立的管道转发器
+					pipeForwarder := NewPipeForwarder(pipeName, rtmpURL, true, false, sm.pipeForwarder.hub)
+
+					// 启动额外的管道转发器
+					go func(pf *PipeForwarder, name string) {
+						if err := pf.Start(ffmpegCmd); err != nil {
+							log.Printf("Failed to start pipe forwarder for stream %s: %v", name, err)
+						}
+					}(pipeForwarder, pipeName)
+				}
+			}
+
+			// 不启动传统的推流方式
+			return
+		} else if sm.stream.Stream.Mode == "primary-backup" {
+			// 在 primary-backup 模式下，我们需要为 primary 和 backup 都创建转发器
+			// 为 primary 创建 PipeForwarder
+			var primaryRTMPURL string
+			primaryCmd := receivers[0].BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
+			if len(primaryCmd) > 0 {
+				primaryRTMPURL = primaryCmd[len(primaryCmd)-1]
+			}
+
+			sm.pipeForwarder = NewPipeForwarder(sm.name+"_primary", primaryRTMPURL, true, true, nil)
+
+			// 启动 primary PipeForwarder
+			go func() {
+				if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
+					log.Printf("Failed to start primary pipe forwarder for stream %s: %v", sm.name, err)
+				}
+			}()
+
+			// 如果有 backup receiver，也为它创建一个独立的 PipeForwarder
+			if sm.stream.Stream.Receivers.Backup != nil {
+				var backupRTMPURL string
+				backupCmd := sm.stream.Stream.Receivers.Backup.BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
+				if len(backupCmd) > 0 {
+					backupRTMPURL = backupCmd[len(backupCmd)-1]
+				}
+
+				// 创建 backup PipeForwarder
+				backupPipeForwarder := NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, true, nil)
+
+				// 启动 backup PipeForwarder
+				go func() {
+					if err := backupPipeForwarder.Start(ffmpegCmd); err != nil {
+						log.Printf("Failed to start backup pipe forwarder for stream %s: %v", sm.name, err)
+					}
+				}()
+			}
+
+			// 不启动传统的推流方式
+			return
+		} else {
+			// 对于其他模式，保持原有逻辑（只处理第一个接收器）
+			var rtmpURL string
 			receiverCmd := receivers[0].BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
 			if len(receiverCmd) > 0 {
-				// RTMP URL通常是命令的最后一个参数
 				rtmpURL = receiverCmd[len(receiverCmd)-1]
 			}
+
+			// 创建PipeForwarder，传入RTMP URL
+			sm.pipeForwarder = NewPipeForwarder(sm.name, rtmpURL, true, true, nil)
+
+			// 启动管道转发器
+			go func() {
+				if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
+					log.Printf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
+				}
+			}()
+
+			// 如果使用PipeForwarder，则不启动传统的推流方式
+			return
 		}
-		
-		// 创建PipeForwarder，传入RTMP URL
-		sm.pipeForwarder = NewPipeForwarder(sm.name, rtmpURL, true)
-		
-		// 启动管道转发器
-		go func() {
-			if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
-				log.Printf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
-			}
-		}()
-		
-		// 如果使用PipeForwarder，则不启动传统的推流方式
-		return
 	}
-	
+
 	// Get receivers
 	receivers := sm.stream.Stream.GetReceivers()
 	log.Printf("Stream %s has %d receivers", sm.name, len(receivers))
-	
+
 	// Start streaming for each receiver
 	var wg sync.WaitGroup
 	for i, receiver := range receivers {
@@ -701,20 +785,20 @@ func (sm *StreamManager) startStreaming() {
 			sm.mutex.RLock()
 			currentStreamKey := sm.streamKey
 			sm.mutex.RUnlock()
-			
+
 			cmd := r.BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
 			log.Printf("Full FFmpeg command for stream %s receiver %d: ffmpeg %s", sm.name, index+1, strings.Join(cmd, " "))
 			sm.runFFmpegStream(cmd, index+1)
 		}(i, receiver)
 	}
-	
+
 	// 对于 primary-backup 模式，额外处理 backup receiver
 	if sm.stream.Stream.Mode == "primary-backup" && sm.stream.Stream.Receivers.Backup != nil {
 		// 等待一段时间观察 primary 是否正常工作
 		go func() {
 			// 等待一段时间让 primary 先启动
 			time.Sleep(5 * time.Second)
-			
+
 			// 检查 primary 是否正常运行
 			if sm.isPrimaryHealthy() {
 				log.Printf("Primary receiver for stream %s is healthy, not starting backup", sm.name)
@@ -727,7 +811,7 @@ func (sm *StreamManager) startStreaming() {
 					sm.mutex.RLock()
 					currentStreamKey := sm.streamKey
 					sm.mutex.RUnlock()
-					
+
 					// 构建 backup receiver 的 FFmpeg 命令
 					cmd := sm.stream.Stream.Receivers.Backup.BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
 					log.Printf("Full FFmpeg command for stream %s backup receiver: ffmpeg %s", sm.name, strings.Join(cmd, " "))
@@ -737,14 +821,14 @@ func (sm *StreamManager) startStreaming() {
 			}
 		}()
 	}
-	
+
 	// 等待所有接收器完成或上下文取消
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-sm.ctx.Done():
 		log.Printf("Stream %s context cancelled, stopping", sm.name)
@@ -760,13 +844,13 @@ func (sm *StreamManager) isPrimaryHealthy() bool {
 	if manager == nil {
 		return false
 	}
-	
+
 	// 获取 FFmpeg 统计信息
 	stats := manager.GetFFmpegStats(sm.name, 1) // primary receiver 是索引 1
 	if stats == nil {
 		return false
 	}
-	
+
 	// 检查进程是否正在运行且没有错误
 	return stats.Running && stats.LastError == ""
 }
@@ -774,10 +858,10 @@ func (sm *StreamManager) isPrimaryHealthy() bool {
 // runFFmpegStream runs the ffmpeg stream with restart capability
 func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 	log.Printf("Starting FFmpeg stream routine for %s receiver %d", sm.name, receiverIndex)
-	
+
 	// 添加一个标志来跟踪是否已经尝试过backup_url
 	useBackup := false
-	
+
 	for {
 		// 检查stream manager是否仍在运行
 		if !sm.isRunning() {
@@ -789,7 +873,7 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 			}
 			return
 		}
-		
+
 		select {
 		case <-sm.ctx.Done():
 			log.Printf("Stream %s receiver %d context cancelled", sm.name, receiverIndex)
@@ -801,21 +885,21 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 			return
 		default:
 			log.Printf("Starting FFmpeg stream for %s receiver %d", sm.name, receiverIndex)
-			
+
 			// Execute FFmpeg with monitoring
 			var lastBytes uint64 = 0
 			var startTime time.Time
-			
-			err := sm.stream.ExecuteFFmpegWithMonitoring(sm.ctx, cmd, 
+
+			err := sm.stream.ExecuteFFmpegWithMonitoring(sm.ctx, cmd,
 				func(pid int32, proc *process.Process) {
 					// Process started callback
 					log.Printf("FFmpeg process started for %s receiver %d with PID %d", sm.name, receiverIndex, pid)
 					// Update process information
 					sm.updateFFmpegProcessInfo(receiverIndex, proc)
-					
+
 					// 记录开始时间
 					startTime = time.Now()
-					
+
 					// 更新统计信息
 					manager := GetManager()
 					if manager != nil {
@@ -826,34 +910,34 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 					// Stats update callback
 					lastBytes = bytes
 					log.Printf("FFmpeg stream for %s receiver %d transferred %d bytes", sm.name, receiverIndex, bytes)
-					
+
 					// 更新统计信息
 					manager := GetManager()
 					if manager != nil {
 						manager.updateFFmpegStats(sm.name, receiverIndex, 0, true, nil, bytes, time.Now())
 					}
 				})
-				
+
 			if err != nil {
 				log.Printf("FFmpeg stream for %s receiver %d failed: %v", sm.name, receiverIndex, err)
-				
+
 				// 更新统计信息（错误状态）
 				manager := GetManager()
 				if manager != nil {
 					manager.updateFFmpegStats(sm.name, receiverIndex, 0, false, err, lastBytes, time.Now())
 				}
-				
+
 				// 检查是否应该继续
 				if !sm.isRunning() {
 					log.Printf("Stream %s receiver %d stopped after error", sm.name, receiverIndex)
 					return
 				}
-				
+
 				// 如果主URL失败且有backup_url且尚未尝试过backup_url，则切换到backup_url
 				if !useBackup && sm.stream.Stream.Source.BackupURL != "" {
 					log.Printf("Switching to backup URL for stream %s receiver %d", sm.name, receiverIndex)
 					useBackup = true
-					
+
 					// 重新构建使用backup_url的命令
 					backupCmd := sm.buildFFmpegCommandWithBackup(true)
 					receivers := sm.stream.Stream.GetReceivers()
@@ -861,18 +945,18 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 						cmd = receivers[receiverIndex-1].BuildFFmpegPushCommand(backupCmd, sm.streamKey)
 						log.Printf("Rebuilt FFmpeg command with backup URL for %s receiver %d", sm.name, receiverIndex)
 						log.Printf("New command: ffmpeg %s", strings.Join(cmd, " "))
-						
+
 						// 继续循环使用backup_url进行推流
 						continue
 					}
 				}
-				
+
 				// 检查stream key是否过期
 				sm.mutex.RLock()
 				streamKey := sm.streamKey
 				createdAt := sm.createdAt
 				sm.mutex.RUnlock()
-				
+
 				log.Printf("Checking if stream key expired for %s (created at: %v)", sm.name, createdAt)
 				if sm.stream.CheckStreamKeyExpiration(streamKey, createdAt) {
 					log.Printf("Stream key for %s expired, generating new key", sm.name)
@@ -888,7 +972,7 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 						sm.createdAt = time.Now()
 						sm.mutex.Unlock()
 						log.Printf("Generated new stream key for %s: %s (was: %s)", sm.name, newStreamKey, oldKey)
-						
+
 						// 回写配置到YAML文件
 						log.Printf("Updating config file for %s with new stream key", sm.name)
 						if err := sm.updateConfigFile(newStreamKey); err != nil {
@@ -896,7 +980,7 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 						} else {
 							log.Printf("Successfully updated config file for %s", sm.name)
 						}
-						
+
 						// 重新构建命令
 						ffmpegCmd := sm.stream.BuildFFmpegCommand()
 						// 如果之前使用的是backup_url，继续使用backup_url
@@ -911,10 +995,10 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 						} else {
 							log.Printf("Receiver index %d out of range, cannot rebuild command", receiverIndex)
 						}
-						
+
 						// 重置backup标志，以便在新的流密钥下可以重新尝试backup_url
 						useBackup = false
-						
+
 						// 继续循环使用新密钥进行推流
 						continue
 					}
@@ -923,7 +1007,7 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 					// 重置backup标志，以便下次可以重新尝试backup_url
 					useBackup = false
 				}
-				
+
 				// 等待后重启
 				select {
 				case <-sm.ctx.Done():
@@ -940,12 +1024,12 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 				if manager != nil {
 					manager.updateFFmpegStats(sm.name, receiverIndex, 0, false, nil, 0, time.Now())
 				}
-				
+
 				// 检查是否应该继续运行
 				if !sm.isRunning() {
 					return
 				}
-				
+
 				// 等待一段时间后继续
 				select {
 				case <-sm.ctx.Done():
@@ -966,10 +1050,10 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 // This is a local implementation since the Stream method might not be accessible
 func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 	s := sm.stream
-	
+
 	// Start with base command - manually build it
 	var cmd []string
-	
+
 	// Add global arguments - 默认参数
 	if s.FFmpegOptions == nil || len(s.FFmpegOptions.GlobalArgs) == 0 {
 		// 默认全局参数
@@ -977,7 +1061,7 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 	} else if s.FFmpegOptions != nil && len(s.FFmpegOptions.GlobalArgs) > 0 {
 		cmd = append(cmd, s.FFmpegOptions.GlobalArgs...)
 	}
-	
+
 	// Add input pre arguments - 默认输入前参数
 	if s.FFmpegOptions != nil && len(s.FFmpegOptions.InputPreArgs) > 0 {
 		cmd = append(cmd, s.FFmpegOptions.InputPreArgs...)
@@ -989,16 +1073,16 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 			cmd = append(cmd, "-rtsp_transport", "tcp")
 		}
 	}
-	
+
 	// Add User-Agent if configured in FFmpegOptions
 	if s.FFmpegOptions != nil && s.FFmpegOptions.UserAgent != "" {
 		cmd = append(cmd, "-user_agent", s.FFmpegOptions.UserAgent)
 	}
-	
+
 	// Add custom headers
 	var headersBuilder strings.Builder
 	hasHeaders := false
-	
+
 	if s.FFmpegOptions != nil && len(s.FFmpegOptions.Headers) > 0 {
 		for _, header := range s.FFmpegOptions.Headers {
 			headersBuilder.WriteString(header)
@@ -1015,11 +1099,11 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 			hasHeaders = true
 		}
 	}
-	
+
 	if hasHeaders {
 		cmd = append(cmd, "-headers", headersBuilder.String())
 	}
-	
+
 	// Add source URL - 根据useBackup参数决定使用主URL还是备份URL
 	if useBackup && s.Stream.Source.BackupURL != "" {
 		cmd = append(cmd, "-i", s.Stream.Source.BackupURL)
@@ -1028,12 +1112,12 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 		cmd = append(cmd, "-i", s.Stream.Source.URL)
 		log.Printf("Stream %s: Using primary URL: %s", sm.name, s.Stream.Source.URL)
 	}
-	
+
 	// Add input post arguments
 	if s.FFmpegOptions != nil && len(s.FFmpegOptions.InputPostArgs) > 0 {
 		cmd = append(cmd, s.FFmpegOptions.InputPostArgs...)
 	}
-	
+
 	// Add filter arguments
 	if s.FFmpegOptions != nil && s.FFmpegOptions.Filters != nil {
 		if len(s.FFmpegOptions.Filters.VideoFilters) > 0 {
@@ -1043,77 +1127,77 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 			cmd = append(cmd, "-af", strings.Join(s.FFmpegOptions.Filters.AudioFilters, ","))
 		}
 	}
-	
+
 	// Add video codec - 默认视频编码器
 	videoCodec := "libx264"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.VideoCodec != "" {
 		videoCodec = s.FFmpegOptions.VideoCodec
 	}
 	cmd = append(cmd, "-c:v", videoCodec)
-	
+
 	// Add audio codec - 默认音频编码器
 	audioCodec := "aac"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.AudioCodec != "" {
 		audioCodec = s.FFmpegOptions.AudioCodec
 	}
 	cmd = append(cmd, "-c:a", audioCodec)
-	
+
 	// Add video bitrate - 默认视频码率
 	videoBitrate := "2M"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.VideoBitrate != "" {
 		videoBitrate = s.FFmpegOptions.VideoBitrate
 	}
 	cmd = append(cmd, "-b:v", videoBitrate)
-	
+
 	// Add audio bitrate - 默认音频码率
 	audioBitrate := "128k"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.AudioBitrate != "" {
 		audioBitrate = s.FFmpegOptions.AudioBitrate
 	}
 	cmd = append(cmd, "-b:a", audioBitrate)
-	
+
 	// Add preset - 默认编码预设
 	preset := "ultrafast"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.Preset != "" {
 		preset = s.FFmpegOptions.Preset
 	}
 	cmd = append(cmd, "-preset", preset)
-	
+
 	// Add CRF
 	if s.FFmpegOptions != nil && s.FFmpegOptions.CRF > 0 {
 		cmd = append(cmd, "-crf", fmt.Sprintf("%d", s.FFmpegOptions.CRF))
 	}
-	
+
 	// Add output format - 默认输出格式
 	outputFormat := "flv"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.OutputFormat != "" {
 		outputFormat = s.FFmpegOptions.OutputFormat
 	}
 	cmd = append(cmd, "-f", outputFormat)
-	
+
 	// Add output pre arguments
 	if s.FFmpegOptions != nil && len(s.FFmpegOptions.OutputPreArgs) > 0 {
 		cmd = append(cmd, s.FFmpegOptions.OutputPreArgs...)
 	}
-	
+
 	// Add custom arguments after input
 	if s.FFmpegOptions != nil && len(s.FFmpegOptions.CustomArgs) > 0 {
 		cmd = append(cmd, s.FFmpegOptions.CustomArgs...)
 	}
-	
+
 	return cmd
 }
 
 // restartStreaming 重新启动推流
 func (sm *StreamManager) restartStreaming() {
 	log.Printf("Restarting streaming for %s", sm.name)
-	
+
 	// 先停止当前推流
 	sm.Stop()
-	
+
 	// 等待一小段时间确保旧的推流完全停止
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// 重新创建context
 	sm.mutex.Lock()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1121,10 +1205,10 @@ func (sm *StreamManager) restartStreaming() {
 	sm.ctx = ctx
 	sm.running = true // 确保设置running状态为true
 	sm.mutex.Unlock()
-	
+
 	// 启动新的推流
 	go sm.startStreaming()
-	
+
 	log.Printf("Restarted streaming for %s", sm.name)
 }
 
@@ -1143,7 +1227,7 @@ func (sm *StreamManager) isRunning() bool {
 // Stop stops the stream
 func (sm *StreamManager) Stop() {
 	log.Printf("Stopping stream manager for %s", sm.name)
-	
+
 	sm.mutex.Lock()
 	if !sm.running {
 		sm.mutex.Unlock()
@@ -1152,17 +1236,17 @@ func (sm *StreamManager) Stop() {
 	}
 	sm.running = false
 	sm.mutex.Unlock()
-	
+
 	// Cancel the context to stop all operations
 	if sm.cancel != nil {
 		sm.cancel()
 	}
-	
+
 	// 停止管道转发器
 	if sm.pipeForwarder != nil {
 		sm.pipeForwarder.Stop()
 	}
-	
+
 	log.Printf("Stream manager for %s stopped", sm.name)
 }
 
@@ -1179,7 +1263,7 @@ func (sm *StreamManager) UpdateStreamKey() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 	sm.streamKey = newStreamKey
@@ -1190,7 +1274,7 @@ func (sm *StreamManager) UpdateStreamKey() (string, error) {
 // updateConfigFile updates the stream key in the config file
 func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 	log.Printf("Attempting to update config file for stream %s with new key %s", sm.name, newStreamKey)
-	
+
 	// 读取当前配置文件
 	configData, err := ioutil.ReadFile(*config.ConfigFilePath)
 	if err != nil {
@@ -1210,7 +1294,7 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 		log.Printf("Found publisher config")
 		if stream, ok := publisher[sm.name].(map[string]interface{}); ok {
 			log.Printf("Found stream config for %s", sm.name)
-			
+
 			// 更新streamkey的value字段
 			if streamKey, ok := stream["streamkey"].(map[string]interface{}); ok {
 				oldValue := streamKey["value"]
@@ -1221,11 +1305,11 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 			} else {
 				log.Printf("Failed to find streamkey config for %s", sm.name)
 			}
-			
+
 			// 更新stream中的source headers
 			if streamData, ok := stream["stream"].(map[string]interface{}); ok {
 				log.Printf("Found stream data for %s", sm.name)
-				
+
 				// 更新local_play_urls
 				if localPlayURLs, ok := streamData["local_play_urls"].(map[string]interface{}); ok {
 					for format, url := range localPlayURLs {
@@ -1237,7 +1321,7 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 						}
 					}
 				}
-				
+
 				// 更新stream中的receivers的push_url
 				if receivers, ok := streamData["receivers"].(map[string]interface{}); ok {
 					log.Printf("Found receivers config")
@@ -1249,7 +1333,7 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 							primary["push_url"] = pushURL
 							log.Printf("Updated primary push_url to: %s", pushURL)
 						}
-						
+
 						// 更新primary play_urls
 						if playURLs, ok := primary["play_urls"].(map[string]interface{}); ok {
 							for format, url := range playURLs {
@@ -1262,7 +1346,7 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 							}
 						}
 					}
-					
+
 					if backup, ok := receivers["backup"].(map[string]interface{}); ok {
 						if pushURL, ok := backup["push_url"].(string); ok {
 							// 替换旧的密钥为新的密钥
@@ -1270,7 +1354,7 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 							backup["push_url"] = pushURL
 							log.Printf("Updated backup push_url to: %s", pushURL)
 						}
-						
+
 						// 更新backup play_urls
 						if playURLs, ok := backup["play_urls"].(map[string]interface{}); ok {
 							for format, url := range playURLs {
@@ -1283,7 +1367,7 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 							}
 						}
 					}
-					
+
 					// 处理all模式
 					if allReceivers, ok := receivers["all"].([]interface{}); ok {
 						log.Printf("Found all receivers config with %d receivers", len(allReceivers))
@@ -1295,7 +1379,7 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 									rec["push_url"] = pushURL
 									log.Printf("Updated receiver %d push_url to: %s", i, pushURL)
 								}
-								
+
 								// 更新receiver play_urls
 								if playURLs, ok := rec["play_urls"].(map[string]interface{}); ok {
 									for format, url := range playURLs {
@@ -1321,7 +1405,7 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 								rec["push_url"] = pushURL
 								log.Printf("Updated receiver %d push_url to: %s", i, pushURL)
 							}
-							
+
 							// 更新receiver play_urls
 							if playURLs, ok := rec["play_urls"].(map[string]interface{}); ok {
 								for format, url := range playURLs {
@@ -1371,9 +1455,9 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 func (sm *StreamManager) replaceStreamKeyInURL(urlStr, newKey string) string {
 	// 从URL中提取旧密钥
 	oldKey := sm.oldStreamKey
-	
+
 	log.Printf("Replacing stream key in URL: %s, oldKey: %s, newKey: %s", urlStr, oldKey, newKey)
-	
+
 	// 如果旧密钥为空，则直接在URL末尾添加新密钥
 	if oldKey == "" {
 		// 处理各种URL格式
@@ -1405,14 +1489,14 @@ func (sm *StreamManager) replaceStreamKeyInURL(urlStr, newKey string) string {
 		log.Printf("Updated URL with new key: %s", urlStr)
 		return urlStr
 	}
-	
+
 	// 检查URL是否已经包含新的stream key，避免重复添加
 	if strings.Contains(urlStr, "/"+newKey+"/") || strings.Contains(urlStr, "/"+newKey+".") || strings.HasSuffix(urlStr, "/"+newKey) {
 		// 如果URL已经包含了新的stream key，检查是否需要清理重复的部分
 		if strings.Count(urlStr, newKey) > 1 {
 			// 存在重复的stream key，需要清理
 			log.Printf("Found duplicate stream key in URL, cleaning up: %s", urlStr)
-			
+
 			// 对于.flv URL的特殊处理
 			if strings.HasSuffix(urlStr, ".flv") {
 				// 移除.flv后缀进行处理
@@ -1460,7 +1544,7 @@ func (sm *StreamManager) replaceStreamKeyInURL(urlStr, newKey string) string {
 		}
 		return urlStr
 	}
-	
+
 	// 处理.flv扩展名
 	if strings.HasSuffix(urlStr, ".flv") {
 		// 特殊处理：如果URL形如 http://domain/path/streamkey.flv
@@ -1488,7 +1572,7 @@ func (sm *StreamManager) replaceStreamKeyInURL(urlStr, newKey string) string {
 		log.Printf("Updated .flv URL: %s", urlStr)
 		return urlStr
 	}
-	
+
 	// 处理.m3u8扩展名
 	if strings.HasSuffix(urlStr, ".m3u8") {
 		if strings.HasSuffix(urlStr, "/"+oldKey+".m3u8") {
@@ -1514,7 +1598,7 @@ func (sm *StreamManager) replaceStreamKeyInURL(urlStr, newKey string) string {
 		log.Printf("Updated .m3u8 URL: %s", urlStr)
 		return urlStr
 	}
-	
+
 	// 处理index.m3u8扩展名
 	if strings.HasSuffix(urlStr, "index.m3u8") {
 		if strings.Contains(urlStr, "/"+oldKey+"/index.m3u8") {
@@ -1526,7 +1610,7 @@ func (sm *StreamManager) replaceStreamKeyInURL(urlStr, newKey string) string {
 		log.Printf("Updated index.m3u8 URL: %s", urlStr)
 		return urlStr
 	}
-	
+
 	// 处理路径格式 (如: /path/oldKey)
 	if strings.Contains(urlStr, "/"+oldKey+"/") {
 		urlStr = strings.Replace(urlStr, "/"+oldKey+"/", "/"+newKey+"/", 1)
@@ -1548,7 +1632,7 @@ func (sm *StreamManager) replaceStreamKeyInURL(urlStr, newKey string) string {
 			urlStr += newKey
 		}
 	}
-	
+
 	log.Printf("Updated general URL: %s", urlStr)
 	return urlStr
 }
@@ -1556,10 +1640,10 @@ func (sm *StreamManager) replaceStreamKeyInURL(urlStr, newKey string) string {
 // updateFFmpegStats updates the FFmpeg process statistics
 func (m *Manager) updateFFmpegStats(streamName string, receiverIndex int, pid int32, running bool, err error, bytesTransferred uint64, currentTime time.Time) {
 	key := streamName + "_" + string(rune(receiverIndex+'0'))
-	
+
 	m.statsMutex.Lock()
 	defer m.statsMutex.Unlock()
-	
+
 	stat, exists := m.ffmpegStats[key]
 	if !exists {
 		stat = &FFmpegProcessStats{
@@ -1570,19 +1654,19 @@ func (m *Manager) updateFFmpegStats(streamName string, receiverIndex int, pid in
 		}
 		m.ffmpegStats[key] = stat
 	}
-	
+
 	stat.LastUpdate = time.Now()
 	stat.Running = running
 	stat.BytesTransferred = bytesTransferred
-	
+
 	// 计算运行时长
 	stat.Duration = time.Since(stat.StartTime).Seconds()
-	
+
 	// 计算平均码率
 	if stat.Duration > 0 {
 		stat.AvgBitrate = uint64(float64(stat.BytesTransferred*8) / stat.Duration)
 	}
-	
+
 	// 计算当前码率（基于上次更新）
 	if exists && !stat.LastUpdate.IsZero() {
 		timeDiff := time.Since(stat.LastUpdate).Seconds()
@@ -1591,7 +1675,7 @@ func (m *Manager) updateFFmpegStats(streamName string, receiverIndex int, pid in
 			stat.CurrentBitrate = uint64(float64(bytesDiff*8) / timeDiff)
 		}
 	}
-	
+
 	// 获取进程的CPU和内存使用情况
 	if pid > 0 {
 		proc, err := process.NewProcess(pid)
@@ -1601,7 +1685,7 @@ func (m *Manager) updateFFmpegStats(streamName string, receiverIndex int, pid in
 			if err == nil {
 				stat.CPUPercent = cpuPercent
 			}
-			
+
 			// 获取内存使用情况
 			memInfo, err := proc.MemoryInfo()
 			if err == nil {
@@ -1609,7 +1693,7 @@ func (m *Manager) updateFFmpegStats(streamName string, receiverIndex int, pid in
 			}
 		}
 	}
-	
+
 	if err != nil {
 		stat.LastError = err.Error()
 	} else {
@@ -1621,14 +1705,14 @@ func (m *Manager) updateFFmpegStats(streamName string, receiverIndex int, pid in
 func (m *Manager) GetFFmpegStats(streamName string, receiverIndex int) *FFmpegProcessStats {
 	m.statsMutex.RLock()
 	defer m.statsMutex.RUnlock()
-	
+
 	key := fmt.Sprintf("%s_%d", streamName, receiverIndex)
 	if stat, exists := m.ffmpegStats[key]; exists {
 		// 返回副本以避免并发问题
 		statCopy := *stat
 		return &statCopy
 	}
-	
+
 	return nil
 }
 
@@ -1640,11 +1724,11 @@ func (sm *StreamManager) updateFFmpegProcessInfo(receiverIndex int, proc *proces
 	if sm.ffmpegProcesses == nil {
 		sm.ffmpegProcesses = make(map[int]*FFmpegProcessInfo)
 	}
-	
+
 	if sm.ffmpegProcesses[receiverIndex] == nil {
 		sm.ffmpegProcesses[receiverIndex] = &FFmpegProcessInfo{}
 	}
-	
+
 	sm.ffmpegProcesses[receiverIndex].Process = proc
 	sm.ffmpegProcesses[receiverIndex].LastTime = time.Now()
 }
@@ -1654,7 +1738,7 @@ func (m *Manager) extractStreamKeyFromURL(urlStr string) string {
 	if urlStr == "" {
 		return ""
 	}
-	
+
 	// 处理RTMP URL
 	if strings.HasPrefix(urlStr, "rtmp://") {
 		// 从路径中提取密钥
@@ -1669,7 +1753,7 @@ func (m *Manager) extractStreamKeyFromURL(urlStr string) string {
 			return lastPart
 		}
 	}
-	
+
 	// 处理HTTP URL
 	if strings.Contains(urlStr, "http://") || strings.Contains(urlStr, "https://") {
 		// 从路径中提取密钥
@@ -1690,6 +1774,6 @@ func (m *Manager) extractStreamKeyFromURL(urlStr string) string {
 			return lastPart
 		}
 	}
-	
+
 	return ""
 }

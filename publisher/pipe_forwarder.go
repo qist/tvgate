@@ -23,6 +23,7 @@ type PipeForwarder struct {
 	streamName string
 	rtmpURL    string
 	enabled    bool
+	needPull   bool // 新增标志，标识是否需要拉流
 
 	ffmpegCmd *exec.Cmd
 
@@ -44,20 +45,31 @@ type PipeForwarder struct {
 	headerBuf      bytes.Buffer
 	headerCaptured bool
 	headerMutex    sync.Mutex
+	// 用于从hub读取数据的客户端缓冲区
+	clientBuffer *ringbuffer.RingBuffer
 }
 
 // NewPipeForwarder 创建新的 PipeForwarder
-func NewPipeForwarder(streamName string, rtmpURL string, enabled bool) *PipeForwarder {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &PipeForwarder{
-		streamName: streamName,
-		rtmpURL:    rtmpURL,
-		enabled:    enabled,
-		ctx:        ctx,
-		cancel:     cancel,
-		hub:        stream.NewStreamHubs(),
-	}
+// 修改构造函数签名并复用传入 hub（若为 nil 则创建新 hub）
+func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull bool, hub *stream.StreamHubs) *PipeForwarder {
+    ctx, cancel := context.WithCancel(context.Background())
+    var h *stream.StreamHubs
+    if hub != nil {
+        h = hub
+    } else {
+        h = stream.NewStreamHubs()
+    }
+    return &PipeForwarder{
+        streamName: streamName,
+        rtmpURL:    rtmpURL,
+        enabled:    enabled,
+        needPull:   needPull,
+        ctx:        ctx,
+        cancel:     cancel,
+        hub:        h,
+    }
 }
+
 
 // SetCallbacks 设置启动和停止回调
 func (pf *PipeForwarder) SetCallbacks(onStarted, onStopped func()) {
@@ -79,30 +91,44 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 		return nil
 	}
 
-	// 创建 io.Pipe
-	pf.pipeReader, pf.pipeWriter = io.Pipe()
+	// 如果需要拉流，则创建 io.Pipe 并启动 ffmpeg 拉流进程
+	if pf.needPull {
+		// 创建 io.Pipe
+		pf.pipeReader, pf.pipeWriter = io.Pipe()
 
-	// 修改 ffmpeg 命令，确保输出为 pipe:1
-	modArgs := pf.modifyFFmpegCommand(ffmpegArgs)
+		// 修改 ffmpeg 命令，确保输出为 pipe:1
+		modArgs := pf.modifyFFmpegCommand(ffmpegArgs)
 
-	// 启动 ffmpeg（主进程，输出到 pipe:1）
-	pf.ffmpegCmd = exec.CommandContext(pf.ctx, "ffmpeg", modArgs...)
-	pf.ffmpegCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	pf.ffmpegCmd.Stderr = os.Stderr
-	pf.ffmpegCmd.Stdout = pf.pipeWriter
+		// 启动 ffmpeg（主进程，输出到 pipe:1）
+		pf.ffmpegCmd = exec.CommandContext(pf.ctx, "ffmpeg", modArgs...)
+		pf.ffmpegCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		pf.ffmpegCmd.Stderr = os.Stderr
+		pf.ffmpegCmd.Stdout = pf.pipeWriter
 
-	if err := pf.ffmpegCmd.Start(); err != nil {
-		// 启动失败，清理 pipe
-		_ = pf.pipeReader.Close()
-		_ = pf.pipeWriter.Close()
-		pf.pipeReader = nil
-		pf.pipeWriter = nil
-		return fmt.Errorf("failed to start ffmpeg: %v", err)
+		if err := pf.ffmpegCmd.Start(); err != nil {
+			// 启动失败，清理 pipe
+			_ = pf.pipeReader.Close()
+			_ = pf.pipeWriter.Close()
+			pf.pipeReader = nil
+			pf.pipeWriter = nil
+			return fmt.Errorf("failed to start ffmpeg: %v", err)
+		}
+
+		log.Printf("[%s] Started PipeForwarder, ffmpeg pid=%d", pf.streamName, pf.ffmpegCmd.Process.Pid)
+		log.Printf("[%s] Full FFmpeg command: ffmpeg %s", pf.streamName, strings.Join(modArgs, " "))
+	} else {
+		// 不需要拉流，创建客户端缓冲区从hub读取数据
+		var err error
+		pf.clientBuffer, err = ringbuffer.New(1024 * 1024)
+		if err != nil {
+			log.Printf("[%s] Failed to create client buffer: %v", pf.streamName, err)
+			return fmt.Errorf("failed to create client buffer: %v", err)
+		}
+
+		log.Printf("[%s] Started PipeForwarder in forward-only mode", pf.streamName)
 	}
 
 	pf.isRunning = true
-	log.Printf("[%s] Started PipeForwarder, ffmpeg pid=%d", pf.streamName, pf.ffmpegCmd.Process.Pid)
-	log.Printf("[%s] Full FFmpeg command: ffmpeg %s", pf.streamName, strings.Join(modArgs, " "))
 
 	// 清空 header 缓存状态
 	pf.headerMutex.Lock()
@@ -113,8 +139,10 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 	// 启动数据转发 goroutine
 	go pf.forwardDataFromPipe()
 
-	// 启动 wait goroutine，等待 ffmpeg 退出并清理
-	go pf.wait()
+	// 如果需要拉流，启动 wait goroutine，等待 ffmpeg 退出并清理
+	if pf.needPull && pf.ffmpegCmd != nil {
+		go pf.wait()
+	}
 
 	// 触发启动回调
 	if pf.onStarted != nil {
@@ -237,87 +265,153 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 	// 标记 hub 为播放状态
 	pf.hub.SetPlaying()
 
-	buf := make([]byte, 32*1024)
-	for {
-		select {
-		case <-pf.ctx.Done():
-			log.Printf("[%s] context canceled, stopping forwardDataFromPipe", pf.streamName)
-			if ffIn != nil {
-				_ = ffIn.Close()
-				ffIn = nil
-			}
-			// 等待推流进程退出
-			pushWg.Wait()
-			return
-		default:
-			n, err := pf.pipeReader.Read(buf)
-			if n > 0 {
-				chunk := make([]byte, n)
-				copy(chunk, buf[:n])
-
-				// 在 header 未捕获时缓存前段数据
-				pf.headerMutex.Lock()
-				if !pf.headerCaptured {
-					// 限制 header 缓存大小，避免无限增长
-					if pf.headerBuf.Len() < 128*1024 {
-						pf.headerBuf.Write(chunk)
-					}
-					// 当缓存长度足够并且包含 FLV 文件头时判定为已捕获
-					b := pf.headerBuf.Bytes()
-					if len(b) >= 13 && bytes.HasPrefix(b, []byte("FLV")) {
-						// FLV header 最少 9 字节，后面通常还有 FirstPrevTagSize（4 bytes），所以 13 是安全的短阈值
-						pf.headerCaptured = true
-						log.Printf("[%s] FLV header captured (%d bytes)", pf.streamName, pf.headerBuf.Len())
-					} else if pf.headerBuf.Len() >= 64*1024 {
-						// 超过阈值仍未发现 FLV 开头，则放弃进一步检测，避免无限等待
-						pf.headerCaptured = true
-						log.Printf("[%s] Header capture limit reached (%d bytes) — marking captured", pf.streamName, pf.headerBuf.Len())
-					}
-				}
-				pf.headerMutex.Unlock()
-
-				// 写入 RTMP 推流进程 stdin（如果有）
+	// 根据 needPull 参数决定数据源
+	if pf.needPull {
+		// 从管道读取数据（主拉流实例）
+		buf := make([]byte, 32*1024)
+		for {
+			select {
+			case <-pf.ctx.Done():
+				log.Printf("[%s] context canceled, stopping forwardDataFromPipe", pf.streamName)
 				if ffIn != nil {
-					wDone := make(chan error, 1)
-					go func() {
-						_, werr := ffIn.Write(chunk)
-						wDone <- werr
-					}()
+					_ = ffIn.Close()
+					ffIn = nil
+				}
+				// 等待推流进程退出
+				pushWg.Wait()
+				return
+			default:
+				n, err := pf.pipeReader.Read(buf)
+				if n > 0 {
+					chunk := make([]byte, n)
+					copy(chunk, buf[:n])
 
-					select {
-					case werr := <-wDone:
-						if werr != nil {
-							log.Printf("[%s] Error writing to RTMP stdin: %v — closing ffIn", pf.streamName, werr)
+					// 在 header 未捕获时缓存前段数据
+					pf.headerMutex.Lock()
+					if !pf.headerCaptured {
+						// 限制 header 缓存大小，避免无限增长
+						if pf.headerBuf.Len() < 128*1024 {
+							pf.headerBuf.Write(chunk)
+						}
+						// 当缓存长度足够并且包含 FLV 文件头时判定为已捕获
+						b := pf.headerBuf.Bytes()
+						if len(b) >= 13 && bytes.HasPrefix(b, []byte("FLV")) {
+							// FLV header 最少 9 字节，后面通常还有 FirstPrevTagSize（4 bytes），所以 13 是安全的短阈值
+							pf.headerCaptured = true
+							log.Printf("[%s] FLV header captured (%d bytes)", pf.streamName, pf.headerBuf.Len())
+						} else if pf.headerBuf.Len() >= 64*1024 {
+							// 超过阈值仍未发现 FLV 开头，则放弃进一步检测，避免无限等待
+							pf.headerCaptured = true
+							log.Printf("[%s] Header capture limit reached (%d bytes) — marking captured", pf.streamName, pf.headerBuf.Len())
+						}
+					}
+					pf.headerMutex.Unlock()
+
+					// 写入 RTMP 推流进程 stdin（如果有）
+					if ffIn != nil {
+						wDone := make(chan error, 1)
+						go func() {
+							_, werr := ffIn.Write(chunk)
+							wDone <- werr
+						}()
+
+						select {
+						case werr := <-wDone:
+							if werr != nil {
+								log.Printf("[%s] Error writing to RTMP stdin: %v — closing ffIn", pf.streamName, werr)
+								_ = ffIn.Close()
+								ffIn = nil
+							}
+						case <-time.After(5 * time.Second):
+							log.Printf("[%s] Timeout writing to RTMP stdin — closing ffIn", pf.streamName)
 							_ = ffIn.Close()
 							ffIn = nil
 						}
-					case <-time.After(5 * time.Second):
-						log.Printf("[%s] Timeout writing to RTMP stdin — closing ffIn", pf.streamName)
-						_ = ffIn.Close()
-						ffIn = nil
 					}
+
+					// 广播到 hub（所有已注册客户端）
+					pf.hub.Broadcast(chunk)
 				}
 
-				// 广播到 hub（所有已注册客户端）
-				pf.hub.Broadcast(chunk)
+				if err != nil {
+					if err == io.EOF {
+						log.Printf("[%s] pipe EOF reached", pf.streamName)
+						if ffIn != nil {
+							_ = ffIn.Close()
+							ffIn = nil
+						}
+						// 等待可选的推流进程退出
+						pushWg.Wait()
+						return
+					}
+					// 记录并短暂休眠，继续循环以便响应 ctx.Done()
+					if pf.ctx.Err() == nil {
+						log.Printf("[%s] pipe read error: %v", pf.streamName, err)
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
 			}
+		}
+	} else {
+		// 从 hub 读取数据（转发实例）
+		if pf.clientBuffer != nil {
+			// 注册客户端到 hub
+			pf.hub.AddClient(pf.clientBuffer)
 
-			if err != nil {
-				if err == io.EOF {
-					log.Printf("[%s] pipe EOF reached", pf.streamName)
+			// 从 hub 读取数据并推流
+			for {
+				select {
+				case <-pf.ctx.Done():
+					log.Printf("[%s] context canceled, stopping forwardDataFromPipe (forward-only mode)", pf.streamName)
 					if ffIn != nil {
 						_ = ffIn.Close()
 						ffIn = nil
 					}
-					// 等待可选的推流进程退出
+					// 等待推流进程退出
 					pushWg.Wait()
+					// 移除客户端
+					pf.hub.RemoveClient(pf.clientBuffer)
 					return
+				default:
+					data, ok := pf.clientBuffer.PullWithContext(pf.ctx)
+					if !ok {
+						// buffer 关闭或上下文取消
+						if ffIn != nil {
+							_ = ffIn.Close()
+							ffIn = nil
+						}
+						// 等待推流进程退出
+						pushWg.Wait()
+						// 移除客户端
+						pf.hub.RemoveClient(pf.clientBuffer)
+						return
+					}
+
+					// PullWithContext 返回 interface{}，我们假定是 []byte
+					if chunk, ok := data.([]byte); ok {
+						// 写入 RTMP 推流进程 stdin（如果有）
+						if ffIn != nil {
+							wDone := make(chan error, 1)
+							go func() {
+								_, werr := ffIn.Write(chunk)
+								wDone <- werr
+							}()
+
+							select {
+							case werr := <-wDone:
+								if werr != nil {
+									log.Printf("[%s] Error writing to RTMP stdin: %v — closing ffIn", pf.streamName, werr)
+									_ = ffIn.Close()
+									ffIn = nil
+								}
+							case <-time.After(5 * time.Second):
+								log.Printf("[%s] Timeout writing to RTMP stdin — closing ffIn", pf.streamName)
+								_ = ffIn.Close()
+								ffIn = nil
+							}
+						}
+					}
 				}
-				// 记录并短暂休眠，继续循环以便响应 ctx.Done()
-				if pf.ctx.Err() == nil {
-					log.Printf("[%s] pipe read error: %v", pf.streamName, err)
-				}
-				time.Sleep(10 * time.Millisecond)
 			}
 		}
 	}
@@ -379,6 +473,12 @@ func (pf *PipeForwarder) Stop() {
 	if pf.pipeReader != nil {
 		_ = pf.pipeReader.Close()
 		pf.pipeReader = nil
+	}
+
+	// 关闭客户端缓冲区
+	if pf.clientBuffer != nil {
+		pf.clientBuffer.Close()
+		pf.clientBuffer = nil
 	}
 
 	// 关闭 hub，清理客户端
