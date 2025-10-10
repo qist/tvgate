@@ -1143,7 +1143,7 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 	cmd = append(cmd, "-c:a", audioCodec)
 
 	// Add video bitrate - 默认视频码率
-	videoBitrate := "2M"
+	videoBitrate := "4M"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.VideoBitrate != "" {
 		videoBitrate = s.FFmpegOptions.VideoBitrate
 	}

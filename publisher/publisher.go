@@ -196,7 +196,7 @@ func (s *Stream) BuildFFmpegCommand() []string {
 	
 	// Only add video bitrate if not using copy codec
 	if videoCodec != "copy" {
-		videoBitrate := "2M"
+		videoBitrate := "4M"
 		if s.FFmpegOptions != nil && s.FFmpegOptions.VideoBitrate != "" {
 			videoBitrate = s.FFmpegOptions.VideoBitrate
 		}

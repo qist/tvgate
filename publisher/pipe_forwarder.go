@@ -52,24 +52,23 @@ type PipeForwarder struct {
 // NewPipeForwarder 创建新的 PipeForwarder
 // 修改构造函数签名并复用传入 hub（若为 nil 则创建新 hub）
 func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull bool, hub *stream.StreamHubs) *PipeForwarder {
-    ctx, cancel := context.WithCancel(context.Background())
-    var h *stream.StreamHubs
-    if hub != nil {
-        h = hub
-    } else {
-        h = stream.NewStreamHubs()
-    }
-    return &PipeForwarder{
-        streamName: streamName,
-        rtmpURL:    rtmpURL,
-        enabled:    enabled,
-        needPull:   needPull,
-        ctx:        ctx,
-        cancel:     cancel,
-        hub:        h,
-    }
+	ctx, cancel := context.WithCancel(context.Background())
+	var h *stream.StreamHubs
+	if hub != nil {
+		h = hub
+	} else {
+		h = stream.NewStreamHubs()
+	}
+	return &PipeForwarder{
+		streamName: streamName,
+		rtmpURL:    rtmpURL,
+		enabled:    enabled,
+		needPull:   needPull,
+		ctx:        ctx,
+		cancel:     cancel,
+		hub:        h,
+	}
 }
-
 
 // SetCallbacks 设置启动和停止回调
 func (pf *PipeForwarder) SetCallbacks(onStarted, onStopped func()) {
@@ -102,7 +101,7 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 		// 启动 ffmpeg（主进程，输出到 pipe:1）
 		pf.ffmpegCmd = exec.CommandContext(pf.ctx, "ffmpeg", modArgs...)
 		pf.ffmpegCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		pf.ffmpegCmd.Stderr = os.Stderr
+		// pf.ffmpegCmd.Stderr = os.Stderr
 		pf.ffmpegCmd.Stdout = pf.pipeWriter
 
 		if err := pf.ffmpegCmd.Start(); err != nil {
@@ -217,7 +216,20 @@ func (pf *PipeForwarder) modifyFFmpegCommand(args []string) []string {
 		// 采用 aac，44100Hz，双声道
 		result = append(result, "-c:a", "aac", "-ar", "44100", "-ac", "2")
 	}
+	// 追加低延迟参数，保留用户已有设置
+	appendIfMissing := func(flag string, vals ...string) {
+		for _, a := range result {
+			if a == flag {
+				return
+			}
+		}
+		result = append(result, append([]string{flag}, vals...)...)
+	}
 
+	appendIfMissing("-fflags", "+genpts")
+	appendIfMissing("-avioflags", "direct")
+	appendIfMissing("-flush_packets", "1")
+	appendIfMissing("-flvflags", "no_duration_filesize")
 	// 最终输出到 stdout 的 FLV
 	result = append(result, "-f", "flv", "pipe:1")
 	return result
@@ -239,7 +251,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 			log.Printf("[%s] Failed to create stdin pipe for RTMP push: %v", pf.streamName, err)
 			ffIn = nil
 		} else {
-			ffmpegPush.Stderr = os.Stderr
+			// ffmpegPush.Stderr = os.Stderr
 			ffmpegPush.Stdout = os.Stdout
 
 			if err := ffmpegPush.Start(); err != nil {
@@ -289,20 +301,13 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					// 在 header 未捕获时缓存前段数据
 					pf.headerMutex.Lock()
 					if !pf.headerCaptured {
-						// 限制 header 缓存大小，避免无限增长
-						if pf.headerBuf.Len() < 128*1024 {
+						if pf.headerBuf.Len() < 4*1024 { // 4KB 足够
 							pf.headerBuf.Write(chunk)
 						}
-						// 当缓存长度足够并且包含 FLV 文件头时判定为已捕获
 						b := pf.headerBuf.Bytes()
-						if len(b) >= 13 && bytes.HasPrefix(b, []byte("FLV")) {
-							// FLV header 最少 9 字节，后面通常还有 FirstPrevTagSize（4 bytes），所以 13 是安全的短阈值
+						if len(b) >= 9 && bytes.HasPrefix(b, []byte("FLV")) {
 							pf.headerCaptured = true
 							log.Printf("[%s] FLV header captured (%d bytes)", pf.streamName, pf.headerBuf.Len())
-						} else if pf.headerBuf.Len() >= 64*1024 {
-							// 超过阈值仍未发现 FLV 开头，则放弃进一步检测，避免无限等待
-							pf.headerCaptured = true
-							log.Printf("[%s] Header capture limit reached (%d bytes) — marking captured", pf.streamName, pf.headerBuf.Len())
 						}
 					}
 					pf.headerMutex.Unlock()
@@ -558,6 +563,7 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 				// buffer 关闭或客户端断开
 				return
 			}
+			// PullWithContext 返回 interface{}，我们假定是 []byte（与原代码一致）
 			if chunk, ok := data.([]byte); ok {
 				if _, err := w.Write(chunk); err != nil {
 					return
