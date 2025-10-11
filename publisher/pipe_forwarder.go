@@ -163,7 +163,7 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 
 	// 如果需要拉流，启动 wait goroutine，等待 ffmpeg 退出并清理
 	if pf.needPull && pf.ffmpegCmd != nil {
-		go pf.wait()
+		go pf.waitWithBackupSupport(ffmpegArgs)
 	}
 
 	// 触发启动回调
@@ -455,14 +455,111 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 	}
 }
 
-// wait 等待主 ffmpeg 进程退出并清理管道
-func (pf *PipeForwarder) wait() {
+// waitWithoutBackupSupport 等待主 ffmpeg 进程退出并清理管道
+func (pf *PipeForwarder) waitWithoutBackupSupport() {
 	if pf.ffmpegCmd == nil {
 		return
 	}
 
 	err := pf.ffmpegCmd.Wait()
 
+	// 置状态并关闭 pipeWriter 以通知读取方 EOF
+	pf.mutex.Lock()
+	pf.isRunning = false
+	if pf.pipeWriter != nil {
+		_ = pf.pipeWriter.Close()
+		pf.pipeWriter = nil
+	}
+	pf.mutex.Unlock()
+
+	if err != nil && pf.ctx.Err() == nil {
+		log.Printf("[%s] FFmpeg exited with error: %v", pf.streamName, err)
+	} else {
+		log.Printf("[%s] FFmpeg exited normally", pf.streamName)
+	}
+
+	// 触发停止回调
+	if pf.onStopped != nil {
+		pf.onStopped()
+	}
+}
+
+// waitWithBackupSupport 等待主 ffmpeg 进程退出，如果配置了 backup_url 则尝试切换到备用URL
+func (pf *PipeForwarder) waitWithBackupSupport(originalArgs []string) {
+	if pf.ffmpegCmd == nil {
+		return
+	}
+
+	err := pf.ffmpegCmd.Wait()
+
+	// 检查是否存在 backup_url 并且当前不是使用 backup_url 的情况
+	// 这里我们需要获取 StreamManager 来检查 backup_url 配置
+	manager := GetManager()
+	if manager != nil {
+		// 提取流名称，去掉可能的后缀（如 _receiver_2, _primary, _backup）
+		streamName := pf.streamName
+		if strings.Contains(streamName, "_receiver_") {
+			parts := strings.Split(streamName, "_receiver_")
+			streamName = parts[0]
+		} else if strings.HasSuffix(streamName, "_primary") {
+			streamName = strings.TrimSuffix(streamName, "_primary")
+		} else if strings.HasSuffix(streamName, "_backup") {
+			streamName = strings.TrimSuffix(streamName, "_backup")
+		}
+		
+		manager.mutex.RLock()
+		streamManager, exists := manager.streams[streamName]
+		manager.mutex.RUnlock()
+		
+		if exists && streamManager.stream.Stream.Source.BackupURL != "" {
+			// 检查当前是否正在使用 backup_url
+			usingBackup := strings.Contains(strings.Join(originalArgs, " "), streamManager.stream.Stream.Source.BackupURL)
+			
+			if !usingBackup {
+				log.Printf("[%s] Primary URL failed, switching to backup URL", pf.streamName)
+				
+				// 重新构建使用 backup_url 的命令
+				backupArgs := streamManager.buildFFmpegCommandWithBackup(true)
+				modifiedBackupArgs := pf.modifyFFmpegCommand(backupArgs)
+				
+				// 重启 FFmpeg 进程使用 backup_url
+				pf.mutex.Lock()
+				// 关闭旧的管道
+				if pf.pipeWriter != nil {
+					_ = pf.pipeWriter.Close()
+				}
+				if pf.pipeReader != nil {
+					_ = pf.pipeReader.Close()
+				}
+				
+				// 创建新的管道
+				pf.pipeReader, pf.pipeWriter = io.Pipe()
+				
+				// 启动新的 FFmpeg 进程
+				pf.ffmpegCmd = exec.CommandContext(pf.ctx, "ffmpeg", modifiedBackupArgs...)
+				pf.ffmpegCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+				pf.ffmpegCmd.Stdout = pf.pipeWriter
+				
+				if startErr := pf.ffmpegCmd.Start(); startErr != nil {
+					log.Printf("[%s] Failed to start ffmpeg with backup URL: %v", pf.streamName, startErr)
+					pf.mutex.Unlock()
+					goto cleanup
+				}
+				
+				log.Printf("[%s] Started PipeForwarder with backup URL, ffmpeg pid=%d", pf.streamName, pf.ffmpegCmd.Process.Pid)
+				log.Printf("[%s] Full FFmpeg command with backup URL: ffmpeg %s", pf.streamName, strings.Join(modifiedBackupArgs, " "))
+				pf.mutex.Unlock()
+				
+				// 递归调用 waitWithBackupSupport 来处理可能的后续失败
+				pf.waitWithBackupSupport(backupArgs)
+				return
+			} else {
+				log.Printf("[%s] Backup URL also failed", pf.streamName)
+			}
+		}
+	}
+
+cleanup:
 	// 置状态并关闭 pipeWriter 以通知读取方 EOF
 	pf.mutex.Lock()
 	pf.isRunning = false
