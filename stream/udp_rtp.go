@@ -380,16 +380,12 @@ func rtpPayloadGet(buf []byte) (startOff, endOff int, err error) {
 
 func makeNullTS() []byte {
 	ts := make([]byte, 188)
-	ts[0] = 0x47 // sync byte
-	ts[1] = 0x1F // PID high (0x1FFF = null PID)
-	ts[2] = 0xFF // PID low
-	ts[3] = 0x10 // payload unit start, adaptation field exists, CC=0
-
-	// 适配字段
-	ts[4] = 0x07 // 适配字段长度: 188-5-4=179 bytes
-	ts[5] = 0x00 // 适配字段标志: 无特殊标志
-
-	// 填充剩余字节为 0xFF
+	ts[0] = 0x47
+	ts[1] = 0x1F
+	ts[2] = 0xFF
+	ts[3] = 0x10
+	ts[4] = 0x07
+	ts[5] = 0x00
 	for i := 6; i < 188; i++ {
 		ts[i] = 0xFF
 	}
