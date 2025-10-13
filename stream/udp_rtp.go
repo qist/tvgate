@@ -35,6 +35,8 @@ const (
 
 	// RTP constants
 	RTP_VERSION = 2
+	PAT_PID     = 0x0000
+	PMT_PID     = 0x1000
 )
 
 type rtpSeqEntry struct {
@@ -99,26 +101,29 @@ type hubClient struct {
 // StreamHub 流转发核心
 // ====================
 type StreamHub struct {
-	Mu              sync.RWMutex
-	Clients         map[string]hubClient // key = connID
-	AddCh           chan hubClient
-	RemoveCh        chan string
-	UdpConns        []*net.UDPConn
-	Closed          chan struct{}
-	BufPool         *sync.Pool
-	LastFrame       []byte
-	CacheBuffer     *RingBuffer
-	AddrList        []string
-	PacketCount     uint64
-	DropCount       uint64
-	state           int // 0: stopped, 1: playing, 2: error
-	stateCond       *sync.Cond
-	OnEmpty         func(h *StreamHub) // 当客户端数量为0时触发
+	Mu          sync.RWMutex
+	Clients     map[string]hubClient // key = connID
+	AddCh       chan hubClient
+	RemoveCh    chan string
+	UdpConns    []*net.UDPConn
+	Closed      chan struct{}
+	BufPool     *sync.Pool
+	LastFrame   []byte
+	CacheBuffer *RingBuffer
+	AddrList    []string
+	PacketCount uint64
+	DropCount   uint64
+	state       int // 0: stopped, 1: playing, 2: error
+	stateCond   *sync.Cond
+	OnEmpty     func(h *StreamHub) // 当客户端数量为0时触发
+	// lastPAT     []byte
+	// lastPMT     []byte
+	// patSent     bool
 	// lastRTPSequence uint16
 	// lastRTPSSRC     uint32
-	rtpBuffer       []byte // RTP拼接缓存
-	lastCCMap       map[int]byte
-	rtpSequenceMap  map[uint32]*rtpSeqEntry
+	rtpBuffer      []byte // RTP拼接缓存
+	lastCCMap      map[int]byte
+	rtpSequenceMap map[uint32]*rtpSeqEntry
 }
 
 // ====================
@@ -323,6 +328,7 @@ func (h *StreamHub) cleanupOldSSRCs() {
 		}
 	}
 }
+
 // rtpPayloadGet 从RTP包中提取有效载荷位置和大小
 func rtpPayloadGet(buf []byte) (startOff, endOff int, err error) {
 	if len(buf) < 12 {
@@ -374,16 +380,23 @@ func rtpPayloadGet(buf []byte) (startOff, endOff int, err error) {
 
 func makeNullTS() []byte {
 	ts := make([]byte, 188)
-	ts[0] = 0x47
-	ts[1] = 0x1F
-	ts[2] = 0xFF
-	ts[3] = 0x10
+	ts[0] = 0x47 // sync byte
+	ts[1] = 0x1F // PID high (0x1FFF = null PID)
+	ts[2] = 0xFF // PID low
+	ts[3] = 0x10 // payload unit start, adaptation field exists, CC=0
+
+	// 适配字段
+	ts[4] = 0x07 // 适配字段长度: 188-5-4=179 bytes
+	ts[5] = 0x00 // 适配字段标志: 无特殊标志
+
+	// 填充剩余字节为 0xFF
+	for i := 6; i < 188; i++ {
+		ts[i] = 0xFF
+	}
 	return ts
 }
 
-// ====================
-// 处理RTP包，提取有效载荷
-// ====================
+// 改进的 processRTPPacket 函数
 func (h *StreamHub) processRTPPacket(data []byte) []byte {
 	// 已经是完整 TS 包直接返回（兼容非 RTP 流）
 	if len(data) >= 188 && data[0] == 0x47 {

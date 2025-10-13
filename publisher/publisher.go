@@ -356,10 +356,8 @@ func (s *Stream) ExecuteFFmpeg(ctx context.Context, args []string) error {
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 
 	// Set process group ID to allow killing child processes
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
-
+	cmd.SysProcAttr = &syscall.SysProcAttr{}
+	setSysProcAttr(cmd.SysProcAttr)
 	// Start the command
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start ffmpeg: %v", err)
@@ -379,9 +377,8 @@ func (s *Stream) ExecuteFFmpegWithMonitoring(ctx context.Context, args []string,
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 
 	// Set process group ID to allow killing child processes
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{}
+	setSysProcAttr(cmd.SysProcAttr)
 
 	// Start the command
 	if err := cmd.Start(); err != nil {
@@ -420,7 +417,7 @@ func (s *Stream) ExecuteFFmpegWithMonitoring(ctx context.Context, args []string,
 		// Kill the process group when context is cancelled
 		if cmd.Process != nil {
 			// Kill the entire process group
-			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			killProcess(-cmd.Process.Pid)
 		}
 		return ctx.Err()
 	}

@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
 )
 
@@ -50,46 +50,46 @@ type PipeForwarder struct {
 	// firstTagOnce   sync.Once
 	// 用于从hub读取数据的客户端缓冲区
 	clientBuffer *ringbuffer.RingBuffer
-	
+
 	// HLS支持
 	hlsManager *HLSSegmentManager
-	hlsEnabled   bool // 添加这个字段来控制HLS启用状态
-	
+	hlsEnabled bool // 添加这个字段来控制HLS启用状态
+
 	// PAT/PMT缓存，确保每个HLS片段都包含这些信息
 	patPmtBuf bytes.Buffer
 }
 
 // NewPipeForwarder 创建新的 PipeForwarder
 func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull bool, hub *stream.StreamHubs) *PipeForwarder {
-    ctx, cancel := context.WithCancel(context.Background())
-    var h *stream.StreamHubs
-    if hub != nil {
-        h = hub
-    } else {
-        h = stream.NewStreamHubs()
-    }
+	ctx, cancel := context.WithCancel(context.Background())
+	var h *stream.StreamHubs
+	if hub != nil {
+		h = hub
+	} else {
+		h = stream.NewStreamHubs()
+	}
 
-    // 初始化 HLS 管理器
-    segmentPath := filepath.Join("/tmp/hls", streamName)
-    os.MkdirAll(segmentPath, 0755)
-    
-    hlsManager := NewHLSSegmentManager(ctx, streamName, segmentPath, 5) // 5秒片段时长
-    hlsManager.SetHub(h)
-    hlsManager.SetNeedPull(needPull) // 设置needPull标志
-    
-    pipeForwarder := &PipeForwarder{
-        streamName:  streamName,
-        rtmpURL:     rtmpURL,
-        enabled:     enabled,
-        needPull:    needPull,
-        ctx:         ctx,
-        cancel:      cancel,
-        hub:         h,
-        hlsManager:  hlsManager,
-        hlsEnabled:  true, // 默认启用，后续会根据配置调整
-    }
-    
-    return pipeForwarder
+	// 初始化 HLS 管理器
+	segmentPath := filepath.Join("/tmp/hls", streamName)
+	os.MkdirAll(segmentPath, 0755)
+
+	hlsManager := NewHLSSegmentManager(ctx, streamName, segmentPath, 5) // 5秒片段时长
+	hlsManager.SetHub(h)
+	hlsManager.SetNeedPull(needPull) // 设置needPull标志
+
+	pipeForwarder := &PipeForwarder{
+		streamName: streamName,
+		rtmpURL:    rtmpURL,
+		enabled:    enabled,
+		needPull:   needPull,
+		ctx:        ctx,
+		cancel:     cancel,
+		hub:        h,
+		hlsManager: hlsManager,
+		hlsEnabled: true, // 默认启用，后续会根据配置调整
+	}
+
+	return pipeForwarder
 }
 
 // SetCallbacks 设置启动和停止回调
@@ -122,7 +122,8 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 
 		// 启动 ffmpeg（主进程，输出到 pipe:1）
 		pf.ffmpegCmd = exec.CommandContext(pf.ctx, "ffmpeg", modArgs...)
-		pf.ffmpegCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		pf.ffmpegCmd.SysProcAttr = &syscall.SysProcAttr{}
+		setSysProcAttr(pf.ffmpegCmd.SysProcAttr)
 		// pf.ffmpegCmd.Stderr = os.Stderr
 		pf.ffmpegCmd.Stdout = pf.pipeWriter
 
@@ -510,22 +511,22 @@ func (pf *PipeForwarder) waitWithBackupSupport(originalArgs []string) {
 		} else if strings.HasSuffix(streamName, "_backup") {
 			streamName = strings.TrimSuffix(streamName, "_backup")
 		}
-		
+
 		manager.mutex.RLock()
 		streamManager, exists := manager.streams[streamName]
 		manager.mutex.RUnlock()
-		
+
 		if exists && streamManager.stream.Stream.Source.BackupURL != "" {
 			// 检查当前是否正在使用 backup_url
 			usingBackup := strings.Contains(strings.Join(originalArgs, " "), streamManager.stream.Stream.Source.BackupURL)
-			
+
 			if !usingBackup {
 				logger.LogPrintf("[%s] Primary URL failed, switching to backup URL", pf.streamName)
-				
+
 				// 重新构建使用 backup_url 的命令
 				backupArgs := streamManager.buildFFmpegCommandWithBackup(true)
 				modifiedBackupArgs := pf.modifyFFmpegCommand(backupArgs)
-				
+
 				// 重启 FFmpeg 进程使用 backup_url
 				pf.mutex.Lock()
 				// 关闭旧的管道
@@ -535,25 +536,26 @@ func (pf *PipeForwarder) waitWithBackupSupport(originalArgs []string) {
 				if pf.pipeReader != nil {
 					_ = pf.pipeReader.Close()
 				}
-				
+
 				// 创建新的管道
 				pf.pipeReader, pf.pipeWriter = io.Pipe()
-				
+
 				// 启动新的 FFmpeg 进程
 				pf.ffmpegCmd = exec.CommandContext(pf.ctx, "ffmpeg", modifiedBackupArgs...)
-				pf.ffmpegCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+				pf.ffmpegCmd.SysProcAttr = &syscall.SysProcAttr{}
+				setSysProcAttr(pf.ffmpegCmd.SysProcAttr)
 				pf.ffmpegCmd.Stdout = pf.pipeWriter
-				
+
 				if startErr := pf.ffmpegCmd.Start(); startErr != nil {
 					logger.LogPrintf("[%s] Failed to start ffmpeg with backup URL: %v", pf.streamName, startErr)
 					pf.mutex.Unlock()
 					goto cleanup
 				}
-				
+
 				logger.LogPrintf("[%s] Started PipeForwarder with backup URL, ffmpeg pid=%d", pf.streamName, pf.ffmpegCmd.Process.Pid)
 				logger.LogPrintf("[%s] Full FFmpeg command with backup URL: ffmpeg %s", pf.streamName, strings.Join(modifiedBackupArgs, " "))
 				pf.mutex.Unlock()
-				
+
 				// 递归调用 waitWithBackupSupport 来处理可能的后续失败
 				pf.waitWithBackupSupport(backupArgs)
 				return
@@ -601,7 +603,7 @@ func (pf *PipeForwarder) Stop() {
 	// 杀掉 ffmpeg 进程组（如果存在）
 	if pf.ffmpegCmd != nil && pf.ffmpegCmd.Process != nil {
 		// 使用负 pid 向进程组发送信号（Setpgid 在 Start 时已设置）
-		_ = syscall.Kill(-pf.ffmpegCmd.Process.Pid, syscall.SIGKILL)
+		_ = killProcess(-pf.ffmpegCmd.Process.Pid)
 	}
 
 	// 关闭 pipe
@@ -622,7 +624,7 @@ func (pf *PipeForwarder) Stop() {
 
 	// 关闭 hub，清理客户端
 	pf.hub.Close()
-	
+
 	// 停止HLS管理器
 	pf.hlsManager.Stop()
 
@@ -717,21 +719,21 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 
 // EnableHLS 控制HLS功能的启用或禁用
 func (pf *PipeForwarder) EnableHLS(enable bool) {
-    pf.hlsEnabled = enable
-    
-    if pf.hlsManager != nil {
-        if enable {
-            logger.LogPrintf("HLS enabled for stream %s", pf.streamName)
-            // 如果需要，可以在这里添加启动HLS处理的逻辑
-        } else {
-            logger.LogPrintf("HLS disabled for stream %s", pf.streamName)
-            // 停止HLS管理器的相关操作
-            // 例如清理HLS片段文件等
-            pf.hlsManager.Stop()
-        }
-    } else if enable {
-        logger.LogPrintf("Cannot enable HLS for stream %s: HLS manager not initialized", pf.streamName)
-    }
+	pf.hlsEnabled = enable
+
+	if pf.hlsManager != nil {
+		if enable {
+			logger.LogPrintf("HLS enabled for stream %s", pf.streamName)
+			// 如果需要，可以在这里添加启动HLS处理的逻辑
+		} else {
+			logger.LogPrintf("HLS disabled for stream %s", pf.streamName)
+			// 停止HLS管理器的相关操作
+			// 例如清理HLS片段文件等
+			pf.hlsManager.Stop()
+		}
+	} else if enable {
+		logger.LogPrintf("Cannot enable HLS for stream %s: HLS manager not initialized", pf.streamName)
+	}
 }
 
 func (pf *PipeForwarder) WriteChunk(chunk []byte, isVideo bool, isKeyFrame bool) {
@@ -761,16 +763,16 @@ func (pf *PipeForwarder) ServeHLS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Pipe forwarder disabled", http.StatusNotFound)
 		return
 	}
-	
+
 	// 解析URL路径确定请求类型
 	path := r.URL.Path
-	
+
 	// 如果是播放列表请求
 	if strings.HasSuffix(path, ".m3u8") {
 		pf.hlsManager.ServePlaylist(w, r)
 		return
 	}
-	
+
 	// 如果是片段请求
 	if strings.HasSuffix(path, ".ts") {
 		// 从路径中提取片段名称
@@ -781,7 +783,7 @@ func (pf *PipeForwarder) ServeHLS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	
+
 	// 默认提供播放列表
 	pf.hlsManager.ServePlaylist(w, r)
 }

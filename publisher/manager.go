@@ -278,8 +278,12 @@ func (m *Manager) checkStreamKeyExpiration() {
 func (m *Manager) Stop() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-
-	logger.LogPrintf("Stopping publisher manager with %d streams")
+	var names []string
+	for name := range m.streams {
+		names = append(names, name)
+	}
+	logger.LogPrintf("Stopping publisher manager with %d streams: %s",
+		len(names), strings.Join(names, ", "))
 
 	// 停止过期检查器
 	if m.expirationChecker != nil {

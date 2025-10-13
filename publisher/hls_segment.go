@@ -118,7 +118,8 @@ func (h *HLSSegmentManager) Start() error {
 	}
 
 	cmd := exec.CommandContext(h.ctx, "ffmpeg", args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{}
+	setSysProcAttr(cmd.SysProcAttr)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("failed to get ffmpeg stdin: %v", err)
@@ -214,7 +215,7 @@ func (h *HLSSegmentManager) Stop() error {
 		select {
 		case <-waitCh:
 		case <-time.After(1 * time.Second):
-			_ = syscall.Kill(-h.ffmpegCmd.Process.Pid, syscall.SIGKILL)
+			_ = killProcess(h.ffmpegCmd.Process.Pid)
 		}
 		h.ffmpegCmd = nil
 	}
