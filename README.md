@@ -27,6 +27,7 @@
   - [配置（config.yaml）示例](#配置configyaml示例)
   - [Nginx 反向代理配置参考](#nginx-反向代理配置参考)
   - [注意事项 / 常见问题](#注意事项--常见问题)
+    - [Star](#star)
 
 ---
 changelog
@@ -569,3 +570,7 @@ server {
 - **自动重载配置**：修改 `config.yaml` 后观察日志，确认程序已加载新配置。
 
 ---
+
+### Star
+
+[![Star History Chart](https://api.star-history.com/svg?repos=qist/tvgate&type=Date)](https://www.star-history.com/#qist/tvgate&Date)
