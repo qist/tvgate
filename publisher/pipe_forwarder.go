@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/qist/tvgate/stream"
+	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
 )
 
@@ -101,11 +101,11 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 	defer pf.mutex.Unlock()
 
 	if !pf.enabled {
-		log.Printf("[%s] PipeForwarder disabled, skipping start", pf.streamName)
+		logger.LogPrintf("[%s] PipeForwarder disabled, skipping start", pf.streamName)
 		return nil
 	}
 	if pf.isRunning {
-		log.Printf("[%s] PipeForwarder already running", pf.streamName)
+		logger.LogPrintf("[%s] PipeForwarder already running", pf.streamName)
 		return nil
 	}
 
@@ -132,18 +132,18 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 			return fmt.Errorf("failed to start ffmpeg: %v", err)
 		}
 
-		log.Printf("[%s] Started PipeForwarder, ffmpeg pid=%d", pf.streamName, pf.ffmpegCmd.Process.Pid)
-		log.Printf("[%s] Full FFmpeg command: ffmpeg %s", pf.streamName, strings.Join(modArgs, " "))
+		logger.LogPrintf("[%s] Started PipeForwarder, ffmpeg pid=%d", pf.streamName, pf.ffmpegCmd.Process.Pid)
+		logger.LogPrintf("[%s] Full FFmpeg command: ffmpeg %s", pf.streamName, strings.Join(modArgs, " "))
 	} else {
 		// 不需要拉流，创建客户端缓冲区从hub读取数据
 		var err error
 		pf.clientBuffer, err = ringbuffer.New(1024 * 1024)
 		if err != nil {
-			log.Printf("[%s] Failed to create client buffer: %v", pf.streamName, err)
+			logger.LogPrintf("[%s] Failed to create client buffer: %v", pf.streamName, err)
 			return fmt.Errorf("failed to create client buffer: %v", err)
 		}
 
-		log.Printf("[%s] Started PipeForwarder in forward-only mode", pf.streamName)
+		logger.LogPrintf("[%s] Started PipeForwarder in forward-only mode", pf.streamName)
 	}
 
 	pf.isRunning = true
@@ -273,26 +273,26 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 		var err error
 		ffIn, err = ffmpegPush.StdinPipe()
 		if err != nil {
-			log.Printf("[%s] Failed to create stdin pipe for RTMP push: %v", pf.streamName, err)
+			logger.LogPrintf("[%s] Failed to create stdin pipe for RTMP push: %v", pf.streamName, err)
 			ffIn = nil
 		} else {
 			// ffmpegPush.Stderr = os.Stderr
 			ffmpegPush.Stdout = os.Stdout
 
 			if err := ffmpegPush.Start(); err != nil {
-				log.Printf("[%s] Failed to start RTMP push: %v", pf.streamName, err)
+				logger.LogPrintf("[%s] Failed to start RTMP push: %v", pf.streamName, err)
 				_ = ffIn.Close()
 				ffIn = nil
 			} else {
-				log.Printf("[%s] Started RTMP push to %s (pid=%d)", pf.streamName, pf.rtmpURL, ffmpegPush.Process.Pid)
+				logger.LogPrintf("[%s] Started RTMP push to %s (pid=%d)", pf.streamName, pf.rtmpURL, ffmpegPush.Process.Pid)
 				// 等待 ffmpegPush 退出的 goroutine
 				pushWg.Add(1)
 				go func() {
 					defer pushWg.Done()
 					if err := ffmpegPush.Wait(); err != nil && pf.ctx.Err() == nil {
-						log.Printf("[%s] RTMP push ffmpeg exited with error: %v", pf.streamName, err)
+						logger.LogPrintf("[%s] RTMP push ffmpeg exited with error: %v", pf.streamName, err)
 					} else {
-						log.Printf("[%s] RTMP push ffmpeg exited normally", pf.streamName)
+						logger.LogPrintf("[%s] RTMP push ffmpeg exited normally", pf.streamName)
 					}
 				}()
 			}
@@ -309,7 +309,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 		for {
 			select {
 			case <-pf.ctx.Done():
-				log.Printf("[%s] context canceled, stopping forwardDataFromPipe", pf.streamName)
+				logger.LogPrintf("[%s] context canceled, stopping forwardDataFromPipe", pf.streamName)
 				if ffIn != nil {
 					_ = ffIn.Close()
 					ffIn = nil
@@ -335,7 +335,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 						b := pf.headerBuf.Bytes()
 						if len(b) >= 9 && b[0] == 'F' && b[1] == 'L' && b[2] == 'V' {
 							pf.headerCaptured = true
-							log.Printf("[%s] FLV header captured (%d bytes)", pf.streamName, pf.headerBuf.Len())
+							logger.LogPrintf("[%s] FLV header captured (%d bytes)", pf.streamName, pf.headerBuf.Len())
 						}
 					}
 					pf.headerMutex.Unlock()
@@ -351,12 +351,12 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 						select {
 						case werr := <-wDone:
 							if werr != nil {
-								log.Printf("[%s] Error writing to RTMP stdin: %v — closing ffIn", pf.streamName, werr)
+								logger.LogPrintf("[%s] Error writing to RTMP stdin: %v — closing ffIn", pf.streamName, werr)
 								_ = ffIn.Close()
 								ffIn = nil
 							}
 						case <-time.After(5 * time.Second):
-							log.Printf("[%s] Timeout writing to RTMP stdin — closing ffIn", pf.streamName)
+							logger.LogPrintf("[%s] Timeout writing to RTMP stdin — closing ffIn", pf.streamName)
 							_ = ffIn.Close()
 							ffIn = nil
 						}
@@ -365,13 +365,13 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					// 广播到 hub（所有已注册客户端）
 					pf.hub.Broadcast(chunk)
 					// isVideo, isKeyFrame := pf.parseFLVTags(chunk)
-					pf.hlsManager.WriteData(chunk)
+					// pf.hlsManager.WriteData(chunk)
 					// pf.WriteChunk(chunk, isVideo, isKeyFrame)
 				}
 
 				if err != nil {
 					if err == io.EOF {
-						log.Printf("[%s] pipe EOF reached", pf.streamName)
+						logger.LogPrintf("[%s] pipe EOF reached", pf.streamName)
 						if ffIn != nil {
 							_ = ffIn.Close()
 							ffIn = nil
@@ -382,7 +382,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					}
 					// 记录并短暂休眠，继续循环以便响应 ctx.Done()
 					if pf.ctx.Err() == nil {
-						log.Printf("[%s] pipe read error: %v", pf.streamName, err)
+						logger.LogPrintf("[%s] pipe read error: %v", pf.streamName, err)
 					}
 					time.Sleep(10 * time.Millisecond)
 				}
@@ -398,7 +398,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 			for {
 				select {
 				case <-pf.ctx.Done():
-					log.Printf("[%s] context canceled, stopping forwardDataFromPipe (forward-only mode)", pf.streamName)
+					logger.LogPrintf("[%s] context canceled, stopping forwardDataFromPipe (forward-only mode)", pf.streamName)
 					if ffIn != nil {
 						_ = ffIn.Close()
 						ffIn = nil
@@ -436,16 +436,17 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 							select {
 							case werr := <-wDone:
 								if werr != nil {
-									log.Printf("[%s] Error writing to RTMP stdin: %v — closing ffIn", pf.streamName, werr)
+									logger.LogPrintf("[%s] Error writing to RTMP stdin: %v — closing ffIn", pf.streamName, werr)
 									_ = ffIn.Close()
 									ffIn = nil
 								}
 							case <-time.After(5 * time.Second):
-								log.Printf("[%s] Timeout writing to RTMP stdin — closing ffIn", pf.streamName)
+								logger.LogPrintf("[%s] Timeout writing to RTMP stdin — closing ffIn", pf.streamName)
 								_ = ffIn.Close()
 								ffIn = nil
 							}
 						}
+						// pf.hlsManager.WriteData(chunk)
 						// isVideo, isKeyFrame := pf.parseFLVTags(chunk)
 						// pf.WriteChunk(chunk, isVideo, isKeyFrame)
 					}
@@ -473,9 +474,9 @@ func (pf *PipeForwarder) waitWithoutBackupSupport() {
 	pf.mutex.Unlock()
 
 	if err != nil && pf.ctx.Err() == nil {
-		log.Printf("[%s] FFmpeg exited with error: %v", pf.streamName, err)
+		logger.LogPrintf("[%s] FFmpeg exited with error: %v", pf.streamName, err)
 	} else {
-		log.Printf("[%s] FFmpeg exited normally", pf.streamName)
+		logger.LogPrintf("[%s] FFmpeg exited normally", pf.streamName)
 	}
 
 	// 触发停止回调
@@ -516,7 +517,7 @@ func (pf *PipeForwarder) waitWithBackupSupport(originalArgs []string) {
 			usingBackup := strings.Contains(strings.Join(originalArgs, " "), streamManager.stream.Stream.Source.BackupURL)
 			
 			if !usingBackup {
-				log.Printf("[%s] Primary URL failed, switching to backup URL", pf.streamName)
+				logger.LogPrintf("[%s] Primary URL failed, switching to backup URL", pf.streamName)
 				
 				// 重新构建使用 backup_url 的命令
 				backupArgs := streamManager.buildFFmpegCommandWithBackup(true)
@@ -541,20 +542,20 @@ func (pf *PipeForwarder) waitWithBackupSupport(originalArgs []string) {
 				pf.ffmpegCmd.Stdout = pf.pipeWriter
 				
 				if startErr := pf.ffmpegCmd.Start(); startErr != nil {
-					log.Printf("[%s] Failed to start ffmpeg with backup URL: %v", pf.streamName, startErr)
+					logger.LogPrintf("[%s] Failed to start ffmpeg with backup URL: %v", pf.streamName, startErr)
 					pf.mutex.Unlock()
 					goto cleanup
 				}
 				
-				log.Printf("[%s] Started PipeForwarder with backup URL, ffmpeg pid=%d", pf.streamName, pf.ffmpegCmd.Process.Pid)
-				log.Printf("[%s] Full FFmpeg command with backup URL: ffmpeg %s", pf.streamName, strings.Join(modifiedBackupArgs, " "))
+				logger.LogPrintf("[%s] Started PipeForwarder with backup URL, ffmpeg pid=%d", pf.streamName, pf.ffmpegCmd.Process.Pid)
+				logger.LogPrintf("[%s] Full FFmpeg command with backup URL: ffmpeg %s", pf.streamName, strings.Join(modifiedBackupArgs, " "))
 				pf.mutex.Unlock()
 				
 				// 递归调用 waitWithBackupSupport 来处理可能的后续失败
 				pf.waitWithBackupSupport(backupArgs)
 				return
 			} else {
-				log.Printf("[%s] Backup URL also failed", pf.streamName)
+				logger.LogPrintf("[%s] Backup URL also failed", pf.streamName)
 			}
 		}
 	}
@@ -570,9 +571,9 @@ cleanup:
 	pf.mutex.Unlock()
 
 	if err != nil && pf.ctx.Err() == nil {
-		log.Printf("[%s] FFmpeg exited with error: %v", pf.streamName, err)
+		logger.LogPrintf("[%s] FFmpeg exited with error: %v", pf.streamName, err)
 	} else {
-		log.Printf("[%s] FFmpeg exited normally", pf.streamName)
+		logger.LogPrintf("[%s] FFmpeg exited normally", pf.streamName)
 	}
 
 	// 触发停止回调
@@ -627,7 +628,7 @@ func (pf *PipeForwarder) Stop() {
 		pf.onStopped()
 	}
 
-	log.Printf("[%s] Stopped PipeForwarder", pf.streamName)
+	logger.LogPrintf("[%s] Stopped PipeForwarder", pf.streamName)
 }
 
 // IsRunning 返回当前运行状态

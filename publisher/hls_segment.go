@@ -3,454 +3,270 @@ package publisher
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strings"
-	"sync"
-	"time"
-
+	// "sort"
+	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
 )
 
-// HLSSegmentManager 管理HLS片段生成和文件管理
+// HLSSegmentManager 管理每个流的 HLS 输出（通过 hub -> FFmpeg 切片）
 type HLSSegmentManager struct {
 	streamName      string
-	segmentPath     string
-	playlistPath    string
+	segmentPath     string // 输出目录，例如 /tmp/hls/<streamName>
+	playlistPath    string // index.m3u8 的完整路径
 	segmentDuration int
 	segmentCount    int
-	segments        []string
-	segNumber       int
-	segBaseNumber   int
-	dataBuffer      *ringbuffer.RingBuffer
-	mutex           sync.Mutex
-	ctx             context.Context
-	cancel          context.CancelFunc
+	needPull        bool
 
-	// 数据缓冲
-	dataBuf []byte
-
-	// Hub相关字段
+	// hub 相关
 	hub          *stream.StreamHubs
 	clientBuffer *ringbuffer.RingBuffer
 
-	// 片段相关字段
-	currentSeg *os.File
-	segStart   time.Time
+	// ffmpeg 相关
+	ffmpegCmd *exec.Cmd
+	ffmpegIn  io.WriteCloser
 
-	// needPull标志
-	needPull bool
-
-	// PAT/PMT信息缓存
-	patPmtBuf   []byte
-	patPmtMutex sync.Mutex
-
-	// 上次写入时间，用于确保数据及时写入
-	lastWriteTime time.Time
+	// 控制与同步
+	ctx    context.Context
+	cancel context.CancelFunc
+	mutex  sync.Mutex
+	wg     sync.WaitGroup
 }
 
-// NewHLSSegmentManager 创建新的HLS片段管理器
-func NewHLSSegmentManager(ctx context.Context, streamName, segmentPath string, segmentDuration int) *HLSSegmentManager {
-	playlistPath := filepath.Join(segmentPath, "index.m3u8")
+// NewHLSSegmentManager 创建新的管理器，每个流独立目录
+func NewHLSSegmentManager(parentCtx context.Context, streamName, baseDir string, segmentDuration int) *HLSSegmentManager {
+	// 🔧 自动防止路径重复，例如 baseDir 已经是 /tmp/hls/cctv1
+	var segmentPath string
+	if strings.HasSuffix(baseDir, string(os.PathSeparator)+streamName) || filepath.Base(baseDir) == streamName {
+		segmentPath = baseDir
+	} else {
+		segmentPath = filepath.Join(baseDir, streamName)
+	}
 
-	manager := &HLSSegmentManager{
+	playlistPath := filepath.Join(segmentPath, "index.m3u8")
+	ctx, cancel := context.WithCancel(parentCtx)
+
+	return &HLSSegmentManager{
 		streamName:      streamName,
 		segmentPath:     segmentPath,
 		playlistPath:    playlistPath,
 		segmentDuration: segmentDuration,
-		segmentCount:    10,
-		segments:        make([]string, 0),
-		segBaseNumber:   1,
-		needPull:        false,
-		patPmtBuf:       make([]byte, 0, 188*8),
-		lastWriteTime:   time.Now(),
+		segmentCount:    5, // 默认保留 5 个片段，可调整
+		needPull:        true,
+		ctx:             ctx,
+		cancel:          cancel,
 	}
-
-	// 创建数据缓冲区
-	manager.dataBuffer, _ = ringbuffer.New(2 * 1024 * 1024) // 2MB缓冲区
-
-	// 设置取消函数和上下文
-	if ctx == nil {
-		manager.ctx, manager.cancel = context.WithCancel(context.Background())
-	} else {
-		manager.ctx, manager.cancel = context.WithCancel(ctx)
-	}
-
-	return manager
 }
 
-// Start 开始HLS片段处理
-func (h *HLSSegmentManager) Start() {
+// SetHub 设置 hub 引用（可选）
+func (h *HLSSegmentManager) SetHub(hub *stream.StreamHubs) {
+	h.hub = hub
+}
+
+// SetNeedPull 设置 needPull 标志
+func (h *HLSSegmentManager) SetNeedPull(need bool) {
+	h.needPull = need
+}
+
+// Start 启动输出目录、注册 hub（若有）、并启动 FFmpeg 进程
+func (h *HLSSegmentManager) Start() error {
 	if !h.needPull {
-		return
+		return fmt.Errorf("needPull disabled")
 	}
 
-	// 保证目录存在
+	// 确保目录存在
 	if err := os.MkdirAll(h.segmentPath, 0755); err != nil {
-		log.Printf("[%s] failed to create segment dir: %v", h.streamName, err)
-		return
+		return fmt.Errorf("failed to create segment dir: %v", err)
 	}
 
-	// 创建客户端缓冲区
-	h.clientBuffer, _ = ringbuffer.New(1024)
-
-	// 注册到hub
+	// 如果有 hub，则创建 clientBuffer 并注册
 	if h.hub != nil {
+		buf, err := ringbuffer.New(2 * 1024 * 1024) // 2MB
+		if err != nil {
+			return fmt.Errorf("failed to create client buffer: %v", err)
+		}
+		h.clientBuffer = buf
 		h.hub.AddClient(h.clientBuffer)
-		go h.processDataLoopFromHub()
-	} else {
-		go h.processDataLoop()
+		logger.LogPrintf("[%s] registered with hub", h.streamName)
 	}
 
-	go h.cleanupLoop()
-	log.Printf("[%s] HLS segment manager started", h.streamName)
+	// FFmpeg 输出路径（标准格式）
+	segPattern := filepath.Join(h.segmentPath, fmt.Sprintf("%s_%%03d.ts", h.streamName))
+	m3u8Path := h.playlistPath
+
+	args := []string{
+		"-f", "flv",
+		"-i", "pipe:0",
+		"-c:v", "copy",
+		"-c:a", "copy",
+		"-f", "hls",
+		"-hls_time", fmt.Sprintf("%d", h.segmentDuration),
+		"-hls_list_size", fmt.Sprintf("%d", h.segmentCount),
+		"-hls_flags", "delete_segments+append_list",
+		"-hls_segment_filename", segPattern,
+		m3u8Path,
+	}
+
+	cmd := exec.CommandContext(h.ctx, "ffmpeg", args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get ffmpeg stdin: %v", err)
+	}
+	// cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		stdin.Close()
+		return fmt.Errorf("failed to start ffmpeg: %v", err)
+	}
+
+	h.mutex.Lock()
+	h.ffmpegCmd = cmd
+	h.ffmpegIn = stdin
+	h.mutex.Unlock()
+
+	// 启动数据推送（来自 hub）
+	if h.clientBuffer != nil {
+		h.wg.Add(1)
+		go func() {
+			defer h.wg.Done()
+			for {
+				select {
+				case <-h.ctx.Done():
+					return
+				default:
+					item, ok := h.clientBuffer.PullWithContext(h.ctx)
+					if !ok {
+						return
+					}
+					if data, ok := item.([]byte); ok {
+						writeDone := make(chan error, 1)
+						go func(d []byte) {
+							_, err := h.ffmpegIn.Write(d)
+							writeDone <- err
+						}(data)
+
+						select {
+						case err := <-writeDone:
+							if err != nil {
+								logger.LogPrintf("[%s] write to ffmpeg stdin error: %v", h.streamName, err)
+								_ = h.Stop()
+								return
+							}
+						case <-time.After(5 * time.Second):
+							logger.LogPrintf("[%s] timeout writing to ffmpeg stdin", h.streamName)
+							_ = h.Stop()
+							return
+						}
+					}
+				}
+			}
+		}()
+	}
+
+	// 定期清理任务
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-h.ctx.Done():
+				return
+			case <-ticker.C:
+				// h.cleanupSegments()
+				h.updatePlaylist()
+			}
+		}
+	}()
+
+	// log.Printf("[%s] Started HLS manager and ffmpeg (output: %s)", h.streamName, h.segmentPath)
+	return nil
 }
 
-// Stop 停止HLS片段处理
-func (h *HLSSegmentManager) Stop() {
-	if !h.needPull {
-		return
-	}
-
+// Stop 停止管理器并清理
+func (h *HLSSegmentManager) Stop() error {
 	h.cancel()
 
 	h.mutex.Lock()
-	// 写入并关闭当前片段
-	if h.currentSeg != nil {
-		if len(h.dataBuf) > 0 {
-			_, _ = h.currentSeg.Write(h.dataBuf)
-			h.dataBuf = h.dataBuf[:0]
+	if h.ffmpegIn != nil {
+		_ = h.ffmpegIn.Close()
+		h.ffmpegIn = nil
+	}
+	if h.ffmpegCmd != nil && h.ffmpegCmd.Process != nil {
+		_ = h.ffmpegCmd.Process.Signal(syscall.SIGTERM)
+		waitCh := make(chan struct{})
+		go func() {
+			h.ffmpegCmd.Wait()
+			close(waitCh)
+		}()
+		select {
+		case <-waitCh:
+		case <-time.After(1 * time.Second):
+			_ = syscall.Kill(-h.ffmpegCmd.Process.Pid, syscall.SIGKILL)
 		}
-		h.currentSeg.Close()
-		h.currentSeg = nil
+		h.ffmpegCmd = nil
 	}
 	h.mutex.Unlock()
 
-	log.Printf("[%s] HLS segment manager stopped", h.streamName)
+	h.wg.Wait()
+	// log.Printf("[%s] HLS manager stopped", h.streamName)
+	return nil
 }
 
-// WriteData 写入数据用于HLS处理
-func (h *HLSSegmentManager) WriteData(data []byte) {
-	if !h.needPull {
-		return
-	}
-
-	// 提取 PAT/PMT（持续更新缓存）
-	h.extractPATPMT(data)
-
-	h.dataBuffer.Push(data)
-}
-
-// extractPATPMT 从数据中提取PAT/PMT信息（持续更新）
-func (h *HLSSegmentManager) extractPATPMT(data []byte) {
-	h.patPmtMutex.Lock()
-	defer h.patPmtMutex.Unlock()
-
-	// 检查是否已经有PAT和PMT
-	patFound := false
-	pmtFound := false
-	
-	for i := 0; i <= len(h.patPmtBuf)-188 && len(h.patPmtBuf) >= 188; i++ {
-		if h.patPmtBuf[i] == 0x47 {
-			pid := ((uint16(h.patPmtBuf[i+1]) & 0x1F) << 8) | uint16(h.patPmtBuf[i+2])
-			if pid == 0x0000 {
-				patFound = true
-			} else if pid >= 0x1000 && pid <= 0x1FFF {
-				pmtFound = true
-			}
-		}
-	}
-	
-	// 如果已经找到PAT和PMT，则不需要再次查找
-	if patFound && pmtFound && len(h.patPmtBuf) >= 376 {
-		return
-	}
-
-	// 扫描 data，找 TS 包（188 字节对齐的包）
-	for i := 0; i <= len(data)-188; i++ {
-		if data[i] != 0x47 {
-			continue
-		}
-		// 基本 PID 判定
-		pid := ((uint16(data[i+1]) & 0x1F) << 8) | uint16(data[i+2])
-
-		// 仅在 payload_unit_start_indicator 设置时收集（更可能是完整表）
-		payloadStart := (data[i+1] & 0x40) != 0
-
-		// 查找PAT包
-		if payloadStart && pid == 0x0000 && !patFound {
-			end := i + 188
-			if end <= len(data) {
-				// 如果是第一个PAT包，重置缓冲区
-				if !patFound {
-					h.patPmtBuf = h.patPmtBuf[:0]
-				}
-				h.patPmtBuf = append(h.patPmtBuf, data[i:end]...)
-				patFound = true
-			}
-		}
-		
-		// 查找PMT包
-		if payloadStart && pid >= 0x1000 && pid <= 0x1FFF && !pmtFound {
-			end := i + 188
-			if end <= len(data) {
-				h.patPmtBuf = append(h.patPmtBuf, data[i:end]...)
-				pmtFound = true
-			}
-		}
-		
-		// 一旦找到PAT和PMT就停止查找
-		if patFound && pmtFound && len(h.patPmtBuf) >= 376 {
-			return
-		}
-	}
-}
-
-// processDataLoop 处理数据循环（直接从 dataBuffer）
-func (h *HLSSegmentManager) processDataLoop() {
-	if !h.needPull {
-		return
-	}
-
-	for {
-		data, ok := h.dataBuffer.PullWithContext(h.ctx)
-		if !ok {
-			h.mutex.Lock()
-			if h.currentSeg != nil {
-				if len(h.dataBuf) > 0 {
-					_, _ = h.currentSeg.Write(h.dataBuf)
-					h.dataBuf = h.dataBuf[:0]
-				}
-				h.currentSeg.Close()
-				h.currentSeg = nil
-			}
-			h.mutex.Unlock()
-			return
-		}
-
-		if chunk, ok := data.([]byte); ok {
-			h.mutex.Lock()
-			h.processChunk(chunk)
-			h.mutex.Unlock()
-		}
-	}
-}
-
-// processDataLoopFromHub 从 hub 读取数据处理
-func (h *HLSSegmentManager) processDataLoopFromHub() {
-	if !h.needPull {
-		return
-	}
-
-	for {
-		data, ok := h.clientBuffer.PullWithContext(h.ctx)
-		if !ok {
-			h.mutex.Lock()
-			if h.currentSeg != nil {
-				if len(h.dataBuf) > 0 {
-					_, _ = h.currentSeg.Write(h.dataBuf)
-					h.dataBuf = h.dataBuf[:0]
-				}
-				h.currentSeg.Close()
-				h.currentSeg = nil
-			}
-			h.mutex.Unlock()
-			return
-		}
-
-		if chunk, ok := data.([]byte); ok {
-			h.mutex.Lock()
-			h.processChunk(chunk)
-			h.mutex.Unlock()
-		}
-	}
-}
-
-// processChunk 处理数据块（缓冲并按策略写入当前片段）
-func (h *HLSSegmentManager) processChunk(chunk []byte) {
-	// 累积到缓冲区
-	h.dataBuf = append(h.dataBuf, chunk...)
-
-	// 如果没有片段或已超过片段时长则创建新片段
-	if h.currentSeg == nil || time.Since(h.segStart) >= time.Duration(h.segmentDuration)*time.Second {
-		h.createNextSegment()
-	}
-
-	// 根据数据量或时间触发写入，防止过多内存积累
-	if len(h.dataBuf) > 128*1024 || time.Since(h.lastWriteTime) > 150*time.Millisecond {
-		if h.currentSeg != nil && len(h.dataBuf) > 0 {
-			_, _ = h.currentSeg.Write(h.dataBuf)
-			h.dataBuf = h.dataBuf[:0]
-			h.lastWriteTime = time.Now()
-		}
-	}
-}
-
-// createNextSegment 创建下一个HLS片段，并在开头写入 PAT/PMT
-func (h *HLSSegmentManager) createNextSegment() {
-	// 关闭当前片段
-	if h.currentSeg != nil {
-		// 写入剩余数据
-		if len(h.dataBuf) > 0 {
-			_, _ = h.currentSeg.Write(h.dataBuf)
-			h.dataBuf = h.dataBuf[:0]
-		}
-		h.currentSeg.Close()
-	}
-
-	// 更新片段编号
-	h.segNumber++
-
-	// 创建新片段文件，使用流名称作为前缀
-	segName := fmt.Sprintf("%s_%d.ts", h.streamName, h.segNumber)
-	segPath := filepath.Join(h.segmentPath, segName)
-
-	file, err := os.Create(segPath)
-	if err != nil {
-		log.Printf("[%s] Failed to create segment file %s: %v", h.streamName, segPath, err)
-		h.segNumber--
-		return
-	}
-
-	h.currentSeg = file
-	h.segStart = time.Now()
-
-	// 写入 PAT/PMT 缓存（如果有），写一次以保证播放器能正确解析
-	h.patPmtMutex.Lock()
-	if len(h.patPmtBuf) >= 188 {
-		// 写入PAT/PMT信息到片段开头
-		if n, err := h.currentSeg.Write(h.patPmtBuf); err == nil {
-			log.Printf("[%s] wrote %d bytes PAT/PMT to %s", h.streamName, n, segName)
-		} else {
-			log.Printf("[%s] error writing PAT/PMT to %s: %v", h.streamName, segName, err)
-		}
-	} else {
-		log.Printf("[%s] Warning: PAT/PMT buffer too small (%d), segment may be unplayable: %s", h.streamName, len(h.patPmtBuf), segName)
-	}
-	h.patPmtMutex.Unlock()
-
-	// 更新片段列表和 playlist
-	h.segments = append(h.segments, segName)
-	h.updatePlaylist()
-
-	// 删除过旧片段并维护序号
-	if len(h.segments) > h.segmentCount {
-		oldSeg := h.segments[0]
-		h.segments = h.segments[1:]
-		_ = os.Remove(filepath.Join(h.segmentPath, oldSeg))
-		h.segBaseNumber++
-	}
-
-	h.lastWriteTime = time.Now()
-}
-
-// updatePlaylist 更新HLS播放列表
-func (h *HLSSegmentManager) updatePlaylist() {
-	if !h.needPull {
-		return
-	}
-
-	var playlist strings.Builder
-	playlist.WriteString("#EXTM3U\n")
-	playlist.WriteString("#EXT-X-VERSION:3\n")
-	playlist.WriteString(fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", h.segmentDuration+1))
-	playlist.WriteString(fmt.Sprintf("#EXT-X-MEDIA-SEQUENCE:%d\n", h.segBaseNumber))
-
-	for _, seg := range h.segments {
-		playlist.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", float64(h.segmentDuration)))
-		playlist.WriteString(seg + "\n")
-	}
-
-	// 写入 playlist 文件
-	if err := os.WriteFile(h.playlistPath, []byte(playlist.String()), 0644); err != nil {
-		log.Printf("[%s] Failed to write playlist file: %v", h.streamName, err)
-	}
-	// 强制更新时间戳，帮助某些缓存策略
-	_ = os.Chtimes(h.playlistPath, time.Now(), time.Now())
-}
-
-// cleanupLoop 清理过期的片段
-func (h *HLSSegmentManager) cleanupLoop() {
-	if !h.needPull {
-		return
-	}
-
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-h.ctx.Done():
-			return
-		case <-ticker.C:
-			h.cleanupSegments()
-		}
-	}
-}
-
-// cleanupSegments 清理过期片段
-func (h *HLSSegmentManager) cleanupSegments() {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-
-	for len(h.segments) > h.segmentCount {
-		oldSeg := h.segments[0]
-		h.segments = h.segments[1:]
-		oldSegPath := filepath.Join(h.segmentPath, oldSeg)
-		_ = os.Remove(oldSegPath)
-		h.segBaseNumber++
-	}
-
-	h.updatePlaylist()
-}
-
-// ServePlaylist 提供HLS播放列表服务
+// ServePlaylist 返回 m3u8
 func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request) {
 	if !h.needPull {
 		http.Error(w, "HLS not available", http.StatusNotFound)
 		return
 	}
-
 	data, err := os.ReadFile(h.playlistPath)
 	if err != nil {
 		http.Error(w, "Playlist not available", http.StatusNotFound)
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	_, _ = w.Write(data)
 }
 
-// ServeSegment 提供HLS片段服务
+// ServeSegment 提供 ts 文件
 func (h *HLSSegmentManager) ServeSegment(w http.ResponseWriter, r *http.Request, segmentName string) {
 	if !h.needPull {
 		http.Error(w, "HLS not available", http.StatusNotFound)
 		return
 	}
-
 	segmentPath := filepath.Join(h.segmentPath, segmentName)
 	if _, err := os.Stat(segmentPath); os.IsNotExist(err) {
+		log.Printf("[%s] Segment not found: %s", h.streamName, segmentPath)
 		http.Error(w, "Segment not found", http.StatusNotFound)
 		return
 	}
-
 	w.Header().Set("Content-Type", "video/MP2T")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	http.ServeFile(w, r, segmentPath)
+	// log.Printf("[%s] Served segment: %s", h.streamName, segmentName)
 }
 
-// SetHub 设置hub引用
-func (h *HLSSegmentManager) SetHub(hub *stream.StreamHubs) {
-	h.hub = hub
-}
-
-// SetNeedPull 设置needPull标志
-func (h *HLSSegmentManager) SetNeedPull(needPull bool) {
-	h.needPull = needPull
+// updatePlaylist 更新 playlist 文件 mtime
+func (h *HLSSegmentManager) updatePlaylist() {
+	if _, err := os.Stat(h.playlistPath); err != nil {
+		return
+	}
+	_ = os.Chtimes(h.playlistPath, time.Now(), time.Now())
 }

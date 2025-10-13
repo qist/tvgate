@@ -3,18 +3,18 @@ package publisher
 import (
 	"context"
 	"fmt"
-	"log"
+	// "log"
 	"net/http"
 	"strings"
 	"time"
-	
+
 	"crypto/rand"
 	"math/big"
-	
+
+	"github.com/qist/tvgate/logger"
+	"github.com/shirou/gopsutil/v3/process"
 	"os/exec"
 	"syscall"
-	
-	"github.com/shirou/gopsutil/v3/process"
 )
 
 // GenerateStreamKey generates a stream key based on the configuration
@@ -23,12 +23,12 @@ func (s *Stream) GenerateStreamKey() (string, error) {
 	if s.StreamKey.Type == "external" {
 		return "", nil
 	}
-	
+
 	// 如果已经配置了固定的stream key值，直接使用它
 	if s.StreamKey.Type == "fixed" && s.StreamKey.Value != "" {
 		return s.StreamKey.Value, nil
 	}
-	
+
 	// 如果是随机类型或者没有指定类型但有长度配置
 	if s.StreamKey.Type == "random" || (s.StreamKey.Type == "" && s.StreamKey.Length > 0) {
 		length := s.StreamKey.Length
@@ -37,17 +37,17 @@ func (s *Stream) GenerateStreamKey() (string, error) {
 		}
 		return generateRandomString(length)
 	}
-	
+
 	// 如果没有配置streamkey，则生成默认的随机密钥
 	if s.StreamKey.Type == "" && s.StreamKey.Value == "" && s.StreamKey.Length == 0 {
 		return generateRandomString(16)
 	}
-	
+
 	// 其他情况使用配置的值
 	if s.StreamKey.Value != "" {
 		return s.StreamKey.Value, nil
 	}
-	
+
 	// 默认生成随机密钥
 	return generateRandomString(16)
 }
@@ -88,7 +88,7 @@ func (sc *StreamConfig) GetReceivers() []Receiver {
 // BuildFFmpegCommand builds the ffmpeg command based on the configuration
 func (s *Stream) BuildFFmpegCommand() []string {
 	var cmd []string
-	
+
 	// 处理全局参数和-re标志
 	if s.FFmpegOptions == nil || len(s.FFmpegOptions.GlobalArgs) == 0 {
 		// 使用默认全局参数（包含-re）
@@ -96,7 +96,7 @@ func (s *Stream) BuildFFmpegCommand() []string {
 	} else {
 		// 使用配置的全局参数
 		cmd = append(cmd, s.FFmpegOptions.GlobalArgs...)
-		
+
 		// 如果UseReFlag为true但全局参数中没有-re，则添加
 		if s.FFmpegOptions.UseReFlag {
 			// 检查是否已经包含-re
@@ -112,7 +112,7 @@ func (s *Stream) BuildFFmpegCommand() []string {
 			}
 		}
 	}
-	
+
 	// Add input pre arguments - 默认输入前参数
 	if s.FFmpegOptions != nil && len(s.FFmpegOptions.InputPreArgs) > 0 {
 		cmd = append(cmd, s.FFmpegOptions.InputPreArgs...)
@@ -127,12 +127,12 @@ func (s *Stream) BuildFFmpegCommand() []string {
 			cmd = append(cmd, "-user_agent", "TVGate/1.0")
 		}
 	}
-	
+
 	// Add User-Agent if configured in FFmpegOptions
 	if s.FFmpegOptions != nil && s.FFmpegOptions.UserAgent != "" {
 		cmd = append(cmd, "-user_agent", s.FFmpegOptions.UserAgent)
 	}
-	
+
 	// Add custom headers
 	if s.FFmpegOptions != nil && len(s.FFmpegOptions.Headers) > 0 {
 		for _, header := range s.FFmpegOptions.Headers {
@@ -151,15 +151,15 @@ func (s *Stream) BuildFFmpegCommand() []string {
 			cmd = append(cmd, "-headers", headersBuilder.String())
 		}
 	}
-	
+
 	// Add source URL
 	cmd = append(cmd, "-i", s.Stream.Source.URL)
-	
+
 	// Add input post arguments
 	if s.FFmpegOptions != nil && len(s.FFmpegOptions.InputPostArgs) > 0 {
 		cmd = append(cmd, s.FFmpegOptions.InputPostArgs...)
 	}
-	
+
 	// Add filter arguments
 	if s.FFmpegOptions != nil && s.FFmpegOptions.Filters != nil {
 		if len(s.FFmpegOptions.Filters.VideoFilters) > 0 {
@@ -169,7 +169,7 @@ func (s *Stream) BuildFFmpegCommand() []string {
 			cmd = append(cmd, "-af", strings.Join(s.FFmpegOptions.Filters.AudioFilters, ","))
 		}
 	}
-	
+
 	// Add video codec - 默认视频编码器
 	videoCodec := "libx264"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.VideoCodec != "" {
@@ -181,7 +181,7 @@ func (s *Stream) BuildFFmpegCommand() []string {
 	} else {
 		cmd = append(cmd, "-c:v", "copy")
 	}
-	
+
 	// Add audio codec - 默认音频编码器
 	audioCodec := "aac"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.AudioCodec != "" {
@@ -193,7 +193,7 @@ func (s *Stream) BuildFFmpegCommand() []string {
 	} else {
 		cmd = append(cmd, "-c:a", "copy")
 	}
-	
+
 	// Only add video bitrate if not using copy codec
 	if videoCodec != "copy" {
 		videoBitrate := "4M"
@@ -202,7 +202,7 @@ func (s *Stream) BuildFFmpegCommand() []string {
 		}
 		cmd = append(cmd, "-b:v", videoBitrate)
 	}
-	
+
 	// Only add audio bitrate if not using copy codec
 	if audioCodec != "copy" {
 		audioBitrate := "128k"
@@ -211,7 +211,7 @@ func (s *Stream) BuildFFmpegCommand() []string {
 		}
 		cmd = append(cmd, "-b:a", audioBitrate)
 	}
-	
+
 	// Add preset - 默认编码预设 (only if not using copy)
 	if videoCodec != "copy" {
 		preset := "ultrafast"
@@ -220,39 +220,39 @@ func (s *Stream) BuildFFmpegCommand() []string {
 		}
 		cmd = append(cmd, "-preset", preset)
 	}
-	
+
 	// Add CRF (only if not using copy)
 	if videoCodec != "copy" && s.FFmpegOptions != nil && s.FFmpegOptions.CRF > 0 {
 		cmd = append(cmd, "-crf", fmt.Sprintf("%d", s.FFmpegOptions.CRF))
 	}
-	
+
 	// Add pixel format if specified
 	if s.FFmpegOptions != nil && s.FFmpegOptions.PixFmt != "" {
 		cmd = append(cmd, "-pix_fmt", s.FFmpegOptions.PixFmt)
 	}
-	
+
 	// Add GOP size if specified
 	if s.FFmpegOptions != nil && s.FFmpegOptions.GopSize > 0 {
 		cmd = append(cmd, "-g", fmt.Sprintf("%d", s.FFmpegOptions.GopSize))
 	}
-	
+
 	// Add output format - 默认输出格式
 	outputFormat := "flv"
 	if s.FFmpegOptions != nil && s.FFmpegOptions.OutputFormat != "" {
 		outputFormat = s.FFmpegOptions.OutputFormat
 	}
 	cmd = append(cmd, "-f", outputFormat)
-	
+
 	// Add output pre arguments
 	if s.FFmpegOptions != nil && len(s.FFmpegOptions.OutputPreArgs) > 0 {
 		cmd = append(cmd, s.FFmpegOptions.OutputPreArgs...)
 	}
-	
+
 	// Add custom arguments after input
 	if s.FFmpegOptions != nil && len(s.FFmpegOptions.CustomArgs) > 0 {
 		cmd = append(cmd, s.FFmpegOptions.CustomArgs...)
 	}
-	
+
 	return cmd
 }
 
@@ -260,12 +260,12 @@ func (s *Stream) BuildFFmpegCommand() []string {
 func (r *Receiver) BuildFFmpegPushCommand(baseCmd []string, streamKey string) []string {
 	cmd := make([]string, len(baseCmd))
 	copy(cmd, baseCmd)
-	
+
 	// Add push pre arguments
 	if len(r.PushPreArgs) > 0 {
 		cmd = append(cmd, r.PushPreArgs...)
 	}
-	
+
 	// Add push URL with stream key
 	pushURL := r.PushURL
 	// 如果URL中已经包含密钥，则替换它
@@ -287,7 +287,7 @@ func (r *Receiver) BuildFFmpegPushCommand(baseCmd []string, streamKey string) []
 				oldKey = lastPart
 			}
 		}
-		
+
 		// 处理HTTP URL
 		if strings.Contains(pushURL, "http://") || strings.Contains(pushURL, "https://") {
 			// 从路径中提取密钥
@@ -308,7 +308,7 @@ func (r *Receiver) BuildFFmpegPushCommand(baseCmd []string, streamKey string) []
 				oldKey = lastPart
 			}
 		}
-		
+
 		// 如果找到了旧密钥，则替换它
 		if oldKey != "" {
 			// 替换URL中的旧密钥为新密钥
@@ -339,14 +339,14 @@ func (r *Receiver) BuildFFmpegPushCommand(baseCmd []string, streamKey string) []
 		}
 	}
 	// 如果streamKey为空（external类型），则使用原始pushURL
-	
+
 	cmd = append(cmd, pushURL)
-	
+
 	// Add push post arguments
 	if len(r.PushPostArgs) > 0 {
 		cmd = append(cmd, r.PushPostArgs...)
 	}
-	
+
 	return cmd
 }
 
@@ -354,22 +354,22 @@ func (r *Receiver) BuildFFmpegPushCommand(baseCmd []string, streamKey string) []
 func (s *Stream) ExecuteFFmpeg(ctx context.Context, args []string) error {
 	// Create the command
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
-	
+
 	// Set process group ID to allow killing child processes
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 	}
-	
+
 	// Start the command
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start ffmpeg: %v", err)
 	}
-	
+
 	// Wait for the command to finish
 	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("ffmpeg execution failed: %v", err)
 	}
-	
+
 	return nil
 }
 
@@ -377,17 +377,17 @@ func (s *Stream) ExecuteFFmpeg(ctx context.Context, args []string) error {
 func (s *Stream) ExecuteFFmpegWithMonitoring(ctx context.Context, args []string, onStarted func(int32, *process.Process), onStatsUpdate func(uint64)) error {
 	// Create the command
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
-	
+
 	// Set process group ID to allow killing child processes
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 	}
-	
+
 	// Start the command
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start ffmpeg: %v", err)
 	}
-	
+
 	// If we have a callback for when the process starts, call it
 	if onStarted != nil && cmd.Process != nil {
 		// Wrap the process with gopsutil
@@ -396,19 +396,19 @@ func (s *Stream) ExecuteFFmpegWithMonitoring(ctx context.Context, args []string,
 			onStarted(int32(cmd.Process.Pid), proc)
 		}
 	}
-	
+
 	// Channel to signal when the process has finished
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
 	}()
-	
+
 	// Monitor the process if we have callbacks
 	if (onStarted != nil || onStatsUpdate != nil) && cmd.Process != nil {
 		pid := int32(cmd.Process.Pid)
 		go s.monitorFFmpegProcess(ctx, pid, onStatsUpdate)
 	}
-	
+
 	// Wait for the command to finish or context to be cancelled
 	select {
 	case err := <-done:
@@ -430,16 +430,16 @@ func (s *Stream) ExecuteFFmpegWithMonitoring(ctx context.Context, args []string,
 func (s *Stream) monitorFFmpegProcess(ctx context.Context, pid int32, onStatsUpdate func(uint64)) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
-	
+
 	var lastIOCounters *process.IOCountersStat
-	
+
 	// Get process object
 	proc, err := process.NewProcess(pid)
 	if err != nil {
-		log.Printf("Failed to get process %d: %v", pid, err)
+		logger.LogPrintf("Failed to get process %d: %v", pid, err)
 		return
 	}
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -451,17 +451,17 @@ func (s *Stream) monitorFFmpegProcess(ctx context.Context, pid int32, onStatsUpd
 				// Process might have exited
 				return
 			}
-			
+
 			// Calculate bytes transferred since last check
 			var bytesTransferred uint64
 			if lastIOCounters != nil {
 				// Sum of read and write bytes
-				bytesTransferred = (ioCounters.ReadBytes - lastIOCounters.ReadBytes) + 
+				bytesTransferred = (ioCounters.ReadBytes - lastIOCounters.ReadBytes) +
 					(ioCounters.WriteBytes - lastIOCounters.WriteBytes)
 			}
-			
+
 			lastIOCounters = ioCounters
-			
+
 			// Call the stats update callback if provided
 			if onStatsUpdate != nil {
 				onStatsUpdate(bytesTransferred)
@@ -475,12 +475,12 @@ func (s *Stream) BuildLocalPlayURL(baseURL string, streamKey string, protocol st
 	if baseURL == "" {
 		return ""
 	}
-	
+
 	// 确保URL以/结尾
 	if !strings.HasSuffix(baseURL, "/") {
 		baseURL = baseURL + "/"
 	}
-	
+
 	switch protocol {
 	case "flv":
 		return baseURL + streamKey + ".flv"
@@ -497,12 +497,12 @@ func (r *Receiver) BuildReceiverPlayURL(baseURL string, streamKey string, protoc
 	if baseURL == "" {
 		return ""
 	}
-	
+
 	// 确保URL以/结尾
 	if !strings.HasSuffix(baseURL, "/") {
 		baseURL = baseURL + "/"
 	}
-	
+
 	switch protocol {
 	case "flv":
 		return baseURL + streamKey + ".flv"
@@ -522,34 +522,34 @@ func (r *Receiver) BuildReceiverPlayURL(baseURL string, streamKey string, protoc
 // CheckStreamKeyExpiration checks if a stream key has expired
 func (s *Stream) CheckStreamKeyExpiration(streamKey string, createdAt time.Time) bool {
 	if streamKey == "" {
-		log.Printf("Stream key is empty, considering as expired")
+		logger.LogPrintf("Stream key is empty, considering as expired")
 		return true
 	}
-	
+
 	// 如果CreatedAt为零值，设置为当前时间
 	if createdAt.IsZero() {
-		log.Printf("CreatedAt is zero, setting to current time")
+		logger.LogPrintf("CreatedAt is zero, setting to current time")
 		createdAt = time.Now()
 	}
-	
+
 	// 检查是否配置了过期时间
 	if s.StreamKey.Expiration != "" && s.StreamKey.Expiration != "0" {
 		// 解析过期时间
 		expiration, err := time.ParseDuration(s.StreamKey.Expiration)
 		if err != nil {
-			log.Printf("Failed to parse expiration duration '%s': %v, using default 24h", s.StreamKey.Expiration, err)
+			logger.LogPrintf("Failed to parse expiration duration '%s': %v, using default 24h", s.StreamKey.Expiration, err)
 			expiration = 24 * time.Hour
 		}
-		
+
 		// 检查是否过期
 		expired := time.Since(createdAt) > expiration
-		log.Printf("Stream key created at %v, expiration %v, expired: %t", createdAt, expiration, expired)
+		logger.LogPrintf("Stream key created at %v, expiration %v, expired: %t", createdAt, expiration, expired)
 		return expired
 	}
-	
+
 	// 默认24小时过期
 	expired := time.Since(createdAt) > 24*time.Hour
-	log.Printf("Using default 24h expiration, expired: %t", expired)
+	logger.LogPrintf("Using default 24h expiration, expired: %t", expired)
 	return expired
 }
 
@@ -566,23 +566,23 @@ func (s *Stream) ServeFLV(w http.ResponseWriter, r *http.Request, streamName, st
 		http.Error(w, "Publisher manager not available", http.StatusServiceUnavailable)
 		return
 	}
-	
+
 	// 获取流管理器实例
 	manager.mutex.RLock()
 	streamManager, exists := manager.streams[streamName]
 	manager.mutex.RUnlock()
-	
+
 	if !exists {
 		http.Error(w, "Stream not found", http.StatusNotFound)
 		return
 	}
-	
+
 	// 检查管道转发器是否可用
 	if streamManager.pipeForwarder == nil {
 		http.Error(w, "Pipe forwarder not available", http.StatusServiceUnavailable)
 		return
 	}
-	
+
 	// 使用管道转发器提供FLV流服务
 	streamManager.pipeForwarder.ServeFLV(w, r)
 }
@@ -592,7 +592,7 @@ func (sm *StreamManager) HandleLocalPlay(w http.ResponseWriter, r *http.Request)
 	// 根据请求路径确定播放类型
 	path := r.URL.Path
 	var contentType string
-	
+
 	switch {
 	case strings.HasSuffix(path, ".m3u8"):
 		contentType = "application/x-mpegURL"
@@ -602,12 +602,12 @@ func (sm *StreamManager) HandleLocalPlay(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Unsupported format", http.StatusBadRequest)
 		return
 	}
-	
+
 	// 设置响应头
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	
+
 	// 从流缓冲区读取数据并发送给客户端
 	// 使用pipeForwarder提供FLV流服务
 	if sm.pipeForwarder != nil {

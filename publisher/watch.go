@@ -1,13 +1,13 @@
 package publisher
 
 import (
-	"log"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/config/load"
 )
 
@@ -19,14 +19,14 @@ func WatchConfigFile(configPath string) {
 
 	absPath, err := filepath.Abs(configPath)
 	if err != nil {
-		log.Printf("Failed to get absolute path for config file: %v", err)
+		logger.LogPrintf("Failed to get absolute path for config file: %v", err)
 		return
 	}
 
 	// 创建文件监控器
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Printf("Failed to create file watcher: %v", err)
+		logger.LogPrintf("Failed to create file watcher: %v", err)
 		return
 	}
 	defer watcher.Close()
@@ -34,11 +34,11 @@ func WatchConfigFile(configPath string) {
 	// 添加配置文件到监控
 	err = watcher.Add(absPath)
 	if err != nil {
-		log.Printf("Failed to add config file to watcher: %v", err)
+		logger.LogPrintf("Failed to add config file to watcher: %v", err)
 		return
 	}
 
-	log.Printf("Started watching config file: %s", absPath)
+	logger.LogPrintf("Started watching config file: %s", absPath)
 
 	// 获取初始修改时间
 	fileInfo, err := os.Stat(absPath)
@@ -47,7 +47,7 @@ func WatchConfigFile(configPath string) {
 		lastModifiedTime = fileInfo.ModTime()
 	} else {
 		lastModifiedTime = time.Now()
-		log.Printf("Failed to get initial file info, using current time: %v", err)
+		logger.LogPrintf("Failed to get initial file info, using current time: %v", err)
 	}
 
 	// 监控循环
@@ -66,7 +66,7 @@ func WatchConfigFile(configPath string) {
 				// 检查文件修改时间
 				info, err := os.Stat(absPath)
 				if err != nil {
-					log.Printf("Failed to get file info: %v", err)
+					logger.LogPrintf("Failed to get file info: %v", err)
 					continue
 				}
 				
@@ -76,11 +76,11 @@ func WatchConfigFile(configPath string) {
 				}
 				
 				lastModifiedTime = info.ModTime()
-				log.Printf("Config file updated: %s", event.Name)
+				logger.LogPrintf("Config file updated: %s", event.Name)
 				
 				// 重新加载配置
 				if err := load.LoadConfig(configPath); err != nil {
-					log.Printf("Failed to reload config: %v", err)
+					logger.LogPrintf("Failed to reload config: %v", err)
 					continue
 				}
 				
@@ -92,7 +92,7 @@ func WatchConfigFile(configPath string) {
 			if !ok {
 				return
 			}
-			log.Printf("File watcher error: %v", err)
+			logger.LogPrintf("File watcher error: %v", err)
 		}
 	}
 }
@@ -101,18 +101,18 @@ func WatchConfigFile(configPath string) {
 func UpdatePublisherConfig() {
 	manager := GetManager()
 	if manager == nil {
-		log.Printf("Publisher manager not initialized")
+		logger.LogPrintf("Publisher manager not initialized")
 		return
 	}
 	
 	// 转换新的配置
 	newConfig := convertConfig(config.Cfg.Publisher)
 	if newConfig == nil {
-		log.Printf("Failed to convert new config")
+		logger.LogPrintf("Failed to convert new config")
 		return
 	}
 	
-	log.Printf("Updating publisher config with %d streams", len(newConfig.Streams))
+	logger.LogPrintf("Updating publisher config with %d streams", len(newConfig.Streams))
 	
 	// 更新manager配置
 	manager.UpdateConfig(newConfig)

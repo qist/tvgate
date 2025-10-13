@@ -1,11 +1,12 @@
 package publisher
 
 import (
-	"log"
+	// "log"
 	"net/http"
 	"sync"
 
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/logger"
 )
 
 var (
@@ -20,7 +21,7 @@ func Init() error {
 	once.Do(func() {
 		// Check if publisher config exists
 		if config.Cfg.Publisher == nil {
-			log.Println("Publisher config not found, skipping initialization")
+			logger.LogPrintf("Publisher config not found, skipping initialization")
 			return
 		}
 
@@ -42,7 +43,7 @@ func Init() error {
 			go WatchConfigFile(*config.ConfigFilePath)
 		}
 
-		log.Println("Publisher module initialized successfully")
+		logger.LogPrintf("Publisher module initialized successfully")
 	})
 
 	return initErr
@@ -57,7 +58,7 @@ func GetHandler() http.Handler {
 func Stop() {
 	if manager != nil {
 		manager.Stop()
-		log.Println("Publisher module stopped")
+		logger.LogPrintf("Publisher module stopped")
 	}
 }
 
@@ -75,10 +76,10 @@ func convertConfig(cfg *config.PublisherConfig) *Config {
 	}
 
 	// Convert streams - 处理扁平结构
-	log.Printf("Converting config with %d streams", len(cfg.Streams))
+	logger.LogPrintf("Converting config with %d streams", len(cfg.Streams))
 	for name, streamItem := range cfg.Streams {
-		log.Printf("Processing stream: %s", name)
-		log.Printf("Stream protocol: %s, enabled: %t", streamItem.Protocol, streamItem.Enabled)
+		logger.LogPrintf("Processing stream: %s", name)
+		logger.LogPrintf("Stream protocol: %s, enabled: %t", streamItem.Protocol, streamItem.Enabled)
 		
 		// 生成streamKey
 		streamKey := streamItem.StreamKey.Value
@@ -145,10 +146,10 @@ func convertConfig(cfg *config.PublisherConfig) *Config {
 		}
 
 		publisherCfg.Streams[name] = stream
-		log.Printf("Added stream %s to publisher config", name)
+		logger.LogPrintf("Added stream %s to publisher config", name)
 	}
 
-	log.Printf("Converted config has %d streams", len(publisherCfg.Streams))
+	logger.LogPrintf("Converted config has %d streams", len(publisherCfg.Streams))
 	return publisherCfg
 }
 
