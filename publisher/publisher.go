@@ -521,6 +521,10 @@ func (r *Receiver) BuildReceiverPlayURL(baseURL string, streamKey string, protoc
 
 // CheckStreamKeyExpiration checks if a stream key has expired
 func (s *Stream) CheckStreamKeyExpiration(streamKey string, createdAt time.Time) bool {
+	if s.StreamKey.Type == "external" || s.StreamKey.Type == "fixed" {
+		logger.LogPrintf("Stream key type is %s, never expires", s.StreamKey.Type)
+		return false
+	}
 	if streamKey == "" {
 		logger.LogPrintf("Stream key is empty, considering as expired")
 		return true
