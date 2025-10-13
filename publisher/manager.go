@@ -96,7 +96,7 @@ func (m *Manager) Start() error {
 	m.startExpirationChecker()
 
 	if m.config.Streams == nil {
-		log.Println("No streams configured")
+		logger.LogPrintf("No streams configured")
 		return nil
 	}
 
@@ -112,19 +112,30 @@ func (m *Manager) Start() error {
 		// Create context for this stream
 		ctx, cancel := context.WithCancel(context.Background())
 
-		// 以配置文件中的streamkey.value为准，只在密钥过期或为空时才生成新密钥
+		// 简化streamkey处理逻辑，只支持random类型
 		var streamKey string
 		var createdAt time.Time
 		needUpdateConfig := false
 
-		if stream.StreamKey.Value != "" {
-			// 如果配置中有stream key值，使用配置文件中的值和时间
+		// 检查配置中的streamkey值是否为空，如果为空则生成新的密钥
+		if stream.StreamKey.Value == "" {
+			logger.LogPrintf("No existing stream key for %s, generating new key", name)
+			var err error
+			streamKey, err = stream.GenerateStreamKey()
+			if err != nil {
+				logger.LogPrintf("Failed to generate stream key for %s: %v", name, err)
+				cancel()
+				continue
+			}
+			createdAt = time.Now()
+			needUpdateConfig = true
+		} else {
+			// 使用配置文件中的密钥值
 			streamKey = stream.StreamKey.Value
 			createdAt = stream.StreamKey.CreatedAt
 
 			// 检查创建时间是否有效
 			if createdAt.IsZero() {
-				// 如果创建时间为零值，使用当前时间作为创建时间
 				createdAt = time.Now()
 				logger.LogPrintf("Stream key creation time is zero, using current time: %v", createdAt)
 			}
@@ -145,42 +156,6 @@ func (m *Manager) Start() error {
 				needUpdateConfig = true
 			} else {
 				logger.LogPrintf("Using existing stream key for %s: %s", name, streamKey)
-				// 即使密钥未过期，也要确保createdAt有效
-				if createdAt.IsZero() {
-					createdAt = time.Now()
-				}
-				// 对于fixed类型，即使未过期也需要更新配置以确保URL中的streamkey与value一致
-				if stream.StreamKey.Type == "fixed" {
-					needUpdateConfig = true
-				}
-			}
-		} else {
-			// 没有stream key，生成新的
-			logger.LogPrintf("No existing stream key for %s, generating new key", name)
-			var err error
-			streamKey, err = stream.GenerateStreamKey()
-			if err != nil {
-				logger.LogPrintf("Failed to generate stream key for %s: %v", name, err)
-				cancel()
-				continue
-			}
-			createdAt = time.Now()
-			needUpdateConfig = true
-		}
-
-		// 从URL中提取旧密钥，用于替换
-		oldStreamKey := ""
-		if stream.Stream.Receivers.All != nil && len(stream.Stream.Receivers.All) > 0 {
-			// 从第一个receiver的push_url中提取旧密钥
-			if stream.Stream.Receivers.All[0].PushURL != "" {
-				oldStreamKey = m.extractStreamKeyFromURL(stream.Stream.Receivers.All[0].PushURL)
-				logger.LogPrintf("Extracted old stream key from push_url for %s: %s", name, oldStreamKey)
-			}
-		} else if stream.Stream.Receivers.Primary != nil {
-			// 从primary receiver的push_url中提取旧密钥
-			if stream.Stream.Receivers.Primary.PushURL != "" {
-				oldStreamKey = m.extractStreamKeyFromURL(stream.Stream.Receivers.Primary.PushURL)
-				logger.LogPrintf("Extracted old stream key from primary push_url for %s: %s", name, oldStreamKey)
 			}
 		}
 
@@ -188,7 +163,6 @@ func (m *Manager) Start() error {
 			name:            name,
 			stream:          stream,
 			streamKey:       streamKey,
-			oldStreamKey:    oldStreamKey,
 			createdAt:       createdAt,
 			cancel:          cancel,
 			ctx:             ctx,
@@ -225,7 +199,6 @@ func (m *Manager) Start() error {
 		go streamManager.startStreaming()
 
 		// 如果需要更新配置文件（新生成密钥的情况），则更新配置文件
-		// 对于fixed类型，即使密钥未过期也需要更新配置以确保URL中的streamkey与value一致
 		if needUpdateConfig {
 			logger.LogPrintf("Updating config file for %s with stream key", name)
 			if err := streamManager.updateConfigFile(streamKey); err != nil {
@@ -281,43 +254,14 @@ func (m *Manager) checkStreamKeyExpiration() {
 				logger.LogPrintf("Failed to generate new stream key for %s: %v", stream.name, err)
 			} else {
 				stream.mutex.Lock()
-				oldKey := stream.streamKey
-				stream.oldStreamKey = oldKey // 保存旧密钥
 				stream.streamKey = newStreamKey
 				stream.createdAt = time.Now()
 				stream.mutex.Unlock()
-				logger.LogPrintf("Generated new stream key for %s: %s (was: %s)", stream.name, newStreamKey, oldKey)
+				logger.LogPrintf("Generated new stream key for %s: %s", stream.name, newStreamKey)
 
 				// 回写配置到YAML文件
 				logger.LogPrintf("Updating config file for %s with new stream key", stream.name)
 				if err := stream.updateConfigFile(newStreamKey); err != nil {
-					logger.LogPrintf("Failed to update config file for %s: %v", stream.name, err)
-				} else {
-					logger.LogPrintf("Successfully updated config file for %s", stream.name)
-				}
-
-				// 重新构建命令并重启推流
-				stream.restartStreaming()
-			}
-		} else if stream.stream.StreamKey.Type == "fixed" {
-			stream.mutex.Lock()
-			currentKey := stream.streamKey
-			expectedKey := stream.stream.StreamKey.Value
-			stream.mutex.Unlock()
-
-			// 如果当前密钥与期望的固定密钥不一致，则更新
-			if currentKey != expectedKey {
-				logger.LogPrintf("Stream key for %s (fixed type) mismatch, updating from %s to %s", stream.name, currentKey, expectedKey)
-				stream.mutex.Lock()
-				oldKey := stream.streamKey
-				stream.oldStreamKey = oldKey // 保存旧密钥
-				stream.streamKey = expectedKey
-				stream.createdAt = time.Now()
-				stream.mutex.Unlock()
-
-				// 回写配置到YAML文件
-				logger.LogPrintf("Updating config file for %s with fixed stream key", stream.name)
-				if err := stream.updateConfigFile(expectedKey); err != nil {
 					logger.LogPrintf("Failed to update config file for %s: %v", stream.name, err)
 				} else {
 					logger.LogPrintf("Successfully updated config file for %s", stream.name)
@@ -447,19 +391,30 @@ func (m *Manager) startStream(name string, stream *Stream) {
 	// Create context for this stream
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// 以配置文件中的streamkey.value为准，只在密钥过期或为空时才生成新密钥
+	// 简化streamkey处理逻辑，只支持random类型
 	var streamKey string
 	var createdAt time.Time
 	needUpdateConfig := false
 
-	if stream.StreamKey.Value != "" {
-		// 如果配置中有stream key值，使用配置文件中的值和时间
+	// 检查配置中的streamkey值是否为空，如果为空则生成新的密钥
+	if stream.StreamKey.Value == "" {
+		logger.LogPrintf("No existing stream key for %s, generating new key", name)
+		var err error
+		streamKey, err = stream.GenerateStreamKey()
+		if err != nil {
+			logger.LogPrintf("Failed to generate stream key for %s: %v", name, err)
+			cancel()
+			return
+		}
+		createdAt = time.Now()
+		needUpdateConfig = true
+	} else {
+		// 使用配置文件中的密钥值
 		streamKey = stream.StreamKey.Value
 		createdAt = stream.StreamKey.CreatedAt
 
 		// 检查创建时间是否有效
 		if createdAt.IsZero() {
-			// 如果创建时间为零值，使用当前时间作为创建时间
 			createdAt = time.Now()
 			logger.LogPrintf("Stream key creation time is zero, using current time: %v", createdAt)
 		}
@@ -480,42 +435,6 @@ func (m *Manager) startStream(name string, stream *Stream) {
 			needUpdateConfig = true
 		} else {
 			logger.LogPrintf("Using existing stream key for %s: %s", name, streamKey)
-			// 即使密钥未过期，也要确保createdAt有效
-			if createdAt.IsZero() {
-				createdAt = time.Now()
-			}
-			// 对于fixed类型，即使未过期也需要更新配置以确保URL中的streamkey与value一致
-			if stream.StreamKey.Type == "fixed" {
-				needUpdateConfig = true
-			}
-		}
-	} else {
-		// 没有stream key，生成新的
-		logger.LogPrintf("No existing stream key for %s, generating new key", name)
-		var err error
-		streamKey, err = stream.GenerateStreamKey()
-		if err != nil {
-			logger.LogPrintf("Failed to generate stream key for %s: %v", name, err)
-			cancel()
-			return
-		}
-		createdAt = time.Now()
-		needUpdateConfig = true
-	}
-
-	// 从URL中提取旧密钥，用于替换
-	oldStreamKey := ""
-	if stream.Stream.Receivers.All != nil && len(stream.Stream.Receivers.All) > 0 {
-		// 从第一个receiver的push_url中提取旧密钥
-		if stream.Stream.Receivers.All[0].PushURL != "" {
-			oldStreamKey = m.extractStreamKeyFromURL(stream.Stream.Receivers.All[0].PushURL)
-			logger.LogPrintf("Extracted old stream key from push_url for %s: %s", name, oldStreamKey)
-		}
-	} else if stream.Stream.Receivers.Primary != nil {
-		// 从primary receiver的push_url中提取旧密钥
-		if stream.Stream.Receivers.Primary.PushURL != "" {
-			oldStreamKey = m.extractStreamKeyFromURL(stream.Stream.Receivers.Primary.PushURL)
-			logger.LogPrintf("Extracted old stream key from primary push_url for %s: %s", name, oldStreamKey)
 		}
 	}
 
@@ -523,7 +442,6 @@ func (m *Manager) startStream(name string, stream *Stream) {
 		name:            name,
 		stream:          stream,
 		streamKey:       streamKey,
-		oldStreamKey:    oldStreamKey,
 		createdAt:       createdAt,
 		cancel:          cancel,
 		ctx:             ctx,
@@ -535,7 +453,6 @@ func (m *Manager) startStream(name string, stream *Stream) {
 	go streamManager.startStreaming()
 
 	// 如果需要更新配置文件（新生成密钥的情况），则更新配置文件
-	// 对于fixed类型，即使密钥未过期也需要更新配置以确保URL中的streamkey与value一致
 	if needUpdateConfig {
 		logger.LogPrintf("Updating config file for %s with stream key", name)
 		if err := streamManager.updateConfigFile(streamKey); err != nil {
@@ -658,7 +575,8 @@ func (sm *StreamManager) startStreaming() {
 
 	// 检查是否配置了本地播放URL，如果配置了则启动管道转发器
 	localPlayUrls := sm.stream.Stream.LocalPlayUrls
-	if localPlayUrls.Flv != "" || localPlayUrls.Hls != "" {
+	// 只有当flv或hls为true时才启动管道转发器，并且根据具体配置启用对应功能
+	if localPlayUrls.Flv || localPlayUrls.Hls {
 		receivers := sm.stream.Stream.GetReceivers()
 		if len(receivers) == 0 {
 			logger.LogPrintf("[%s] No receivers found, skip pipe forwarder", sm.name)
@@ -688,6 +606,11 @@ func (sm *StreamManager) startStreaming() {
 					// 第一个接收器使用主名称
 					pipeName = sm.name
 					sm.pipeForwarder = NewPipeForwarder(pipeName, rtmpURL, true, true, nil)
+					// 在这里可以添加控制HLS启用/禁用的逻辑
+					// 根据配置设置HLS启用状态
+					if sm.pipeForwarder != nil {
+						sm.pipeForwarder.EnableHLS(localPlayUrls.Hls)
+					}
 
 					// 启动主管道转发器
 					go func() {
@@ -720,7 +643,11 @@ func (sm *StreamManager) startStreaming() {
 			}
 
 			sm.pipeForwarder = NewPipeForwarder(sm.name+"_primary", primaryRTMPURL, true, true, nil)
-
+			// 控制HLS启用状态
+			// 根据配置设置HLS启用状态
+			if sm.pipeForwarder != nil {
+				sm.pipeForwarder.EnableHLS(localPlayUrls.Hls)
+			}
 			// 启动 primary PipeForwarder
 			go func() {
 				if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
@@ -738,6 +665,10 @@ func (sm *StreamManager) startStreaming() {
 
 				// 创建 backup PipeForwarder
 				backupPipeForwarder := NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, true, nil)
+				// 控制HLS启用状态
+				if backupPipeForwarder != nil {
+					backupPipeForwarder.EnableHLS(localPlayUrls.Hls)
+				}
 
 				// 启动 backup PipeForwarder
 				go func() {
@@ -750,7 +681,7 @@ func (sm *StreamManager) startStreaming() {
 				// 构建使用 backup_url 的 FFmpeg 命令
 				backupFFmpegCmd := sm.buildFFmpegCommandWithBackup(true)
 				var backupRTMPURL string
-				
+
 				// 为 backup 流使用相同的接收器配置
 				backupCmd := receivers[0].BuildFFmpegPushCommand(backupFFmpegCmd, currentStreamKey)
 				if len(backupCmd) > 0 {
@@ -759,16 +690,20 @@ func (sm *StreamManager) startStreaming() {
 
 				// 创建 backup PipeForwarder (当主URL失效时，备用PipeForwarder需要主动拉流)
 				backupPipeForwarder := NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, true, nil)
+				// 控制HLS启用状态
+				if backupPipeForwarder != nil {
+					backupPipeForwarder.EnableHLS(localPlayUrls.Hls)
+				}
 
 				// 启动 backup PipeForwarder（但默认不激活，只有在主URL失败时才激活）
 				go func() {
 					// 先不启动，等待主URL失败后再启动
 					logger.LogPrintf("Backup pipe forwarder for stream %s created, waiting for primary failure", sm.name)
-					
+
 					// 监控主URL是否失败，如果失败则启动backup
 					ticker := time.NewTicker(10 * time.Second)
 					defer ticker.Stop()
-					
+
 					for {
 						select {
 						case <-sm.ctx.Done():
@@ -803,6 +738,10 @@ func (sm *StreamManager) startStreaming() {
 
 			// 创建PipeForwarder，传入RTMP URL
 			sm.pipeForwarder = NewPipeForwarder(sm.name, rtmpURL, true, true, nil)
+			// 控制HLS启用状态
+			if sm.pipeForwarder != nil {
+				sm.pipeForwarder.EnableHLS(localPlayUrls.Hls)
+			}
 
 			// 启动管道转发器
 			go func() {
@@ -1355,117 +1294,12 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 			if streamData, ok := stream["stream"].(map[string]interface{}); ok {
 				logger.LogPrintf("Found stream data for %s", sm.name)
 
-				// 更新local_play_urls
+				// 更新local_play_urls，保持原有的布尔值配置
 				if localPlayURLs, ok := streamData["local_play_urls"].(map[string]interface{}); ok {
-					for format, url := range localPlayURLs {
-						if urlStr, ok := url.(string); ok {
-							// 替换旧的密钥为新的密钥
-							urlStr = sm.replaceStreamKeyInURL(urlStr, newStreamKey)
-							localPlayURLs[format] = urlStr
-							logger.LogPrintf("Updated local_play_urls.%s to: %s", format, urlStr)
-						}
-					}
-				}
-
-				// 更新stream中的receivers的push_url
-				if receivers, ok := streamData["receivers"].(map[string]interface{}); ok {
-					logger.LogPrintf("Found receivers config")
-					// 处理primary-backup模式
-					if primary, ok := receivers["primary"].(map[string]interface{}); ok {
-						if pushURL, ok := primary["push_url"].(string); ok {
-							// 替换旧的密钥为新的密钥
-							pushURL = sm.replaceStreamKeyInURL(pushURL, newStreamKey)
-							primary["push_url"] = pushURL
-							logger.LogPrintf("Updated primary push_url to: %s", pushURL)
-						}
-
-						// 更新primary play_urls
-						if playURLs, ok := primary["play_urls"].(map[string]interface{}); ok {
-							for format, url := range playURLs {
-								if urlStr, ok := url.(string); ok {
-									// 替换旧的密钥为新的密钥
-									urlStr = sm.replaceStreamKeyInURL(urlStr, newStreamKey)
-									playURLs[format] = urlStr
-									logger.LogPrintf("Updated primary play_urls.%s to: %s", format, urlStr)
-								}
-							}
-						}
-					}
-
-					if backup, ok := receivers["backup"].(map[string]interface{}); ok {
-						if pushURL, ok := backup["push_url"].(string); ok {
-							// 替换旧的密钥为新的密钥
-							pushURL = sm.replaceStreamKeyInURL(pushURL, newStreamKey)
-							backup["push_url"] = pushURL
-							logger.LogPrintf("Updated backup push_url to: %s", pushURL)
-						}
-
-						// 更新backup play_urls
-						if playURLs, ok := backup["play_urls"].(map[string]interface{}); ok {
-							for format, url := range playURLs {
-								if urlStr, ok := url.(string); ok {
-									// 替换旧的密钥为新的密钥
-									urlStr = sm.replaceStreamKeyInURL(urlStr, newStreamKey)
-									playURLs[format] = urlStr
-									logger.LogPrintf("Updated backup play_urls.%s to: %s", format, urlStr)
-								}
-							}
-						}
-					}
-
-					// 处理all模式
-					if allReceivers, ok := receivers["all"].([]interface{}); ok {
-						logger.LogPrintf("Found all receivers config with %d receivers", len(allReceivers))
-						for i, receiver := range allReceivers {
-							if rec, ok := receiver.(map[string]interface{}); ok {
-								if pushURL, ok := rec["push_url"].(string); ok {
-									// 替换旧的密钥为新的密钥
-									pushURL = sm.replaceStreamKeyInURL(pushURL, newStreamKey)
-									rec["push_url"] = pushURL
-									logger.LogPrintf("Updated receiver %d push_url to: %s", i, pushURL)
-								}
-
-								// 更新receiver play_urls
-								if playURLs, ok := rec["play_urls"].(map[string]interface{}); ok {
-									for format, url := range playURLs {
-										if urlStr, ok := url.(string); ok {
-											// 替换旧的密钥为新的密钥
-											urlStr = sm.replaceStreamKeyInURL(urlStr, newStreamKey)
-											playURLs[format] = urlStr
-											logger.LogPrintf("Updated receiver %d play_urls.%s to: %s", i, format, urlStr)
-										}
-									}
-								}
-							}
-						}
-					}
-				} else if receivers, ok := streamData["receivers"].([]interface{}); ok {
-					// 处理直接数组格式的receivers（兼容旧格式）
-					logger.LogPrintf("Found direct receivers array config with %d receivers", len(receivers))
-					for i, receiver := range receivers {
-						if rec, ok := receiver.(map[string]interface{}); ok {
-							if pushURL, ok := rec["push_url"].(string); ok {
-								// 替换旧的密钥为新的密钥
-								pushURL = sm.replaceStreamKeyInURL(pushURL, newStreamKey)
-								rec["push_url"] = pushURL
-								logger.LogPrintf("Updated receiver %d push_url to: %s", i, pushURL)
-							}
-
-							// 更新receiver play_urls
-							if playURLs, ok := rec["play_urls"].(map[string]interface{}); ok {
-								for format, url := range playURLs {
-									if urlStr, ok := url.(string); ok {
-										// 替换旧的密钥为新的密钥
-										urlStr = sm.replaceStreamKeyInURL(urlStr, newStreamKey)
-										playURLs[format] = urlStr
-										logger.LogPrintf("Updated receiver %d play_urls.%s to: %s", i, format, urlStr)
-									}
-								}
-							}
-						}
-					}
-				} else {
-					logger.LogPrintf("No receivers found in stream data")
+					// 保持原有的flv和hls配置值（布尔值）
+					// 不再需要修改这些值，因为它们已经是正确的布尔值
+					logger.LogPrintf("local_play_urls config preserved: flv=%v, hls=%v",
+						localPlayURLs["flv"], localPlayURLs["hls"])
 				}
 			} else {
 				logger.LogPrintf("Failed to find stream data for %s", sm.name)
@@ -1494,192 +1328,6 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 
 	logger.LogPrintf("Successfully updated stream key in config file for stream %s", sm.name)
 	return nil
-}
-
-// replaceStreamKeyInURL replaces the old stream key with the new one in a URL
-func (sm *StreamManager) replaceStreamKeyInURL(urlStr, newKey string) string {
-	// 从URL中提取旧密钥
-	oldKey := sm.oldStreamKey
-
-	logger.LogPrintf("Replacing stream key in URL: %s, oldKey: %s, newKey: %s", urlStr, oldKey, newKey)
-
-	// 如果旧密钥为空，则直接在URL末尾添加新密钥
-	if oldKey == "" {
-		// 处理各种URL格式
-		if strings.HasSuffix(urlStr, ".flv") {
-			urlStr = strings.TrimSuffix(urlStr, ".flv")
-			if !strings.HasSuffix(urlStr, "/") {
-				urlStr += "/"
-			}
-			urlStr += newKey + ".flv"
-		} else if strings.HasSuffix(urlStr, ".m3u8") {
-			urlStr = strings.TrimSuffix(urlStr, ".m3u8")
-			if !strings.HasSuffix(urlStr, "/") {
-				urlStr += "/"
-			}
-			urlStr += newKey + ".m3u8"
-		} else if strings.HasSuffix(urlStr, "index.m3u8") {
-			urlStr = strings.TrimSuffix(urlStr, "index.m3u8")
-			if !strings.HasSuffix(urlStr, "/") {
-				urlStr += "/"
-			}
-			urlStr += newKey + "/index.m3u8"
-		} else {
-			// 普通路径格式
-			if !strings.HasSuffix(urlStr, "/") {
-				urlStr += "/"
-			}
-			urlStr += newKey
-		}
-		logger.LogPrintf("Updated URL with new key: %s", urlStr)
-		return urlStr
-	}
-
-	// 检查URL是否已经包含新的stream key，避免重复添加
-	if strings.Contains(urlStr, "/"+newKey+"/") || strings.Contains(urlStr, "/"+newKey+".") || strings.HasSuffix(urlStr, "/"+newKey) {
-		// 如果URL已经包含了新的stream key，检查是否需要清理重复的部分
-		if strings.Count(urlStr, newKey) > 1 {
-			// 存在重复的stream key，需要清理
-			logger.LogPrintf("Found duplicate stream key in URL, cleaning up: %s", urlStr)
-
-			// 对于.flv URL的特殊处理
-			if strings.HasSuffix(urlStr, ".flv") {
-				// 移除.flv后缀进行处理
-				baseURL := strings.TrimSuffix(urlStr, ".flv")
-				// 分割路径
-				parts := strings.Split(baseURL, "/")
-				// 移除重复的stream key
-				seen := make(map[string]bool)
-				newParts := []string{}
-				for _, part := range parts {
-					if part == newKey && seen[part] {
-						// 跳过重复的stream key
-						continue
-					}
-					if part == newKey {
-						seen[part] = true
-					}
-					newParts = append(newParts, part)
-				}
-				// 重新组合URL
-				urlStr = strings.Join(newParts, "/") + ".flv"
-			} else {
-				// 对于其他URL格式的处理
-				// 分割路径
-				parts := strings.Split(urlStr, "/")
-				// 移除重复的stream key
-				seen := make(map[string]bool)
-				newParts := []string{}
-				for _, part := range parts {
-					if part == newKey && seen[part] {
-						// 跳过重复的stream key
-						continue
-					}
-					if part == newKey {
-						seen[part] = true
-					}
-					newParts = append(newParts, part)
-				}
-				// 重新组合URL
-				urlStr = strings.Join(newParts, "/")
-			}
-			logger.LogPrintf("Cleaned up duplicate stream key, new URL: %s", urlStr)
-		} else {
-			logger.LogPrintf("URL already contains new stream key, no update needed: %s", urlStr)
-		}
-		return urlStr
-	}
-
-	// 处理.flv扩展名
-	if strings.HasSuffix(urlStr, ".flv") {
-		// 特殊处理：如果URL形如 http://domain/path/streamkey.flv
-		if strings.HasSuffix(urlStr, "/"+oldKey+".flv") {
-			urlStr = strings.Replace(urlStr, "/"+oldKey+".flv", "/"+newKey+".flv", 1)
-		} else {
-			// 更通用的处理方式：尝试找到并替换旧的stream key
-			// 移除.flv后缀进行处理
-			baseURL := strings.TrimSuffix(urlStr, ".flv")
-			if strings.HasSuffix(baseURL, "/"+oldKey) {
-				baseURL = strings.TrimSuffix(baseURL, "/"+oldKey) + "/" + newKey
-			} else {
-				// 尝试在路径中找到旧的stream key并替换
-				parts := strings.Split(baseURL, "/")
-				for i := len(parts) - 1; i >= 0; i-- {
-					if parts[i] == oldKey {
-						parts[i] = newKey
-						break
-					}
-				}
-				baseURL = strings.Join(parts, "/")
-			}
-			urlStr = baseURL + ".flv"
-		}
-		logger.LogPrintf("Updated .flv URL: %s", urlStr)
-		return urlStr
-	}
-
-	// 处理.m3u8扩展名
-	if strings.HasSuffix(urlStr, ".m3u8") {
-		if strings.HasSuffix(urlStr, "/"+oldKey+".m3u8") {
-			urlStr = strings.Replace(urlStr, "/"+oldKey+".m3u8", "/"+newKey+".m3u8", 1)
-		} else {
-			// 更通用的处理方式：尝试找到并替换旧的stream key
-			baseURL := strings.TrimSuffix(urlStr, ".m3u8")
-			if strings.HasSuffix(baseURL, "/"+oldKey) {
-				baseURL = strings.TrimSuffix(baseURL, "/"+oldKey) + "/" + newKey
-			} else {
-				// 尝试在路径中找到旧的stream key并替换
-				parts := strings.Split(baseURL, "/")
-				for i := len(parts) - 1; i >= 0; i-- {
-					if parts[i] == oldKey {
-						parts[i] = newKey
-						break
-					}
-				}
-				baseURL = strings.Join(parts, "/")
-			}
-			urlStr = baseURL + ".m3u8"
-		}
-		logger.LogPrintf("Updated .m3u8 URL: %s", urlStr)
-		return urlStr
-	}
-
-	// 处理index.m3u8扩展名
-	if strings.HasSuffix(urlStr, "index.m3u8") {
-		if strings.Contains(urlStr, "/"+oldKey+"/index.m3u8") {
-			urlStr = strings.Replace(urlStr, "/"+oldKey+"/index.m3u8", "/"+newKey+"/index.m3u8", 1)
-		} else {
-			// 尝试在路径中找到旧的stream key并替换
-			urlStr = strings.Replace(urlStr, "/"+oldKey, "/"+newKey, 1)
-		}
-		logger.LogPrintf("Updated index.m3u8 URL: %s", urlStr)
-		return urlStr
-	}
-
-	// 处理路径格式 (如: /path/oldKey)
-	if strings.Contains(urlStr, "/"+oldKey+"/") {
-		urlStr = strings.Replace(urlStr, "/"+oldKey+"/", "/"+newKey+"/", 1)
-	} else if strings.HasSuffix(urlStr, "/"+oldKey) {
-		urlStr = strings.TrimSuffix(urlStr, "/"+oldKey) + "/" + newKey
-	} else if strings.HasSuffix(urlStr, "/") {
-		// URL以/结尾，直接添加新的streamkey
-		urlStr += newKey
-	} else {
-		// 最后尝试直接替换旧密钥
-		// 但如果旧密钥不存在于URL中，则添加新的streamkey
-		if strings.Contains(urlStr, "/"+oldKey) {
-			urlStr = strings.Replace(urlStr, "/"+oldKey, "/"+newKey, 1)
-		} else {
-			// URL中既不包含旧密钥，添加新的streamkey
-			if !strings.HasSuffix(urlStr, "/") {
-				urlStr += "/"
-			}
-			urlStr += newKey
-		}
-	}
-
-	logger.LogPrintf("Updated general URL: %s", urlStr)
-	return urlStr
 }
 
 // updateFFmpegStats updates the FFmpeg process statistics

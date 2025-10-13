@@ -31,13 +31,13 @@ func init() {
 // Config 主配置结构
 type Config struct {
 	Server struct {
-		Port         int    `yaml:"port"`           // 旧端口
-		HTTPPort     int    `yaml:"http_port"`      // HTTP 可配置端口
-		CertFile     string `yaml:"certfile"`       // TLS证书文件
-		KeyFile      string `yaml:"keyfile"`        // TLS私钥文件
-		SSLProtocols string `yaml:"ssl_protocols"`  // 支持的TLS协议版本
-		SSLCiphers   string `yaml:"ssl_ciphers"`    // 支持的TLS加密算法
-		SSLECDHCurve string `yaml:"ssl_ecdh_curve"` // 支持的TLS曲线
+		Port            int       `yaml:"port"`             // 旧端口
+		HTTPPort        int       `yaml:"http_port"`        // HTTP 可配置端口
+		CertFile        string    `yaml:"certfile"`         // TLS证书文件
+		KeyFile         string    `yaml:"keyfile"`          // TLS私钥文件
+		SSLProtocols    string    `yaml:"ssl_protocols"`    // 支持的TLS协议版本
+		SSLCiphers      string    `yaml:"ssl_ciphers"`      // 支持的TLS加密算法
+		SSLECDHCurve    string    `yaml:"ssl_ecdh_curve"`   // 支持的TLS曲线
 		TLS             TLSConfig `yaml:"tls"`              // TLS 配置
 		HTTPToHTTPS     bool      `yaml:"http_to_https"`    // HTTP 跳转 HTTPS
 		MulticastIfaces []string  `yaml:"multicast_ifaces"` // 多播网卡
@@ -92,14 +92,14 @@ type Config struct {
 	ProxyGroups map[string]*ProxyGroupConfig `yaml:"proxygroups"` // 代理组配置
 	JX          JXConfig                     `yaml:"jx"`          // 视频解析配置
 	Reload      int                          `yaml:"reload"`      // 添加 Reload 字段
-	
+
 	// Publisher配置 - 修改为直接包含streams
 	Publisher *PublisherConfig `yaml:"publisher"` // 推流配置
 }
 
 // PublisherConfig represents the publisher configuration structure
 type PublisherConfig struct {
-	Path string                    `yaml:"path"`
+	Path string `yaml:"path"`
 	// 注意：这里直接包含streams而不是嵌套在Streams字段中
 	Streams map[string]*StreamItem `yaml:",inline,omitempty"`
 }
@@ -116,10 +116,11 @@ type StreamItem struct {
 
 // StreamKey represents the stream key configuration
 type StreamKey struct {
-	Type       string `yaml:"type"`                // "random" or "fixed"
-	Value      string `yaml:"value"`               // for fixed type
-	Length     int    `yaml:"length"`              // for random type
+	Type       string `yaml:"type"`                 // "random" or "fixed"
+	Value      string `yaml:"value"`                // for fixed type
+	Length     int    `yaml:"length"`               // for random type
 	Expiration string `yaml:"expiration,omitempty"` // 过期时间（支持字符串格式，如"24h"）
+	CreatedAt  time.Time `yaml:"created_at,omitempty"` // 创建时间
 }
 
 // FFmpegOptions represents flexible ffmpeg options configuration
@@ -150,10 +151,10 @@ type FilterOptions struct {
 
 // StreamData represents stream source configuration
 type StreamData struct {
-	Source        SourceData  `yaml:"source"`
-	LocalPlayUrls PlayUrls    `yaml:"local_play_urls"`
-	Mode          string      `yaml:"mode"` // "primary-backup" or "all"
-	Receivers     ReceiversData   `yaml:"receivers"`
+	Source        SourceData    `yaml:"source"`
+	LocalPlayUrls PlayUrl       `yaml:"local_play_urls"`
+	Mode          string        `yaml:"mode"` // "primary-backup" or "all"
+	Receivers     ReceiversData `yaml:"receivers"`
 }
 
 // SourceData represents the source stream configuration
@@ -165,6 +166,12 @@ type SourceData struct {
 }
 
 // PlayUrls represents play URLs for different protocols
+type PlayUrl struct {
+	Flv bool `yaml:"flv,omitempty"`
+	Hls bool `yaml:"hls,omitempty"`
+}
+
+// PlayUrls represents play URLs for different protocols
 type PlayUrls struct {
 	Flv string `yaml:"flv,omitempty"`
 	Hls string `yaml:"hls,omitempty"`
@@ -172,24 +179,24 @@ type PlayUrls struct {
 
 // ReceiversData represents either a primary-backup or all receiver configuration
 type ReceiversData struct {
-	Primary *ReceiverItem `yaml:"primary,omitempty"`
-	Backup  *ReceiverItem `yaml:"backup,omitempty"`
+	Primary *ReceiverItem  `yaml:"primary,omitempty"`
+	Backup  *ReceiverItem  `yaml:"backup,omitempty"`
 	All     []ReceiverItem `yaml:"all,omitempty"`
 }
 
 // ReceiverItem represents a receiver configuration
 type ReceiverItem struct {
-	PushURL       string   `yaml:"push_url"`
-	PlayUrls      PlayUrls `yaml:"play_urls"`
-	PushPreArgs   []string `yaml:"push_pre_args,omitempty"`   // 推流前参数
-	PushPostArgs  []string `yaml:"push_post_args,omitempty"`  // 推流后参数
+	PushURL      string   `yaml:"push_url"`
+	PlayUrls     PlayUrls `yaml:"play_urls"`
+	PushPreArgs  []string `yaml:"push_pre_args,omitempty"`  // 推流前参数
+	PushPostArgs []string `yaml:"push_post_args,omitempty"` // 推流后参数
 }
 
 // DNSConfig DNS配置
 type DNSConfig struct {
-	Servers  []string      `yaml:"servers"`  // DNS服务器列表
-	Timeout  time.Duration `yaml:"timeout"`  // DNS查询超时时间
-	MaxConns int           `yaml:"max_conns"`// 最大连接数
+	Servers  []string      `yaml:"servers"`   // DNS服务器列表
+	Timeout  time.Duration `yaml:"timeout"`   // DNS查询超时时间
+	MaxConns int           `yaml:"max_conns"` // 最大连接数
 }
 
 type TLSConfig struct {
@@ -409,7 +416,7 @@ func (c *Config) SetDefaults() {
 	if c.HTTP.MaxConnsPerHost == 0 {
 		c.HTTP.MaxConnsPerHost = 8
 	}
-	
+
 	// DNS 默认值
 	if c.DNS.Timeout == 0 {
 		c.DNS.Timeout = 5 * time.Second
@@ -417,7 +424,7 @@ func (c *Config) SetDefaults() {
 	if c.DNS.MaxConns == 0 {
 		c.DNS.MaxConns = 10
 	}
-	
+
 	// GitHub 默认值
 	if c.Github.Timeout == 0 {
 		c.Github.Timeout = 10 * time.Second

@@ -6,29 +6,28 @@ import (
 
 // Config represents the publisher configuration
 type Config struct {
-	Path    string              `yaml:"path"`
-	Streams map[string]*Stream  `yaml:",inline,omitempty"`
+	Path    string             `yaml:"path"`
+	Streams map[string]*Stream `yaml:",inline,omitempty"`
 }
 
 // Stream represents a single stream configuration
 type Stream struct {
-	BufferSize     int            `yaml:"buffer_size,omitempty"`
-	Protocol       string         `yaml:"protocol"`
-	Enabled        bool           `yaml:"enabled"`
-	StreamKey      StreamKey      `yaml:"streamkey,omitempty"`
-	Stream         StreamConfig   `yaml:"stream"`
-	FFmpegOptions  *FFmpegOptions `yaml:"ffmpeg_options,omitempty"`
-	PipeForwarder  *PipeForwarder `yaml:"pipe_forwarder,omitempty"` // 命名管道转发配置
+	BufferSize    int            `yaml:"buffer_size,omitempty"`
+	Protocol      string         `yaml:"protocol"`
+	Enabled       bool           `yaml:"enabled"`
+	StreamKey     StreamKey      `yaml:"streamkey,omitempty"`
+	Stream        StreamConfig   `yaml:"stream"`
+	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"`
+	PipeForwarder *PipeForwarder `yaml:"pipe_forwarder,omitempty"` // 命名管道转发配置
 }
-
 
 // StreamKey represents the stream key configuration
 type StreamKey struct {
-	Type       string        `yaml:"type"`                // "random", "fixed" or "external"
-	Value      string        `yaml:"value"`               // for fixed type
-	Length     int           `yaml:"length"`              // for random type
-	Expiration string        `yaml:"expiration,omitempty"` // 过期时间（支持字符串格式，如"24h"）
-	CreatedAt  time.Time     `yaml:"created_at,omitempty"` // 创建时间
+	Type       string    `yaml:"type"`                 // "random", "fixed" or "external"
+	Value      string    `yaml:"value"`                // for fixed type
+	Length     int       `yaml:"length"`               // for random type
+	Expiration string    `yaml:"expiration,omitempty"` // 过期时间（支持字符串格式，如"24h"）
+	CreatedAt  time.Time `yaml:"created_at,omitempty"` // 创建时间
 }
 
 // FFmpegOptions represents flexible ffmpeg options configuration
@@ -57,22 +56,22 @@ type FFmpegOptions struct {
 
 // FFmpegProcessStats represents statistics for an FFmpeg process
 type FFmpegProcessStats struct {
-	StreamName       string    `json:"stream_name"`
-	ReceiverIndex    int       `json:"receiver_index"`
-	PID              int32     `json:"pid"`
-	StartTime        time.Time `json:"start_time"`
-	CPUPercent       float64   `json:"cpu_percent"`
-	MemoryRSS        uint64    `json:"memory_rss"`
-	LastUpdate       time.Time `json:"last_update"`
-	Running          bool      `json:"running"`
-	LastError        string    `json:"last_error,omitempty"`
-	Restarts         int       `json:"restarts"`
-	
+	StreamName    string    `json:"stream_name"`
+	ReceiverIndex int       `json:"receiver_index"`
+	PID           int32     `json:"pid"`
+	StartTime     time.Time `json:"start_time"`
+	CPUPercent    float64   `json:"cpu_percent"`
+	MemoryRSS     uint64    `json:"memory_rss"`
+	LastUpdate    time.Time `json:"last_update"`
+	Running       bool      `json:"running"`
+	LastError     string    `json:"last_error,omitempty"`
+	Restarts      int       `json:"restarts"`
+
 	// 码流和累计推流数据统计
-	BytesTransferred uint64  `json:"bytes_transferred"`  // 累计传输字节数
-	CurrentBitrate   uint64  `json:"current_bitrate"`    // 当前码率 (bps)
-	AvgBitrate       uint64  `json:"avg_bitrate"`        // 平均码率 (bps)
-	Duration         float64 `json:"duration"`           // 运行时长 (秒)
+	BytesTransferred uint64  `json:"bytes_transferred"` // 累计传输字节数
+	CurrentBitrate   uint64  `json:"current_bitrate"`   // 当前码率 (bps)
+	AvgBitrate       uint64  `json:"avg_bitrate"`       // 平均码率 (bps)
+	Duration         float64 `json:"duration"`          // 运行时长 (秒)
 }
 
 // FilterOptions represents video and audio filter configurations
@@ -83,10 +82,10 @@ type FilterOptions struct {
 
 // StreamConfig represents stream source configuration
 type StreamConfig struct {
-	Source        Source      `yaml:"source"`
-	LocalPlayUrls PlayUrls    `yaml:"local_play_urls"`
-	Mode          string      `yaml:"mode"` // "primary-backup" or "all"
-	Receivers     Receivers   `yaml:"receivers"`
+	Source        Source    `yaml:"source"`
+	LocalPlayUrls PlayUrl   `yaml:"local_play_urls"`
+	Mode          string    `yaml:"mode"` // "primary-backup" or "all"
+	Receivers     Receivers `yaml:"receivers"`
 }
 
 // Source represents the source stream configuration
@@ -98,6 +97,12 @@ type Source struct {
 }
 
 // PlayUrls represents play URLs for different protocols
+type PlayUrl struct {
+	Flv bool `yaml:"flv,omitempty"`
+	Hls bool `yaml:"hls,omitempty"`
+}
+
+// PlayUrls represents play URLs for different protocols
 type PlayUrls struct {
 	Flv string `yaml:"flv,omitempty"`
 	Hls string `yaml:"hls,omitempty"`
@@ -105,16 +110,15 @@ type PlayUrls struct {
 
 // Receivers represents either a primary-backup or all receiver configuration
 type Receivers struct {
-	Primary *Receiver `yaml:"primary,omitempty"`
-	Backup  *Receiver `yaml:"backup,omitempty"`
+	Primary *Receiver  `yaml:"primary,omitempty"`
+	Backup  *Receiver  `yaml:"backup,omitempty"`
 	All     []Receiver `yaml:"all,omitempty"`
 }
 
 // Receiver represents a receiver configuration
 type Receiver struct {
-	PushURL       string   `yaml:"push_url"`
-	PlayUrls      PlayUrls `yaml:"play_urls"`
-	PushPreArgs   []string `yaml:"push_pre_args,omitempty"`   // 推流前参数
-	PushPostArgs  []string `yaml:"push_post_args,omitempty"`  // 推流后参数
+	PushURL      string   `yaml:"push_url"`
+	PlayUrls     PlayUrls `yaml:"play_urls"`
+	PushPreArgs  []string `yaml:"push_pre_args,omitempty"`  // 推流前参数
+	PushPostArgs []string `yaml:"push_post_args,omitempty"` // 推流后参数
 }
-

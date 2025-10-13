@@ -47,46 +47,49 @@ type PipeForwarder struct {
 	headerBuf      bytes.Buffer
 	headerCaptured bool
 	headerMutex    sync.Mutex
-	firstTagOnce   sync.Once
+	// firstTagOnce   sync.Once
 	// 用于从hub读取数据的客户端缓冲区
 	clientBuffer *ringbuffer.RingBuffer
 	
 	// HLS支持
 	hlsManager *HLSSegmentManager
+	hlsEnabled   bool // 添加这个字段来控制HLS启用状态
 	
 	// PAT/PMT缓存，确保每个HLS片段都包含这些信息
 	patPmtBuf bytes.Buffer
 }
 
 // NewPipeForwarder 创建新的 PipeForwarder
-// 修改构造函数签名并复用传入 hub（若为 nil 则创建新 hub）
 func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull bool, hub *stream.StreamHubs) *PipeForwarder {
-	ctx, cancel := context.WithCancel(context.Background())
-	var h *stream.StreamHubs
-	if hub != nil {
-		h = hub
-	} else {
-		h = stream.NewStreamHubs()
-	}
-	
-	// 初始化 HLS 管理器
-	segmentPath := filepath.Join("/tmp/hls", streamName)
-	os.MkdirAll(segmentPath, 0755)
-	
-	hlsManager := NewHLSSegmentManager(ctx, streamName, segmentPath, 5) // 5秒片段时长
-	hlsManager.SetHub(h)
-	hlsManager.SetNeedPull(needPull) // 设置needPull标志
-	
-	return &PipeForwarder{
-		streamName: streamName,
-		rtmpURL:    rtmpURL,
-		enabled:    enabled,
-		needPull:   needPull,
-		ctx:        ctx,
-		cancel:     cancel,
-		hub:        h,
-		hlsManager: hlsManager,
-	}
+    ctx, cancel := context.WithCancel(context.Background())
+    var h *stream.StreamHubs
+    if hub != nil {
+        h = hub
+    } else {
+        h = stream.NewStreamHubs()
+    }
+
+    // 初始化 HLS 管理器
+    segmentPath := filepath.Join("/tmp/hls", streamName)
+    os.MkdirAll(segmentPath, 0755)
+    
+    hlsManager := NewHLSSegmentManager(ctx, streamName, segmentPath, 5) // 5秒片段时长
+    hlsManager.SetHub(h)
+    hlsManager.SetNeedPull(needPull) // 设置needPull标志
+    
+    pipeForwarder := &PipeForwarder{
+        streamName:  streamName,
+        rtmpURL:     rtmpURL,
+        enabled:     enabled,
+        needPull:    needPull,
+        ctx:         ctx,
+        cancel:      cancel,
+        hub:         h,
+        hlsManager:  hlsManager,
+        hlsEnabled:  true, // 默认启用，后续会根据配置调整
+    }
+    
+    return pipeForwarder
 }
 
 // SetCallbacks 设置启动和停止回调
@@ -712,30 +715,23 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// parseFLVTags 解析 chunk 中的所有 FLV tag，返回是否包含视频关键帧
-func (pf *PipeForwarder) parseFLVTags(data []byte) (isVideo, isKeyFrame bool) {
-	pos := 0
-	for pos+11 <= len(data) { // 至少要有 tag header
-		tagType := data[pos] & 0x1F
-		dataSize := int(data[pos+1])<<16 | int(data[pos+2])<<8 | int(data[pos+3])
-		tagTotalLen := 11 + dataSize + 4 // 11字节header + 数据 + 4字节 PreviousTagSize
-
-		if pos+tagTotalLen > len(data) {
-			break // 不完整 tag
-		}
-
-		if tagType == 9 { // 视频
-			isVideo = true
-			frameByte := data[pos+11]
-			frameType := (frameByte & 0xF0) >> 4
-			if frameType == 1 { // 关键帧
-				isKeyFrame = true
-				break // 找到首个关键帧即可
-			}
-		}
-		pos += tagTotalLen
-	}
-	return
+// EnableHLS 控制HLS功能的启用或禁用
+func (pf *PipeForwarder) EnableHLS(enable bool) {
+    pf.hlsEnabled = enable
+    
+    if pf.hlsManager != nil {
+        if enable {
+            logger.LogPrintf("HLS enabled for stream %s", pf.streamName)
+            // 如果需要，可以在这里添加启动HLS处理的逻辑
+        } else {
+            logger.LogPrintf("HLS disabled for stream %s", pf.streamName)
+            // 停止HLS管理器的相关操作
+            // 例如清理HLS片段文件等
+            pf.hlsManager.Stop()
+        }
+    } else if enable {
+        logger.LogPrintf("Cannot enable HLS for stream %s: HLS manager not initialized", pf.streamName)
+    }
 }
 
 func (pf *PipeForwarder) WriteChunk(chunk []byte, isVideo bool, isKeyFrame bool) {

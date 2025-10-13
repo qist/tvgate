@@ -105,7 +105,7 @@ func convertConfig(cfg *config.PublisherConfig) *Config {
 					BackupURL: streamItem.Stream.Source.BackupURL,
 					Headers:   streamItem.Stream.Source.Headers,
 				},
-				LocalPlayUrls: PlayUrls{
+				LocalPlayUrls: PlayUrl{
 					Flv: streamItem.Stream.LocalPlayUrls.Flv,
 					Hls: streamItem.Stream.LocalPlayUrls.Hls,
 				},
