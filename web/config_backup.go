@@ -68,6 +68,11 @@ func (h *ConfigBackupHandler) handleDeleteBackup(w http.ResponseWriter, r *http.
 		http.Error(w, "参数 file 必须提供", http.StatusBadRequest)
 		return
 	}
+	// 只允许单文件名，不允许路径分隔符或 ".."
+	if strings.Contains(file, "/") || strings.Contains(file, "\\") || strings.Contains(file, "..") {
+		http.Error(w, "备份文件名不合法", http.StatusBadRequest)
+		return
+	}
 
 	configPath := *config.ConfigFilePath
 	dir, err := filepath.Abs(filepath.Dir(configPath))
@@ -76,16 +81,15 @@ func (h *ConfigBackupHandler) handleDeleteBackup(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// 防止绝对路径，始终在配置目录下查找
+	// 始终在配置目录下查找
 	target := filepath.Join(dir, file)
 	absTarget, err := filepath.Abs(target)
 	if err != nil {
 		http.Error(w, "解析目标文件路径失败: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	// 确保文件在配置目录下
-	if len(absTarget) <= len(dir) || absTarget[:len(dir)] != dir || (len(absTarget) > len(dir) && absTarget[len(dir)] != filepath.Separator) {
+	relPath, err := filepath.Rel(dir, absTarget)
+	if err != nil || strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
 		http.Error(w, "不允许删除目录外的文件", http.StatusForbidden)
 		return
 	}
@@ -100,6 +104,11 @@ func (h *ConfigBackupHandler) handleDeleteBackup(w http.ResponseWriter, r *http.
 }
 
 // handleRestoreBackup 将指定备份还原为当前配置
+	// 只允许单文件名，不允许路径分隔符或 ".."
+	if strings.Contains(file, "/") || strings.Contains(file, "\\") || strings.Contains(file, "..") {
+		http.Error(w, "备份文件名不合法", http.StatusBadRequest)
+		return
+	}
 func (h *ConfigBackupHandler) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 	file := r.URL.Query().Get("file")
 	if file == "" {
@@ -120,8 +129,8 @@ func (h *ConfigBackupHandler) handleRestoreBackup(w http.ResponseWriter, r *http
 		http.Error(w, "解析目标文件路径失败: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	// 确保文件在配置目录下
-	if len(absTarget) <= len(dir) || absTarget[:len(dir)] != dir || (len(absTarget) > len(dir) && absTarget[len(dir)] != filepath.Separator) {
+	relPath, err := filepath.Rel(dir, absTarget)
+	if err != nil || strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
 		http.Error(w, "不允许还原目录外的文件", http.StatusForbidden)
 		return
 	}
