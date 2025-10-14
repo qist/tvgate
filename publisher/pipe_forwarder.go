@@ -17,6 +17,7 @@ import (
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
+	"github.com/shirou/gopsutil/v3/process"
 )
 
 // PipeForwarder 将 FFmpeg 的输出写入 io.Pipe，然后 Go 程序读取并分发到 HTTP-FLV 客户端和可选 RTMP 推流
@@ -57,6 +58,9 @@ type PipeForwarder struct {
 
 	// PAT/PMT缓存，确保每个HLS片段都包含这些信息
 	patPmtBuf bytes.Buffer
+
+		// FFmpeg进程状态监控
+	stats *FFmpegProcessStats
 }
 
 // NewPipeForwarder 创建新的 PipeForwarder
@@ -96,6 +100,14 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 		hlsManager: hlsManager,
 		hlsEnabled: true, // 默认启用，后续会根据配置调整
 	}
+		// 初始化 FFmpegProcessStats
+	pipeForwarder.stats = &FFmpegProcessStats{
+		StreamName:    streamName,
+		ReceiverIndex: -1, // -1 表示 PipeForwarder
+		StartTime:     time.Now(),
+		Running:       false,
+		LastError:     "",
+	}
 
 	return pipeForwarder
 }
@@ -120,6 +132,15 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 		return nil
 	}
 
+	// 初始化 FFmpegProcessStats
+	pf.stats = &FFmpegProcessStats{
+		StreamName:    pf.streamName,
+		ReceiverIndex: -1, // -1 表示 PipeForwarder
+		StartTime:     time.Now(),
+		Running:       false,
+		LastError:     "",
+	}
+
 	// 如果需要拉流，则创建 io.Pipe 并启动 ffmpeg 拉流进程
 	if pf.needPull {
 		// 创建 io.Pipe
@@ -141,8 +162,17 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 			_ = pf.pipeWriter.Close()
 			pf.pipeReader = nil
 			pf.pipeWriter = nil
+			
+			// 更新错误状态
+			pf.stats.LastError = err.Error()
+			pf.stats.LastUpdate = time.Now()
 			return fmt.Errorf("failed to start ffmpeg: %v", err)
 		}
+
+		// 更新运行状态
+		pf.stats.PID = int32(pf.ffmpegCmd.Process.Pid)
+		pf.stats.Running = true
+		pf.stats.LastUpdate = time.Now()
 
 		logger.LogPrintf("[%s] Started PipeForwarder, ffmpeg pid=%d", pf.streamName, pf.ffmpegCmd.Process.Pid)
 		logger.LogPrintf("[%s] Full FFmpeg command: ffmpeg %s", pf.streamName, strings.Join(modArgs, " "))
@@ -152,10 +182,18 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 		pf.clientBuffer, err = ringbuffer.New(1024 * 1024)
 		if err != nil {
 			logger.LogPrintf("[%s] Failed to create client buffer: %v", pf.streamName, err)
+			
+			// 更新错误状态
+			pf.stats.LastError = err.Error()
+			pf.stats.LastUpdate = time.Now()
 			return fmt.Errorf("failed to create client buffer: %v", err)
 		}
 
 		logger.LogPrintf("[%s] Started PipeForwarder in forward-only mode", pf.streamName)
+		
+		// 设置运行状态（虽然没有 FFmpeg 进程，但我们认为组件是运行的）
+		pf.stats.Running = true
+		pf.stats.LastUpdate = time.Now()
 	}
 
 	pf.isRunning = true
@@ -575,6 +613,9 @@ func (pf *PipeForwarder) Stop() {
 		return
 	}
 	pf.isRunning = false
+		// 更新状态
+	pf.stats.Running = false
+	pf.stats.LastUpdate = time.Now()
 	pf.mutex.Unlock()
 
 	// 取消上下文
@@ -621,6 +662,62 @@ func (pf *PipeForwarder) IsRunning() bool {
 	pf.mutex.Lock()
 	defer pf.mutex.Unlock()
 	return pf.isRunning
+}
+
+// IsHealthy 检查 PipeForwarder 是否健康运行
+func (pf *PipeForwarder) IsHealthy() bool {
+	pf.mutex.Lock()
+	defer pf.mutex.Unlock()
+
+	if !pf.enabled {
+		return true // 未启用的组件视为健康
+	}
+
+	if !pf.isRunning {
+		return false
+	}
+
+	// 如果启用了但是没有拉流需求，则认为是健康的
+	if !pf.needPull {
+		return true
+	}
+
+	// 如果启用了并且需要拉流，则检查 FFmpeg 进程是否存在
+	if pf.ffmpegCmd != nil && pf.ffmpegCmd.Process != nil {
+		// 尝试获取进程状态
+		process, err := process.NewProcess(int32(pf.ffmpegCmd.Process.Pid))
+		if err != nil {
+			return false
+		}
+
+		// 检查进程是否在运行
+		running, err := process.IsRunning()
+		if err != nil || !running {
+			return false
+		}
+
+		// 更新统计信息
+		pf.stats.PID = int32(pf.ffmpegCmd.Process.Pid)
+		pf.stats.Running = true
+		pf.stats.LastUpdate = time.Now()
+		return true
+	}
+
+	return false
+}
+
+// GetStats 返回 FFmpegProcessStats 的副本
+func (pf *PipeForwarder) GetStats() *FFmpegProcessStats {
+	pf.mutex.Lock()
+	defer pf.mutex.Unlock()
+	
+	if pf.stats == nil {
+		return nil
+	}
+	
+	// 返回副本以避免并发问题
+	stats := *pf.stats
+	return &stats
 }
 
 // ServeFLV 提供 HTTP-FLV 播放（每个连接创建一个 ring buffer 客户端）
