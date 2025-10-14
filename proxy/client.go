@@ -24,7 +24,7 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 	proxyAddr := fmt.Sprintf("%s:%d", proxyConfig.Server, proxyConfig.Port)
 
 	transport := &http.Transport{
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: false},
 		ResponseHeaderTimeout: 10 * time.Second,
 		IdleConnTimeout:       5 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
