@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -269,15 +270,28 @@ func unzip(src, dest string) error {
 	}
 	defer r.Close()
 
+	absDest, err := filepath.Abs(dest)
+	if err != nil {
+		return err
+	}
+
 	for _, f := range r.File {
+		// Prevent Zip Slip by checking for path traversal in f.Name
 		path := filepath.Join(dest, f.Name)
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			continue // skip on error resolving path
+		}
+		if !strings.HasPrefix(absPath, absDest+string(os.PathSeparator)) && absPath != absDest {
+			continue // skip extracting this entry
+		}
 		if f.FileInfo().IsDir() {
-			_ = os.MkdirAll(path, f.Mode())
+			_ = os.MkdirAll(absPath, f.Mode())
 			continue
 		}
-		_ = os.MkdirAll(filepath.Dir(path), 0755)
+		_ = os.MkdirAll(filepath.Dir(absPath), 0755)
 		rc, _ := f.Open()
-		out, _ := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode())
+		out, _ := os.OpenFile(absPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode())
 		_, _ = io.Copy(out, rc)
 		rc.Close()
 		out.Close()
