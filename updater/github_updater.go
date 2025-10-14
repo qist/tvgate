@@ -276,8 +276,21 @@ func unzip(src, dest string) error {
 	}
 
 	for _, f := range r.File {
-		// Prevent Zip Slip by checking for path traversal in f.Name
-		path := filepath.Join(dest, f.Name)
+		// Enhanced Zip Slip prevention: reject entries with ".." segments or absolute paths
+		if strings.HasPrefix(f.Name, "/") || strings.HasPrefix(f.Name, "\\") {
+			continue // skip absolute path
+		}
+		for _, seg := range strings.Split(f.Name, string(os.PathSeparator)) {
+			if seg == ".." {
+				continue // skip path traversal
+			}
+		}
+		cleanName := filepath.Clean(f.Name)
+		// After cleaning, if f.Name is still ".." or starts with ".."+separator, skip
+		if cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(os.PathSeparator)) {
+			continue
+		}
+		path := filepath.Join(dest, cleanName)
 		absPath, err := filepath.Abs(path)
 		if err != nil {
 			continue // skip on error resolving path
