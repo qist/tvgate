@@ -704,7 +704,7 @@ func (c *dotClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr
 	defer cancel()
 
 	// 创建TLS连接
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	tlsConfig := &tls.Config{InsecureSkipVerify: false}
 	dialer := &net.Dialer{Timeout: c.timeout}
 	conn, err := tls.DialWithDialer(dialer, "tcp", serverAddr, tlsConfig)
 	if err != nil {
@@ -846,7 +846,7 @@ func (c *quicClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAdd
 // --------------------------- 网络请求实现 ---------------------------
 
 func sendDoHQuery(ctx context.Context, dnsServer, b64 string, timeout time.Duration, maxConns int) ([]byte, error) {
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	tlsConfig := &tls.Config{InsecureSkipVerify: false}
 	
 	// 创建带连接数限制的传输器
 	transport := &http.Transport{
@@ -888,7 +888,7 @@ func sendDoHQuery(ctx context.Context, dnsServer, b64 string, timeout time.Durat
 }
 
 func sendH3Query(ctx context.Context, dnsServer, b64 string, timeout time.Duration, maxConns int) ([]byte, error) {
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	tlsConfig := &tls.Config{InsecureSkipVerify: false}
 
 	if strings.HasPrefix(dnsServer, "h3://") {
 		dnsServer = "https://" + dnsServer[5:]
@@ -1094,7 +1094,7 @@ func sendDoQQuery(ctx context.Context, dnsServer, b64Query string, maxConns int)
 
 	// 配置 TLS
 	tlsConf := &tls.Config{
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: false,
 		NextProtos:         []string{"doq"},
 	}
 
