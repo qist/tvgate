@@ -3,8 +3,7 @@ package publisher
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
-	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -294,7 +293,7 @@ func (m *Manager) Stop() {
 	for _, streamManager := range m.streams {
 		streamManager.Stop()
 	}
-	log.Println("Publisher manager stopped")
+	logger.LogPrintf("Publisher manager stopped")
 }
 
 // StopAll stops all streams
@@ -1264,7 +1263,7 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 	logger.LogPrintf("Attempting to update config file for stream %s with new key %s", sm.name, newStreamKey)
 
 	// 读取当前配置文件
-	configData, err := ioutil.ReadFile(*config.ConfigFilePath)
+	configData, err := os.ReadFile(*config.ConfigFilePath)
 	if err != nil {
 		logger.LogPrintf("Failed to read config file: %v", err)
 		return err
@@ -1325,7 +1324,7 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 
 	// 写入文件
 	logger.LogPrintf("Writing updated config to file: %s", *config.ConfigFilePath)
-	if err := ioutil.WriteFile(*config.ConfigFilePath, newConfigData, 0644); err != nil {
+	if err := os.WriteFile(*config.ConfigFilePath, newConfigData, 0644); err != nil {
 		logger.LogPrintf("Failed to write config file: %v", err)
 		return err
 	}
