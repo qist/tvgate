@@ -6,7 +6,7 @@ require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
 	github.com/asticode/go-astits v1.13.0
 	github.com/bluenviron/gortsplib/v5 v5.0.1
-	github.com/bluenviron/mediacommon/v2 v2.4.3
+	github.com/bluenviron/mediacommon/v2 v2.5.0
 	github.com/cloudflare/tableflip v1.2.3
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/jedisct1/go-dnsstamps v0.0.0-20240423203910-07a0735c7774
