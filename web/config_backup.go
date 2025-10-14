@@ -70,16 +70,27 @@ func (h *ConfigBackupHandler) handleDeleteBackup(w http.ResponseWriter, r *http.
 	}
 
 	configPath := *config.ConfigFilePath
-	dir := filepath.Dir(configPath)
-	absFile, _ := filepath.Abs(file)
+	dir, err := filepath.Abs(filepath.Dir(configPath))
+	if err != nil {
+		http.Error(w, "获取配置目录失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 防止绝对路径，始终在配置目录下查找
+	target := filepath.Join(dir, file)
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		http.Error(w, "解析目标文件路径失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// 确保文件在配置目录下
-	if !filepath.HasPrefix(absFile, dir) {
+	if len(absTarget) <= len(dir) || absTarget[:len(dir)] != dir || (len(absTarget) > len(dir) && absTarget[len(dir)] != filepath.Separator) {
 		http.Error(w, "不允许删除目录外的文件", http.StatusForbidden)
 		return
 	}
 
-	if err := os.Remove(absFile); err != nil {
+	if err := os.Remove(absTarget); err != nil {
 		http.Error(w, "删除备份失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -97,15 +108,25 @@ func (h *ConfigBackupHandler) handleRestoreBackup(w http.ResponseWriter, r *http
 	}
 
 	configPath := *config.ConfigFilePath
-	dir := filepath.Dir(configPath)
-	absFile, _ := filepath.Abs(file)
+	dir, err := filepath.Abs(filepath.Dir(configPath))
+	if err != nil {
+		http.Error(w, "获取配置目录失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	if !filepath.HasPrefix(absFile, dir) {
+	target := filepath.Join(dir, file)
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		http.Error(w, "解析目标文件路径失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// 确保文件在配置目录下
+	if len(absTarget) <= len(dir) || absTarget[:len(dir)] != dir || (len(absTarget) > len(dir) && absTarget[len(dir)] != filepath.Separator) {
 		http.Error(w, "不允许还原目录外的文件", http.StatusForbidden)
 		return
 	}
 
-	data, err := os.ReadFile(absFile)
+	data, err := os.ReadFile(absTarget)
 	if err != nil {
 		http.Error(w, "读取备份失败: "+err.Error(), http.StatusInternalServerError)
 		return
