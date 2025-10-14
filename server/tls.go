@@ -38,15 +38,15 @@ func parseProtocols(protoStr string) (minVersion, maxVersion uint16) {
 func buildCipherMap() {
 	cipherSuiteMap = make(map[string]uint16)
 
-	// 获取所有安全套件
+	// 仅获取安全套件
 	for _, suite := range tls.CipherSuites() {
 		cipherSuiteMap[suite.Name] = suite.ID
 	}
 
-	// 获取所有不安全套件
-	for _, suite := range tls.InsecureCipherSuites() {
-		cipherSuiteMap[suite.Name] = suite.ID
-	}
+	// 不再添加不安全套件
+	// 提示：代码已移除 InsecureCipherSuites 防止不安全套件被应用。
+	// 可以在 parseCipherSuites 的警告中说明不安全请求被忽略。
+
 	// 确保 TLS 1.3 套件在旧版本 Go 中可用
 	cipherSuiteMap["TLS_AES_128_GCM_SHA256"] = tls.TLS_AES_128_GCM_SHA256
 	cipherSuiteMap["TLS_AES_256_GCM_SHA384"] = tls.TLS_AES_256_GCM_SHA384
