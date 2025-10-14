@@ -460,34 +460,6 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 	}
 }
 
-// waitWithoutBackupSupport 等待主 ffmpeg 进程退出并清理管道
-func (pf *PipeForwarder) waitWithoutBackupSupport() {
-	if pf.ffmpegCmd == nil {
-		return
-	}
-
-	err := pf.ffmpegCmd.Wait()
-
-	// 置状态并关闭 pipeWriter 以通知读取方 EOF
-	pf.mutex.Lock()
-	pf.isRunning = false
-	if pf.pipeWriter != nil {
-		_ = pf.pipeWriter.Close()
-		pf.pipeWriter = nil
-	}
-	pf.mutex.Unlock()
-
-	if err != nil && pf.ctx.Err() == nil {
-		logger.LogPrintf("[%s] FFmpeg exited with error: %v", pf.streamName, err)
-	} else {
-		logger.LogPrintf("[%s] FFmpeg exited normally", pf.streamName)
-	}
-
-	// 触发停止回调
-	if pf.onStopped != nil {
-		pf.onStopped()
-	}
-}
 
 // waitWithBackupSupport 等待主 ffmpeg 进程退出，如果配置了 backup_url 则尝试切换到备用URL
 func (pf *PipeForwarder) waitWithBackupSupport(originalArgs []string) {
