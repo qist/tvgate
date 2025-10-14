@@ -667,7 +667,7 @@ func (sm *StreamManager) startStreaming() {
 				}
 
 				// 创建 backup PipeForwarder
-				backupPipeForwarder := NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, true, nil)
+				backupPipeForwarder := NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, false, nil)
 				// 控制HLS启用状态
 				if backupPipeForwarder != nil {
 					backupPipeForwarder.EnableHLS(localPlayUrls.Hls)
