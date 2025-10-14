@@ -68,33 +68,18 @@ func (h *ConfigBackupHandler) handleDeleteBackup(w http.ResponseWriter, r *http.
 		http.Error(w, "参数 file 必须提供", http.StatusBadRequest)
 		return
 	}
-	// 只允许单文件名，不允许路径分隔符或 ".."
-	if strings.Contains(file, "/") || strings.Contains(file, "\\") || strings.Contains(file, "..") {
-		http.Error(w, "备份文件名不合法", http.StatusBadRequest)
-		return
-	}
 
 	configPath := *config.ConfigFilePath
-	dir, err := filepath.Abs(filepath.Dir(configPath))
-	if err != nil {
-		http.Error(w, "获取配置目录失败: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	dir := filepath.Dir(configPath)
+	absFile, _ := filepath.Abs(file)
 
-	// 始终在配置目录下查找
-	target := filepath.Join(dir, file)
-	absTarget, err := filepath.Abs(target)
-	if err != nil {
-		http.Error(w, "解析目标文件路径失败: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	relPath, err := filepath.Rel(dir, absTarget)
-	if err != nil || strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
+	// 确保文件在配置目录下
+	if !filepath.HasPrefix(absFile, dir) {
 		http.Error(w, "不允许删除目录外的文件", http.StatusForbidden)
 		return
 	}
 
-	if err := os.Remove(absTarget); err != nil {
+	if err := os.Remove(absFile); err != nil {
 		http.Error(w, "删除备份失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -104,11 +89,6 @@ func (h *ConfigBackupHandler) handleDeleteBackup(w http.ResponseWriter, r *http.
 }
 
 // handleRestoreBackup 将指定备份还原为当前配置
-	// 只允许单文件名，不允许路径分隔符或 ".."
-	if strings.Contains(file, "/") || strings.Contains(file, "\\") || strings.Contains(file, "..") {
-		http.Error(w, "备份文件名不合法", http.StatusBadRequest)
-		return
-	}
 func (h *ConfigBackupHandler) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 	file := r.URL.Query().Get("file")
 	if file == "" {
@@ -117,25 +97,15 @@ func (h *ConfigBackupHandler) handleRestoreBackup(w http.ResponseWriter, r *http
 	}
 
 	configPath := *config.ConfigFilePath
-	dir, err := filepath.Abs(filepath.Dir(configPath))
-	if err != nil {
-		http.Error(w, "获取配置目录失败: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	dir := filepath.Dir(configPath)
+	absFile, _ := filepath.Abs(file)
 
-	target := filepath.Join(dir, file)
-	absTarget, err := filepath.Abs(target)
-	if err != nil {
-		http.Error(w, "解析目标文件路径失败: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	relPath, err := filepath.Rel(dir, absTarget)
-	if err != nil || strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
+	if !filepath.HasPrefix(absFile, dir) {
 		http.Error(w, "不允许还原目录外的文件", http.StatusForbidden)
 		return
 	}
 
-	data, err := os.ReadFile(absTarget)
+	data, err := os.ReadFile(absFile)
 	if err != nil {
 		http.Error(w, "读取备份失败: "+err.Error(), http.StatusInternalServerError)
 		return
