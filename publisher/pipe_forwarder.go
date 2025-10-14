@@ -70,10 +70,18 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 	}
 
 	// 初始化 HLS 管理器
-	segmentPath := filepath.Join("/tmp/hls", streamName)
+	// 使用基础流名称（去除_primary、_backup等后缀）生成HLS路径
+	baseStreamName := streamName
+	if strings.Contains(baseStreamName, "_") {
+		// 提取第一个下划线之前的部分作为基础流名称
+		parts := strings.Split(baseStreamName, "_")
+		baseStreamName = parts[0]
+	}
+	
+	segmentPath := filepath.Join("/tmp/hls", baseStreamName)
 	os.MkdirAll(segmentPath, 0755)
 
-	hlsManager := NewHLSSegmentManager(ctx, streamName, segmentPath, 5) // 5秒片段时长
+	hlsManager := NewHLSSegmentManager(ctx, baseStreamName, segmentPath, 5) // 5秒片段时长
 	hlsManager.SetHub(h)
 	hlsManager.SetNeedPull(needPull) // 设置needPull标志
 
