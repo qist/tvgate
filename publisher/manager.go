@@ -679,58 +679,58 @@ func (sm *StreamManager) startStreaming() {
 						logger.LogPrintf("Failed to start backup pipe forwarder for stream %s: %v", sm.name, err)
 					}
 				}()
-			} else if sm.stream.Stream.Source.BackupURL != "" {
-				// 如果没有显式配置 backup receiver 但配置了 backup_url，则创建一个使用 backup_url 的 PipeForwarder
-				// 构建使用 backup_url 的 FFmpeg 命令
-				backupFFmpegCmd := sm.buildFFmpegCommandWithBackup(true)
-				var backupRTMPURL string
 
-				// 为 backup 流使用相同的接收器配置
-				backupCmd := receivers[0].BuildFFmpegPushCommand(backupFFmpegCmd, currentStreamKey)
-				if len(backupCmd) > 0 {
-					backupRTMPURL = backupCmd[len(backupCmd)-1]
-				}
+			}
+			// 不启动传统的推流方式
+			return
+		} else if sm.stream.Stream.Source.BackupURL != "" {
+			// 如果没有显式配置 backup receiver 但配置了 backup_url，则创建一个使用 backup_url 的 PipeForwarder
+			// 构建使用 backup_url 的 FFmpeg 命令
+			backupFFmpegCmd := sm.buildFFmpegCommandWithBackup(true)
+			var backupRTMPURL string
 
-				// 创建 backup PipeForwarder (当主URL失效时，备用PipeForwarder需要主动拉流)
-				backupPipeForwarder := NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, true, nil)
-				// 控制HLS启用状态
-				if backupPipeForwarder != nil {
-					backupPipeForwarder.EnableHLS(localPlayUrls.Hls)
-				}
+			// 为 backup 流使用相同的接收器配置
+			backupCmd := receivers[0].BuildFFmpegPushCommand(backupFFmpegCmd, currentStreamKey)
+			if len(backupCmd) > 0 {
+				backupRTMPURL = backupCmd[len(backupCmd)-1]
+			}
 
-				// 启动 backup PipeForwarder（但默认不激活，只有在主URL失败时才激活）
-				go func() {
-					// 先不启动，等待主URL失败后再启动
-					logger.LogPrintf("Backup pipe forwarder for stream %s created, waiting for primary failure", sm.name)
+			// 创建 backup PipeForwarder (当主URL失效时，备用PipeForwarder需要主动拉流)
+			backupPipeForwarder := NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, true, nil)
+			// 控制HLS启用状态
+			if backupPipeForwarder != nil {
+				backupPipeForwarder.EnableHLS(localPlayUrls.Hls)
+			}
 
-					// 监控主URL是否失败，如果失败则启动backup
-					ticker := time.NewTicker(10 * time.Second)
-					defer ticker.Stop()
+			// 启动 backup PipeForwarder（但默认不激活，只有在主URL失败时才激活）
+			go func() {
+				// 先不启动，等待主URL失败后再启动
+				logger.LogPrintf("Backup pipe forwarder for stream %s created, waiting for primary failure", sm.name)
 
-					for {
-						select {
-						case <-sm.ctx.Done():
-							return
-						case <-ticker.C:
-							// 检查主转发器是否运行正常
-							if sm.pipeForwarder != nil && !sm.pipeForwarder.IsRunning() {
-								logger.LogPrintf("Primary pipe forwarder for stream %s is not running, starting backup", sm.name)
-								if err := backupPipeForwarder.Start(backupFFmpegCmd); err != nil {
-									logger.LogPrintf("Failed to start backup pipe forwarder for stream %s: %v", sm.name, err)
-								} else {
-									logger.LogPrintf("Backup pipe forwarder for stream %s started successfully", sm.name)
-									// 更新主转发器引用
-									sm.pipeForwarder = backupPipeForwarder
-									return
-								}
+				// 监控主URL是否失败，如果失败则启动backup
+				ticker := time.NewTicker(10 * time.Second)
+				defer ticker.Stop()
+
+				for {
+					select {
+					case <-sm.ctx.Done():
+						return
+					case <-ticker.C:
+						// 检查主转发器是否运行正常
+						if sm.pipeForwarder != nil && !sm.pipeForwarder.IsRunning() {
+							logger.LogPrintf("Primary pipe forwarder for stream %s is not running, starting backup", sm.name)
+							if err := backupPipeForwarder.Start(backupFFmpegCmd); err != nil {
+								logger.LogPrintf("Failed to start backup pipe forwarder for stream %s: %v", sm.name, err)
+							} else {
+								logger.LogPrintf("Backup pipe forwarder for stream %s started successfully", sm.name)
+								// 更新主转发器引用
+								sm.pipeForwarder = backupPipeForwarder
+								return
 							}
 						}
 					}
-				}()
-			}
-
-			// 不启动传统的推流方式
-			return
+				}
+			}()
 		} else {
 			// 对于其他模式，保持原有逻辑（只处理第一个接收器）
 			var rtmpURL string
