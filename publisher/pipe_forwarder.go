@@ -59,7 +59,10 @@ type PipeForwarder struct {
 	// PAT/PMT缓存，确保每个HLS片段都包含这些信息
 	patPmtBuf bytes.Buffer
 
-		// FFmpeg进程状态监控
+	ffmpegPush *exec.Cmd
+
+	ffmpegLock sync.Mutex
+	// FFmpeg进程状态监控
 	stats *FFmpegProcessStats
 }
 
@@ -81,7 +84,7 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 		parts := strings.Split(baseStreamName, "_")
 		baseStreamName = parts[0]
 	}
-	
+
 	segmentPath := filepath.Join("/tmp/hls", baseStreamName)
 	os.MkdirAll(segmentPath, 0755)
 
@@ -100,7 +103,7 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 		hlsManager: hlsManager,
 		hlsEnabled: true, // 默认启用，后续会根据配置调整
 	}
-		// 初始化 FFmpegProcessStats
+	// 初始化 FFmpegProcessStats
 	pipeForwarder.stats = &FFmpegProcessStats{
 		StreamName:    streamName,
 		ReceiverIndex: -1, // -1 表示 PipeForwarder
@@ -162,7 +165,7 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 			_ = pf.pipeWriter.Close()
 			pf.pipeReader = nil
 			pf.pipeWriter = nil
-			
+
 			// 更新错误状态
 			pf.stats.LastError = err.Error()
 			pf.stats.LastUpdate = time.Now()
@@ -182,7 +185,7 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 		pf.clientBuffer, err = ringbuffer.New(1024 * 1024)
 		if err != nil {
 			logger.LogPrintf("[%s] Failed to create client buffer: %v", pf.streamName, err)
-			
+
 			// 更新错误状态
 			pf.stats.LastError = err.Error()
 			pf.stats.LastUpdate = time.Now()
@@ -190,7 +193,7 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 		}
 
 		logger.LogPrintf("[%s] Started PipeForwarder in forward-only mode", pf.streamName)
-		
+
 		// 设置运行状态（虽然没有 FFmpeg 进程，但我们认为组件是运行的）
 		pf.stats.Running = true
 		pf.stats.LastUpdate = time.Now()
@@ -334,12 +337,21 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				_ = ffIn.Close()
 				ffIn = nil
 			} else {
+				// ✅ 保存到 pf.ffmpegPush 以供 IsPushRunning() 检测
+				pf.ffmpegLock.Lock()
+				pf.ffmpegPush = ffmpegPush
+				pf.ffmpegLock.Unlock()
+
 				logger.LogPrintf("[%s] Started RTMP push to %s (pid=%d)", pf.streamName, pf.rtmpURL, ffmpegPush.Process.Pid)
 				// 等待 ffmpegPush 退出的 goroutine
 				pushWg.Add(1)
 				go func() {
 					defer pushWg.Done()
 					if err := ffmpegPush.Wait(); err != nil && pf.ctx.Err() == nil {
+						pf.ffmpegLock.Lock()
+						pf.ffmpegPush = nil // ✅ 退出时清理
+						pf.ffmpegLock.Unlock()
+
 						logger.LogPrintf("[%s] RTMP push ffmpeg exited with error: %v", pf.streamName, err)
 					} else {
 						logger.LogPrintf("[%s] RTMP push ffmpeg exited normally", pf.streamName)
@@ -506,7 +518,6 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 	}
 }
 
-
 // waitWithBackupSupport 等待主 ffmpeg 进程退出，如果配置了 backup_url 则尝试切换到备用URL
 func (pf *PipeForwarder) waitWithBackupSupport(originalArgs []string) {
 	if pf.ffmpegCmd == nil {
@@ -613,7 +624,7 @@ func (pf *PipeForwarder) Stop() {
 		return
 	}
 	pf.isRunning = false
-		// 更新状态
+	// 更新状态
 	pf.stats.Running = false
 	pf.stats.LastUpdate = time.Now()
 	pf.mutex.Unlock()
@@ -710,11 +721,11 @@ func (pf *PipeForwarder) IsHealthy() bool {
 func (pf *PipeForwarder) GetStats() *FFmpegProcessStats {
 	pf.mutex.Lock()
 	defer pf.mutex.Unlock()
-	
+
 	if pf.stats == nil {
 		return nil
 	}
-	
+
 	// 返回副本以避免并发问题
 	stats := *pf.stats
 	return &stats
@@ -863,4 +874,30 @@ func (pf *PipeForwarder) ServeHLS(w http.ResponseWriter, r *http.Request) {
 
 	// 默认提供播放列表
 	pf.hlsManager.ServePlaylist(w, r)
+}
+
+// IsPushRunning 检查 ffmpeg 推流进程是否还在运行
+func (pf *PipeForwarder) IsPushRunning() bool {
+	pf.ffmpegLock.Lock()
+	defer pf.ffmpegLock.Unlock()
+
+	if pf.ffmpegPush == nil {
+		logger.LogPrintf("[%s] IsPushRunning: ffmpegPush is nil", pf.streamName)
+		return false
+	}
+
+	if pf.ffmpegPush.Process == nil {
+		logger.LogPrintf("[%s] IsPushRunning: ffmpegPush.Process is nil", pf.streamName)
+		return false
+	}
+
+	err := pf.ffmpegPush.Process.Signal(syscall.Signal(0))
+	if err != nil {
+		logger.LogPrintf("[%s] IsPushRunning: process check failed (PID=%d): %v",
+			pf.streamName, pf.ffmpegPush.Process.Pid, err)
+		return false
+	}
+
+	logger.LogPrintf("[%s] IsPushRunning: process running (PID=%d)", pf.streamName, pf.ffmpegPush.Process.Pid)
+	return true
 }

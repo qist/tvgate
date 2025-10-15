@@ -658,7 +658,8 @@ func (sm *StreamManager) startStreaming() {
 				}
 			}()
 
-			// 如果有 backup receiver，也为它创建一个独立的 PipeForwarder
+			// 创建备用推流（不启动）
+			var backupPipeForwarder *PipeForwarder
 			if sm.stream.Stream.Receivers.Backup != nil {
 				var backupRTMPURL string
 				backupCmd := sm.stream.Stream.Receivers.Backup.BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
@@ -666,22 +667,14 @@ func (sm *StreamManager) startStreaming() {
 					backupRTMPURL = backupCmd[len(backupCmd)-1]
 				}
 
-				// 创建 backup PipeForwarder
-				backupPipeForwarder := NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, false, nil)
-				// 控制HLS启用状态
+				backupPipeForwarder = NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, false, nil)
 				if backupPipeForwarder != nil {
 					backupPipeForwarder.EnableHLS(localPlayUrls.Hls)
 				}
-
-				// 启动 backup PipeForwarder
-				go func() {
-					if err := backupPipeForwarder.Start(ffmpegCmd); err != nil {
-						logger.LogPrintf("Failed to start backup pipe forwarder for stream %s: %v", sm.name, err)
-					}
-				}()
-
 			}
-			// 不启动传统的推流方式
+
+			// 启动推流监控（主挂才启备）
+			sm.monitorPrimaryPush(sm.pipeForwarder, backupPipeForwarder, ffmpegCmd)
 			return
 		} else if sm.stream.Stream.Source.BackupURL != "" {
 			// 如果没有显式配置 backup receiver 但配置了 backup_url，则创建一个使用 backup_url 的 PipeForwarder
@@ -822,6 +815,34 @@ func (sm *StreamManager) startStreaming() {
 	case <-done:
 		logger.LogPrintf("Stream %s finished", sm.name)
 	}
+}
+
+func (sm *StreamManager) monitorPrimaryPush(primary, backup *PipeForwarder, ffmpegCmd []string) {
+	if primary == nil || backup == nil {
+		return
+	}
+
+	go func() {
+		time.Sleep(5 * time.Second)
+		for {
+			select {
+			case <-sm.ctx.Done():
+				return
+			default:
+				if !primary.IsPushRunning() {
+					logger.LogPrintf("[%s] Primary push stopped, switching to backup", sm.name)
+
+					if err := backup.Start(ffmpegCmd); err != nil {
+						logger.LogPrintf("[%s] Failed to start backup push: %v", sm.name, err)
+					} else {
+						logger.LogPrintf("[%s] Backup push started successfully", sm.name)
+					}
+					return
+				}
+				time.Sleep(30 * time.Second)
+			}
+		}
+	}()
 }
 
 // isPrimaryHealthy 检查 primary receiver 是否健康
