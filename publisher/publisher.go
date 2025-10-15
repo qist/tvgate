@@ -133,23 +133,12 @@ func (s *Stream) BuildFFmpegCommand() []string {
 		cmd = append(cmd, "-user_agent", s.FFmpegOptions.UserAgent)
 	}
 
-	// Add custom headers
 	if s.FFmpegOptions != nil && len(s.FFmpegOptions.Headers) > 0 {
-		for _, header := range s.FFmpegOptions.Headers {
-			cmd = append(cmd, "-headers", header+"\r\n")
+		headers := ""
+		for _, h := range s.FFmpegOptions.Headers {
+			headers += h + "\r\n"
 		}
-	} else if s.Stream.Source.Headers != nil && len(s.Stream.Source.Headers) > 0 {
-		// 兼容旧的source.headers配置
-		var headersBuilder strings.Builder
-		for key, value := range s.Stream.Source.Headers {
-			headersBuilder.WriteString(key)
-			headersBuilder.WriteString(": ")
-			headersBuilder.WriteString(value)
-			headersBuilder.WriteString("\r\n")
-		}
-		if headersBuilder.Len() > 0 {
-			cmd = append(cmd, "-headers", headersBuilder.String())
-		}
+		cmd = append(cmd, "-headers", headers)
 	}
 
 	// Add source URL

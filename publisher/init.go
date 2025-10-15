@@ -62,87 +62,65 @@ func Stop() {
 	}
 }
 
-
 // convertConfig converts the config types to publisher types
 func convertConfig(cfg *config.PublisherConfig) *Config {
 	if cfg == nil {
 		return nil
 	}
 
-	// Create the publisher config
+	// 创建 publisher 配置
 	publisherCfg := &Config{
 		Path:    cfg.Path,
 		Streams: make(map[string]*Stream),
 	}
 
-	// Convert streams - 处理扁平结构
 	logger.LogPrintf("Converting config with %d streams", len(cfg.Streams))
 	for name, streamItem := range cfg.Streams {
 		logger.LogPrintf("Processing stream: %s", name)
 		logger.LogPrintf("Stream protocol: %s, enabled: %t", streamItem.Protocol, streamItem.Enabled)
-		
-		// 生成streamKey
+
+		// 生成 streamKey
 		streamKey := streamItem.StreamKey.Value
 		if streamKey == "" && streamItem.StreamKey.Type == "random" {
-			// 简单生成一个随机key用于测试
-			streamKey = "test_stream_key"
+			streamKey = "test_stream_key" // 简单随机 key
 		}
-		
+
+		// 转换 LocalPlayUrls
+		var localPlayUrls []PlayOutput
+		for _, output := range streamItem.Stream.LocalPlayUrls {
+			localPlayUrls = append(localPlayUrls, PlayOutput{
+				Protocol:      output.Protocol,
+				Enabled:       output.Enabled,
+				FFmpegOptions: convertFFmpegOptions(output.FFmpegOptions),
+			})
+		}
+
 		stream := &Stream{
 			BufferSize: streamItem.BufferSize,
 			Protocol:   streamItem.Protocol,
 			Enabled:    streamItem.Enabled,
-			StreamKey:  StreamKey{ // 使用配置中的streamkey
+			StreamKey: StreamKey{
 				Type:       streamItem.StreamKey.Type,
 				Value:      streamItem.StreamKey.Value,
 				Length:     streamItem.StreamKey.Length,
-				Expiration: streamItem.StreamKey.Expiration, // 添加Expiration字段
+				Expiration: streamItem.StreamKey.Expiration,
 			},
 			Stream: StreamConfig{
 				Source: Source{
-					Type:      streamItem.Stream.Source.Type,
-					URL:       streamItem.Stream.Source.URL,
-					BackupURL: streamItem.Stream.Source.BackupURL,
-					Headers:   streamItem.Stream.Source.Headers,
+					Type:          streamItem.Stream.Source.Type,
+					URL:           streamItem.Stream.Source.URL,
+					BackupURL:     streamItem.Stream.Source.BackupURL,
+					FFmpegOptions: convertFFmpegOptions(streamItem.Stream.Source.FFmpegOptions),
 				},
-				LocalPlayUrls: PlayUrl{
-					Flv: streamItem.Stream.LocalPlayUrls.Flv,
-					Hls: streamItem.Stream.LocalPlayUrls.Hls,
-				},
-				Mode: streamItem.Stream.Mode,
+				LocalPlayUrls: localPlayUrls,
+				Mode:          streamItem.Stream.Mode,
 				Receivers: Receivers{
 					Primary: convertReceiver(streamItem.Stream.Receivers.Primary),
 					Backup:  convertReceiver(streamItem.Stream.Receivers.Backup),
 					All:     convertReceivers(streamItem.Stream.Receivers.All),
 				},
 			},
-		}
-
-		// Convert FFmpeg options
-		if streamItem.FFmpegOptions != nil {
-			stream.FFmpegOptions = &FFmpegOptions{
-				GlobalArgs:     streamItem.FFmpegOptions.GlobalArgs,
-				InputPreArgs:   streamItem.FFmpegOptions.InputPreArgs,
-				InputPostArgs:  streamItem.FFmpegOptions.InputPostArgs,
-				VideoCodec:     streamItem.FFmpegOptions.VideoCodec,
-				AudioCodec:     streamItem.FFmpegOptions.AudioCodec,
-				VideoBitrate:   streamItem.FFmpegOptions.VideoBitrate,
-				AudioBitrate:   streamItem.FFmpegOptions.AudioBitrate,
-				Preset:         streamItem.FFmpegOptions.Preset,
-				CRF:            streamItem.FFmpegOptions.CRF,
-				OutputFormat:   streamItem.FFmpegOptions.OutputFormat,
-				OutputPreArgs:  streamItem.FFmpegOptions.OutputPreArgs,
-				OutputPostArgs: streamItem.FFmpegOptions.OutputPostArgs,
-				CustomArgs:     streamItem.FFmpegOptions.CustomArgs,
-			}
-
-			// Convert filter options
-			if streamItem.FFmpegOptions.Filters != nil {
-				stream.FFmpegOptions.Filters = &FilterOptions{
-					VideoFilters: streamItem.FFmpegOptions.Filters.VideoFilters,
-					AudioFilters: streamItem.FFmpegOptions.Filters.AudioFilters,
-				}
-			}
+			FFmpegOptions: convertFFmpegOptions(streamItem.FFmpegOptions),
 		}
 
 		publisherCfg.Streams[name] = stream
@@ -153,7 +131,7 @@ func convertConfig(cfg *config.PublisherConfig) *Config {
 	return publisherCfg
 }
 
-// convertReceiver converts a receiver item to a receiver
+// convertReceiver converts a receiver item to a new Receiver struct
 func convertReceiver(item *config.ReceiverItem) *Receiver {
 	if item == nil {
 		return nil
@@ -165,17 +143,18 @@ func convertReceiver(item *config.ReceiverItem) *Receiver {
 			Flv: item.PlayUrls.Flv,
 			Hls: item.PlayUrls.Hls,
 		},
-		PushPreArgs:  item.PushPreArgs,
-		PushPostArgs: item.PushPostArgs,
+		PushPreArgs:   item.PushPreArgs,
+		PushPostArgs:  item.PushPostArgs,
+		FFmpegOptions: convertFFmpegOptions(item.FFmpegOptions),
 	}
 }
 
-// convertReceivers converts receiver items to receivers
+// convertReceivers converts a slice of ReceiverItem to a slice of Receiver
 func convertReceivers(items []config.ReceiverItem) []Receiver {
 	if items == nil {
 		return nil
 	}
-	
+
 	receivers := make([]Receiver, len(items))
 	for i, item := range items {
 		receivers[i] = Receiver{
@@ -184,9 +163,48 @@ func convertReceivers(items []config.ReceiverItem) []Receiver {
 				Flv: item.PlayUrls.Flv,
 				Hls: item.PlayUrls.Hls,
 			},
-			PushPreArgs:  item.PushPreArgs,
-			PushPostArgs: item.PushPostArgs,
+			PushPreArgs:   item.PushPreArgs,
+			PushPostArgs:  item.PushPostArgs,
+			FFmpegOptions: convertFFmpegOptions(item.FFmpegOptions),
 		}
 	}
 	return receivers
+}
+
+// convertFFmpegOptions converts FFmpegOptions from config to publisher FFmpegOptions
+func convertFFmpegOptions(src *config.FFmpegOptions) *FFmpegOptions {
+	if src == nil {
+		return nil
+	}
+
+	dest := &FFmpegOptions{
+		GlobalArgs:     src.GlobalArgs,
+		InputPreArgs:   src.InputPreArgs,
+		InputPostArgs:  src.InputPostArgs,
+		VideoCodec:     src.VideoCodec,
+		AudioCodec:     src.AudioCodec,
+		VideoBitrate:   src.VideoBitrate,
+		AudioBitrate:   src.AudioBitrate,
+		Preset:         src.Preset,
+		CRF:            src.CRF,
+		OutputFormat:   src.OutputFormat,
+		OutputPreArgs:  src.OutputPreArgs,
+		OutputPostArgs: src.OutputPostArgs,
+		CustomArgs:     src.CustomArgs,
+		StreamCopy:     src.StreamCopy,
+		UseReFlag:      src.UseReFlag,
+		PixFmt:         src.PixFmt,
+		GopSize:        src.GopSize,
+		UserAgent:      src.UserAgent,
+		Headers:        src.Headers,
+	}
+
+	if src.Filters != nil {
+		dest.Filters = &FilterOptions{
+			VideoFilters: src.Filters.VideoFilters,
+			AudioFilters: src.Filters.AudioFilters,
+		}
+	}
+
+	return dest
 }

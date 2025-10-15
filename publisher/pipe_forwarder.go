@@ -882,22 +882,22 @@ func (pf *PipeForwarder) IsPushRunning() bool {
 	defer pf.ffmpegLock.Unlock()
 
 	if pf.ffmpegPush == nil {
-		logger.LogPrintf("[%s] IsPushRunning: ffmpegPush is nil", pf.streamName)
+		// logger.LogPrintf("[%s] IsPushRunning: ffmpegPush is nil", pf.streamName)
 		return false
 	}
 
 	if pf.ffmpegPush.Process == nil {
-		logger.LogPrintf("[%s] IsPushRunning: ffmpegPush.Process is nil", pf.streamName)
+		// logger.LogPrintf("[%s] IsPushRunning: ffmpegPush.Process is nil", pf.streamName)
 		return false
 	}
 
 	err := pf.ffmpegPush.Process.Signal(syscall.Signal(0))
 	if err != nil {
-		logger.LogPrintf("[%s] IsPushRunning: process check failed (PID=%d): %v",
-			pf.streamName, pf.ffmpegPush.Process.Pid, err)
+		// logger.LogPrintf("[%s] IsPushRunning: process check failed (PID=%d): %v",
+			// pf.streamName, pf.ffmpegPush.Process.Pid, err)
 		return false
 	}
 
-	logger.LogPrintf("[%s] IsPushRunning: process running (PID=%d)", pf.streamName, pf.ffmpegPush.Process.Pid)
+	// logger.LogPrintf("[%s] IsPushRunning: process running (PID=%d)", pf.streamName, pf.ffmpegPush.Process.Pid)
 	return true
 }

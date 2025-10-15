@@ -83,7 +83,7 @@ type FilterOptions struct {
 // StreamConfig represents stream source configuration
 type StreamConfig struct {
 	Source        Source    `yaml:"source"`
-	LocalPlayUrls PlayUrl   `yaml:"local_play_urls"`
+	LocalPlayUrls []PlayOutput   `yaml:"local_play_urls"`
 	Mode          string    `yaml:"mode"` // "primary-backup" or "all"
 	Receivers     Receivers `yaml:"receivers"`
 }
@@ -93,13 +93,14 @@ type Source struct {
 	Type      string            `yaml:"type,omitempty"`
 	URL       string            `yaml:"url"`
 	BackupURL string            `yaml:"backup_url,omitempty"`
-	Headers   map[string]string `yaml:"headers,omitempty"`
+	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"` //独立推流参数
 }
 
-// PlayUrls represents play URLs for different protocols
-type PlayUrl struct {
-	Flv bool `yaml:"flv,omitempty"`
-	Hls bool `yaml:"hls,omitempty"`
+// PlayOutput represents play URLs for different protocols
+type PlayOutput struct {
+	Protocol      string         `yaml:"protocol"`
+	Enabled       bool           `yaml:"enabled"`
+	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"` //独立推流参数
 }
 
 // PlayUrls represents play URLs for different protocols
@@ -121,4 +122,5 @@ type Receiver struct {
 	PlayUrls     PlayUrls `yaml:"play_urls"`
 	PushPreArgs  []string `yaml:"push_pre_args,omitempty"`  // 推流前参数
 	PushPostArgs []string `yaml:"push_post_args,omitempty"` // 推流后参数
+	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"` //独立推流参数
 }

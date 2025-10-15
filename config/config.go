@@ -140,6 +140,10 @@ type FFmpegOptions struct {
 	CustomArgs     []string       `yaml:"custom_args,omitempty"`      // 自定义参数
 	UserAgent      string         `yaml:"user_agent,omitempty"`       // User-Agent
 	Headers        []string       `yaml:"headers,omitempty"`          // 自定义请求头
+	StreamCopy     bool           `yaml:"stream_copy,omitempty"`      // 流复制模式（不重新编码）
+	UseReFlag      bool           `yaml:"use_re_flag,omitempty"`      // 是否使用-re参数（以本地帧速率读取输入）
+	PixFmt         string         `yaml:"pix_fmt,omitempty"`          // 像素格式，如 yuv420p
+	GopSize        int            `yaml:"gop_size,omitempty"`         // GOP大小
 }
 
 // FilterOptions represents video and audio filter configurations
@@ -151,23 +155,24 @@ type FilterOptions struct {
 // StreamData represents stream source configuration
 type StreamData struct {
 	Source        SourceData    `yaml:"source"`
-	LocalPlayUrls PlayUrl       `yaml:"local_play_urls"`
+	LocalPlayUrls []PlayOutput    `yaml:"local_play_urls"` // flv hls
 	Mode          string        `yaml:"mode"` // "primary-backup" or "all"
 	Receivers     ReceiversData `yaml:"receivers"`
 }
 
 // SourceData represents the source stream configuration
 type SourceData struct {
-	Type      string            `yaml:"type,omitempty"`
-	URL       string            `yaml:"url"`
-	BackupURL string            `yaml:"backup_url,omitempty"`
-	Headers   map[string]string `yaml:"headers,omitempty"`
+	Type          string         `yaml:"type,omitempty"`
+	URL           string         `yaml:"url"`
+	BackupURL     string         `yaml:"backup_url,omitempty"`
+	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"` //独立推流参数
 }
 
-// PlayUrls represents play URLs for different protocols
-type PlayUrl struct {
-	Flv bool `yaml:"flv,omitempty"`
-	Hls bool `yaml:"hls,omitempty"`
+// PlayOutput represents play URLs for different protocols
+type PlayOutput struct {
+	Protocol      string         `yaml:"protocol"`
+	Enabled       bool           `yaml:"enabled"`
+	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"` //独立推流参数
 }
 
 // PlayUrls represents play URLs for different protocols
@@ -185,10 +190,11 @@ type ReceiversData struct {
 
 // ReceiverItem represents a receiver configuration
 type ReceiverItem struct {
-	PushURL      string   `yaml:"push_url"`
-	PlayUrls     PlayUrls `yaml:"play_urls"`
-	PushPreArgs  []string `yaml:"push_pre_args,omitempty"`  // 推流前参数
-	PushPostArgs []string `yaml:"push_post_args,omitempty"` // 推流后参数
+	PushURL       string         `yaml:"push_url"`
+	PlayUrls      PlayUrls       `yaml:"play_urls"`
+	PushPreArgs   []string       `yaml:"push_pre_args,omitempty"`  // 推流前参数
+	PushPostArgs  []string       `yaml:"push_post_args,omitempty"` // 推流后参数
+	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"` //独立推流参数
 }
 
 // DNSConfig DNS配置
