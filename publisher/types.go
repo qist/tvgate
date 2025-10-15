@@ -6,8 +6,9 @@ import (
 
 // Config represents the publisher configuration
 type Config struct {
-	Path    string             `yaml:"path"`
-	Streams map[string]*Stream `yaml:",inline,omitempty"`
+	Path          string             `yaml:"path"`
+	Streams       map[string]*Stream `yaml:",inline,omitempty"`
+	FFmpegOptions *FFmpegOptions     `yaml:"ffmpeg_options,omitempty"` //独立推流参数
 }
 
 // Stream represents a single stream configuration
@@ -19,6 +20,7 @@ type Stream struct {
 	Stream        StreamConfig   `yaml:"stream"`
 	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"`
 	PipeForwarder *PipeForwarder `yaml:"pipe_forwarder,omitempty"` // 命名管道转发配置
+	ParentConfig  *Config        `yaml:"-"`                        // 用于访问全局 FFmpegOptions
 }
 
 // StreamKey represents the stream key configuration
@@ -82,17 +84,17 @@ type FilterOptions struct {
 
 // StreamConfig represents stream source configuration
 type StreamConfig struct {
-	Source        Source    `yaml:"source"`
-	LocalPlayUrls []PlayOutput   `yaml:"local_play_urls"`
-	Mode          string    `yaml:"mode"` // "primary-backup" or "all"
-	Receivers     Receivers `yaml:"receivers"`
+	Source        Source       `yaml:"source"`
+	LocalPlayUrls []PlayOutput `yaml:"local_play_urls"`
+	Mode          string       `yaml:"mode"` // "primary-backup" or "all"
+	Receivers     Receivers    `yaml:"receivers"`
 }
 
 // Source represents the source stream configuration
 type Source struct {
-	Type      string            `yaml:"type,omitempty"`
-	URL       string            `yaml:"url"`
-	BackupURL string            `yaml:"backup_url,omitempty"`
+	Type          string         `yaml:"type,omitempty"`
+	URL           string         `yaml:"url"`
+	BackupURL     string         `yaml:"backup_url,omitempty"`
 	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"` //独立推流参数
 }
 
@@ -118,9 +120,9 @@ type Receivers struct {
 
 // Receiver represents a receiver configuration
 type Receiver struct {
-	PushURL      string   `yaml:"push_url"`
-	PlayUrls     PlayUrls `yaml:"play_urls"`
-	PushPreArgs  []string `yaml:"push_pre_args,omitempty"`  // 推流前参数
-	PushPostArgs []string `yaml:"push_post_args,omitempty"` // 推流后参数
+	PushURL       string         `yaml:"push_url"`
+	PlayUrls      PlayUrls       `yaml:"play_urls"`
+	PushPreArgs   []string       `yaml:"push_pre_args,omitempty"`  // 推流前参数
+	PushPostArgs  []string       `yaml:"push_post_args,omitempty"` // 推流后参数
 	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"` //独立推流参数
 }

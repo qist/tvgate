@@ -101,7 +101,8 @@ type Config struct {
 type PublisherConfig struct {
 	Path string `yaml:"path"`
 	// 注意：这里直接包含streams而不是嵌套在Streams字段中
-	Streams map[string]*StreamItem `yaml:",inline,omitempty"`
+	Streams       map[string]*StreamItem `yaml:",inline,omitempty"`
+	FFmpegOptions *FFmpegOptions         `yaml:"ffmpeg_options,omitempty"` //独立推流参数
 }
 
 // StreamItem represents a single stream configuration item
@@ -112,6 +113,7 @@ type StreamItem struct {
 	StreamKey     StreamKey      `yaml:"streamkey,omitempty"`
 	Stream        StreamData     `yaml:"stream"`
 	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"`
+	ParentConfig  *PublisherConfig `yaml:"-"` // 用于访问全局 FFmpegOptions
 }
 
 // StreamKey represents the stream key configuration
@@ -155,8 +157,8 @@ type FilterOptions struct {
 // StreamData represents stream source configuration
 type StreamData struct {
 	Source        SourceData    `yaml:"source"`
-	LocalPlayUrls []PlayOutput    `yaml:"local_play_urls"` // flv hls
-	Mode          string        `yaml:"mode"` // "primary-backup" or "all"
+	LocalPlayUrls []PlayOutput  `yaml:"local_play_urls"` // flv hls
+	Mode          string        `yaml:"mode"`            // "primary-backup" or "all"
 	Receivers     ReceiversData `yaml:"receivers"`
 }
 
