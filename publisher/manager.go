@@ -68,6 +68,7 @@ type StreamManager struct {
 	ffmpegProcesses map[int]*FFmpegProcessInfo // 按receiver index存储FFmpeg进程信息
 	processesMutex  sync.Mutex                 // 保护ffmpegProcesses访问
 	pipeForwarder   *PipeForwarder             // 用于本地播放的管道转发器
+	streamStarted   bool                       // 标记流是否已经启动
 }
 
 // NewManager creates a new publisher manager
@@ -166,6 +167,7 @@ func (m *Manager) Start() error {
 			cancel:          cancel,
 			ctx:             ctx,
 			running:         true,
+			streamStarted:   false, // 初始化流启动状态为false
 			ffmpegProcesses: make(map[int]*FFmpegProcessInfo),
 		}
 
@@ -195,6 +197,8 @@ func (m *Manager) Start() error {
 		}
 
 		m.streams[name] = streamManager
+
+		// 启动流 - 在初始化时总是启动流，避免配置更新时重复启动
 		go streamManager.startStreaming()
 
 		// 如果需要更新配置文件（新生成密钥的情况），则更新配置文件
@@ -389,6 +393,8 @@ func (m *Manager) startStream(name string, stream *Stream) {
 		logger.LogPrintf("Stream %s already exists, stopping it first", name)
 		existingStream.Stop()
 		delete(m.streams, name)
+		// 等待一段时间确保流完全停止
+		time.Sleep(500 * time.Millisecond)
 	}
 
 	// Create context for this stream
@@ -449,10 +455,13 @@ func (m *Manager) startStream(name string, stream *Stream) {
 		cancel:          cancel,
 		ctx:             ctx,
 		running:         true,
+		streamStarted:   false, // 初始化为false
 		ffmpegProcesses: make(map[int]*FFmpegProcessInfo),
 	}
 
 	m.streams[name] = streamManager
+	
+	// 启动流 - 在配置更新时总是启动流
 	go streamManager.startStreaming()
 
 	// 如果需要更新配置文件（新生成密钥的情况），则更新配置文件
@@ -466,7 +475,7 @@ func (m *Manager) startStream(name string, stream *Stream) {
 	}
 }
 
-// UpdateConfig updates the manager configuration and restarts streams if needed
+// UpdateConfig updates the manager configuration
 func (m *Manager) UpdateConfig(newConfig *Config) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
@@ -504,6 +513,9 @@ func (m *Manager) UpdateConfig(newConfig *Config) {
 					logger.LogPrintf("Stream %s configuration changed, restarting", name)
 					// 停止旧流
 					m.streams[name].Stop()
+					delete(m.streams, name)
+					// 等待一段时间确保流完全停止
+					time.Sleep(1 * time.Second)
 					// 创建新流
 					m.startStream(name, newStream)
 				}
@@ -538,6 +550,15 @@ func (m *Manager) UpdateConfig(newConfig *Config) {
 
 // startStreaming starts the streaming process for a single stream
 func (sm *StreamManager) startStreaming() {
+	sm.mutex.Lock()
+	if sm.streamStarted {
+		sm.mutex.Unlock()
+		logger.LogPrintf("Stream %s already started, skipping", sm.name)
+		return
+	}
+	sm.streamStarted = true
+	sm.mutex.Unlock()
+	
 	logger.LogPrintf("Starting stream %s with key %s", sm.name, sm.streamKey)
 
 	// 确保即使密钥未过期也能正常启动推流
@@ -1203,8 +1224,8 @@ func (sm *StreamManager) restartStreaming() {
 	// 先停止当前推流
 	sm.Stop()
 
-	// 等待一小段时间确保旧的推流完全停止
-	time.Sleep(100 * time.Millisecond)
+	// 等待一段时间确保旧的推流完全停止
+	time.Sleep(1 * time.Second)
 
 	// 重新创建context
 	sm.mutex.Lock()
@@ -1254,6 +1275,9 @@ func (sm *StreamManager) Stop() {
 	if sm.pipeForwarder != nil {
 		sm.pipeForwarder.Stop()
 	}
+
+	// 等待一小段时间确保所有goroutine都已退出
+	time.Sleep(100 * time.Millisecond)
 
 	logger.LogPrintf("Stream manager for %s stopped", sm.name)
 }
