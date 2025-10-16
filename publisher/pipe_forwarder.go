@@ -67,54 +67,60 @@ type PipeForwarder struct {
     ffmpegLock sync.Mutex
     // FFmpeg进程状态监控
     stats *FFmpegProcessStats
+
+    // 保护 ffIn 变量的互斥锁
+    ffInLock sync.Mutex
 }
 
 // NewPipeForwarder 创建新的 PipeForwarder
-func NewPipeForwarder(streamName string, sourceURL string, backupURL string, hlsEnabled bool, hub *stream.StreamHubs) *PipeForwarder {
-    ctx, cancel := context.WithCancel(context.Background())
-    
-    // 创建新的StreamHubs
-    h := stream.NewStreamHubs()
+func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull bool, hub *stream.StreamHubs) *PipeForwarder {
+	ctx, cancel := context.WithCancel(context.Background())
+	var h *stream.StreamHubs
+	if hub != nil {
+		h = hub
+	} else {
+		h = stream.NewStreamHubs()
+	}
 
-    // 初始化 HLS 管理器
-    // 使用基础流名称（去除_primary、_backup等后缀）生成HLS路径
-    baseStreamName := streamName
-    if strings.Contains(baseStreamName, "_") {
-        // 提取第一个下划线之前的部分作为基础流名称
-        parts := strings.Split(baseStreamName, "_")
-        baseStreamName = parts[0]
-    }
+	// 初始化 HLS 管理器
+	// 使用基础流名称（去除_primary、_backup等后缀）生成HLS路径
+	baseStreamName := streamName
+	if strings.Contains(baseStreamName, "_") {
+		// 提取第一个下划线之前的部分作为基础流名称
+		parts := strings.Split(baseStreamName, "_")
+		baseStreamName = parts[0]
+	}
 
-    segmentPath := filepath.Join("/tmp/hls", baseStreamName)
-    os.MkdirAll(segmentPath, 0755)
+	segmentPath := filepath.Join("/tmp/hls", baseStreamName)
+	os.MkdirAll(segmentPath, 0755)
 
-    hlsManager := NewHLSSegmentManager(ctx, baseStreamName, segmentPath, 5) // 5秒片段时长
-    hlsManager.SetHub(h)
-    hlsManager.SetNeedPull(true) // 默认需要拉流
+	hlsManager := NewHLSSegmentManager(ctx, baseStreamName, segmentPath, 5) // 5秒片段时长
+	hlsManager.SetHub(h)
+	hlsManager.SetNeedPull(needPull) // 设置needPull标志
 
-    pipeForwarder := &PipeForwarder{
-        streamName: streamName,
-        rtmpURL:    sourceURL,     // 临时存储sourceURL，后续会根据模式处理
-        enabled:    true,          // 默认启用
-        needPull:   true,          // 默认需要拉流
-        ctx:        ctx,
-        cancel:     cancel,
-        hub:        h,
-        hlsManager: hlsManager,
-        hlsEnabled: hlsEnabled,    // 根据参数设置HLS启用状态
-    }
-    
-    // 初始化 FFmpegProcessStats
-    pipeForwarder.stats = &FFmpegProcessStats{
-        StreamName:    streamName,
-        ReceiverIndex: -1, // -1 表示 PipeForwarder
-        StartTime:     time.Now(),
-        Running:       false,
-        LastError:     "",
-    }
+	pipeForwarder := &PipeForwarder{
+		streamName: streamName,
+		rtmpURL:    rtmpURL,
+		enabled:    enabled,
+		needPull:   needPull,
+		ctx:        ctx,
+		cancel:     cancel,
+		hub:        h,
+		hlsManager: hlsManager,
+		hlsEnabled: true, // 默认启用，后续会根据配置调整
+	}
+	// 初始化 FFmpegProcessStats
+	pipeForwarder.stats = &FFmpegProcessStats{
+		StreamName:    streamName,
+		ReceiverIndex: -1, // -1 表示 PipeForwarder
+		StartTime:     time.Now(),
+		Running:       false,
+		LastError:     "",
+	}
 
-    return pipeForwarder
+	return pipeForwarder
 }
+
 
 // SetCallbacks 设置启动和停止回调
 func (pf *PipeForwarder) SetCallbacks(onStarted, onStopped func()) {
@@ -567,9 +573,6 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 
 	// 只有在确实配置了接收器时才启用 RTMP 推流
 	if hasReceivers && streamManager != nil {
-		// 标记是否是第一个推流进程（用于 IsPushRunning 检测）
-		isFirstPush := true
-		
 		// 根据模式和接收器配置构建推流命令
 		var pushCommands [][]string
 		
@@ -580,26 +583,22 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 			// primary-backup 模式，使用 primary 接收器的配置
 			if streamManager.stream.Stream.Receivers.Primary != nil {
 				// 检查并更新过期的 stream key
-				pushURL := pf.checkAndUpdateStreamKey(streamManager, streamManager.stream.Stream.Receivers.Primary.PushURL)
 				
 				// 使用 primary 接收器的 ffmpeg_options 构建推流参数
 				cmd := pf.buildPushCommandWithReceiverOptions(
 					streamManager.stream.Stream.Receivers.Primary.FFmpegOptions,
-					pushURL,
+					pf.rtmpURL,
 				)
 				pushCommands = append(pushCommands, cmd)
 			}
 		} else if streamManager.stream.Stream.Mode == "all" && !isReceiverSpecific {
-			// all 模式且不是特定接收器的PipeForwarder，只使用第一个接收器的配置
-			// 避免在单个PipeForwarder中为所有接收器创建推流进程
-			if len(streamManager.stream.Stream.Receivers.All) > 0 {
-				firstReceiver := streamManager.stream.Stream.Receivers.All[0]
+			// all 模式且不是特定接收器的PipeForwarder，为所有接收器创建推流命令
+			for _, receiver := range streamManager.stream.Stream.Receivers.All {
 				// 检查并更新过期的 stream key
-				pushURL := pf.checkAndUpdateStreamKey(streamManager, firstReceiver.PushURL)
 				
 				cmd := pf.buildPushCommandWithReceiverOptions(
-					firstReceiver.FFmpegOptions,
-					pushURL,
+					receiver.FFmpegOptions,
+					pf.rtmpURL,
 				)
 				pushCommands = append(pushCommands, cmd)
 			}
@@ -614,11 +613,10 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					if receiverIndex < len(streamManager.stream.Stream.Receivers.All) {
 						receiver := streamManager.stream.Stream.Receivers.All[receiverIndex]
 						// 检查并更新过期的 stream key
-						pushURL := pf.checkAndUpdateStreamKey(streamManager, receiver.PushURL)
 						
 						cmd := pf.buildPushCommandWithReceiverOptions(
 							receiver.FFmpegOptions,
-							pushURL,
+							pf.rtmpURL,
 						)
 						pushCommands = append(pushCommands, cmd)
 					}
@@ -627,17 +625,16 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 		} else if len(receivers) > 0 {
 			// 其他模式，使用第一个接收器的配置
 			// 检查并更新过期的 stream key
-			pushURL := pf.checkAndUpdateStreamKey(streamManager, receivers[0].PushURL)
 			
 			cmd := pf.buildPushCommandWithReceiverOptions(
 				receivers[0].FFmpegOptions,
-				pushURL,
+				pf.rtmpURL,
 			)
 			pushCommands = append(pushCommands, cmd)
 		}
 		
 		// 为每个推流命令创建一个推流进程（通常只有一个）
-		for _, pushCmd := range pushCommands {
+		for i, pushCmd := range pushCommands {
 			// 创建推流命令
 			ffmpegPush := exec.CommandContext(pf.ctx, "ffmpeg", pushCmd...)
 			var err error
@@ -659,35 +656,83 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				continue
 			} else {
 				// ✅ 保存到 pf.ffmpegPush 以供 IsPushRunning() 检测（仅保存第一个）
-				if isFirstPush {
+				if i == 0 { // 第一个推流进程作为主进程
 					pf.ffmpegLock.Lock()
 					pf.ffmpegPush = ffmpegPush
 					pf.ffmpegLock.Unlock()
-					isFirstPush = false
 					
 					// 将第一个推流进程的 stdin pipe 赋值给 ffIn
 					ffIn = pushStdin
 				} else {
-					// 为非第一个推流进程创建数据复制 goroutine
+					// 为非第一个推流进程创建完全独立的数据流路径
 					go func(stdin io.WriteCloser) {
 						defer stdin.Close()
 						buf := make([]byte, 32*1024)
+						
+						// 为每个非主推流进程创建独立的 pipe reader
+						pipeReader, pipeWriter := io.Pipe()
+						
+						// 启动数据复制 goroutine
+						go func() {
+							defer pipeWriter.Close()
+							mainBuf := make([]byte, 32*1024)
+							for {
+								select {
+								case <-pf.ctx.Done():
+									return
+								default:
+									n, err := pf.pipeReader.Read(mainBuf)
+									if n > 0 {
+										_, werr := pipeWriter.Write(mainBuf[:n])
+										if werr != nil {
+											if werr == io.ErrClosedPipe || strings.Contains(werr.Error(), "file already closed") {
+												return
+											}
+											logger.LogPrintf("[%s] Error writing to backup RTMP pipe: %v", pf.streamName, werr)
+											return
+										}
+									}
+									if err != nil {
+										if err == io.EOF || err == io.ErrClosedPipe || 
+										   strings.Contains(err.Error(), "file already closed") ||
+										   strings.Contains(err.Error(), "read/write on closed pipe") {
+											return
+										}
+										if err != io.EOF {
+											logger.LogPrintf("[%s] Error reading from main pipe for backup push: %v", pf.streamName, err)
+										}
+										return
+									}
+								}
+							}
+						}()
+						
+						// 从独立的 pipe reader 读取数据并写入到推流进程的 stdin
 						for {
 							select {
 							case <-pf.ctx.Done():
 								return
 							default:
-								n, err := pf.pipeReader.Read(buf)
+								n, err := pipeReader.Read(buf)
 								if n > 0 {
 									_, werr := stdin.Write(buf[:n])
 									if werr != nil {
+										if werr == io.ErrClosedPipe || strings.Contains(werr.Error(), "file already closed") || 
+										   strings.Contains(werr.Error(), "broken pipe") {
+											return
+										}
 										logger.LogPrintf("[%s] Error writing to backup RTMP stdin: %v", pf.streamName, werr)
 										return
 									}
 								}
 								if err != nil {
+									if err == io.EOF || err == io.ErrClosedPipe || 
+									   strings.Contains(err.Error(), "file already closed") ||
+									   strings.Contains(err.Error(), "read/write on closed pipe") {
+										return
+									}
 									if err != io.EOF {
-										logger.LogPrintf("[%s] Error reading from pipe for backup push: %v", pf.streamName, err)
+										logger.LogPrintf("[%s] Error reading from backup pipe: %v", pf.streamName, err)
 									}
 									return
 								}
@@ -727,10 +772,12 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 			select {
 			case <-pf.ctx.Done():
 				logger.LogPrintf("[%s] context canceled, stopping forwardDataFromPipe", pf.streamName)
+				pf.ffInLock.Lock()
 				if ffIn != nil {
 					_ = ffIn.Close()
 					ffIn = nil
 				}
+				pf.ffInLock.Unlock()
 				// 等待推流进程退出
 				pushWg.Wait()
 				return
@@ -757,11 +804,15 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					}
 					pf.headerMutex.Unlock()
 
-					// 只向第一个推流进程写入数据（ffIn）
-					if ffIn != nil {
+					// 写入 RTMP 推流进程 stdin（如果有）
+					pf.ffInLock.Lock()
+					currentFFIn := ffIn
+					pf.ffInLock.Unlock()
+					
+					if currentFFIn != nil {
 						wDone := make(chan error, 1)
 						go func() {
-							_, werr := ffIn.Write(chunk)
+							_, werr := currentFFIn.Write(chunk)
 							wDone <- werr
 						}()
 
@@ -769,13 +820,21 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 						case werr := <-wDone:
 							if werr != nil {
 								logger.LogPrintf("[%s] Error writing to RTMP stdin: %v — closing ffIn", pf.streamName, werr)
-								_ = ffIn.Close()
-								ffIn = nil
+								pf.ffInLock.Lock()
+								if ffIn != nil {
+									_ = ffIn.Close()
+									ffIn = nil
+								}
+								pf.ffInLock.Unlock()
 							}
 						case <-time.After(5 * time.Second):
 							logger.LogPrintf("[%s] Timeout writing to RTMP stdin — closing ffIn", pf.streamName)
-							_ = ffIn.Close()
-							ffIn = nil
+							pf.ffInLock.Lock()
+							if ffIn != nil {
+								_ = ffIn.Close()
+								ffIn = nil
+							}
+							pf.ffInLock.Unlock()
 						}
 					}
 
@@ -789,10 +848,12 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				if err != nil {
 					if err == io.EOF {
 						logger.LogPrintf("[%s] pipe EOF reached", pf.streamName)
+						pf.ffInLock.Lock()
 						if ffIn != nil {
 							_ = ffIn.Close()
 							ffIn = nil
 						}
+						pf.ffInLock.Unlock()
 						// 等待可选的推流进程退出
 						pushWg.Wait()
 						return
@@ -816,10 +877,12 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				select {
 				case <-pf.ctx.Done():
 					logger.LogPrintf("[%s] context canceled, stopping forwardDataFromPipe (forward-only mode)", pf.streamName)
+					pf.ffInLock.Lock()
 					if ffIn != nil {
 						_ = ffIn.Close()
 						ffIn = nil
 					}
+					pf.ffInLock.Unlock()
 					// 等待所有推流进程完全退出
 					pushWg.Wait()
 					// 从 hub 移除客户端
@@ -859,13 +922,21 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 							case werr := <-wDone:
 								if werr != nil {
 									logger.LogPrintf("[%s] Error writing to RTMP stdin: %v — closing ffIn", pf.streamName, werr)
-									_ = ffIn.Close()
-									ffIn = nil
+									pf.ffInLock.Lock()
+									if ffIn != nil {
+										_ = ffIn.Close()
+										ffIn = nil
+									}
+									pf.ffInLock.Unlock()
 								}
 							case <-time.After(5 * time.Second):
 								logger.LogPrintf("[%s] Timeout writing to RTMP stdin — closing ffIn", pf.streamName)
-								_ = ffIn.Close()
-								ffIn = nil
+								pf.ffInLock.Lock()
+								if ffIn != nil {
+									_ = ffIn.Close()
+									ffIn = nil
+								}
+								pf.ffInLock.Unlock()
 							}
 						}
 						// pf.hlsManager.WriteData(chunk)
@@ -967,45 +1038,6 @@ func (pf *PipeForwarder) buildPushCommandWithReceiverOptions(options *FFmpegOpti
 	}
 	
 	return cmd
-}
-
-// checkAndUpdateStreamKey 检查推流URL中的stream key是否过期，如果过期则更新
-func (pf *PipeForwarder) checkAndUpdateStreamKey(streamManager *StreamManager, pushURL string) string {
-	// 如果没有配置推流URL，则直接返回原URL
-	if pushURL == "" {
-		return pushURL
-	}
-	
-	// 获取当前的 stream key 和创建时间
-	currentStreamKey := streamManager.GetStreamKey()
-	createdAt := streamManager.GetCreatedAt()
-	
-	// 检查 stream key 是否过期
-	if streamManager.stream.CheckStreamKeyExpiration(currentStreamKey, createdAt) {
-		// stream key 过期，生成新的 stream key
-		newStreamKey, err := streamManager.UpdateStreamKey()
-		if err != nil {
-			logger.LogPrintf("[%s] Failed to update stream key: %v", pf.streamName, err)
-			// 如果更新失败，仍然使用旧的 stream key
-			return pushURL
-		}
-		
-		logger.LogPrintf("[%s] Stream key updated from %s to %s", pf.streamName, currentStreamKey, newStreamKey)
-		currentStreamKey = newStreamKey
-	}
-	
-	// 如果URL包含 {streamkey} 占位符，则替换为实际的 stream key
-	if strings.Contains(pushURL, "{streamkey}") {
-		return strings.Replace(pushURL, "{streamkey}", currentStreamKey, -1)
-	}
-	
-	// 如果URL以斜杠结尾，则附加 stream key
-	if strings.HasSuffix(pushURL, "/") {
-		return pushURL + currentStreamKey
-	}
-	
-	// 否则直接返回原URL
-	return pushURL
 }
 
 // waitWithBackupSupport 等待主 ffmpeg 进程退出，如果配置了 backup_url 则尝试切换到备用URL
