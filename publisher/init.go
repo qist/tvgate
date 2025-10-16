@@ -63,27 +63,21 @@ func Stop() {
 	}
 }
 
-// 并自动合并全局 FFmpegOptions
+
+// convertConfig converts config.PublisherConfig to publisher.Config
 func convertConfig(cfg *config.PublisherConfig) *Config {
 	if cfg == nil {
 		return nil
 	}
 
-	// 创建 publisher 配置，保证全局 FFmpegOptions 永不为 nil
 	publisherCfg := &Config{
 		Path:    cfg.Path,
 		Streams: make(map[string]*Stream),
 	}
 
-	publisherCfg.FFmpegOptions = convertFFmpegOptions(cfg.FFmpegOptions)
-	if publisherCfg.FFmpegOptions == nil {
-		publisherCfg.FFmpegOptions = &FFmpegOptions{}
-	}
-
 	logger.LogPrintf("Converting config with %d streams", len(cfg.Streams))
 	for name, streamItem := range cfg.Streams {
 		logger.LogPrintf("Processing stream: %s", name)
-		logger.LogPrintf("Stream protocol: %s, enabled: %t", streamItem.Protocol, streamItem.Enabled)
 
 		// 生成 streamKey
 		streamKey := streamItem.StreamKey.Value
@@ -91,17 +85,16 @@ func convertConfig(cfg *config.PublisherConfig) *Config {
 			streamKey = "test_stream_key"
 		}
 
-		// 转换 LocalPlayUrls
-		localPlayUrls := make([]PlayOutput, len(streamItem.Stream.LocalPlayUrls))
-		for i, output := range streamItem.Stream.LocalPlayUrls {
-			localPlayUrls[i] = PlayOutput{
-				Protocol:      output.Protocol,
-				Enabled:       output.Enabled,
-				FFmpegOptions: convertFFmpegOptions(output.FFmpegOptions),
-			}
-		}
+		// Source FFmpegOptions
+		sourceOpts := convertFFmpegOptions(streamItem.Stream.Source.FFmpegOptions)
 
-		// 转换 Stream
+		// 转换 LocalPlayUrls
+		localPlayUrls := convertLocalPlayUrls(streamItem.Stream.LocalPlayUrls, sourceOpts)
+
+		// 转换 Receivers
+		receivers := convertReceivers(streamItem.Stream.Receivers, sourceOpts)
+
+		// 构建 Stream
 		stream := &Stream{
 			BufferSize: streamItem.BufferSize,
 			Protocol:   streamItem.Protocol,
@@ -113,61 +106,11 @@ func convertConfig(cfg *config.PublisherConfig) *Config {
 				Expiration: streamItem.StreamKey.Expiration,
 			},
 			Stream: StreamConfig{
-				Source: Source{
-					Type:          streamItem.Stream.Source.Type,
-					URL:           streamItem.Stream.Source.URL,
-					BackupURL:     streamItem.Stream.Source.BackupURL,
-					FFmpegOptions: convertFFmpegOptions(streamItem.Stream.Source.FFmpegOptions),
-				},
+				Source:        Source{Type: streamItem.Stream.Source.Type, URL: streamItem.Stream.Source.URL, BackupURL: streamItem.Stream.Source.BackupURL, FFmpegOptions: sourceOpts},
 				LocalPlayUrls: localPlayUrls,
 				Mode:          streamItem.Stream.Mode,
-				Receivers: Receivers{
-					Primary: convertReceiver(streamItem.Stream.Receivers.Primary),
-					Backup:  convertReceiver(streamItem.Stream.Receivers.Backup),
-					All:     convertReceivers(streamItem.Stream.Receivers.All),
-				},
+				Receivers:     receivers,
 			},
-			FFmpegOptions: convertFFmpegOptions(streamItem.FFmpegOptions),
-			ParentConfig:  publisherCfg,
-		}
-
-		// ------------------------------
-		// 合并 FFmpegOptions（全局覆盖 + 子级覆盖）
-		// ------------------------------
-		// 先合并 Stream 自身和 Source，得到最终有效的 Stream 参数
-		effectiveStreamOpts := mergeFFmpegOptions(
-			publisherCfg.FFmpegOptions,
-			stream.FFmpegOptions,
-			stream.Stream.Source.FFmpegOptions,
-		)
-		stream.FFmpegOptions = effectiveStreamOpts
-
-		// LocalPlayUrls FFmpegOptions = effectiveStreamOpts -> LocalPlayUrl 子级
-		for i := range stream.Stream.LocalPlayUrls {
-			stream.Stream.LocalPlayUrls[i].FFmpegOptions = mergeFFmpegOptions(
-				effectiveStreamOpts,
-				stream.Stream.LocalPlayUrls[i].FFmpegOptions,
-			)
-		}
-
-		// Receivers FFmpegOptions = effectiveStreamOpts -> Receiver 子级
-		if stream.Stream.Receivers.Primary != nil {
-			stream.Stream.Receivers.Primary.FFmpegOptions = mergeFFmpegOptions(
-				effectiveStreamOpts,
-				stream.Stream.Receivers.Primary.FFmpegOptions,
-			)
-		}
-		if stream.Stream.Receivers.Backup != nil {
-			stream.Stream.Receivers.Backup.FFmpegOptions = mergeFFmpegOptions(
-				effectiveStreamOpts,
-				stream.Stream.Receivers.Backup.FFmpegOptions,
-			)
-		}
-		for i := range stream.Stream.Receivers.All {
-			stream.Stream.Receivers.All[i].FFmpegOptions = mergeFFmpegOptions(
-				effectiveStreamOpts,
-				stream.Stream.Receivers.All[i].FFmpegOptions,
-			)
 		}
 
 		// 添加到 publisherCfg
@@ -175,14 +118,128 @@ func convertConfig(cfg *config.PublisherConfig) *Config {
 		logger.LogPrintf("Added stream %s to publisher config", name)
 
 		// 打印最终有效参数
-		fmt.Printf("Stream %s effective FFmpegOptions: %+v\n", name, effectiveStreamOpts)
+		fmt.Printf("Stream %s Source FFmpegOptions: %+v\n", name, sourceOpts)
+		
+		// 打印接收者的FFmpeg选项
 		if stream.Stream.Receivers.Primary != nil {
-			fmt.Printf("Primary receiver effective FFmpegOptions: %+v\n", stream.Stream.Receivers.Primary.FFmpegOptions)
+			fmt.Printf("Stream %s Primary Receiver FFmpegOptions: %+v\n", name, stream.Stream.Receivers.Primary.FFmpegOptions)
+			// 打印GlobalArgs和InputPreArgs的详细信息
+			fmt.Printf("Stream %s Primary Receiver GlobalArgs: %+v\n", name, stream.Stream.Receivers.Primary.FFmpegOptions.GlobalArgs)
+			fmt.Printf("Stream %s Primary Receiver InputPreArgs: %+v\n", name, stream.Stream.Receivers.Primary.FFmpegOptions.InputPreArgs)
+		}
+		if stream.Stream.Receivers.Backup != nil {
+			fmt.Printf("Stream %s Backup Receiver FFmpegOptions: %+v\n", name, stream.Stream.Receivers.Backup.FFmpegOptions)
+			// 打印GlobalArgs和InputPreArgs的详细信息
+			fmt.Printf("Stream %s Backup Receiver GlobalArgs: %+v\n", name, stream.Stream.Receivers.Backup.FFmpegOptions.GlobalArgs)
+			fmt.Printf("Stream %s Backup Receiver InputPreArgs: %+v\n", name, stream.Stream.Receivers.Backup.FFmpegOptions.InputPreArgs)
+		}
+		for i, receiver := range stream.Stream.Receivers.All {
+			fmt.Printf("Stream %s All Receiver[%d] FFmpegOptions: %+v\n", name, i, receiver.FFmpegOptions)
+			// 打印GlobalArgs和InputPreArgs的详细信息
+			fmt.Printf("Stream %s All Receiver[%d] GlobalArgs: %+v\n", name, i, receiver.FFmpegOptions.GlobalArgs)
+			fmt.Printf("Stream %s All Receiver[%d] InputPreArgs: %+v\n", name, i, receiver.FFmpegOptions.InputPreArgs)
+		}
+
+	}
+
+	return publisherCfg
+}
+
+// convertLocalPlayUrls converts PlayOutputItem to PlayOutput and merges FFmpegOptions with source
+func convertLocalPlayUrls(outputs []config.PlayOutput, sourceOpts *FFmpegOptions) []PlayOutput {
+	if outputs == nil {
+		return nil
+	}
+
+	res := make([]PlayOutput, len(outputs))
+	for i, output := range outputs {
+		sourceCopy := copyFFmpegOptions(sourceOpts)
+
+		res[i] = PlayOutput{
+			Protocol: output.Protocol,
+			Enabled:  output.Enabled,
+		}
+
+		switch output.Protocol {
+		case "flv":
+			res[i].FlvFFmpegOptions = mergeFFmpegOptions(sourceCopy, convertFFmpegOptions(output.FlvFFmpegOptions))
+		case "hls":
+			res[i].HlsFFmpegOptions = mergeFFmpegOptions(sourceCopy, convertFFmpegOptions(output.HlsFFmpegOptions))
+		}
+	}
+	return res
+}
+
+// convertReceivers converts Receivers from config to publisher Receivers, merging FFmpegOptions with source
+func convertReceivers(items config.ReceiversData, sourceOpts *FFmpegOptions) Receivers {
+	var res Receivers
+
+	if items.Primary != nil {
+		res.Primary = &Receiver{
+			PushURL:       items.Primary.PushURL,
+			PlayUrls:      PlayUrls{Flv: items.Primary.PlayUrls.Flv, Hls: items.Primary.PlayUrls.Hls},
+			FFmpegOptions: mergeFFmpegOptions(sourceOpts, convertFFmpegOptions(items.Primary.FFmpegOptions)),
 		}
 	}
 
-	logger.LogPrintf("Converted config has %d streams", len(publisherCfg.Streams))
-	return publisherCfg
+	if items.Backup != nil {
+		res.Backup = &Receiver{
+			PushURL:       items.Backup.PushURL,
+			PlayUrls:      PlayUrls{Flv: items.Backup.PlayUrls.Flv, Hls: items.Backup.PlayUrls.Hls},
+			FFmpegOptions: mergeFFmpegOptions(sourceOpts, convertFFmpegOptions(items.Backup.FFmpegOptions)),
+		}
+	}
+
+	if items.All != nil {
+		res.All = make([]Receiver, len(items.All))
+		for i, item := range items.All {
+			res.All[i] = Receiver{
+				PushURL:       item.PushURL,
+				PlayUrls:      PlayUrls{Flv: item.PlayUrls.Flv, Hls: item.PlayUrls.Hls},
+				FFmpegOptions: mergeFFmpegOptions(sourceOpts, convertFFmpegOptions(item.FFmpegOptions)),
+			}
+		}
+	}
+
+	return res
+}
+
+// copyFFmpegOptions creates a deep copy of FFmpegOptions
+func copyFFmpegOptions(src *FFmpegOptions) *FFmpegOptions {
+	if src == nil {
+		return &FFmpegOptions{}
+	}
+
+	dest := *src
+	if src.Filters != nil {
+		filters := *src.Filters
+		dest.Filters = &filters
+	}
+
+	// slice 类型要新建一份
+	if src.GlobalArgs != nil {
+		dest.GlobalArgs = append([]string{}, src.GlobalArgs...)
+	}
+	if src.InputPreArgs != nil {
+		dest.InputPreArgs = append([]string{}, src.InputPreArgs...)
+	}
+	if src.InputPostArgs != nil {
+		dest.InputPostArgs = append([]string{}, src.InputPostArgs...)
+	}
+	if src.OutputPreArgs != nil {
+		dest.OutputPreArgs = append([]string{}, src.OutputPreArgs...)
+	}
+	if src.OutputPostArgs != nil {
+		dest.OutputPostArgs = append([]string{}, src.OutputPostArgs...)
+	}
+	if src.CustomArgs != nil {
+		dest.CustomArgs = append([]string{}, src.CustomArgs...)
+	}
+	if src.Headers != nil {
+		dest.Headers = append([]string{}, src.Headers...)
+	}
+
+	return &dest
 }
 
 
@@ -195,9 +252,11 @@ func mergeFFmpegOptions(opts ...*FFmpegOptions) *FFmpegOptions {
 			continue
 		}
 
-		// slice 类型累加
+		// slice 类型累加（需要去重处理）
 		if opt.GlobalArgs != nil {
 			result.GlobalArgs = append(result.GlobalArgs, opt.GlobalArgs...)
+			// 去重处理GlobalArgs，特别是-re参数
+			result.GlobalArgs = removeDuplicateStrings(result.GlobalArgs)
 		}
 		if opt.InputPreArgs != nil {
 			result.InputPreArgs = append(result.InputPreArgs, opt.InputPreArgs...)
@@ -266,10 +325,53 @@ func mergeFFmpegOptions(opts ...*FFmpegOptions) *FFmpegOptions {
 		}
 	}
 
+	// 对所有参数进行最终的去重处理，特别是对标志类参数
+	result.GlobalArgs = RemoveDuplicateFlagArgs(result.GlobalArgs)
+	result.InputPreArgs = RemoveDuplicateFlagArgs(result.InputPreArgs)
+	result.InputPostArgs = RemoveDuplicateFlagArgs(result.InputPostArgs)
+	result.OutputPreArgs = RemoveDuplicateFlagArgs(result.OutputPreArgs)
+	result.OutputPostArgs = RemoveDuplicateFlagArgs(result.OutputPostArgs)
+	result.CustomArgs = RemoveDuplicateFlagArgs(result.CustomArgs)
+
 	return result
 }
 
+// removeDuplicateStrings removes duplicate strings from a slice, keeping the first occurrence
+func removeDuplicateStrings(slice []string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0)
+	
+	for _, item := range slice {
+		if !seen[item] {
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+	
+	return result
+}
 
+// RemoveDuplicateFlagArgs removes duplicate flag arguments from a slice, keeping the first occurrence
+// This is specifically for FFmpeg arguments where flags like "-re" should only appear once
+func RemoveDuplicateFlagArgs(slice []string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0)
+	
+	for _, item := range slice {
+		// For flag arguments (starting with -), only allow one occurrence
+		if len(item) > 0 && item[0] == '-' {
+			if !seen[item] {
+				seen[item] = true
+				result = append(result, item)
+			}
+		} else {
+			// For non-flag arguments, always add them
+			result = append(result, item)
+		}
+	}
+	
+	return result
+}
 
 // convertReceiver converts a receiver item to a new Receiver struct
 func convertReceiver(item *config.ReceiverItem) *Receiver {
@@ -283,32 +385,8 @@ func convertReceiver(item *config.ReceiverItem) *Receiver {
 			Flv: item.PlayUrls.Flv,
 			Hls: item.PlayUrls.Hls,
 		},
-		PushPreArgs:   item.PushPreArgs,
-		PushPostArgs:  item.PushPostArgs,
 		FFmpegOptions: convertFFmpegOptions(item.FFmpegOptions),
 	}
-}
-
-// convertReceivers converts a slice of ReceiverItem to a slice of Receiver
-func convertReceivers(items []config.ReceiverItem) []Receiver {
-	if items == nil {
-		return nil
-	}
-
-	receivers := make([]Receiver, len(items))
-	for i, item := range items {
-		receivers[i] = Receiver{
-			PushURL: item.PushURL,
-			PlayUrls: PlayUrls{
-				Flv: item.PlayUrls.Flv,
-				Hls: item.PlayUrls.Hls,
-			},
-			PushPreArgs:   item.PushPreArgs,
-			PushPostArgs:  item.PushPostArgs,
-			FFmpegOptions: convertFFmpegOptions(item.FFmpegOptions),
-		}
-	}
-	return receivers
 }
 
 // convertFFmpegOptions converts FFmpegOptions from config to publisher FFmpegOptions
@@ -318,9 +396,9 @@ func convertFFmpegOptions(src *config.FFmpegOptions) *FFmpegOptions {
 	}
 
 	dest := &FFmpegOptions{
-		GlobalArgs:     src.GlobalArgs,
-		InputPreArgs:   src.InputPreArgs,
-		InputPostArgs:  src.InputPostArgs,
+		GlobalArgs:     make([]string, len(src.GlobalArgs)),
+		InputPreArgs:   make([]string, len(src.InputPreArgs)),
+		InputPostArgs:  make([]string, len(src.InputPostArgs)),
 		VideoCodec:     src.VideoCodec,
 		AudioCodec:     src.AudioCodec,
 		VideoBitrate:   src.VideoBitrate,
@@ -328,22 +406,33 @@ func convertFFmpegOptions(src *config.FFmpegOptions) *FFmpegOptions {
 		Preset:         src.Preset,
 		CRF:            src.CRF,
 		OutputFormat:   src.OutputFormat,
-		OutputPreArgs:  src.OutputPreArgs,
-		OutputPostArgs: src.OutputPostArgs,
-		CustomArgs:     src.CustomArgs,
+		OutputPreArgs:  make([]string, len(src.OutputPreArgs)),
+		OutputPostArgs: make([]string, len(src.OutputPostArgs)),
+		CustomArgs:     make([]string, len(src.CustomArgs)),
 		StreamCopy:     src.StreamCopy,
 		UseReFlag:      src.UseReFlag,
 		PixFmt:         src.PixFmt,
 		GopSize:        src.GopSize,
 		UserAgent:      src.UserAgent,
-		Headers:        src.Headers,
+		Headers:        make([]string, len(src.Headers)),
 	}
+	
+	// Copy slice values
+	copy(dest.GlobalArgs, src.GlobalArgs)
+	copy(dest.InputPreArgs, src.InputPreArgs)
+	copy(dest.InputPostArgs, src.InputPostArgs)
+	copy(dest.OutputPreArgs, src.OutputPreArgs)
+	copy(dest.OutputPostArgs, src.OutputPostArgs)
+	copy(dest.CustomArgs, src.CustomArgs)
+	copy(dest.Headers, src.Headers)
 
 	if src.Filters != nil {
 		dest.Filters = &FilterOptions{
-			VideoFilters: src.Filters.VideoFilters,
-			AudioFilters: src.Filters.AudioFilters,
+			VideoFilters: make([]string, len(src.Filters.VideoFilters)),
+			AudioFilters: make([]string, len(src.Filters.AudioFilters)),
 		}
+		copy(dest.Filters.VideoFilters, src.Filters.VideoFilters)
+		copy(dest.Filters.AudioFilters, src.Filters.AudioFilters)
 	}
 
 	return dest

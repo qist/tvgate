@@ -342,11 +342,12 @@ func (m *Manager) shouldRestartStream(oldStream, newStream *Stream) bool {
 		}
 	}
 
-	// LocalPlayUrls 变化
+	// 检查 LocalPlayUrls 变化
 	if len(oldStream.Stream.LocalPlayUrls) != len(newStream.Stream.LocalPlayUrls) {
 		return true
 	}
 	for i, oldOutput := range oldStream.Stream.LocalPlayUrls {
+		// 检查协议和启用状态变化
 		if i >= len(newStream.Stream.LocalPlayUrls) {
 			return true
 		}
@@ -355,7 +356,18 @@ func (m *Manager) shouldRestartStream(oldStream, newStream *Stream) bool {
 			return true
 		}
 		// 可选：检查 FFmpegOptions 变化（根据需要判断关键字段）
-		if !ffmpegOptionsEqual(oldOutput.FFmpegOptions, newOutput.FFmpegOptions) {
+		// 根据协议类型检查对应的FFmpegOptions
+		var oldOptions, newOptions *FFmpegOptions
+		switch oldOutput.Protocol {
+		case "flv":
+			oldOptions = oldOutput.FlvFFmpegOptions
+			newOptions = newOutput.FlvFFmpegOptions
+		case "hls":
+			oldOptions = oldOutput.HlsFFmpegOptions
+			newOptions = newOutput.HlsFFmpegOptions
+		}
+		
+		if !ffmpegOptionsEqual(oldOptions, newOptions) {
 			return true
 		}
 	}
@@ -628,177 +640,21 @@ func (sm *StreamManager) startStreaming() {
 		}
 	}
 
-	// 只有当flv或hls为true时才启动管道转发器，并且根据具体配置启用对应功能
+	// 如果启用了本地播放，则启动管道转发器
 	if enableFLV || enableHLS {
+		// 如果有接收者，使用第一个接收者的FFmpeg选项构建命令
 		receivers := sm.stream.Stream.GetReceivers()
-		if len(receivers) == 0 {
-			logger.LogPrintf("[%s] No receivers found, skip pipe forwarder", sm.name)
-			return
+		if len(receivers) > 0 {
+			// 使用第一个接收者的选项构建FFmpeg命令
+			ffmpegCmd = sm.stream.BuildFFmpegCommandForReceiver(&receivers[0])
 		}
-
-		// 使用当前的 streamKey
-		sm.mutex.RLock()
-		currentStreamKey := sm.streamKey
-		sm.mutex.RUnlock()
-
-		// 根据模式确定如何处理管道转发器
-		if sm.stream.Stream.Mode == "all" {
-			// 在 all 模式下，为每个接收器创建一个管道转发器
-			for i, receiver := range receivers {
-				// 构建接收器的 FFmpeg 推流命令以提取 RTMP URL
-				receiverCmd := receiver.BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
-				var rtmpURL string
-				if len(receiverCmd) > 0 {
-					// RTMP URL通常是命令的最后一个参数
-					rtmpURL = receiverCmd[len(receiverCmd)-1]
-				}
-
-				// 为每个接收器创建独立的管道转发器
-				pipeName := fmt.Sprintf("%s_receiver_%d", sm.name, i+1)
-				if i == 0 {
-					// 第一个接收器使用主名称
-					pipeName = sm.name
-					sm.pipeForwarder = NewPipeForwarder(pipeName, rtmpURL, true, true, nil)
-					// 在这里可以添加控制HLS启用/禁用的逻辑
-					// 根据配置设置HLS启用状态
-					if sm.pipeForwarder != nil {
-						sm.pipeForwarder.EnableHLS(enableHLS)
-					}
-
-					// 启动主管道转发器
-					go func() {
-						if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
-							logger.LogPrintf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
-						}
-					}()
-				} else {
-					// 其他接收器创建独立的管道转发器
-					pipeForwarder := NewPipeForwarder(pipeName, rtmpURL, true, false, sm.pipeForwarder.hub)
-
-					// 启动额外的管道转发器
-					go func(pf *PipeForwarder, name string) {
-						if err := pf.Start(ffmpegCmd); err != nil {
-							logger.LogPrintf("Failed to start pipe forwarder for stream %s: %v", name, err)
-						}
-					}(pipeForwarder, pipeName)
-				}
-			}
-
-			// 不启动传统的推流方式
-			return
-		} else if sm.stream.Stream.Mode == "primary-backup" {
-			// 在 primary-backup 模式下，我们需要为 primary 和 backup 都创建转发器
-			// 为 primary 创建 PipeForwarder
-			var primaryRTMPURL string
-			primaryCmd := receivers[0].BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
-			if len(primaryCmd) > 0 {
-				primaryRTMPURL = primaryCmd[len(primaryCmd)-1]
-			}
-
-			sm.pipeForwarder = NewPipeForwarder(sm.name+"_primary", primaryRTMPURL, true, true, nil)
-			// 控制HLS启用状态
-			// 根据配置设置HLS启用状态
-			if sm.pipeForwarder != nil {
-				sm.pipeForwarder.EnableHLS(enableHLS)
-			}
-			// 启动 primary PipeForwarder
-			go func() {
-				if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
-					logger.LogPrintf("Failed to start primary pipe forwarder for stream %s: %v", sm.name, err)
-				}
-			}()
-
-			// 创建备用推流（不启动）
-			var backupPipeForwarder *PipeForwarder
-			if sm.stream.Stream.Receivers.Backup != nil {
-				var backupRTMPURL string
-				backupCmd := sm.stream.Stream.Receivers.Backup.BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
-				if len(backupCmd) > 0 {
-					backupRTMPURL = backupCmd[len(backupCmd)-1]
-				}
-
-				backupPipeForwarder = NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, false, nil)
-				if backupPipeForwarder != nil {
-					backupPipeForwarder.EnableHLS(enableHLS)
-				}
-			}
-
-			// 启动推流监控（主挂才启备）
-			sm.monitorPrimaryPush(sm.pipeForwarder, backupPipeForwarder, ffmpegCmd)
-			return
-		} else if sm.stream.Stream.Source.BackupURL != "" {
-			// 如果没有显式配置 backup receiver 但配置了 backup_url，则创建一个使用 backup_url 的 PipeForwarder
-			// 构建使用 backup_url 的 FFmpeg 命令
-			backupFFmpegCmd := sm.buildFFmpegCommandWithBackup(true)
-			var backupRTMPURL string
-
-			// 为 backup 流使用相同的接收器配置
-			backupCmd := receivers[0].BuildFFmpegPushCommand(backupFFmpegCmd, currentStreamKey)
-			if len(backupCmd) > 0 {
-				backupRTMPURL = backupCmd[len(backupCmd)-1]
-			}
-
-			// 创建 backup PipeForwarder (当主URL失效时，备用PipeForwarder需要主动拉流)
-			backupPipeForwarder := NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, true, nil)
-			// 控制HLS启用状态
-			if backupPipeForwarder != nil {
-				backupPipeForwarder.EnableHLS(enableHLS)
-			}
-
-			// 启动 backup PipeForwarder（但默认不激活，只有在主URL失败时才激活）
-			go func() {
-				// 先不启动，等待主URL失败后再启动
-				logger.LogPrintf("Backup pipe forwarder for stream %s created, waiting for primary failure", sm.name)
-
-				// 监控主URL是否失败，如果失败则启动backup
-				ticker := time.NewTicker(10 * time.Second)
-				defer ticker.Stop()
-
-				for {
-					select {
-					case <-sm.ctx.Done():
-						return
-					case <-ticker.C:
-						// 检查主转发器是否运行正常
-						if sm.pipeForwarder != nil && !sm.pipeForwarder.IsRunning() {
-							logger.LogPrintf("Primary pipe forwarder for stream %s is not running, starting backup", sm.name)
-							if err := backupPipeForwarder.Start(backupFFmpegCmd); err != nil {
-								logger.LogPrintf("Failed to start backup pipe forwarder for stream %s: %v", sm.name, err)
-							} else {
-								logger.LogPrintf("Backup pipe forwarder for stream %s started successfully", sm.name)
-								// 更新主转发器引用
-								sm.pipeForwarder = backupPipeForwarder
-								return
-							}
-						}
-					}
-				}
-			}()
-		} else {
-			// 对于其他模式，保持原有逻辑（只处理第一个接收器）
-			var rtmpURL string
-			receiverCmd := receivers[0].BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
-			if len(receiverCmd) > 0 {
-				rtmpURL = receiverCmd[len(receiverCmd)-1]
-			}
-
-			// 创建PipeForwarder，传入RTMP URL
-			sm.pipeForwarder = NewPipeForwarder(sm.name, rtmpURL, true, true, nil)
-			// 控制HLS启用状态
-			if sm.pipeForwarder != nil {
-				sm.pipeForwarder.EnableHLS(enableHLS)
-			}
-
-			// 启动管道转发器
-			go func() {
-				if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
-					logger.LogPrintf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
-				}
-			}()
-
-			// 如果使用PipeForwarder，则不启动传统的推流方式
-			return
+		
+		// 启动管道转发器
+		if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
+			logger.LogPrintf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
+			return // 修复：这里不应该返回错误，因为startStreaming方法没有返回值
 		}
+		logger.LogPrintf("Started pipe forwarder for stream %s", sm.name)
 	}
 
 	// Get receivers
@@ -816,7 +672,9 @@ func (sm *StreamManager) startStreaming() {
 			currentStreamKey := sm.streamKey
 			sm.mutex.RUnlock()
 
-			cmd := r.BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
+			// 为每个接收者构建基础命令，使用接收者的FFmpeg选项
+			baseCmd := sm.stream.BuildFFmpegCommandForReceiver(&r)
+			cmd := r.BuildFFmpegPushCommand(baseCmd, currentStreamKey)
 			logger.LogPrintf("Full FFmpeg command for stream %s receiver %d: ffmpeg %s", sm.name, index+1, strings.Join(cmd, " "))
 			sm.runFFmpegStream(cmd, index+1)
 		}(i, receiver)
@@ -1112,19 +970,34 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 	// Start with base command - manually build it
 	var cmd []string
 
+	// 获取合并后的FFmpegOptions（如果在receiver上下文中）
+	// 注意：这个方法在StreamManager中调用，我们可能需要使用特定的FFmpegOptions
+	var ffmpegOptions *FFmpegOptions
+	
+	// 优先使用第一个接收器的FFmpegOptions，如果没有接收器则使用源的FFmpegOptions
+	receivers := s.Stream.GetReceivers()
+	if len(receivers) > 0 && receivers[0].FFmpegOptions != nil {
+		ffmpegOptions = receivers[0].FFmpegOptions
+		logger.LogPrintf("Using receiver's FFmpeg options for stream %s", sm.name)
+	} else {
+		// 默认使用源FFmpegOptions
+		ffmpegOptions = s.Stream.Source.FFmpegOptions
+		logger.LogPrintf("Using source's FFmpeg options for stream %s", sm.name)
+	}
+
 	// 处理全局参数和-re标志
-	if s.FFmpegOptions == nil || len(s.FFmpegOptions.GlobalArgs) == 0 {
+	if ffmpegOptions == nil || len(ffmpegOptions.GlobalArgs) == 0 {
 		// 使用默认全局参数（包含-re）
 		cmd = append(cmd, "-re", "-fflags", "+genpts")
 	} else {
 		// 使用配置的全局参数
-		cmd = append(cmd, s.FFmpegOptions.GlobalArgs...)
+		cmd = append(cmd, ffmpegOptions.GlobalArgs...)
 
 		// 如果UseReFlag为true但全局参数中没有-re，则添加
-		if s.FFmpegOptions.UseReFlag {
+		if ffmpegOptions.UseReFlag {
 			// 检查是否已经包含-re
 			hasRe := false
-			for _, arg := range s.FFmpegOptions.GlobalArgs {
+			for _, arg := range ffmpegOptions.GlobalArgs {
 				if arg == "-re" {
 					hasRe = true
 					break
@@ -1137,8 +1010,8 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 	}
 
 	// Add input pre arguments - 默认输入前参数
-	if s.FFmpegOptions != nil && len(s.FFmpegOptions.InputPreArgs) > 0 {
-		cmd = append(cmd, s.FFmpegOptions.InputPreArgs...)
+	if ffmpegOptions != nil && len(ffmpegOptions.InputPreArgs) > 0 {
+		cmd = append(cmd, ffmpegOptions.InputPreArgs...)
 	} else {
 		// 默认输入前参数
 		switch {
@@ -1152,15 +1025,16 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 	}
 
 	// Add custom headers
-	var headersBuilder strings.Builder
 	hasHeaders := false
-
-	if s.FFmpegOptions != nil && len(s.FFmpegOptions.Headers) > 0 {
-		headers := ""
-		for _, h := range s.FFmpegOptions.Headers {
-			headers += h + "\r\n"
+	var headersBuilder strings.Builder
+	if ffmpegOptions != nil && len(ffmpegOptions.Headers) > 0 {
+		hasHeaders = true
+		for i, h := range ffmpegOptions.Headers {
+			if i > 0 {
+				headersBuilder.WriteString("\r\n")
+			}
+			headersBuilder.WriteString(h)
 		}
-		cmd = append(cmd, "-headers", headers)
 	}
 
 	if hasHeaders {
@@ -1177,24 +1051,24 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 	}
 
 	// Add input post arguments
-	if s.FFmpegOptions != nil && len(s.FFmpegOptions.InputPostArgs) > 0 {
-		cmd = append(cmd, s.FFmpegOptions.InputPostArgs...)
+	if ffmpegOptions != nil && len(ffmpegOptions.InputPostArgs) > 0 {
+		cmd = append(cmd, ffmpegOptions.InputPostArgs...)
 	}
 
 	// Add filter arguments
-	if s.FFmpegOptions != nil && s.FFmpegOptions.Filters != nil {
-		if len(s.FFmpegOptions.Filters.VideoFilters) > 0 {
-			cmd = append(cmd, "-vf", strings.Join(s.FFmpegOptions.Filters.VideoFilters, ","))
+	if ffmpegOptions != nil && ffmpegOptions.Filters != nil {
+		if len(ffmpegOptions.Filters.VideoFilters) > 0 {
+			cmd = append(cmd, "-vf", strings.Join(ffmpegOptions.Filters.VideoFilters, ","))
 		}
-		if len(s.FFmpegOptions.Filters.AudioFilters) > 0 {
-			cmd = append(cmd, "-af", strings.Join(s.FFmpegOptions.Filters.AudioFilters, ","))
+		if len(ffmpegOptions.Filters.AudioFilters) > 0 {
+			cmd = append(cmd, "-af", strings.Join(ffmpegOptions.Filters.AudioFilters, ","))
 		}
 	}
 
 	// Add video codec - 默认视频编码器
 	videoCodec := "libx264"
-	if s.FFmpegOptions != nil && s.FFmpegOptions.VideoCodec != "" {
-		videoCodec = s.FFmpegOptions.VideoCodec
+	if ffmpegOptions != nil && ffmpegOptions.VideoCodec != "" {
+		videoCodec = ffmpegOptions.VideoCodec
 	}
 	// 如果使用copy模式，确保不添加其他视频参数
 	if videoCodec != "copy" {
@@ -1205,8 +1079,8 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 
 	// Add audio codec - 默认音频编码器
 	audioCodec := "aac"
-	if s.FFmpegOptions != nil && s.FFmpegOptions.AudioCodec != "" {
-		audioCodec = s.FFmpegOptions.AudioCodec
+	if ffmpegOptions != nil && ffmpegOptions.AudioCodec != "" {
+		audioCodec = ffmpegOptions.AudioCodec
 	}
 	// 如果使用copy模式，确保不添加其他音频参数
 	if audioCodec != "copy" {
@@ -1218,8 +1092,8 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 	// Only add video bitrate if not using copy codec
 	if videoCodec != "copy" {
 		videoBitrate := "4M"
-		if s.FFmpegOptions != nil && s.FFmpegOptions.VideoBitrate != "" {
-			videoBitrate = s.FFmpegOptions.VideoBitrate
+		if ffmpegOptions != nil && ffmpegOptions.VideoBitrate != "" {
+			videoBitrate = ffmpegOptions.VideoBitrate
 		}
 		cmd = append(cmd, "-b:v", videoBitrate)
 	}
@@ -1227,8 +1101,8 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 	// Only add audio bitrate if not using copy codec
 	if audioCodec != "copy" {
 		audioBitrate := "128k"
-		if s.FFmpegOptions != nil && s.FFmpegOptions.AudioBitrate != "" {
-			audioBitrate = s.FFmpegOptions.AudioBitrate
+		if ffmpegOptions != nil && ffmpegOptions.AudioBitrate != "" {
+			audioBitrate = ffmpegOptions.AudioBitrate
 		}
 		cmd = append(cmd, "-b:a", audioBitrate)
 	}
@@ -1236,43 +1110,46 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 	// Add preset - 默认编码预设 (only if not using copy)
 	if videoCodec != "copy" {
 		preset := "ultrafast"
-		if s.FFmpegOptions != nil && s.FFmpegOptions.Preset != "" {
-			preset = s.FFmpegOptions.Preset
+		if ffmpegOptions != nil && ffmpegOptions.Preset != "" {
+			preset = ffmpegOptions.Preset
 		}
 		cmd = append(cmd, "-preset", preset)
 	}
 
 	// Add CRF (only if not using copy)
-	if videoCodec != "copy" && s.FFmpegOptions != nil && s.FFmpegOptions.CRF > 0 {
-		cmd = append(cmd, "-crf", fmt.Sprintf("%d", s.FFmpegOptions.CRF))
+	if videoCodec != "copy" && ffmpegOptions != nil && ffmpegOptions.CRF > 0 {
+		cmd = append(cmd, "-crf", fmt.Sprintf("%d", ffmpegOptions.CRF))
 	}
 
 	// Add pixel format if specified
-	if s.FFmpegOptions != nil && s.FFmpegOptions.PixFmt != "" {
-		cmd = append(cmd, "-pix_fmt", s.FFmpegOptions.PixFmt)
+	if ffmpegOptions != nil && ffmpegOptions.PixFmt != "" {
+		cmd = append(cmd, "-pix_fmt", ffmpegOptions.PixFmt)
 	}
 
 	// Add GOP size if specified
-	if s.FFmpegOptions != nil && s.FFmpegOptions.GopSize > 0 {
-		cmd = append(cmd, "-g", fmt.Sprintf("%d", s.FFmpegOptions.GopSize))
+	if ffmpegOptions != nil && ffmpegOptions.GopSize > 0 {
+		cmd = append(cmd, "-g", fmt.Sprintf("%d", ffmpegOptions.GopSize))
 	}
 
 	// Add output format - 默认输出格式
 	outputFormat := "flv"
-	if s.FFmpegOptions != nil && s.FFmpegOptions.OutputFormat != "" {
-		outputFormat = s.FFmpegOptions.OutputFormat
+	if ffmpegOptions != nil && ffmpegOptions.OutputFormat != "" {
+		outputFormat = ffmpegOptions.OutputFormat
 	}
 	cmd = append(cmd, "-f", outputFormat)
 
 	// Add output pre arguments
-	if s.FFmpegOptions != nil && len(s.FFmpegOptions.OutputPreArgs) > 0 {
-		cmd = append(cmd, s.FFmpegOptions.OutputPreArgs...)
+	if ffmpegOptions != nil && len(ffmpegOptions.OutputPreArgs) > 0 {
+		cmd = append(cmd, ffmpegOptions.OutputPreArgs...)
 	}
 
 	// Add custom arguments after input
-	if s.FFmpegOptions != nil && len(s.FFmpegOptions.CustomArgs) > 0 {
-		cmd = append(cmd, s.FFmpegOptions.CustomArgs...)
+	if ffmpegOptions != nil && len(ffmpegOptions.CustomArgs) > 0 {
+		cmd = append(cmd, ffmpegOptions.CustomArgs...)
 	}
+
+	// Remove duplicate flags to prevent duplication
+	cmd = RemoveDuplicateFlagArgs(cmd)
 
 	return cmd
 }

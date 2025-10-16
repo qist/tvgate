@@ -85,23 +85,35 @@ func (sc *StreamConfig) GetReceivers() []Receiver {
 	}
 }
 
+// BuildFFmpegCommandForReceiver builds the ffmpeg command using the receiver's FFmpeg options
+func (s *Stream) BuildFFmpegCommandForReceiver(receiver *Receiver) []string {
+	// 使用接收者的FFmpeg选项
+	return s.BuildFFmpegCommandWithOptions(receiver.FFmpegOptions)
+}
+
 // BuildFFmpegCommand builds the ffmpeg command based on the configuration
 func (s *Stream) BuildFFmpegCommand() []string {
+	// 默认使用源FFmpegOptions
+	return s.BuildFFmpegCommandWithOptions(s.Stream.Source.FFmpegOptions)
+}
+
+// BuildFFmpegCommandWithOptions builds the ffmpeg command with specific FFmpeg options
+func (s *Stream) BuildFFmpegCommandWithOptions(ffmpegOptions *FFmpegOptions) []string {
 	var cmd []string
 
 	// 处理全局参数和-re标志
-	if s.FFmpegOptions == nil || len(s.FFmpegOptions.GlobalArgs) == 0 {
+	if ffmpegOptions == nil || len(ffmpegOptions.GlobalArgs) == 0 {
 		// 使用默认全局参数（包含-re）
 		cmd = append(cmd, "-re", "-fflags", "+genpts")
 	} else {
 		// 使用配置的全局参数
-		cmd = append(cmd, s.FFmpegOptions.GlobalArgs...)
+		cmd = append(cmd, ffmpegOptions.GlobalArgs...)
 
 		// 如果UseReFlag为true但全局参数中没有-re，则添加
-		if s.FFmpegOptions.UseReFlag {
+		if ffmpegOptions.UseReFlag {
 			// 检查是否已经包含-re
 			hasRe := false
-			for _, arg := range s.FFmpegOptions.GlobalArgs {
+			for _, arg := range ffmpegOptions.GlobalArgs {
 				if arg == "-re" {
 					hasRe = true
 					break
@@ -114,8 +126,8 @@ func (s *Stream) BuildFFmpegCommand() []string {
 	}
 
 	// Add input pre arguments - 默认输入前参数
-	if s.FFmpegOptions != nil && len(s.FFmpegOptions.InputPreArgs) > 0 {
-		cmd = append(cmd, s.FFmpegOptions.InputPreArgs...)
+	if ffmpegOptions != nil && len(ffmpegOptions.InputPreArgs) > 0 {
+		cmd = append(cmd, ffmpegOptions.InputPreArgs...)
 	} else {
 		// 默认输入前参数
 		switch {
@@ -129,13 +141,13 @@ func (s *Stream) BuildFFmpegCommand() []string {
 	}
 
 	// Add User-Agent if configured in FFmpegOptions
-	if s.FFmpegOptions != nil && s.FFmpegOptions.UserAgent != "" {
-		cmd = append(cmd, "-user_agent", s.FFmpegOptions.UserAgent)
+	if ffmpegOptions != nil && ffmpegOptions.UserAgent != "" {
+		cmd = append(cmd, "-user_agent", ffmpegOptions.UserAgent)
 	}
 
-	if s.FFmpegOptions != nil && len(s.FFmpegOptions.Headers) > 0 {
+	if ffmpegOptions != nil && len(ffmpegOptions.Headers) > 0 {
 		headers := ""
-		for _, h := range s.FFmpegOptions.Headers {
+		for _, h := range ffmpegOptions.Headers {
 			headers += h + "\r\n"
 		}
 		cmd = append(cmd, "-headers", headers)
@@ -145,24 +157,24 @@ func (s *Stream) BuildFFmpegCommand() []string {
 	cmd = append(cmd, "-i", s.Stream.Source.URL)
 
 	// Add input post arguments
-	if s.FFmpegOptions != nil && len(s.FFmpegOptions.InputPostArgs) > 0 {
-		cmd = append(cmd, s.FFmpegOptions.InputPostArgs...)
+	if ffmpegOptions != nil && len(ffmpegOptions.InputPostArgs) > 0 {
+		cmd = append(cmd, ffmpegOptions.InputPostArgs...)
 	}
 
 	// Add filter arguments
-	if s.FFmpegOptions != nil && s.FFmpegOptions.Filters != nil {
-		if len(s.FFmpegOptions.Filters.VideoFilters) > 0 {
-			cmd = append(cmd, "-vf", strings.Join(s.FFmpegOptions.Filters.VideoFilters, ","))
+	if ffmpegOptions != nil && ffmpegOptions.Filters != nil {
+		if len(ffmpegOptions.Filters.VideoFilters) > 0 {
+			cmd = append(cmd, "-vf", strings.Join(ffmpegOptions.Filters.VideoFilters, ","))
 		}
-		if len(s.FFmpegOptions.Filters.AudioFilters) > 0 {
-			cmd = append(cmd, "-af", strings.Join(s.FFmpegOptions.Filters.AudioFilters, ","))
+		if len(ffmpegOptions.Filters.AudioFilters) > 0 {
+			cmd = append(cmd, "-af", strings.Join(ffmpegOptions.Filters.AudioFilters, ","))
 		}
 	}
 
 	// Add video codec - 默认视频编码器
 	videoCodec := "libx264"
-	if s.FFmpegOptions != nil && s.FFmpegOptions.VideoCodec != "" {
-		videoCodec = s.FFmpegOptions.VideoCodec
+	if ffmpegOptions != nil && ffmpegOptions.VideoCodec != "" {
+		videoCodec = ffmpegOptions.VideoCodec
 	}
 	// 如果使用copy模式，确保不添加其他视频参数
 	if videoCodec != "copy" {
@@ -173,8 +185,8 @@ func (s *Stream) BuildFFmpegCommand() []string {
 
 	// Add audio codec - 默认音频编码器
 	audioCodec := "aac"
-	if s.FFmpegOptions != nil && s.FFmpegOptions.AudioCodec != "" {
-		audioCodec = s.FFmpegOptions.AudioCodec
+	if ffmpegOptions != nil && ffmpegOptions.AudioCodec != "" {
+		audioCodec = ffmpegOptions.AudioCodec
 	}
 	// 如果使用copy模式，确保不添加其他音频参数
 	if audioCodec != "copy" {
@@ -186,8 +198,8 @@ func (s *Stream) BuildFFmpegCommand() []string {
 	// Only add video bitrate if not using copy codec
 	if videoCodec != "copy" {
 		videoBitrate := "4M"
-		if s.FFmpegOptions != nil && s.FFmpegOptions.VideoBitrate != "" {
-			videoBitrate = s.FFmpegOptions.VideoBitrate
+		if ffmpegOptions != nil && ffmpegOptions.VideoBitrate != "" {
+			videoBitrate = ffmpegOptions.VideoBitrate
 		}
 		cmd = append(cmd, "-b:v", videoBitrate)
 	}
@@ -195,8 +207,8 @@ func (s *Stream) BuildFFmpegCommand() []string {
 	// Only add audio bitrate if not using copy codec
 	if audioCodec != "copy" {
 		audioBitrate := "128k"
-		if s.FFmpegOptions != nil && s.FFmpegOptions.AudioBitrate != "" {
-			audioBitrate = s.FFmpegOptions.AudioBitrate
+		if ffmpegOptions != nil && ffmpegOptions.AudioBitrate != "" {
+			audioBitrate = ffmpegOptions.AudioBitrate
 		}
 		cmd = append(cmd, "-b:a", audioBitrate)
 	}
@@ -204,55 +216,60 @@ func (s *Stream) BuildFFmpegCommand() []string {
 	// Add preset - 默认编码预设 (only if not using copy)
 	if videoCodec != "copy" {
 		preset := "ultrafast"
-		if s.FFmpegOptions != nil && s.FFmpegOptions.Preset != "" {
-			preset = s.FFmpegOptions.Preset
+		if ffmpegOptions != nil && ffmpegOptions.Preset != "" {
+			preset = ffmpegOptions.Preset
 		}
 		cmd = append(cmd, "-preset", preset)
 	}
 
 	// Add CRF (only if not using copy)
-	if videoCodec != "copy" && s.FFmpegOptions != nil && s.FFmpegOptions.CRF > 0 {
-		cmd = append(cmd, "-crf", fmt.Sprintf("%d", s.FFmpegOptions.CRF))
+	if videoCodec != "copy" && ffmpegOptions != nil && ffmpegOptions.CRF > 0 {
+		cmd = append(cmd, "-crf", fmt.Sprintf("%d", ffmpegOptions.CRF))
 	}
 
 	// Add pixel format if specified
-	if s.FFmpegOptions != nil && s.FFmpegOptions.PixFmt != "" {
-		cmd = append(cmd, "-pix_fmt", s.FFmpegOptions.PixFmt)
+	if ffmpegOptions != nil && ffmpegOptions.PixFmt != "" {
+		cmd = append(cmd, "-pix_fmt", ffmpegOptions.PixFmt)
 	}
 
 	// Add GOP size if specified
-	if s.FFmpegOptions != nil && s.FFmpegOptions.GopSize > 0 {
-		cmd = append(cmd, "-g", fmt.Sprintf("%d", s.FFmpegOptions.GopSize))
+	if ffmpegOptions != nil && ffmpegOptions.GopSize > 0 {
+		cmd = append(cmd, "-g", fmt.Sprintf("%d", ffmpegOptions.GopSize))
 	}
 
 	// Add output format - 默认输出格式
 	outputFormat := "flv"
-	if s.FFmpegOptions != nil && s.FFmpegOptions.OutputFormat != "" {
-		outputFormat = s.FFmpegOptions.OutputFormat
+	if ffmpegOptions != nil && ffmpegOptions.OutputFormat != "" {
+		outputFormat = ffmpegOptions.OutputFormat
 	}
 	cmd = append(cmd, "-f", outputFormat)
 
 	// Add output pre arguments
-	if s.FFmpegOptions != nil && len(s.FFmpegOptions.OutputPreArgs) > 0 {
-		cmd = append(cmd, s.FFmpegOptions.OutputPreArgs...)
+	if ffmpegOptions != nil && len(ffmpegOptions.OutputPreArgs) > 0 {
+		cmd = append(cmd, ffmpegOptions.OutputPreArgs...)
 	}
 
 	// Add custom arguments after input
-	if s.FFmpegOptions != nil && len(s.FFmpegOptions.CustomArgs) > 0 {
-		cmd = append(cmd, s.FFmpegOptions.CustomArgs...)
+	if ffmpegOptions != nil && len(ffmpegOptions.CustomArgs) > 0 {
+		cmd = append(cmd, ffmpegOptions.CustomArgs...)
 	}
 
 	return cmd
 }
 
-// BuildFFmpegPushCommand builds the ffmpeg push command for a receiver
+// BuildFFmpegPushCommand builds the ffmpeg push command by appending push arguments to the base command
 func (r *Receiver) BuildFFmpegPushCommand(baseCmd []string, streamKey string) []string {
+	// Create a copy of the base command
 	cmd := make([]string, len(baseCmd))
 	copy(cmd, baseCmd)
 
+	// Remove duplicate flags from the base command to prevent duplication
+	cmd = RemoveDuplicateFlagArgs(cmd)
+
 	// Add push pre arguments
 	if len(r.PushPreArgs) > 0 {
-		cmd = append(cmd, r.PushPreArgs...)
+		tempCmd := append(cmd, r.PushPreArgs...)
+		cmd = RemoveDuplicateFlagArgs(tempCmd)
 	}
 
 	// Add push URL with stream key
@@ -333,8 +350,12 @@ func (r *Receiver) BuildFFmpegPushCommand(baseCmd []string, streamKey string) []
 
 	// Add push post arguments
 	if len(r.PushPostArgs) > 0 {
-		cmd = append(cmd, r.PushPostArgs...)
+		tempCmd := append(cmd, r.PushPostArgs...)
+		cmd = RemoveDuplicateFlagArgs(tempCmd)
 	}
+
+	// Final pass to remove any duplicate flags
+	cmd = RemoveDuplicateFlagArgs(cmd)
 
 	return cmd
 }
