@@ -234,82 +234,285 @@ func (pf *PipeForwarder) modifyFFmpegCommand(args []string) []string {
 		return []string{"-f", "flv", "pipe:1"}
 	}
 
-	result := make([]string, 0, len(args)+4)
-	skipNext := false
-	// lastWasInput := false
+	// 获取流管理器以访问 source 和 local_play_urls 配置
+	manager := GetManager()
+	var sourceOptions *FFmpegOptions
+	var flvOptions *FFmpegOptions
 
-	for i := 0; i < len(args); i++ {
-		if skipNext {
-			skipNext = false
-			continue
+	// 尝试获取流管理器配置
+	if manager != nil {
+		// 提取流名称，去掉可能的后缀（如 _receiver_2, _primary, _backup）
+		streamName := pf.streamName
+		if strings.Contains(streamName, "_receiver_") {
+			parts := strings.Split(streamName, "_receiver_")
+			streamName = parts[0]
+		} else if strings.HasSuffix(streamName, "_primary") {
+			streamName = strings.TrimSuffix(streamName, "_primary")
+		} else if strings.HasSuffix(streamName, "_backup") {
+			streamName = strings.TrimSuffix(streamName, "_backup")
 		}
-		arg := args[i]
 
-		switch arg {
-		case "-f", "-flvflags", "-y":
-			// 跳过这些选项及其潜在值（-y 没值，-f/-flvflags 后面有值）
-			if arg == "-f" || arg == "-flvflags" {
-				// 跳过参数和值
-				skipNext = true
+		// 获取流配置
+		manager.mutex.RLock()
+		streamManager, exists := manager.streams[streamName]
+		manager.mutex.RUnlock()
+
+		if exists {
+			// 获取 source 的 ffmpeg_options
+			sourceOptions = streamManager.stream.Stream.Source.FFmpegOptions
+
+			// 获取 flv 的 ffmpeg_options
+			for _, playURL := range streamManager.stream.Stream.LocalPlayUrls {
+				if playURL.Protocol == "flv" && playURL.Enabled {
+					flvOptions = playURL.FlvFFmpegOptions
+					break
+				}
 			}
-			// don't append
-			// lastWasInput = false
-			continue
-
-		case "-i":
-			// 保留输入标识和输入地址
-			result = append(result, arg)
-			if i+1 < len(args) {
-				result = append(result, args[i+1])
-				skipNext = true
-			}
-			// lastWasInput = true
-			continue
-
-		default:
-			// 若不是以 - 开头的项，且前面不是 -i（也就是不是输入），这很可能是输出 URL -> 跳过
-			// if !strings.HasPrefix(arg, "-") && !lastWasInput {
-			// 	// 跳过疑似输出 URL
-			// 	lastWasInput = false
-			// 	continue
-			// }
-			// 否则保留该参数
-			result = append(result, arg)
-			// lastWasInput = false
 		}
 	}
+
+	// 合并参数
+	mergedArgs := pf.mergeFFmpegOptions(args, sourceOptions, flvOptions)
 
 	// 强制设置音频编码为 aac（可选，但更兼容浏览器播放），如果用户已在 args 指定则不会重复影响
 	// 这里不强行覆盖用户设置，只在没有显式 -c:a 的情况下追加
 	hasCA := false
-	for i := 0; i < len(result); i++ {
-		if result[i] == "-c:a" {
+	for i := 0; i < len(mergedArgs); i++ {
+		if mergedArgs[i] == "-c:a" {
 			hasCA = true
 			break
 		}
 	}
 	if !hasCA {
 		// 采用 aac，44100Hz，双声道
-		result = append(result, "-c:a", "aac", "-ar", "44100", "-ac", "2")
+		mergedArgs = append(mergedArgs, "-c:a", "aac", "-ar", "44100", "-ac", "2")
 	}
+
 	// 追加低延迟参数，保留用户已有设置
 	appendIfMissing := func(flag string, vals ...string) {
-		for _, a := range result {
+		for _, a := range mergedArgs {
 			if a == flag {
 				return
 			}
 		}
-		result = append(result, append([]string{flag}, vals...)...)
+		mergedArgs = append(mergedArgs, append([]string{flag}, vals...)...)
 	}
 
 	appendIfMissing("-fflags", "+genpts")
 	appendIfMissing("-avioflags", "direct")
 	appendIfMissing("-flush_packets", "1")
 	appendIfMissing("-flvflags", "no_duration_filesize")
-	appendIfMissing("-g", "25")
 	appendIfMissing("-keyint_min", "1")
 	// 最终输出到 stdout 的 FLV
-	result = append(result, "-f", "flv", "pipe:1")
+	mergedArgs = append(mergedArgs, "-f", "flv", "pipe:1")
+	return mergedArgs
+}
+
+// mergeFFmpegOptions 合并 FFmpeg 选项，支持去重
+func (pf *PipeForwarder) mergeFFmpegOptions(baseArgs []string, sourceOptions, flvOptions *FFmpegOptions) []string {
+	// 创建一个映射来跟踪已设置的选项，用于去重
+	optionSet := make(map[string]bool)
+	result := make([]string, 0, len(baseArgs)+20) // 预分配容量
+
+	// 先处理基础参数
+	i := 0
+	for i < len(baseArgs) {
+		arg := baseArgs[i]
+		
+		if len(arg) > 0 && arg[0] == '-' {
+			// 这是一个选项参数
+			optionSet[arg] = true
+
+			// 如果这个选项需要值，则处理值
+			if i+1 < len(baseArgs) && (arg == "-c" || arg == "-codec" || arg == "-vcodec" ||
+				arg == "-acodec" || arg == "-b:v" || arg == "-b:a" || arg == "-s" ||
+				arg == "-r" || arg == "-preset" || arg == "-crf" || arg == "-pix_fmt" ||
+				arg == "-vf" || arg == "-af" || arg == "-ac" || arg == "-ar" || arg == "-g" ||
+				arg == "-keyint_min" || arg == "-f" || arg == "-flvflags") {
+				// 添加参数和值到结果中
+				result = append(result, arg, baseArgs[i+1])
+				// 标记参数值，防止重复
+				if len(baseArgs[i+1]) > 0 && baseArgs[i+1][0] != '-' {
+					optionSet[arg+"_value"] = true
+				}
+				i += 2
+				continue
+			}
+		}
+		
+		// 添加非选项参数或者不需要值的选项
+		result = append(result, arg)
+		i++
+	}
+
+	// 添加 source ffmpeg 选项（如果存在）
+	var optionsToUse []*FFmpegOptions
+	if sourceOptions != nil {
+		optionsToUse = append(optionsToUse, sourceOptions)
+	}
+	
+	// FLV配置优先于source配置
+	if flvOptions != nil {
+		optionsToUse = append(optionsToUse, flvOptions)
+	}
+
+	// 按顺序处理所有选项（后面的选项会覆盖前面的选项）
+	for _, options := range optionsToUse {
+		// 处理 input_pre_args
+		if len(options.InputPreArgs) > 0 {
+			for _, arg := range options.InputPreArgs {
+				// 简单去重逻辑 - 检查参数是否已经存在
+				if !optionSet[arg] {
+					result = append(result, arg)
+					optionSet[arg] = true
+				}
+			}
+		}
+
+		// 处理视频编解码器 (-c:v 和 -vcodec 是等价的)
+		if options.VideoCodec != "" {
+			// 先移除可能已存在的 -vcodec 和 -c:v 参数
+			result = removeArg(result, "-vcodec")
+			result = removeArg(result, "-c:v")
+			delete(optionSet, "-vcodec")
+			delete(optionSet, "-c:v")
+			delete(optionSet, "-vcodec_value")
+			delete(optionSet, "-c:v_value")
+			
+			result = append(result, "-vcodec", options.VideoCodec)
+			optionSet["-vcodec"] = true
+			optionSet["-c:v"] = true
+			optionSet["-vcodec_value"] = true
+			optionSet["-c:v_value"] = true
+		}
+
+		// 处理音频编解码器 (-c:a 和 -acodec 是等价的)
+		if options.AudioCodec != "" {
+			// 先移除可能已存在的 -acodec 和 -c:a 参数
+			result = removeArg(result, "-acodec")
+			result = removeArg(result, "-c:a")
+			delete(optionSet, "-acodec")
+			delete(optionSet, "-c:a")
+			delete(optionSet, "-acodec_value")
+			delete(optionSet, "-c:a_value")
+			
+			result = append(result, "-acodec", options.AudioCodec)
+			optionSet["-acodec"] = true
+			optionSet["-c:a"] = true
+			optionSet["-acodec_value"] = true
+			optionSet["-c:a_value"] = true
+		}
+
+		// 处理视频码率
+		if options.VideoBitrate != "" {
+			// 先移除可能已存在的 -b:v 参数
+			result = removeArg(result, "-b:v")
+			delete(optionSet, "-b:v")
+			delete(optionSet, "-b:v_value")
+			
+			result = append(result, "-b:v", options.VideoBitrate)
+			optionSet["-b:v"] = true
+			optionSet["-b:v_value"] = true
+		}
+
+		// 处理音频码率
+		if options.AudioBitrate != "" {
+			// 先移除可能已存在的 -b:a 参数
+			result = removeArg(result, "-b:a")
+			delete(optionSet, "-b:a")
+			delete(optionSet, "-b:a_value")
+			
+			result = append(result, "-b:a", options.AudioBitrate)
+			optionSet["-b:a"] = true
+			optionSet["-b:a_value"] = true
+		}
+
+		// 处理预设
+		if options.Preset != "" {
+			// 先移除可能已存在的 -preset 参数
+			result = removeArg(result, "-preset")
+			delete(optionSet, "-preset")
+			delete(optionSet, "-preset_value")
+			
+			result = append(result, "-preset", options.Preset)
+			optionSet["-preset"] = true
+			optionSet["-preset_value"] = true
+		}
+
+		// 处理 CRF
+		if options.CRF > 0 {
+			// 先移除可能已存在的 -crf 参数
+			result = removeArg(result, "-crf")
+			delete(optionSet, "-crf")
+			delete(optionSet, "-crf_value")
+			
+			result = append(result, "-crf", fmt.Sprintf("%d", options.CRF))
+			optionSet["-crf"] = true
+			optionSet["-crf_value"] = true
+		}
+
+		// 处理像素格式
+		if options.PixFmt != "" {
+			// 先移除可能已存在的 -pix_fmt 参数
+			result = removeArg(result, "-pix_fmt")
+			delete(optionSet, "-pix_fmt")
+			delete(optionSet, "-pix_fmt_value")
+			
+			result = append(result, "-pix_fmt", options.PixFmt)
+			optionSet["-pix_fmt"] = true
+			optionSet["-pix_fmt_value"] = true
+		}
+
+		// 处理 GOP 大小
+		if options.GopSize > 0 {
+			// 先移除可能已存在的 -g 参数
+			result = removeArg(result, "-g")
+			delete(optionSet, "-g")
+			delete(optionSet, "-g_value")
+			
+			result = append(result, "-g", fmt.Sprintf("%d", options.GopSize))
+			optionSet["-g"] = true
+			optionSet["-g_value"] = true
+		}
+
+		// 处理 output_pre_args
+		if len(options.OutputPreArgs) > 0 {
+			for _, arg := range options.OutputPreArgs {
+				// 特殊处理 -f 参数
+				if arg == "-f" {
+					// 移除已存在的 -f 参数
+					result = removeArg(result, "-f")
+					delete(optionSet, "-f")
+					delete(optionSet, "-f_value")
+				}
+				// 添加参数（允许覆盖）
+				result = append(result, arg)
+				optionSet[arg] = true
+			}
+		}
+	}
+
+	return result
+}
+
+// removeArg 从参数列表中移除指定的参数及其值
+func removeArg(args []string, argToRemove string) []string {
+	result := make([]string, 0, len(args))
+	i := 0
+	for i < len(args) {
+		arg := args[i]
+		if arg == argToRemove {
+			// 跳过参数和它的值（如果有的话）
+			if i+1 < len(args) && len(args[i+1]) > 0 && args[i+1][0] != '-' {
+				i += 2 // 跳过参数和值
+			} else {
+				i += 1 // 只跳过参数
+			}
+			continue
+		}
+		result = append(result, arg)
+		i++
+	}
 	return result
 }
 
@@ -320,44 +523,87 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 	var pushWg sync.WaitGroup
 
 	// 如果配置了 rtmpURL，则启用 ffmpegPush：读取 stdin（pipe:0）并推送到 rtmp
+	// 只有在确实配置了接收器时才启用 RTMP 推流
 	if pf.rtmpURL != "" {
-		// 不使用 -re（对 pipe:0 不需要节流）
-		ffmpegPush = exec.CommandContext(pf.ctx, "ffmpeg", "-i", "pipe:0", "-c", "copy", "-f", "flv", pf.rtmpURL)
-		var err error
-		ffIn, err = ffmpegPush.StdinPipe()
-		if err != nil {
-			logger.LogPrintf("[%s] Failed to create stdin pipe for RTMP push: %v", pf.streamName, err)
-			ffIn = nil
-		} else {
-			// ffmpegPush.Stderr = os.Stderr
-			ffmpegPush.Stdout = os.Stdout
+		// 检查是否有配置接收器
+		hasReceivers := false
+		manager := GetManager()
+		if manager != nil {
+			// 提取流名称，去掉可能的后缀（如 _receiver_2, _primary, _backup）
+			streamName := pf.streamName
+			if strings.Contains(streamName, "_receiver_") {
+				parts := strings.Split(streamName, "_receiver_")
+				streamName = parts[0]
+			} else if strings.HasSuffix(streamName, "_primary") {
+				streamName = strings.TrimSuffix(streamName, "_primary")
+			} else if strings.HasSuffix(streamName, "_backup") {
+				streamName = strings.TrimSuffix(streamName, "_backup")
+			}
 
-			if err := ffmpegPush.Start(); err != nil {
-				logger.LogPrintf("[%s] Failed to start RTMP push: %v", pf.streamName, err)
-				_ = ffIn.Close()
+			manager.mutex.RLock()
+			streamManager, exists := manager.streams[streamName]
+			manager.mutex.RUnlock()
+
+			// 检查是否配置了接收器
+			if exists {
+				// 检查三种可能的接收器配置
+				if streamManager.stream.Stream.Mode == "primary-backup" {
+					// primary-backup 模式
+					if streamManager.stream.Stream.Receivers.Primary != nil || 
+					   streamManager.stream.Stream.Receivers.Backup != nil {
+						hasReceivers = true
+					}
+				} else if streamManager.stream.Stream.Mode == "all" {
+					// all 模式
+					if len(streamManager.stream.Stream.Receivers.All) > 0 {
+						hasReceivers = true
+					}
+				}
+			}
+		}
+
+		// 只有在确实配置了接收器时才启用 RTMP 推流
+		if hasReceivers {
+			// 不使用 -re（对 pipe:0 不需要节流）
+			ffmpegPush = exec.CommandContext(pf.ctx, "ffmpeg", "-i", "pipe:0", "-c", "copy", "-f", "flv", pf.rtmpURL)
+			var err error
+			ffIn, err = ffmpegPush.StdinPipe()
+			if err != nil {
+				logger.LogPrintf("[%s] Failed to create stdin pipe for RTMP push: %v", pf.streamName, err)
 				ffIn = nil
 			} else {
-				// ✅ 保存到 pf.ffmpegPush 以供 IsPushRunning() 检测
-				pf.ffmpegLock.Lock()
-				pf.ffmpegPush = ffmpegPush
-				pf.ffmpegLock.Unlock()
+				// ffmpegPush.Stderr = os.Stderr
+				ffmpegPush.Stdout = os.Stdout
 
-				logger.LogPrintf("[%s] Started RTMP push to %s (pid=%d)", pf.streamName, pf.rtmpURL, ffmpegPush.Process.Pid)
-				// 等待 ffmpegPush 退出的 goroutine
-				pushWg.Add(1)
-				go func() {
-					defer pushWg.Done()
-					if err := ffmpegPush.Wait(); err != nil && pf.ctx.Err() == nil {
-						pf.ffmpegLock.Lock()
-						pf.ffmpegPush = nil // ✅ 退出时清理
-						pf.ffmpegLock.Unlock()
+				if err := ffmpegPush.Start(); err != nil {
+					logger.LogPrintf("[%s] Failed to start RTMP push: %v", pf.streamName, err)
+					_ = ffIn.Close()
+					ffIn = nil
+				} else {
+					// ✅ 保存到 pf.ffmpegPush 以供 IsPushRunning() 检测
+					pf.ffmpegLock.Lock()
+					pf.ffmpegPush = ffmpegPush
+					pf.ffmpegLock.Unlock()
 
-						logger.LogPrintf("[%s] RTMP push ffmpeg exited with error: %v", pf.streamName, err)
-					} else {
-						logger.LogPrintf("[%s] RTMP push ffmpeg exited normally", pf.streamName)
-					}
-				}()
+					logger.LogPrintf("[%s] Started RTMP push to %s (pid=%d)", pf.streamName, pf.rtmpURL, ffmpegPush.Process.Pid)
+					// 等待 ffmpegPush 退出的 goroutine
+					pushWg.Add(1)
+					go func() {
+						defer pushWg.Done()
+						if err := ffmpegPush.Wait(); err != nil && pf.ctx.Err() == nil {
+							pf.ffmpegLock.Lock()
+							pf.ffmpegPush = nil // ✅ 退出时清理
+							pf.ffmpegLock.Unlock()
+
+							logger.LogPrintf("[%s] RTMP push ffmpeg exited with error: %v", pf.streamName, err)
+						} else {
+							logger.LogPrintf("[%s] RTMP push ffmpeg exited normally", pf.streamName)
+						}
+					}()
+				}
 			}
+		} else {
+			logger.LogPrintf("[%s] RTMP URL configured but no receivers found, skipping RTMP push", pf.streamName)
 		}
 	}
 
@@ -746,6 +992,14 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Transfer-Encoding", "chunked")
 
+	// 创建客户端 ringbuffer 并注册 hub
+	clientBuffer, err := ringbuffer.New(4 * 1024 * 1024)
+	if err != nil {
+		logger.LogPrintf("Failed to create ring buffer for client: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	
 	// 立即发送响应头
 	w.WriteHeader(http.StatusOK)
 
@@ -766,9 +1020,7 @@ func (pf *PipeForwarder) ServeFLV(w http.ResponseWriter, r *http.Request) {
 	if fl, ok := w.(http.Flusher); ok {
 		fl.Flush()
 	}
-
-	// 创建客户端 ringbuffer 并注册 hub
-	clientBuffer, _ := ringbuffer.New(4 * 1024 * 1024)
+	
 	pf.hub.AddClient(clientBuffer)
 	defer pf.hub.RemoveClient(clientBuffer)
 
