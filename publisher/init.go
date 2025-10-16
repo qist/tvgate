@@ -63,7 +63,6 @@ func Stop() {
 	}
 }
 
-
 // convertConfig converts config.PublisherConfig to publisher.Config
 func convertConfig(cfg *config.PublisherConfig) *Config {
 	if cfg == nil {
@@ -119,7 +118,7 @@ func convertConfig(cfg *config.PublisherConfig) *Config {
 
 		// 打印最终有效参数
 		fmt.Printf("Stream %s Source FFmpegOptions: %+v\n", name, sourceOpts)
-		
+
 		// 打印接收者的FFmpeg选项
 		if stream.Stream.Receivers.Primary != nil {
 			fmt.Printf("Stream %s Primary Receiver FFmpegOptions: %+v\n", name, stream.Stream.Receivers.Primary.FFmpegOptions)
@@ -156,8 +155,11 @@ func convertLocalPlayUrls(outputs []config.PlayOutput, sourceOpts *FFmpegOptions
 		sourceCopy := copyFFmpegOptions(sourceOpts)
 
 		res[i] = PlayOutput{
-			Protocol: output.Protocol,
-			Enabled:  output.Enabled,
+			Protocol:           output.Protocol,
+			Enabled:            output.Enabled,
+			HlsSegmentDuration: output.HlsSegmentDuration,
+			HlsSegmentCount:    output.HlsSegmentCount,
+			HlsPath:            output.HlsPath,
 		}
 
 		switch output.Protocol {
@@ -241,7 +243,6 @@ func copyFFmpegOptions(src *FFmpegOptions) *FFmpegOptions {
 
 	return &dest
 }
-
 
 // 子级会覆盖前面的全局/上级参数
 func mergeFFmpegOptions(opts ...*FFmpegOptions) *FFmpegOptions {
@@ -340,14 +341,14 @@ func mergeFFmpegOptions(opts ...*FFmpegOptions) *FFmpegOptions {
 func removeDuplicateStrings(slice []string) []string {
 	seen := make(map[string]bool)
 	result := make([]string, 0)
-	
+
 	for _, item := range slice {
 		if !seen[item] {
 			seen[item] = true
 			result = append(result, item)
 		}
 	}
-	
+
 	return result
 }
 
@@ -356,7 +357,7 @@ func removeDuplicateStrings(slice []string) []string {
 func RemoveDuplicateFlagArgs(slice []string) []string {
 	seen := make(map[string]bool)
 	result := make([]string, 0)
-	
+
 	for _, item := range slice {
 		// For flag arguments (starting with -), only allow one occurrence
 		if len(item) > 0 && item[0] == '-' {
@@ -369,7 +370,7 @@ func RemoveDuplicateFlagArgs(slice []string) []string {
 			result = append(result, item)
 		}
 	}
-	
+
 	return result
 }
 
@@ -416,7 +417,7 @@ func convertFFmpegOptions(src *config.FFmpegOptions) *FFmpegOptions {
 		UserAgent:      src.UserAgent,
 		Headers:        make([]string, len(src.Headers)),
 	}
-	
+
 	// Copy slice values
 	copy(dest.GlobalArgs, src.GlobalArgs)
 	copy(dest.InputPreArgs, src.InputPreArgs)

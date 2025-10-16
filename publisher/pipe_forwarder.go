@@ -22,97 +22,99 @@ import (
 
 // PipeForwarder 将 FFmpeg 的输出写入 io.Pipe，然后 Go 程序读取并分发到 HTTP-FLV 客户端和可选 RTMP 推流
 type PipeForwarder struct {
-	streamName string
-	rtmpURL    string
-	enabled    bool
-	needPull   bool // 新增标志，标识是否需要拉流
+    streamName string
+    sourceURL  string  // 源URL
+    backupURL  string  // 备份URL
+    rtmpURL    string  // RTMP推流URL（如果有）
+    enabled    bool
+    needPull   bool    // 新增标志，标识是否需要拉流
 
-	ffmpegCmd *exec.Cmd
+    ffmpegCmd *exec.Cmd
 
-	ctx    context.Context
-	cancel context.CancelFunc
+    ctx    context.Context
+    cancel context.CancelFunc
 
-	mutex     sync.Mutex
-	isRunning bool
+    mutex     sync.Mutex
+    isRunning bool
 
-	onStarted func()
-	onStopped func()
+    onStarted func()
+    onStopped func()
 
-	hub *stream.StreamHubs
+    hub *stream.StreamHubs
 
-	pipeReader *io.PipeReader
-	pipeWriter *io.PipeWriter
+    pipeReader *io.PipeReader
+    pipeWriter *io.PipeWriter
 
-	// header 缓存（用于补发给中途加入的 HTTP-FLV 客户端）
-	firstTagBuf    bytes.Buffer
-	headerBuf      bytes.Buffer
-	headerCaptured bool
-	headerMutex    sync.Mutex
-	// firstTagOnce   sync.Once
-	// 用于从hub读取数据的客户端缓冲区
-	clientBuffer *ringbuffer.RingBuffer
+    // header 缓存（用于补发给中途加入的 HTTP-FLV 客户端）
+    firstTagBuf    bytes.Buffer
+    headerBuf      bytes.Buffer
+    headerCaptured bool
+    headerMutex    sync.Mutex
+    // firstTagOnce   sync.Once
+    // 用于从hub读取数据的客户端缓冲区
+    clientBuffer *ringbuffer.RingBuffer
 
-	// HLS支持
-	hlsManager *HLSSegmentManager
-	hlsEnabled bool // 添加这个字段来控制HLS启用状态
+    // HLS支持
+    hlsManager *HLSSegmentManager
+    hlsEnabled bool // 添加这个字段来控制HLS启用状态
 
-	// PAT/PMT缓存，确保每个HLS片段都包含这些信息
-	patPmtBuf bytes.Buffer
+    // PAT/PMT缓存，确保每个HLS片段都包含这些信息
+    patPmtBuf bytes.Buffer
 
-	ffmpegPush *exec.Cmd
+    ffmpegPush *exec.Cmd
 
-	ffmpegLock sync.Mutex
-	// FFmpeg进程状态监控
-	stats *FFmpegProcessStats
+    ffmpegLock sync.Mutex
+    // FFmpeg进程状态监控
+    stats *FFmpegProcessStats
 }
 
 // NewPipeForwarder 创建新的 PipeForwarder
-func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull bool, hub *stream.StreamHubs) *PipeForwarder {
-	ctx, cancel := context.WithCancel(context.Background())
-	var h *stream.StreamHubs
-	if hub != nil {
-		h = hub
-	} else {
-		h = stream.NewStreamHubs()
-	}
+// NewPipeForwarder 创建新的 PipeForwarder
+// 修改函数签名以接受源URL和备份URL，而不是rtmpURL
+func NewPipeForwarder(streamName string, sourceURL string, backupURL string, hlsEnabled bool) *PipeForwarder {
+    ctx, cancel := context.WithCancel(context.Background())
+    
+    // 创建新的StreamHubs
+    h := stream.NewStreamHubs()
 
-	// 初始化 HLS 管理器
-	// 使用基础流名称（去除_primary、_backup等后缀）生成HLS路径
-	baseStreamName := streamName
-	if strings.Contains(baseStreamName, "_") {
-		// 提取第一个下划线之前的部分作为基础流名称
-		parts := strings.Split(baseStreamName, "_")
-		baseStreamName = parts[0]
-	}
+    // 初始化 HLS 管理器
+    // 使用基础流名称（去除_primary、_backup等后缀）生成HLS路径
+    baseStreamName := streamName
+    if strings.Contains(baseStreamName, "_") {
+        // 提取第一个下划线之前的部分作为基础流名称
+        parts := strings.Split(baseStreamName, "_")
+        baseStreamName = parts[0]
+    }
 
-	segmentPath := filepath.Join("/tmp/hls", baseStreamName)
-	os.MkdirAll(segmentPath, 0755)
+    segmentPath := filepath.Join("/tmp/hls", baseStreamName)
+    os.MkdirAll(segmentPath, 0755)
 
-	hlsManager := NewHLSSegmentManager(ctx, baseStreamName, segmentPath, 5) // 5秒片段时长
-	hlsManager.SetHub(h)
-	hlsManager.SetNeedPull(needPull) // 设置needPull标志
+    hlsManager := NewHLSSegmentManager(ctx, baseStreamName, segmentPath, 5) // 5秒片段时长
+    hlsManager.SetHub(h)
+    hlsManager.SetNeedPull(true) // 默认需要拉流
 
-	pipeForwarder := &PipeForwarder{
-		streamName: streamName,
-		rtmpURL:    rtmpURL,
-		enabled:    enabled,
-		needPull:   needPull,
-		ctx:        ctx,
-		cancel:     cancel,
-		hub:        h,
-		hlsManager: hlsManager,
-		hlsEnabled: true, // 默认启用，后续会根据配置调整
-	}
-	// 初始化 FFmpegProcessStats
-	pipeForwarder.stats = &FFmpegProcessStats{
-		StreamName:    streamName,
-		ReceiverIndex: -1, // -1 表示 PipeForwarder
-		StartTime:     time.Now(),
-		Running:       false,
-		LastError:     "",
-	}
+    pipeForwarder := &PipeForwarder{
+        streamName: streamName,
+        rtmpURL:    sourceURL,     // 临时存储sourceURL，后续会根据模式处理
+        enabled:    true,          // 默认启用
+        needPull:   true,          // 默认需要拉流
+        ctx:        ctx,
+        cancel:     cancel,
+        hub:        h,
+        hlsManager: hlsManager,
+        hlsEnabled: hlsEnabled,    // 根据参数设置HLS启用状态
+    }
+    
+    // 初始化 FFmpegProcessStats
+    pipeForwarder.stats = &FFmpegProcessStats{
+        StreamName:    streamName,
+        ReceiverIndex: -1, // -1 表示 PipeForwarder
+        StartTime:     time.Now(),
+        Running:       false,
+        LastError:     "",
+    }
 
-	return pipeForwarder
+    return pipeForwarder
 }
 
 // SetCallbacks 设置启动和停止回调

@@ -154,7 +154,7 @@ type FilterOptions struct {
 // StreamData represents stream source configuration
 type StreamData struct {
 	Source        SourceData    `yaml:"source"`
-	LocalPlayUrls []PlayOutput    `yaml:"local_play_urls"` // flv hls
+	LocalPlayUrls []PlayOutput  `yaml:"local_play_urls"` // flv hls
 	Mode          string        `yaml:"mode"`            // "primary-backup" or "all"
 	Receivers     ReceiversData `yaml:"receivers"`
 }
@@ -169,10 +169,13 @@ type SourceData struct {
 
 // PlayOutput represents play URLs for different protocols
 type PlayOutput struct {
-	Protocol         string         `yaml:"protocol"` // flv/hls/…
-	Enabled          bool           `yaml:"enabled"`
-	FlvFFmpegOptions *FFmpegOptions `yaml:"flv_ffmpeg_options,omitempty"`
-	HlsFFmpegOptions *FFmpegOptions `yaml:"hls_ffmpeg_options,omitempty"`
+	Protocol           string         `yaml:"protocol"` // flv/hls/…
+	Enabled            bool           `yaml:"enabled"`
+	FlvFFmpegOptions   *FFmpegOptions `yaml:"flv_ffmpeg_options,omitempty"`
+	HlsFFmpegOptions   *FFmpegOptions `yaml:"hls_ffmpeg_options,omitempty"`
+	HlsSegmentDuration int            `yaml:"hls_segment_duration,omitempty"` // HLS片段时长（秒）
+	HlsSegmentCount    int            `yaml:"hls_segment_count,omitempty"`    // 保留的HLS片段数量
+	HlsPath            string         `yaml:"hls_path,omitempty"`             // HLS文件存储路径
 }
 
 // PlayUrls represents play URLs for different protocols
