@@ -665,7 +665,7 @@ func (sm *StreamManager) startStreaming() {
 					// RTMP URL通常是命令的最后一个参数
 					rtmpURL = receiverCmd[len(receiverCmd)-1]
 				}
-
+            // fmt.Printf("Stream %s 01223123 %s 234234e1: %+v\n",receiverCmd,rtmpURL ,ffmpegCmd)
 				// 为每个接收器创建独立的管道转发器
 				pipeName := fmt.Sprintf("%s_receiver_%d", sm.name, i+1)
 				if i == 0 {
@@ -750,6 +750,8 @@ func (sm *StreamManager) startStreaming() {
 			if len(backupCmd) > 0 {
 				backupRTMPURL = backupCmd[len(backupCmd)-1]
 			}
+
+			
 
 			// 创建 backup PipeForwarder (当主URL失效时，备用PipeForwarder需要主动拉流)
 			backupPipeForwarder := NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, true, nil)
