@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -69,7 +70,7 @@ type PipeForwarder struct {
 }
 
 // NewPipeForwarder 创建新的 PipeForwarder
-func NewPipeForwarder(streamName string, sourceURL string, backupURL string, hlsEnabled bool) *PipeForwarder {
+func NewPipeForwarder(streamName string, sourceURL string, backupURL string, hlsEnabled bool, hub *stream.StreamHubs) *PipeForwarder {
     ctx, cancel := context.WithCancel(context.Background())
     
     // 创建新的StreamHubs
@@ -518,93 +519,189 @@ func removeArg(args []string, argToRemove string) []string {
 
 // forwardDataFromPipe 从 pipeReader 读取数据并分发到 hub 与可选 RTMP 推流
 func (pf *PipeForwarder) forwardDataFromPipe() {
-	var ffmpegPush *exec.Cmd
+	// var ffmpegPush *exec.Cmd
 	var ffIn io.WriteCloser
 	var pushWg sync.WaitGroup
 
-	// 如果配置了 rtmpURL，则启用 ffmpegPush：读取 stdin（pipe:0）并推送到 rtmp
-	// 只有在确实配置了接收器时才启用 RTMP 推流
-	if pf.rtmpURL != "" {
-		// 检查是否有配置接收器
-		hasReceivers := false
-		manager := GetManager()
-		if manager != nil {
-			// 提取流名称，去掉可能的后缀（如 _receiver_2, _primary, _backup）
-			streamName := pf.streamName
-			if strings.Contains(streamName, "_receiver_") {
-				parts := strings.Split(streamName, "_receiver_")
-				streamName = parts[0]
-			} else if strings.HasSuffix(streamName, "_primary") {
-				streamName = strings.TrimSuffix(streamName, "_primary")
-			} else if strings.HasSuffix(streamName, "_backup") {
-				streamName = strings.TrimSuffix(streamName, "_backup")
-			}
+	// 检查是否有配置接收器
+	hasReceivers := false
+	manager := GetManager()
+	var streamManager *StreamManager
+	var receivers []Receiver
+	
+	if manager != nil {
+		// 提取流名称，去掉可能的后缀（如 _receiver_2, _primary, _backup）
+		streamName := pf.streamName
+		if strings.Contains(streamName, "_receiver_") {
+			parts := strings.Split(streamName, "_receiver_")
+			streamName = parts[0]
+		} else if strings.HasSuffix(streamName, "_primary") {
+			streamName = strings.TrimSuffix(streamName, "_primary")
+		} else if strings.HasSuffix(streamName, "_backup") {
+			streamName = strings.TrimSuffix(streamName, "_backup")
+		}
 
-			manager.mutex.RLock()
-			streamManager, exists := manager.streams[streamName]
-			manager.mutex.RUnlock()
+		manager.mutex.RLock()
+		var exists bool
+		streamManager, exists = manager.streams[streamName]
+		manager.mutex.RUnlock()
 
-			// 检查是否配置了接收器
-			if exists {
-				// 检查三种可能的接收器配置
-				if streamManager.stream.Stream.Mode == "primary-backup" {
-					// primary-backup 模式
-					if streamManager.stream.Stream.Receivers.Primary != nil || 
-					   streamManager.stream.Stream.Receivers.Backup != nil {
-						hasReceivers = true
-					}
-				} else if streamManager.stream.Stream.Mode == "all" {
-					// all 模式
-					if len(streamManager.stream.Stream.Receivers.All) > 0 {
-						hasReceivers = true
-					}
+		// 检查是否配置了接收器
+		if exists && streamManager != nil {
+			// 获取接收器列表
+			receivers = streamManager.stream.Stream.GetReceivers()
+			if streamManager.stream.Stream.Mode == "primary-backup" {
+				// primary-backup 模式
+				if streamManager.stream.Stream.Receivers.Primary != nil || 
+				   streamManager.stream.Stream.Receivers.Backup != nil {
+					hasReceivers = true
+				}
+			} else if streamManager.stream.Stream.Mode == "all" {
+				// all 模式
+				if len(streamManager.stream.Stream.Receivers.All) > 0 {
+					hasReceivers = true
 				}
 			}
 		}
+	}
 
-		// 只有在确实配置了接收器时才启用 RTMP 推流
-		if hasReceivers {
-			// 不使用 -re（对 pipe:0 不需要节流）
-			ffmpegPush = exec.CommandContext(pf.ctx, "ffmpeg", "-i", "pipe:0", "-c", "copy", "-f", "flv", pf.rtmpURL)
+	// 只有在确实配置了接收器时才启用 RTMP 推流
+	if hasReceivers && streamManager != nil {
+		// 标记是否是第一个推流进程（用于 IsPushRunning 检测）
+		isFirstPush := true
+		
+		// 根据模式和接收器配置构建推流命令
+		var pushCommands [][]string
+		
+		// 检查是否是为特定接收器创建的PipeForwarder（名称包含_receiver_）
+		isReceiverSpecific := strings.Contains(pf.streamName, "_receiver_")
+		
+		if streamManager.stream.Stream.Mode == "primary-backup" && !isReceiverSpecific {
+			// primary-backup 模式，使用 primary 接收器的配置
+			if streamManager.stream.Stream.Receivers.Primary != nil {
+				// 使用 primary 接收器的 ffmpeg_options 构建推流参数
+				cmd := pf.buildPushCommandWithReceiverOptions(
+					streamManager.stream.Stream.Receivers.Primary.FFmpegOptions,
+					streamManager.stream.Stream.Receivers.Primary.PushURL,
+				)
+				pushCommands = append(pushCommands, cmd)
+			}
+		} else if streamManager.stream.Stream.Mode == "all" && !isReceiverSpecific {
+			// all 模式且不是特定接收器的PipeForwarder，只使用第一个接收器的配置
+			// 避免在单个PipeForwarder中为所有接收器创建推流进程
+			if len(streamManager.stream.Stream.Receivers.All) > 0 {
+				firstReceiver := streamManager.stream.Stream.Receivers.All[0]
+				cmd := pf.buildPushCommandWithReceiverOptions(
+					firstReceiver.FFmpegOptions,
+					firstReceiver.PushURL,
+				)
+				pushCommands = append(pushCommands, cmd)
+			}
+		} else if streamManager.stream.Stream.Mode == "all" && isReceiverSpecific {
+			// 特定接收器的PipeForwarder，使用对应接收器的配置
+			// 从名称中提取接收器索引
+			parts := strings.Split(pf.streamName, "_receiver_")
+			if len(parts) == 2 {
+				if index, err := strconv.Atoi(parts[1]); err == nil && index > 0 {
+					// 索引从1开始，数组从0开始
+					receiverIndex := index - 1
+					if receiverIndex < len(streamManager.stream.Stream.Receivers.All) {
+						receiver := streamManager.stream.Stream.Receivers.All[receiverIndex]
+						cmd := pf.buildPushCommandWithReceiverOptions(
+							receiver.FFmpegOptions,
+							receiver.PushURL,
+						)
+						pushCommands = append(pushCommands, cmd)
+					}
+				}
+			}
+		} else if len(receivers) > 0 {
+			// 其他模式，使用第一个接收器的配置
+			cmd := pf.buildPushCommandWithReceiverOptions(
+				receivers[0].FFmpegOptions,
+				receivers[0].PushURL,
+			)
+			pushCommands = append(pushCommands, cmd)
+		}
+		
+		// 为每个推流命令创建一个推流进程（通常只有一个）
+		for _, pushCmd := range pushCommands {
+			// 创建推流命令
+			ffmpegPush := exec.CommandContext(pf.ctx, "ffmpeg", pushCmd...)
 			var err error
-			ffIn, err = ffmpegPush.StdinPipe()
+			
+			// 为每个推流进程创建独立的 stdin pipe
+			var pushStdin io.WriteCloser
+			pushStdin, err = ffmpegPush.StdinPipe()
 			if err != nil {
 				logger.LogPrintf("[%s] Failed to create stdin pipe for RTMP push: %v", pf.streamName, err)
-				ffIn = nil
-			} else {
-				// ffmpegPush.Stderr = os.Stderr
-				ffmpegPush.Stdout = os.Stdout
+				continue
+			}
+			
+			ffmpegPush.Stderr = os.Stderr
+			ffmpegPush.Stdout = os.Stdout
 
-				if err := ffmpegPush.Start(); err != nil {
-					logger.LogPrintf("[%s] Failed to start RTMP push: %v", pf.streamName, err)
-					_ = ffIn.Close()
-					ffIn = nil
-				} else {
-					// ✅ 保存到 pf.ffmpegPush 以供 IsPushRunning() 检测
+			if err := ffmpegPush.Start(); err != nil {
+				logger.LogPrintf("[%s] Failed to start RTMP push: %v", pf.streamName, err)
+				_ = pushStdin.Close()
+				continue
+			} else {
+				// ✅ 保存到 pf.ffmpegPush 以供 IsPushRunning() 检测（仅保存第一个）
+				if isFirstPush {
 					pf.ffmpegLock.Lock()
 					pf.ffmpegPush = ffmpegPush
 					pf.ffmpegLock.Unlock()
-
-					logger.LogPrintf("[%s] Started RTMP push to %s (pid=%d)", pf.streamName, pf.rtmpURL, ffmpegPush.Process.Pid)
-					// 等待 ffmpegPush 退出的 goroutine
-					pushWg.Add(1)
-					go func() {
-						defer pushWg.Done()
-						if err := ffmpegPush.Wait(); err != nil && pf.ctx.Err() == nil {
-							pf.ffmpegLock.Lock()
-							pf.ffmpegPush = nil // ✅ 退出时清理
-							pf.ffmpegLock.Unlock()
-
-							logger.LogPrintf("[%s] RTMP push ffmpeg exited with error: %v", pf.streamName, err)
-						} else {
-							logger.LogPrintf("[%s] RTMP push ffmpeg exited normally", pf.streamName)
+					isFirstPush = false
+					
+					// 将第一个推流进程的 stdin pipe 赋值给 ffIn
+					ffIn = pushStdin
+				} else {
+					// 为非第一个推流进程创建数据复制 goroutine
+					go func(stdin io.WriteCloser) {
+						defer stdin.Close()
+						buf := make([]byte, 32*1024)
+						for {
+							select {
+							case <-pf.ctx.Done():
+								return
+							default:
+								n, err := pf.pipeReader.Read(buf)
+								if n > 0 {
+									_, werr := stdin.Write(buf[:n])
+									if werr != nil {
+										logger.LogPrintf("[%s] Error writing to backup RTMP stdin: %v", pf.streamName, werr)
+										return
+									}
+								}
+								if err != nil {
+									if err != io.EOF {
+										logger.LogPrintf("[%s] Error reading from pipe for backup push: %v", pf.streamName, err)
+									}
+									return
+								}
+							}
 						}
-					}()
+					}(pushStdin)
 				}
+
+				logger.LogPrintf("[%s] Started RTMP push (pid=%d)", pf.streamName, ffmpegPush.Process.Pid)
+				// 等待 ffmpegPush 退出的 goroutine
+				pushWg.Add(1)
+				go func(cmd *exec.Cmd, stdin io.WriteCloser) {
+					defer pushWg.Done()
+					if err := cmd.Wait(); err != nil && pf.ctx.Err() == nil {
+						// 注意：这里不清理 pf.ffmpegPush，因为可能有多个推流进程
+						logger.LogPrintf("[%s] RTMP push ffmpeg exited with error: %v", pf.streamName, err)
+					} else {
+						logger.LogPrintf("[%s] RTMP push ffmpeg exited normally", pf.streamName)
+					}
+					// 关闭 stdin pipe
+					_ = stdin.Close()
+				}(ffmpegPush, pushStdin)
 			}
-		} else {
-			logger.LogPrintf("[%s] RTMP URL configured but no receivers found, skipping RTMP push", pf.streamName)
 		}
+	} else {
+		logger.LogPrintf("[%s] No receivers found, skipping RTMP push", pf.streamName)
 	}
 
 	// 标记 hub 为播放状态
@@ -648,7 +745,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					}
 					pf.headerMutex.Unlock()
 
-					// 写入 RTMP 推流进程 stdin（如果有）
+					// 只向第一个推流进程写入数据（ffIn）
 					if ffIn != nil {
 						wDone := make(chan error, 1)
 						go func() {
@@ -711,10 +808,15 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 						_ = ffIn.Close()
 						ffIn = nil
 					}
-					// 等待推流进程退出
+					// 等待所有推流进程完全退出
 					pushWg.Wait()
-					// 移除客户端
+					// 从 hub 移除客户端
 					pf.hub.RemoveClient(pf.clientBuffer)
+					// 关闭并清理客户端缓冲区
+					if pf.clientBuffer != nil {
+						pf.clientBuffer.Close()
+						pf.clientBuffer = nil
+					}
 					return
 				default:
 					data, ok := pf.clientBuffer.PullWithContext(pf.ctx)
@@ -762,6 +864,97 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 			}
 		}
 	}
+}
+
+// buildPushCommandWithReceiverOptions 根据接收器的 FFmpeg 选项构建推流命令
+func (pf *PipeForwarder) buildPushCommandWithReceiverOptions(options *FFmpegOptions, pushURL string) []string {
+	cmd := []string{"-i", "pipe:0"}
+	
+	// 如果是特定接收器的PipeForwarder（名称包含_receiver_），则使用对应的URL
+	isReceiverSpecific := strings.Contains(pf.streamName, "_receiver_")
+	if isReceiverSpecific && pushURL != "" {
+		// 使用传入的pushURL
+		cmd = append(cmd, "-f", "flv", pushURL)
+		return cmd
+	}
+	
+	// 如果有配置选项，则使用它们
+	if options != nil {
+		// 视频编码器
+		if options.VideoCodec != "" {
+			cmd = append(cmd, "-c:v", options.VideoCodec)
+		} else {
+			cmd = append(cmd, "-c:v", "copy")
+		}
+		
+		// 音频编码器
+		if options.AudioCodec != "" {
+			cmd = append(cmd, "-c:a", options.AudioCodec)
+		} else {
+			cmd = append(cmd, "-c:a", "copy")
+		}
+		
+		// 视频码率
+		if options.VideoBitrate != "" {
+			cmd = append(cmd, "-b:v", options.VideoBitrate)
+		}
+		
+		// 音频码率
+		if options.AudioBitrate != "" {
+			cmd = append(cmd, "-b:a", options.AudioBitrate)
+		}
+		
+		// 预设
+		if options.Preset != "" {
+			cmd = append(cmd, "-preset", options.Preset)
+		}
+		
+		// CRF
+		if options.CRF > 0 {
+			cmd = append(cmd, "-crf", fmt.Sprintf("%d", options.CRF))
+		}
+		
+		// 像素格式
+		if options.PixFmt != "" {
+			cmd = append(cmd, "-pix_fmt", options.PixFmt)
+		}
+		
+		// GOP大小
+		if options.GopSize > 0 {
+			cmd = append(cmd, "-g", fmt.Sprintf("%d", options.GopSize))
+		}
+		
+		// 输出前参数
+		if len(options.OutputPreArgs) > 0 {
+			cmd = append(cmd, options.OutputPreArgs...)
+		}
+		
+		// 输出格式
+		if options.OutputFormat != "" {
+			cmd = append(cmd, "-f", options.OutputFormat)
+		} else {
+			cmd = append(cmd, "-f", "flv")
+		}
+		
+		// 输出后参数
+		if len(options.OutputPostArgs) > 0 {
+			cmd = append(cmd, options.OutputPostArgs...)
+		}
+	} else {
+		// 没有配置选项，使用默认的复制模式
+		cmd = append(cmd, "-c:v", "copy", "-c:a", "copy", "-f", "flv")
+	}
+	
+	// 添加推流URL
+	if pushURL != "" {
+		cmd = append(cmd, pushURL)
+	} else if pf.rtmpURL != "" {
+		cmd = append(cmd, pf.rtmpURL)
+	} else {
+		cmd = append(cmd, "rtmp://localhost/live/stream")
+	}
+	
+	return cmd
 }
 
 // waitWithBackupSupport 等待主 ffmpeg 进程退出，如果配置了 backup_url 则尝试切换到备用URL
@@ -1156,7 +1349,36 @@ func (pf *PipeForwarder) IsPushRunning() bool {
 
 
 func (pf *PipeForwarder) monitorPrimaryPush(primary, backup *PipeForwarder, ffmpegCmd []string) {
-	if primary == nil || backup == nil {
+	// 获取流管理器
+	manager := GetManager()
+	if manager == nil {
+		return
+	}
+
+	// 检查是否是特定接收器的PipeForwarder（名称包含_receiver_）
+	// 如果是，则不执行主备切换逻辑
+	if strings.Contains(pf.streamName, "_receiver_") {
+		return
+	}
+
+	// 提取流名称
+	streamName := pf.streamName
+	if strings.Contains(streamName, "_receiver_") {
+		parts := strings.Split(streamName, "_receiver_")
+		streamName = parts[0]
+	} else if strings.HasSuffix(streamName, "_primary") {
+		streamName = strings.TrimSuffix(streamName, "_primary")
+	} else if strings.HasSuffix(streamName, "_backup") {
+		streamName = strings.TrimSuffix(streamName, "_backup")
+	}
+
+	// 获取流管理器
+	manager.mutex.RLock()
+	streamManager, exists := manager.streams[streamName]
+	manager.mutex.RUnlock()
+
+	// 检查是否是 primary-backup 模式
+	if !exists || streamManager == nil || streamManager.stream.Stream.Mode != "primary-backup" {
 		return
 	}
 
@@ -1169,6 +1391,17 @@ func (pf *PipeForwarder) monitorPrimaryPush(primary, backup *PipeForwarder, ffmp
 			default:
 				if !primary.IsPushRunning() {
 					logger.LogPrintf("[%s] Primary push stopped, switching to backup", pf.streamName)
+
+					// 使用备份接收器的配置构建推流命令
+					if streamManager.stream.Stream.Receivers.Backup != nil {
+						// 设置备份推流的 URL
+						backup.rtmpURL = streamManager.stream.Stream.Receivers.Backup.PushURL
+						// 构建使用备份接收器配置的推流命令
+						ffmpegCmd = backup.buildPushCommandWithReceiverOptions(
+							streamManager.stream.Stream.Receivers.Backup.FFmpegOptions,
+							streamManager.stream.Stream.Receivers.Backup.PushURL,
+						)
+					}
 
 					if err := backup.Start(ffmpegCmd); err != nil {
 						logger.LogPrintf("[%s] Failed to start backup push: %v", pf.streamName, err)

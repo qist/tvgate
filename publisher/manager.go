@@ -181,6 +181,7 @@ func (m *Manager) Start() error {
 				stream.PipeForwarder.sourceURL,
 				stream.PipeForwarder.backupURL,
 				stream.PipeForwarder.hlsEnabled,
+				stream.PipeForwarder.hub,
 			)
 
 			// 构建FFmpeg命令
@@ -365,7 +366,7 @@ func (m *Manager) shouldRestartStream(oldStream, newStream *Stream) bool {
 			oldOptions = oldOutput.HlsFFmpegOptions
 			newOptions = newOutput.HlsFFmpegOptions
 		}
-		
+
 		if !ffmpegOptionsEqual(oldOptions, newOptions) {
 			return true
 		}
@@ -578,154 +579,154 @@ func (m *Manager) UpdateConfig(newConfig *Config) {
 	logger.LogPrintf("Publisher config updated successfully")
 }
 
-
 // startStreaming starts the streaming process for a single stream
 func (sm *StreamManager) startStreaming() {
-    sm.mutex.Lock()
-    if sm.streamStarted {
-        sm.mutex.Unlock()
-        logger.LogPrintf("Stream %s already started, skipping", sm.name)
-        return
-    }
-    sm.streamStarted = true
-    sm.mutex.Unlock()
+	sm.mutex.Lock()
+	if sm.streamStarted {
+		sm.mutex.Unlock()
+		logger.LogPrintf("Stream %s already started, skipping", sm.name)
+		return
+	}
+	sm.streamStarted = true
+	sm.mutex.Unlock()
 
-    logger.LogPrintf("Starting stream %s with key %s", sm.name, sm.streamKey)
+	logger.LogPrintf("Starting stream %s with key %s", sm.name, sm.streamKey)
 
-    // 确保即使密钥未过期也能正常启动推流
-    // 检查密钥是否过期，如果过期则生成新密钥
-    sm.mutex.RLock()
-    streamKey := sm.streamKey
-    createdAt := sm.createdAt
-    sm.mutex.RUnlock()
+	// 确保即使密钥未过期也能正常启动推流
+	// 检查密钥是否过期，如果过期则生成新密钥
+	sm.mutex.RLock()
+	streamKey := sm.streamKey
+	createdAt := sm.createdAt
+	sm.mutex.RUnlock()
 
-    if sm.stream.CheckStreamKeyExpiration(streamKey, createdAt) {
-        logger.LogPrintf("Stream key for %s expired at start, generating new key", sm.name)
-        // 更新stream key
-        newStreamKey, err := sm.stream.UpdateStreamKey()
-        if err != nil {
-            logger.LogPrintf("Failed to generate new stream key for %s: %v", sm.name, err)
-            return
-        }
+	if sm.stream.CheckStreamKeyExpiration(streamKey, createdAt) {
+		logger.LogPrintf("Stream key for %s expired at start, generating new key", sm.name)
+		// 更新stream key
+		newStreamKey, err := sm.stream.UpdateStreamKey()
+		if err != nil {
+			logger.LogPrintf("Failed to generate new stream key for %s: %v", sm.name, err)
+			return
+		}
 
-        sm.mutex.Lock()
-        oldKey := sm.streamKey
-        sm.oldStreamKey = oldKey // 保存旧密钥
-        sm.streamKey = newStreamKey
-        sm.createdAt = time.Now()
-        sm.mutex.Unlock()
-        logger.LogPrintf("Generated new stream key for %s: %s (was: %s)", sm.name, newStreamKey, oldKey)
+		sm.mutex.Lock()
+		oldKey := sm.streamKey
+		sm.oldStreamKey = oldKey // 保存旧密钥
+		sm.streamKey = newStreamKey
+		sm.createdAt = time.Now()
+		sm.mutex.Unlock()
+		logger.LogPrintf("Generated new stream key for %s: %s (was: %s)", sm.name, newStreamKey, oldKey)
 
-        // 回写配置到YAML文件
-        logger.LogPrintf("Updating config file for %s with new stream key", sm.name)
-        if err := sm.updateConfigFile(newStreamKey); err != nil {
-            logger.LogPrintf("Failed to update config file for %s: %v", sm.name, err)
-        } else {
-            logger.LogPrintf("Successfully updated config file for %s", sm.name)
-        }
-    }
+		// 回写配置到YAML文件
+		logger.LogPrintf("Updating config file for %s with new stream key", sm.name)
+		if err := sm.updateConfigFile(newStreamKey); err != nil {
+			logger.LogPrintf("Failed to update config file for %s: %v", sm.name, err)
+		} else {
+			logger.LogPrintf("Successfully updated config file for %s", sm.name)
+		}
+	}
 
-    // Build FFmpeg command
-    ffmpegCmd := sm.stream.BuildFFmpegCommand()
+	// Build FFmpeg command
+	ffmpegCmd := sm.stream.BuildFFmpegCommand()
 
-    // 检查是否配置了本地播放URL，如果配置了则启动管道转发器
-    enableFLV, enableHLS := false, false
-    for _, output := range sm.stream.Stream.LocalPlayUrls {
-        if output.Protocol == "flv" && output.Enabled {
-            enableFLV = true
-        }
-        if output.Protocol == "hls" && output.Enabled {
-            enableHLS = true
-        }
-    }
+	// 检查是否配置了本地播放URL，如果配置了则启动管道转发器
+	enableFLV, enableHLS := false, false
+	for _, output := range sm.stream.Stream.LocalPlayUrls {
+		if output.Protocol == "flv" && output.Enabled {
+			enableFLV = true
+		}
+		if output.Protocol == "hls" && output.Enabled {
+			enableHLS = true
+		}
+	}
 
-    // 如果启用了本地播放，则启动管道转发器
-    if enableFLV || enableHLS {
-        // 创建PipeForwarder，传入源URL和备份URL
-        sm.pipeForwarder = NewPipeForwarder(
-            sm.name,
-            sm.stream.Stream.Source.URL,
-            sm.stream.Stream.Source.BackupURL,
-            enableHLS,
-        )
-        
-        // 启动管道转发器
-        go func() {
-            if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
-                logger.LogPrintf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
-            }
-        }()
-        
-        // 如果使用PipeForwarder，则不启动传统的推流方式
-        return
-    }
+	// 如果启用了本地播放，则启动管道转发器
+	if enableFLV || enableHLS {
+		// 创建PipeForwarder，传入源URL和备份URL
+		sm.pipeForwarder = NewPipeForwarder(
+			sm.name,
+			sm.stream.Stream.Source.URL,
+			sm.stream.Stream.Source.BackupURL,
+			enableHLS,
+			nil,
+		)
 
-    // Get receivers
-    receivers := sm.stream.Stream.GetReceivers()
-    logger.LogPrintf("Stream %s has %d receivers", sm.name, len(receivers))
+		// 启动管道转发器
+		go func() {
+			if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
+				logger.LogPrintf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
+			}
+		}()
 
-    // Start streaming for each receiver
-    var wg sync.WaitGroup
-    for i, receiver := range receivers {
-        wg.Add(1)
-        go func(index int, r Receiver) {
-            defer wg.Done()
-            // 使用当前的streamKey而不是启动时的streamKey
-            sm.mutex.RLock()
-            currentStreamKey := sm.streamKey
-            sm.mutex.RUnlock()
+		// 如果使用PipeForwarder，则不启动传统的推流方式
+		return
+	}
 
-            // 为每个接收者构建基础命令，使用接收者的FFmpeg选项
-            baseCmd := sm.stream.BuildFFmpegCommandForReceiver(&r)
-            cmd := r.BuildFFmpegPushCommand(baseCmd, currentStreamKey)
-            logger.LogPrintf("Full FFmpeg command for stream %s receiver %d: ffmpeg %s", sm.name, index+1, strings.Join(cmd, " "))
-            sm.runFFmpegStream(cmd, index+1)
-        }(i, receiver)
-    }
+	// Get receivers
+	receivers := sm.stream.Stream.GetReceivers()
+	logger.LogPrintf("Stream %s has %d receivers", sm.name, len(receivers))
 
-    // 对于 primary-backup 模式，额外处理 backup receiver
-    if sm.stream.Stream.Mode == "primary-backup" && sm.stream.Stream.Receivers.Backup != nil {
-        // 等待一段时间观察 primary 是否正常工作
-        go func() {
-            // 等待一段时间让 primary 先启动
-            time.Sleep(5 * time.Second)
+	// Start streaming for each receiver
+	var wg sync.WaitGroup
+	for i, receiver := range receivers {
+		wg.Add(1)
+		go func(index int, r Receiver) {
+			defer wg.Done()
+			// 使用当前的streamKey而不是启动时的streamKey
+			sm.mutex.RLock()
+			currentStreamKey := sm.streamKey
+			sm.mutex.RUnlock()
 
-            // 检查 primary 是否正常运行
-            if sm.isPrimaryHealthy() {
-                logger.LogPrintf("Primary receiver for stream %s is healthy, not starting backup", sm.name)
-            } else {
-                logger.LogPrintf("Primary receiver for stream %s is unhealthy, starting backup", sm.name)
-                wg.Add(1)
-                go func() {
-                    defer wg.Done()
-                    // 使用当前的streamKey而不是启动时的streamKey
-                    sm.mutex.RLock()
-                    currentStreamKey := sm.streamKey
-                    sm.mutex.RUnlock()
+			// 为每个接收者构建基础命令，使用接收者的FFmpeg选项
+			baseCmd := sm.stream.BuildFFmpegCommandForReceiver(&r)
+			cmd := r.BuildFFmpegPushCommand(baseCmd, currentStreamKey)
+			logger.LogPrintf("Full FFmpeg command for stream %s receiver %d: ffmpeg %s", sm.name, index+1, strings.Join(cmd, " "))
+			sm.runFFmpegStream(cmd, index+1)
+		}(i, receiver)
+	}
 
-                    // 构建 backup receiver 的 FFmpeg 命令
-                    cmd := sm.stream.Stream.Receivers.Backup.BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
-                    logger.LogPrintf("Full FFmpeg command for stream %s backup receiver: ffmpeg %s", sm.name, strings.Join(cmd, " "))
-                    // index 为 2，因为 primary 是 1，backup 是 2
-                    sm.runFFmpegStream(cmd, 2)
-                }()
-            }
-        }()
-    }
+	// 对于 primary-backup 模式，额外处理 backup receiver
+	if sm.stream.Stream.Mode == "primary-backup" && sm.stream.Stream.Receivers.Backup != nil {
+		// 等待一段时间观察 primary 是否正常工作
+		go func() {
+			// 等待一段时间让 primary 先启动
+			time.Sleep(5 * time.Second)
 
-    // 等待所有接收器完成或上下文取消
-    done := make(chan struct{})
-    go func() {
-        wg.Wait()
-        close(done)
-    }()
+			// 检查 primary 是否正常运行
+			if sm.isPrimaryHealthy() {
+				logger.LogPrintf("Primary receiver for stream %s is healthy, not starting backup", sm.name)
+			} else {
+				logger.LogPrintf("Primary receiver for stream %s is unhealthy, starting backup", sm.name)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					// 使用当前的streamKey而不是启动时的streamKey
+					sm.mutex.RLock()
+					currentStreamKey := sm.streamKey
+					sm.mutex.RUnlock()
 
-    select {
-    case <-sm.ctx.Done():
-        logger.LogPrintf("Stream %s context cancelled, stopping", sm.name)
-    case <-done:
-        logger.LogPrintf("Stream %s finished", sm.name)
-    }
+					// 构建 backup receiver 的 FFmpeg 命令
+					cmd := sm.stream.Stream.Receivers.Backup.BuildFFmpegPushCommand(ffmpegCmd, currentStreamKey)
+					logger.LogPrintf("Full FFmpeg command for stream %s backup receiver: ffmpeg %s", sm.name, strings.Join(cmd, " "))
+					// index 为 2，因为 primary 是 1，backup 是 2
+					sm.runFFmpegStream(cmd, 2)
+				}()
+			}
+		}()
+	}
+
+	// 等待所有接收器完成或上下文取消
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-sm.ctx.Done():
+		logger.LogPrintf("Stream %s context cancelled, stopping", sm.name)
+	case <-done:
+		logger.LogPrintf("Stream %s finished", sm.name)
+	}
 }
 
 // isPrimaryHealthy 检查 primary receiver 是否健康
@@ -948,7 +949,7 @@ func (sm *StreamManager) buildFFmpegCommandWithBackup(useBackup bool) []string {
 	// 获取合并后的FFmpegOptions（如果在receiver上下文中）
 	// 注意：这个方法在StreamManager中调用，我们可能需要使用特定的FFmpegOptions
 	var ffmpegOptions *FFmpegOptions
-	
+
 	// 优先使用第一个接收器的FFmpegOptions，如果没有接收器则使用源的FFmpegOptions
 	receivers := s.Stream.GetReceivers()
 	if len(receivers) > 0 && receivers[0].FFmpegOptions != nil {
