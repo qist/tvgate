@@ -69,8 +69,6 @@ type PipeForwarder struct {
 }
 
 // NewPipeForwarder 创建新的 PipeForwarder
-// NewPipeForwarder 创建新的 PipeForwarder
-// 修改函数签名以接受源URL和备份URL，而不是rtmpURL
 func NewPipeForwarder(streamName string, sourceURL string, backupURL string, hlsEnabled bool) *PipeForwarder {
     ctx, cancel := context.WithCancel(context.Background())
     
@@ -902,4 +900,33 @@ func (pf *PipeForwarder) IsPushRunning() bool {
 
 	// logger.LogPrintf("[%s] IsPushRunning: process running (PID=%d)", pf.streamName, pf.ffmpegPush.Process.Pid)
 	return true
+}
+
+
+func (pf *PipeForwarder) monitorPrimaryPush(primary, backup *PipeForwarder, ffmpegCmd []string) {
+	if primary == nil || backup == nil {
+		return
+	}
+
+	go func() {
+		time.Sleep(5 * time.Second)
+		for {
+			select {
+			case <-pf.ctx.Done():
+				return
+			default:
+				if !primary.IsPushRunning() {
+					logger.LogPrintf("[%s] Primary push stopped, switching to backup", pf.streamName)
+
+					if err := backup.Start(ffmpegCmd); err != nil {
+						logger.LogPrintf("[%s] Failed to start backup push: %v", pf.streamName, err)
+					} else {
+						logger.LogPrintf("[%s] Backup push started successfully", pf.streamName)
+					}
+					return
+				}
+				time.Sleep(30 * time.Second)
+			}
+		}
+	}()
 }
