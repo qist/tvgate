@@ -579,10 +579,13 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 		if streamManager.stream.Stream.Mode == "primary-backup" && !isReceiverSpecific {
 			// primary-backup 模式，使用 primary 接收器的配置
 			if streamManager.stream.Stream.Receivers.Primary != nil {
+				// 检查并更新过期的 stream key
+				pushURL := pf.checkAndUpdateStreamKey(streamManager, streamManager.stream.Stream.Receivers.Primary.PushURL)
+				
 				// 使用 primary 接收器的 ffmpeg_options 构建推流参数
 				cmd := pf.buildPushCommandWithReceiverOptions(
 					streamManager.stream.Stream.Receivers.Primary.FFmpegOptions,
-					streamManager.stream.Stream.Receivers.Primary.PushURL,
+					pushURL,
 				)
 				pushCommands = append(pushCommands, cmd)
 			}
@@ -591,9 +594,12 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 			// 避免在单个PipeForwarder中为所有接收器创建推流进程
 			if len(streamManager.stream.Stream.Receivers.All) > 0 {
 				firstReceiver := streamManager.stream.Stream.Receivers.All[0]
+				// 检查并更新过期的 stream key
+				pushURL := pf.checkAndUpdateStreamKey(streamManager, firstReceiver.PushURL)
+				
 				cmd := pf.buildPushCommandWithReceiverOptions(
 					firstReceiver.FFmpegOptions,
-					firstReceiver.PushURL,
+					pushURL,
 				)
 				pushCommands = append(pushCommands, cmd)
 			}
@@ -607,9 +613,12 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					receiverIndex := index - 1
 					if receiverIndex < len(streamManager.stream.Stream.Receivers.All) {
 						receiver := streamManager.stream.Stream.Receivers.All[receiverIndex]
+						// 检查并更新过期的 stream key
+						pushURL := pf.checkAndUpdateStreamKey(streamManager, receiver.PushURL)
+						
 						cmd := pf.buildPushCommandWithReceiverOptions(
 							receiver.FFmpegOptions,
-							receiver.PushURL,
+							pushURL,
 						)
 						pushCommands = append(pushCommands, cmd)
 					}
@@ -617,9 +626,12 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 			}
 		} else if len(receivers) > 0 {
 			// 其他模式，使用第一个接收器的配置
+			// 检查并更新过期的 stream key
+			pushURL := pf.checkAndUpdateStreamKey(streamManager, receivers[0].PushURL)
+			
 			cmd := pf.buildPushCommandWithReceiverOptions(
 				receivers[0].FFmpegOptions,
-				receivers[0].PushURL,
+				pushURL,
 			)
 			pushCommands = append(pushCommands, cmd)
 		}
@@ -638,7 +650,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				continue
 			}
 			
-			ffmpegPush.Stderr = os.Stderr
+			// ffmpegPush.Stderr = os.Stderr
 			ffmpegPush.Stdout = os.Stdout
 
 			if err := ffmpegPush.Start(); err != nil {
@@ -955,6 +967,45 @@ func (pf *PipeForwarder) buildPushCommandWithReceiverOptions(options *FFmpegOpti
 	}
 	
 	return cmd
+}
+
+// checkAndUpdateStreamKey 检查推流URL中的stream key是否过期，如果过期则更新
+func (pf *PipeForwarder) checkAndUpdateStreamKey(streamManager *StreamManager, pushURL string) string {
+	// 如果没有配置推流URL，则直接返回原URL
+	if pushURL == "" {
+		return pushURL
+	}
+	
+	// 获取当前的 stream key 和创建时间
+	currentStreamKey := streamManager.GetStreamKey()
+	createdAt := streamManager.GetCreatedAt()
+	
+	// 检查 stream key 是否过期
+	if streamManager.stream.CheckStreamKeyExpiration(currentStreamKey, createdAt) {
+		// stream key 过期，生成新的 stream key
+		newStreamKey, err := streamManager.UpdateStreamKey()
+		if err != nil {
+			logger.LogPrintf("[%s] Failed to update stream key: %v", pf.streamName, err)
+			// 如果更新失败，仍然使用旧的 stream key
+			return pushURL
+		}
+		
+		logger.LogPrintf("[%s] Stream key updated from %s to %s", pf.streamName, currentStreamKey, newStreamKey)
+		currentStreamKey = newStreamKey
+	}
+	
+	// 如果URL包含 {streamkey} 占位符，则替换为实际的 stream key
+	if strings.Contains(pushURL, "{streamkey}") {
+		return strings.Replace(pushURL, "{streamkey}", currentStreamKey, -1)
+	}
+	
+	// 如果URL以斜杠结尾，则附加 stream key
+	if strings.HasSuffix(pushURL, "/") {
+		return pushURL + currentStreamKey
+	}
+	
+	// 否则直接返回原URL
+	return pushURL
 }
 
 // waitWithBackupSupport 等待主 ffmpeg 进程退出，如果配置了 backup_url 则尝试切换到备用URL

@@ -1202,6 +1202,13 @@ func (sm *StreamManager) GetStreamKey() string {
 	return sm.streamKey
 }
 
+// GetCreatedAt returns the creation time of the stream key
+func (sm *StreamManager) GetCreatedAt() time.Time {
+	sm.mutex.RLock()
+	defer sm.mutex.RUnlock()
+	return sm.createdAt
+}
+
 // UpdateStreamKey generates and updates the stream key
 func (sm *StreamManager) UpdateStreamKey() (string, error) {
 	newStreamKey, err := sm.stream.UpdateStreamKey()
