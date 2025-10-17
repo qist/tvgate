@@ -730,7 +730,7 @@ func (sm *StreamManager) startStreaming() {
 					backupRTMPURL = backupCmd[len(backupCmd)-1]
 				}
 
-				backupPipeForwarder = NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, false, nil)
+				backupPipeForwarder = NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, true, nil)
 				if backupPipeForwarder != nil {
 					backupPipeForwarder.EnableHLS(enableHLS)
 				}
@@ -896,7 +896,8 @@ func (sm *StreamManager) monitorPrimaryPush(primary, backup *PipeForwarder, ffmp
 			default:
 				if !primary.IsPushRunning() {
 					logger.LogPrintf("[%s] Primary push stopped, switching to backup", sm.name)
-
+					// 确保主转发器完全停止
+					primary.Stop()
 					if err := backup.Start(ffmpegCmd); err != nil {
 						logger.LogPrintf("[%s] Failed to start backup push: %v", sm.name, err)
 					} else {

@@ -571,32 +571,33 @@ func (s *Stream) UpdateStreamKey() (string, error) {
 
 // ServeFLV serves FLV stream via HTTP by reading from the pipe
 func (s *Stream) ServeFLV(w http.ResponseWriter, r *http.Request, streamName, streamKey string) {
-	// 获取流管理器
-	manager := GetManager()
-	if manager == nil {
-		http.Error(w, "Publisher manager not available", http.StatusServiceUnavailable)
-		return
-	}
+    manager := GetManager()
+    if manager == nil {
+        http.Error(w, "Publisher manager not available", http.StatusServiceUnavailable)
+        return
+    }
 
-	// 获取流管理器实例
-	manager.mutex.RLock()
-	streamManager, exists := manager.streams[streamName]
-	manager.mutex.RUnlock()
+    // 每次请求都动态获取最新流管理器实例
+    manager.mutex.RLock()
+    streamManager, exists := manager.streams[streamName]
+    manager.mutex.RUnlock()
 
-	if !exists {
-		http.Error(w, "Stream not found", http.StatusNotFound)
-		return
-	}
+    if !exists {
+        http.Error(w, "Stream not found", http.StatusNotFound)
+        return
+    }
 
-	// 检查管道转发器是否可用
-	if streamManager.pipeForwarder == nil {
-		http.Error(w, "Pipe forwarder not available", http.StatusServiceUnavailable)
-		return
-	}
+    // 每次请求都动态获取 PipeForwarder
+    pf := streamManager.pipeForwarder
+    if pf == nil {
+        http.Error(w, "Pipe forwarder not available", http.StatusServiceUnavailable)
+        return
+    }
 
-	// 使用管道转发器提供FLV流服务
-	streamManager.pipeForwarder.ServeFLV(w, r)
+    // 提供 FLV 流服务
+    pf.ServeFLV(w, r)
 }
+
 
 // HandleLocalPlay 处理本地播放请求
 func (sm *StreamManager) HandleLocalPlay(w http.ResponseWriter, r *http.Request) {
