@@ -104,6 +104,9 @@ type PlayOutput struct {
 	HlsSegmentDuration int            `yaml:"hls_segment_duration,omitempty"` // HLS片段时长（秒）
 	HlsSegmentCount    int            `yaml:"hls_segment_count,omitempty"`    // 保留的HLS片段数量
 	HlsPath            string         `yaml:"hls_path,omitempty"`             // HLS文件存储路径
+	HlsEnablePlayback  bool           `yaml:"hls_enable_playback,omitempty"`  // 是否开启回放模式
+	HlsRetentionDays   int            `yaml:"hls_retention_days,omitempty"`   // TS 文件保留天数
+	TSFilenameTemplate string         `yaml:"ts_filename_template,omitempty"` // TS 文件名模板
 }
 
 // PlayUrls represents play URLs for different protocols

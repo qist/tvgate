@@ -160,6 +160,9 @@ func convertLocalPlayUrls(outputs []config.PlayOutput, sourceOpts *FFmpegOptions
 			HlsSegmentDuration: output.HlsSegmentDuration,
 			HlsSegmentCount:    output.HlsSegmentCount,
 			HlsPath:            output.HlsPath,
+			HlsEnablePlayback:  output.HlsEnablePlayback,
+			HlsRetentionDays:   output.HlsRetentionDays,
+			TSFilenameTemplate: output.TSFilenameTemplate,
 		}
 
 		switch output.Protocol {
