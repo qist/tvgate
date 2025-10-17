@@ -366,7 +366,7 @@ func (m *Manager) shouldRestartStream(oldStream, newStream *Stream) bool {
 			oldOptions = oldOutput.HlsFFmpegOptions
 			newOptions = newOutput.HlsFFmpegOptions
 		}
-		
+
 		if !ffmpegOptionsEqual(oldOptions, newOptions) {
 			return true
 		}
@@ -665,7 +665,7 @@ func (sm *StreamManager) startStreaming() {
 					// RTMP URL通常是命令的最后一个参数
 					rtmpURL = receiverCmd[len(receiverCmd)-1]
 				}
-            // fmt.Printf("Stream %s 01223123 %s 234234e1: %+v\n",receiverCmd,rtmpURL ,ffmpegCmd)
+				// fmt.Printf("Stream %s 01223123 %s 234234e1: %+v\n",receiverCmd,rtmpURL ,ffmpegCmd)
 				// 为每个接收器创建独立的管道转发器
 				pipeName := fmt.Sprintf("%s_receiver_%d", sm.name, i+1)
 				if i == 0 {
@@ -750,8 +750,6 @@ func (sm *StreamManager) startStreaming() {
 			if len(backupCmd) > 0 {
 				backupRTMPURL = backupCmd[len(backupCmd)-1]
 			}
-
-			
 
 			// 创建 backup PipeForwarder (当主URL失效时，备用PipeForwarder需要主动拉流)
 			backupPipeForwarder := NewPipeForwarder(sm.name+"_backup", backupRTMPURL, true, true, nil)
@@ -934,59 +932,39 @@ func (sm *StreamManager) isPrimaryHealthy() bool {
 func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 	logger.LogPrintf("Starting FFmpeg stream routine for %s receiver %d", sm.name, receiverIndex)
 
-	// 添加一个标志来跟踪是否已经尝试过backup_url
 	useBackup := false
+	maxRetries := 3
+	retryCount := 0
 
 	for {
-		// 检查stream manager是否仍在运行
 		if !sm.isRunning() {
 			logger.LogPrintf("Stream %s receiver %d stopped - manager not running", sm.name, receiverIndex)
-			// 更新统计信息
-			manager := GetManager()
-			if manager != nil {
-				manager.updateFFmpegStats(sm.name, receiverIndex, 0, false, nil, 0, time.Now())
-			}
 			return
 		}
 
 		select {
 		case <-sm.ctx.Done():
 			logger.LogPrintf("Stream %s receiver %d context cancelled", sm.name, receiverIndex)
-			// 更新统计信息
-			manager := GetManager()
-			if manager != nil {
-				manager.updateFFmpegStats(sm.name, receiverIndex, 0, false, nil, 0, time.Now())
-			}
 			return
 		default:
 			logger.LogPrintf("Starting FFmpeg stream for %s receiver %d", sm.name, receiverIndex)
 
-			// Execute FFmpeg with monitoring
 			var lastBytes uint64 = 0
 			var startTime time.Time
 
 			err := sm.stream.ExecuteFFmpegWithMonitoring(sm.ctx, cmd,
 				func(pid int32, proc *process.Process) {
-					// Process started callback
 					logger.LogPrintf("FFmpeg process started for %s receiver %d with PID %d", sm.name, receiverIndex, pid)
-					// Update process information
 					sm.updateFFmpegProcessInfo(receiverIndex, proc)
-
-					// 记录开始时间
 					startTime = time.Now()
-
-					// 更新统计信息
 					manager := GetManager()
 					if manager != nil {
 						manager.updateFFmpegStats(sm.name, receiverIndex, pid, true, nil, lastBytes, startTime)
 					}
 				},
 				func(bytes uint64) {
-					// Stats update callback
 					lastBytes = bytes
 					logger.LogPrintf("FFmpeg stream for %s receiver %d transferred %d bytes", sm.name, receiverIndex, bytes)
-
-					// 更新统计信息
 					manager := GetManager()
 					if manager != nil {
 						manager.updateFFmpegStats(sm.name, receiverIndex, 0, true, nil, bytes, time.Now())
@@ -996,69 +974,51 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 			if err != nil {
 				logger.LogPrintf("FFmpeg stream for %s receiver %d failed: %v", sm.name, receiverIndex, err)
 
+				retryCount++
+				if retryCount > maxRetries {
+					logger.LogPrintf("Stream %s receiver %d reached max retry count (%d), giving up", sm.name, receiverIndex, maxRetries)
+					return
+				}
+
 				// 更新统计信息（错误状态）
 				manager := GetManager()
 				if manager != nil {
 					manager.updateFFmpegStats(sm.name, receiverIndex, 0, false, err, lastBytes, time.Now())
 				}
 
-				// 检查是否应该继续
-				if !sm.isRunning() {
-					logger.LogPrintf("Stream %s receiver %d stopped after error", sm.name, receiverIndex)
-					return
-				}
-
-				// 如果主URL失败且有backup_url且尚未尝试过backup_url，则切换到backup_url
+				// backup URL 切换逻辑
 				if !useBackup && sm.stream.Stream.Source.BackupURL != "" {
 					logger.LogPrintf("Switching to backup URL for stream %s receiver %d", sm.name, receiverIndex)
 					useBackup = true
-
-					// 重新构建使用backup_url的命令
-					backupCmd := sm.buildFFmpegCommandWithBackup(true)
+					cmd = sm.buildFFmpegCommandWithBackup(true)
 					receivers := sm.stream.Stream.GetReceivers()
 					if receiverIndex <= len(receivers) {
-						cmd = receivers[receiverIndex-1].BuildFFmpegPushCommand(backupCmd, sm.streamKey)
+						cmd = receivers[receiverIndex-1].BuildFFmpegPushCommand(cmd, sm.streamKey)
 						logger.LogPrintf("Rebuilt FFmpeg command with backup URL for %s receiver %d", sm.name, receiverIndex)
 						logger.LogPrintf("New command: ffmpeg %s", strings.Join(cmd, " "))
-
-						// 继续循环使用backup_url进行推流
-						continue
 					}
 				}
 
-				// 检查stream key是否过期
+				// streamKey 过期检查与更新逻辑
 				sm.mutex.RLock()
 				streamKey := sm.streamKey
 				createdAt := sm.createdAt
 				sm.mutex.RUnlock()
 
-				logger.LogPrintf("Checking if stream key expired for %s (created at: %v)", sm.name, createdAt)
 				if sm.stream.CheckStreamKeyExpiration(streamKey, createdAt) {
 					logger.LogPrintf("Stream key for %s expired, generating new key", sm.name)
-					// 更新stream key
 					newStreamKey, err := sm.stream.UpdateStreamKey()
 					if err != nil {
 						logger.LogPrintf("Failed to generate new stream key for %s: %v", sm.name, err)
 					} else {
 						sm.mutex.Lock()
 						oldKey := sm.streamKey
-						sm.oldStreamKey = oldKey // 保存旧密钥
+						sm.oldStreamKey = oldKey
 						sm.streamKey = newStreamKey
 						sm.createdAt = time.Now()
 						sm.mutex.Unlock()
-						logger.LogPrintf("Generated new stream key for %s: %s (was: %s)", sm.name, newStreamKey, oldKey)
 
-						// 回写配置到YAML文件
-						logger.LogPrintf("Updating config file for %s with new stream key", sm.name)
-						if err := sm.updateConfigFile(newStreamKey); err != nil {
-							logger.LogPrintf("Failed to update config file for %s: %v", sm.name, err)
-						} else {
-							logger.LogPrintf("Successfully updated config file for %s", sm.name)
-						}
-
-						// 重新构建命令
 						ffmpegCmd := sm.stream.BuildFFmpegCommand()
-						// 如果之前使用的是backup_url，继续使用backup_url
 						if useBackup {
 							ffmpegCmd = sm.buildFFmpegCommandWithBackup(true)
 						}
@@ -1067,54 +1027,43 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 							cmd = receivers[receiverIndex-1].BuildFFmpegPushCommand(ffmpegCmd, newStreamKey)
 							logger.LogPrintf("Rebuilt FFmpeg command with new stream key for %s receiver %d", sm.name, receiverIndex)
 							logger.LogPrintf("New command: ffmpeg %s", strings.Join(cmd, " "))
-						} else {
-							logger.LogPrintf("Receiver index %d out of range, cannot rebuild command", receiverIndex)
 						}
 
-						// 重置backup标志，以便在新的流密钥下可以重新尝试backup_url
 						useBackup = false
-
-						// 继续循环使用新密钥进行推流
-						continue
 					}
 				} else {
 					logger.LogPrintf("Stream key for %s not expired, will retry in 5 seconds", sm.name)
-					// 重置backup标志，以便下次可以重新尝试backup_url
 					useBackup = false
 				}
 
-				// 等待后重启
+				// 等待 5 秒后重试
 				select {
 				case <-sm.ctx.Done():
-					logger.LogPrintf("Stream %s receiver %d stopped during wait", sm.name, receiverIndex)
 					return
 				case <-time.After(5 * time.Second):
-					// 继续循环重启
-					logger.LogPrintf("Retrying stream %s receiver %d after 5 second delay", sm.name, receiverIndex)
 				}
+				continue
 			} else {
-				logger.LogPrintf("FFmpeg stream for %s receiver %d finished normally", sm.name, receiverIndex)
-				// 更新统计信息（正常结束）
+				// FFmpeg 正常结束
 				manager := GetManager()
 				if manager != nil {
-					manager.updateFFmpegStats(sm.name, receiverIndex, 0, false, nil, 0, time.Now())
+					manager.updateFFmpegStats(sm.name, receiverIndex, 0, false, nil, lastBytes, time.Now())
 				}
 
-				// 检查是否应该继续运行
+				// 成功或正常结束后重置重试计数
+				retryCount = 0
+				useBackup = false
+
 				if !sm.isRunning() {
 					return
 				}
 
-				// 等待一段时间后继续
+				// 等待 1 秒后继续循环
 				select {
 				case <-sm.ctx.Done():
-					logger.LogPrintf("Stream %s receiver %d stopped after normal finish", sm.name, receiverIndex)
 					return
 				case <-time.After(1 * time.Second):
-					// 继续循环
 					logger.LogPrintf("Restarting stream %s receiver %d after normal finish", sm.name, receiverIndex)
-					// 重置backup标志，以便下次可以重新尝试backup_url
-					useBackup = false
 				}
 			}
 		}
