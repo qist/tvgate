@@ -125,7 +125,7 @@ type Receivers struct {
 // Receiver represents a receiver configuration
 type Receiver struct {
 	PushURL       string         `yaml:"push_url"`
-	PlayUrls      PlayUrls       `yaml:"play_urls"`
+	PlayUrls      PlayUrls       `yaml:"play_urls,omitempty"`
 	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"` //独立推流参数
 	PushPreArgs   []string       `yaml:"push_pre_args,omitempty"`  // 推流前参数
 	PushPostArgs  []string       `yaml:"push_post_args,omitempty"` // 推流后参数

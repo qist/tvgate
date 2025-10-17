@@ -197,7 +197,7 @@ type ReceiversData struct {
 // ReceiverItem represents a receiver configuration
 type ReceiverItem struct {
 	PushURL       string         `yaml:"push_url"`
-	PlayUrls      PlayUrls       `yaml:"play_urls"`
+	PlayUrls      PlayUrls       `yaml:"play_urls,omitempty"`
 	FFmpegOptions *FFmpegOptions `yaml:"ffmpeg_options,omitempty"` //独立推流参数
 }
 
