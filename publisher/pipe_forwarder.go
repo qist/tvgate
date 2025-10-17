@@ -484,7 +484,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 			// logger.LogPrintf("[receiver] Matched %s -> %s, opts: %+v", pf.streamName, receiver.PushURL, ffmpegOpts)
 		} else {
 			// logger.LogPrintf("[receiver] No match for %s (%s), using default opts", pf.streamName, pf.rtmpURL)
-			ffmpegOpts = &FFmpegOptions{}
+			ffmpegOpts = receivers[0].FFmpegOptions
 		}
 
 		cmd := pf.buildPushCommandWithReceiverOptions(ffmpegOpts, pf.rtmpURL)
@@ -493,34 +493,42 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 		// 为每个推流命令创建一个推流进程（通常只有一个）
 
 		// 创建推流命令
-		ffmpegPush := exec.CommandContext(pf.ctx, "ffmpeg", cmd...)
+		pf.ffmpegLock.Lock()
+		pf.ffmpegPush = exec.CommandContext(pf.ctx, "ffmpeg", cmd...)
+		pf.ffmpegLock.Unlock()
 		var err error
 
 		// 为每个推流进程创建独立的 stdin pipe
 
-		ffIn, err = ffmpegPush.StdinPipe()
+		ffIn, err = pf.ffmpegPush.StdinPipe()
 		if err != nil {
 			logger.LogPrintf("[%s] Failed to create stdin pipe for RTMP push: %v", pf.streamName, err)
 			ffIn = nil
 		} else {
-			// ffmpegPush.Stderr = os.Stderr
-			ffmpegPush.Stdout = os.Stdout
+			pf.ffmpegPush.Stdout = os.Stdout
+			// pf.ffmpegPush.Stderr = os.Stderr
 
-			if err := ffmpegPush.Start(); err != nil {
+			if err := pf.ffmpegPush.Start(); err != nil {
 				logger.LogPrintf("[%s] Failed to start RTMP push: %v", pf.streamName, err)
 				_ = ffIn.Close()
 				ffIn = nil
 			} else {
-				logger.LogPrintf("[%s] Started RTMP push to %s (pid=%d)", pf.streamName, pf.rtmpURL, ffmpegPush.Process.Pid)
-				// 等待 ffmpegPush 退出的 goroutine
+				logger.LogPrintf("[%s] Started RTMP push to %s (pid=%d)",
+					pf.streamName, pf.rtmpURL, pf.ffmpegPush.Process.Pid)
+
 				pushWg.Add(1)
 				go func() {
 					defer pushWg.Done()
-					if err := ffmpegPush.Wait(); err != nil && pf.ctx.Err() == nil {
+					if err := pf.ffmpegPush.Wait(); err != nil && pf.ctx.Err() == nil {
 						logger.LogPrintf("[%s] RTMP push ffmpeg exited with error: %v", pf.streamName, err)
 					} else {
 						logger.LogPrintf("[%s] RTMP push ffmpeg exited normally", pf.streamName)
 					}
+
+					// 推流结束后清理
+					pf.ffmpegLock.Lock()
+					pf.ffmpegPush = nil
+					pf.ffmpegLock.Unlock()
 				}()
 			}
 		}
@@ -911,19 +919,29 @@ func (pf *PipeForwarder) Stop() {
 		return
 	}
 	pf.isRunning = false
-	// 更新状态
 	pf.stats.Running = false
 	pf.stats.LastUpdate = time.Now()
 	pf.mutex.Unlock()
 
 	// 取消上下文
-	pf.cancel()
-
-	// 杀掉 ffmpeg 进程组（如果存在）
-	if pf.ffmpegCmd != nil && pf.ffmpegCmd.Process != nil {
-		// 使用负 pid 向进程组发送信号（Setpgid 在 Start 时已设置）
-		_ = killProcess(-pf.ffmpegCmd.Process.Pid)
+	if pf.cancel != nil {
+		pf.cancel()
 	}
+
+	// 杀掉主拉流 ffmpeg 进程组
+	if pf.ffmpegCmd != nil && pf.ffmpegCmd.Process != nil {
+		_ = killProcess(-pf.ffmpegCmd.Process.Pid)
+		pf.ffmpegCmd = nil
+	}
+
+	// 杀掉推流 ffmpeg 进程
+	pf.ffmpegLock.Lock()
+	if pf.ffmpegPush != nil && pf.ffmpegPush.Process != nil {
+		logger.LogPrintf("[%s] Killing ffmpeg push process (pid=%d)", pf.streamName, pf.ffmpegPush.Process.Pid)
+		_ = killProcess(-pf.ffmpegPush.Process.Pid)
+		pf.ffmpegPush = nil
+	}
+	pf.ffmpegLock.Unlock()
 
 	// 关闭 pipe
 	if pf.pipeWriter != nil {
@@ -942,10 +960,14 @@ func (pf *PipeForwarder) Stop() {
 	}
 
 	// 关闭 hub，清理客户端
-	pf.hub.Close()
+	if pf.hub != nil {
+		pf.hub.Close()
+	}
 
-	// 停止HLS管理器
-	pf.hlsManager.Stop()
+	// 停止 HLS 管理器
+	if pf.hlsManager != nil {
+		pf.hlsManager.Stop()
+	}
 
 	// 回调
 	if pf.onStopped != nil {
@@ -954,6 +976,7 @@ func (pf *PipeForwarder) Stop() {
 
 	logger.LogPrintf("[%s] Stopped PipeForwarder", pf.streamName)
 }
+
 
 // IsRunning 返回当前运行状态
 func (pf *PipeForwarder) IsRunning() bool {

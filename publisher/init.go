@@ -3,11 +3,14 @@ package publisher
 import (
 	// "log"
 	"fmt"
-	"net/http"
-	"sync"
-
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
 )
 
 var (
@@ -25,7 +28,12 @@ func Init() error {
 			logger.LogPrintf("Publisher config not found, skipping initialization")
 			return
 		}
-
+		ffmpegPath, err := FindFFmpeg()
+		if err != nil {
+			logger.LogPrintf("FFmpeg 未找到: %v", err)
+		} else {
+			logger.LogPrintf("✅ 已检测到 FFmpeg: %s", ffmpegPath)
+		}
 		// Convert config types
 		publisherConfig := convertConfig(config.Cfg.Publisher)
 
@@ -377,22 +385,6 @@ func RemoveDuplicateFlagArgs(slice []string) []string {
 	return result
 }
 
-// convertReceiver converts a receiver item to a new Receiver struct
-func convertReceiver(item *config.ReceiverItem) *Receiver {
-	if item == nil {
-		return nil
-	}
-
-	return &Receiver{
-		PushURL: item.PushURL,
-		PlayUrls: PlayUrls{
-			Flv: item.PlayUrls.Flv,
-			Hls: item.PlayUrls.Hls,
-		},
-		FFmpegOptions: convertFFmpegOptions(item.FFmpegOptions),
-	}
-}
-
 // convertFFmpegOptions converts FFmpegOptions from config to publisher FFmpegOptions
 func convertFFmpegOptions(src *config.FFmpegOptions) *FFmpegOptions {
 	if src == nil {
@@ -440,4 +432,80 @@ func convertFFmpegOptions(src *config.FFmpegOptions) *FFmpegOptions {
 	}
 
 	return dest
+}
+
+func FindFFmpeg() (string, error) {
+	exeName := "ffmpeg"
+	if runtime.GOOS == "windows" {
+		exeName += ".exe"
+	}
+
+	// 获取当前工作目录
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	// 获取当前可执行文件所在的目录
+	executablePath, err := os.Executable()
+	if err != nil {
+		logger.LogPrintf("无法获取当前可执行文件的路径: %v", err)
+		return "", err
+	}
+	executableDir := filepath.Dir(executablePath)
+
+	// ✅ 优先检查这些相对路径（项目目录优先）
+	pathsToCheck := []string{
+		filepath.Join("ffmpeg", "bin", exeName),
+		filepath.Join("bin", exeName),
+		exeName, // 当前目录直接有 ffmpeg
+	}
+
+	for _, relativePath := range pathsToCheck {
+		// 当前工作目录优先
+		cwdPath := filepath.Join(cwd, relativePath)
+		if _, err := os.Stat(cwdPath); err == nil {
+			_ = updatePathEnv(filepath.Dir(cwdPath))
+			_ = os.Setenv("FFMPEG_PATH", cwdPath)
+			logger.LogPrintf("优先使用本地 ffmpeg: %s", cwdPath)
+			return cwdPath, nil
+		}
+
+		// 再检查可执行文件目录
+		execPath := filepath.Join(executableDir, relativePath)
+		if _, err := os.Stat(execPath); err == nil {
+			_ = updatePathEnv(filepath.Dir(execPath))
+			_ = os.Setenv("FFMPEG_PATH", execPath)
+			logger.LogPrintf("优先使用可执行目录下的 ffmpeg: %s", execPath)
+			return execPath, nil
+		}
+	}
+
+	// ✅ 如果本地没有，再查系统 PATH
+	pathEnv := os.Getenv("PATH")
+	for _, dir := range filepath.SplitList(pathEnv) {
+		fullPath := filepath.Join(dir, exeName)
+		if _, err := os.Stat(fullPath); err == nil {
+			_ = os.Setenv("FFMPEG_PATH", fullPath)
+			logger.LogPrintf("使用系统 PATH 中的 ffmpeg: %s", fullPath)
+			return fullPath, nil
+		}
+	}
+
+	// ❌ 都没找到
+	logger.LogPrintf("未在本地或系统 PATH 中找到 ffmpeg")
+	return "", fmt.Errorf("ffmpeg 未找到，请确认 ffmpeg 存在于 ./ffmpeg/bin 或系统 PATH 中")
+}
+
+// 辅助函数：追加 ffmpeg 目录到 PATH
+func updatePathEnv(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	oldPath := os.Getenv("PATH")
+	if !strings.Contains(oldPath, dir) {
+		newPath := fmt.Sprintf("%s%c%s", dir, os.PathListSeparator, oldPath)
+		return os.Setenv("PATH", newPath)
+	}
+	return nil
 }
