@@ -570,62 +570,25 @@ func (s *Stream) UpdateStreamKey() (string, error) {
 }
 
 // ServeFLV serves FLV stream via HTTP by reading from the pipe
+
 func (s *Stream) ServeFLV(w http.ResponseWriter, r *http.Request, streamName, streamKey string) {
-    manager := GetManager()
-    if manager == nil {
-        http.Error(w, "Publisher manager not available", http.StatusServiceUnavailable)
-        return
-    }
-
-    // 每次请求都动态获取最新流管理器实例
-    manager.mutex.RLock()
-    streamManager, exists := manager.streams[streamName]
-    manager.mutex.RUnlock()
-
-    if !exists {
-        http.Error(w, "Stream not found", http.StatusNotFound)
-        return
-    }
-
-    // 每次请求都动态获取 PipeForwarder
-    pf := streamManager.pipeForwarder
-    if pf == nil {
-        http.Error(w, "Pipe forwarder not available", http.StatusServiceUnavailable)
-        return
-    }
-
-    // 提供 FLV 流服务
-    pf.ServeFLV(w, r)
-}
-
-
-// HandleLocalPlay 处理本地播放请求
-func (sm *StreamManager) HandleLocalPlay(w http.ResponseWriter, r *http.Request) {
-	// 根据请求路径确定播放类型
-	path := r.URL.Path
-	var contentType string
-
-	switch {
-	case strings.HasSuffix(path, ".m3u8"):
-		contentType = "application/x-mpegURL"
-	case strings.HasSuffix(path, ".flv"):
-		contentType = "video/x-flv"
-	default:
-		http.Error(w, "Unsupported format", http.StatusBadRequest)
+	manager := GetManager()
+	if manager == nil {
+		http.Error(w, "Publisher manager not available", http.StatusServiceUnavailable)
 		return
 	}
 
-	// 设置响应头
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	// 每次请求都动态获取最新流管理器实例
+	manager.mutex.RLock()
+	_, exists := manager.streams[streamName]
+	manager.mutex.RUnlock()
 
-	// 从流缓冲区读取数据并发送给客户端
-	// 使用pipeForwarder提供FLV流服务
-	if sm.pipeForwarder != nil {
-		sm.pipeForwarder.ServeFLV(w, r)
-	} else {
-		http.Error(w, "Local play not available", http.StatusServiceUnavailable)
+	if !exists {
+		http.Error(w, "Stream not found", http.StatusNotFound)
 		return
 	}
+
+	// 使用StreamHub提供服务，实现解耦
+	streamHub := GetStreamHub(streamName)
+	streamHub.ServeFLV(w, r)
 }

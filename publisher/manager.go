@@ -883,34 +883,39 @@ func (sm *StreamManager) startStreaming() {
 }
 
 func (sm *StreamManager) monitorPrimaryPush(primary, backup *PipeForwarder, ffmpegCmd []string) {
-	if primary == nil || backup == nil {
-		return
-	}
+    if primary == nil || backup == nil {
+        return
+    }
 
-	go func() {
-		time.Sleep(5 * time.Second)
-		for {
-			select {
-			case <-sm.ctx.Done():
-				return
-			default:
-				if !primary.IsPushRunning() {
-					logger.LogPrintf("[%s] Primary push stopped, switching to backup", sm.name)
-					// 确保主转发器完全停止
-					primary.Stop()
-					if err := backup.Start(ffmpegCmd); err != nil {
-						logger.LogPrintf("[%s] Failed to start backup push: %v", sm.name, err)
-					} else {
-						logger.LogPrintf("[%s] Backup push started successfully", sm.name)
-					}
-					return
-				}
-				time.Sleep(30 * time.Second)
-			}
-		}
-	}()
+    go func() {
+        time.Sleep(5 * time.Second)
+        for {
+            select {
+            case <-sm.ctx.Done():
+                return
+            default:
+                if !primary.IsPushRunning() {
+                    logger.LogPrintf("[%s] Primary push stopped, switching to backup", sm.name)
+                    // 确保主转发器完全停止
+                    primary.Stop()
+                    // 启动备用转发器
+                    if err := backup.Start(ffmpegCmd); err != nil {
+                        logger.LogPrintf("[%s] Failed to start backup push: %v", sm.name, err)
+                    } else {
+                        logger.LogPrintf("[%s] Backup push started successfully", sm.name)
+                        // 更新StreamHub中的备份转发器引用
+                        streamHub := GetStreamHub(sm.name)
+                        if streamHub != nil {
+                            streamHub.SetBackup(backup)
+                        }
+                    }
+                    return
+                }
+                time.Sleep(30 * time.Second)
+            }
+        }
+    }()
 }
-
 // isPrimaryHealthy 检查 primary receiver 是否健康
 func (sm *StreamManager) isPrimaryHealthy() bool {
 	// 检查索引为1的 FFmpeg 进程状态（primary receiver）
