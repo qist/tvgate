@@ -45,6 +45,10 @@ type Manager struct {
 	// FFmpeg进程统计
 	ffmpegStats map[string]*FFmpegProcessStats
 	statsMutex  sync.RWMutex
+
+	// 优雅退出标志，若为 true 则遇到 FFmpeg 失败不进行重启
+	gracefulExit bool
+	gracefulMu   sync.RWMutex
 }
 
 // FFmpegProcessInfo holds information about an FFmpeg process
@@ -504,6 +508,20 @@ func (m *Manager) startStream(name string, stream *Stream) {
 			logger.LogPrintf("Successfully updated config file for %s", name)
 		}
 	}
+}
+
+// SetGracefulExit 设置全局优雅退出标志
+func (m *Manager) SetGracefulExit(v bool) {
+	m.gracefulMu.Lock()
+	m.gracefulExit = v
+	m.gracefulMu.Unlock()
+}
+
+// IsGracefulExit 返回当前优雅退出状态
+func (m *Manager) IsGracefulExit() bool {
+	m.gracefulMu.RLock()
+	defer m.gracefulMu.RUnlock()
+	return m.gracefulExit
 }
 
 // UpdateConfig updates the manager configuration
@@ -1011,6 +1029,13 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 			if err != nil {
 				logger.LogPrintf("FFmpeg stream for %s receiver %d failed: %v", sm.name, receiverIndex, err)
 
+				// 如果全局请求优雅退出，则不重试，直接退出
+				manager := GetManager()
+				if manager != nil && manager.IsGracefulExit() {
+					logger.LogPrintf("Graceful exit requested, not restarting FFmpeg for %s receiver %d", sm.name, receiverIndex)
+					return
+				}
+
 				retryCount++
 				if retryCount > maxRetries {
 					logger.LogPrintf("Stream %s receiver %d reached max retry count (%d), giving up", sm.name, receiverIndex, maxRetries)
@@ -1018,7 +1043,7 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 				}
 
 				// 更新统计信息（错误状态）
-				manager := GetManager()
+				// manager := GetManager()
 				if manager != nil {
 					manager.updateFFmpegStats(sm.name, receiverIndex, 0, false, err, lastBytes, time.Now())
 				}
