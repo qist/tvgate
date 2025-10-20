@@ -92,9 +92,9 @@ func (h *HLSSegmentManager) SetNeedPull(need bool) {
 // Start 启动输出目录、注册 hub（若有）、并启动 FFmpeg 进程
 func (h *HLSSegmentManager) Start() error {
 	// 不再检查 needPull 标志，因为即使在转发模式下，HLS 也需要从 hub 获取数据
-	if !h.needPull {
-		return fmt.Errorf("needPull disabled")
-	}
+	// if !h.needPull {
+	// 	return fmt.Errorf("needPull disabled")
+	// }
 
 	// 确保目录存在
 	if err := os.MkdirAll(h.segmentPath, 0755); err != nil {
