@@ -912,6 +912,98 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				}
 			}
 		}
+	} else {
+		// 从 hub 读取数据（转发实例）
+		if pf.clientBuffer != nil {
+			pf.hub.AddClient(pf.clientBuffer)
+			chunkCount := 0
+
+			for {
+				select {
+				case <-pf.ctx.Done():
+					logger.LogPrintf("[%s] context canceled, stopping forwardDataFromPipe (forward-only mode), chunks: %d", pf.streamName, chunkCount)
+					pf.ffInLock.Lock()
+					if ffIn != nil {
+						_ = ffIn.Close()
+						ffIn = nil
+					}
+					pf.ffInLock.Unlock()
+					pushWg.Wait()
+					pf.hub.RemoveClient(pf.clientBuffer)
+					if pf.clientBuffer != nil {
+						pf.clientBuffer.Close()
+						pf.clientBuffer = nil
+					}
+					return
+				default:
+					data, ok := pf.clientBuffer.PullWithContext(pf.ctx)
+					if !ok {
+						pf.ffInLock.Lock()
+						if ffIn != nil {
+							_ = ffIn.Close()
+							ffIn = nil
+						}
+						pf.ffInLock.Unlock()
+						pushWg.Wait()
+						pf.hub.RemoveClient(pf.clientBuffer)
+						return
+					}
+
+					if chunk, ok := data.([]byte); ok {
+						chunkCount++
+						// 写入 RTMP 推流进程 stdin（如果有）
+						pf.ffInLock.Lock()
+						currentFFIn := ffIn
+						pf.ffInLock.Unlock()
+
+						if currentFFIn != nil {
+							wDone := make(chan error, 1)
+							go func() {
+								_, werr := currentFFIn.Write(chunk)
+								wDone <- werr
+							}()
+
+							select {
+							case werr := <-wDone:
+								if werr != nil {
+									// 检查是否是预期的关闭错误
+									if werr == io.ErrClosedPipe || strings.Contains(werr.Error(), "file already closed") || 
+									   strings.Contains(werr.Error(), "broken pipe") || strings.Contains(werr.Error(), "read/write on closed pipe") {
+										logger.LogPrintf("[%s] Expected pipe close error: %v", pf.streamName, werr)
+									} else {
+										logger.LogPrintf("[%s] Error writing to RTMP stdin: %v", pf.streamName, werr)
+									}
+									pf.ffInLock.Lock()
+									if ffIn != nil {
+										_ = ffIn.Close()
+										ffIn = nil
+									}
+									pf.ffInLock.Unlock()
+								}
+							case <-time.After(5 * time.Second):
+								logger.LogPrintf("[%s] Timeout writing to RTMP stdin", pf.streamName)
+								pf.ffInLock.Lock()
+								if ffIn != nil {
+									_ = ffIn.Close()
+									ffIn = nil
+								}
+								pf.ffInLock.Unlock()
+							}
+						}
+
+						// 广播到 hub（确保数据能被其他客户端接收）
+						// pf.hub.Broadcast(chunk)
+
+						// 通知StreamHub已接收到数据
+						// streamHub := GetStreamHub(pf.streamName)
+						// if streamHub != nil && chunkCount <= 10 {
+						// 	streamHub.SetDataReceived()
+						// 	logger.LogPrintf("[%s] Forwarded data broadcasted, chunk #%d", pf.streamName, chunkCount)
+						// }
+					}
+				}
+			}
+		}
 	}
 }
 
