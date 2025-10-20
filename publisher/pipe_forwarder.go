@@ -281,6 +281,8 @@ type PipeForwarder struct {
 
 	// 保护 ffIn 变量的互斥锁
 	ffInLock sync.Mutex
+
+	hlsFFmpegOptions *FFmpegOptions
 }
 
 // NewPipeForwarder 创建新的 PipeForwarder
@@ -303,11 +305,15 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 		baseStreamName = parts[0]
 	}
 
-	segmentPath := filepath.Join("/tmp/hls", baseStreamName)
-	os.MkdirAll(segmentPath, 0755)
+	// segmentPath := filepath.Join("/tmp/hls", baseStreamName)
+	// os.MkdirAll(segmentPath, 0755)
 
-	// 获取 HLS FFmpeg 选项
+	// 获取 HLS 配置
 	var hlsFFmpegOptions *FFmpegOptions
+	hlsSegmentDuration := 5 // 默认值
+	hlsSegmentCount := 5    // 默认值
+	hlsPath := ""           // 默认空，使用默认路径
+	
 	manager := GetManager()
 	if manager != nil {
 		manager.mutex.RLock()
@@ -319,14 +325,40 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 			for _, playURL := range streamManager.stream.Stream.LocalPlayUrls {
 				if playURL.Protocol == "hls" && playURL.Enabled {
 					hlsFFmpegOptions = playURL.HlsFFmpegOptions
+					// 使用配置的HLS段时长，如果配置了的话
+					if playURL.HlsSegmentDuration > 0 {
+						hlsSegmentDuration = playURL.HlsSegmentDuration
+					}
+					// 使用配置的HLS段数量，如果配置了的话
+					if playURL.HlsSegmentCount > 0 {
+						hlsSegmentCount = playURL.HlsSegmentCount
+					}
+					// 使用配置的HLS路径，如果配置了的话
+					if playURL.HlsPath != "" {
+						hlsPath = playURL.HlsPath
+					}
 					break
 				}
 			}
 		}
 	}
 
-	// 创建 HLS 管理器
-	hlsManager := NewHLSSegmentManager(ctx, baseStreamName, segmentPath, 5, hlsFFmpegOptions) // 5秒片段时长，传递 hlsFFmpegOptions
+	// 确定HLS段路径
+	var segmentPath string
+	if hlsPath != "" {
+		// 如果配置了HLS路径，则使用配置的路径
+		segmentPath = hlsPath
+	} else {
+		// 否则使用默认路径
+		segmentPath = filepath.Join("/tmp/hls", baseStreamName)
+	}
+	
+	// 确保目录存在
+	os.MkdirAll(segmentPath, 0755)
+
+	// 创建 HLS 管理器，传递正确的参数包括段时长和段数量
+	hlsManager := NewHLSSegmentManager(ctx, baseStreamName, segmentPath, hlsSegmentDuration, hlsFFmpegOptions)
+	hlsManager.segmentCount = hlsSegmentCount // 设置段数量
 	hlsManager.SetHub(h)
 	hlsManager.SetNeedPull(needPull) // 设置needPull标志
 
@@ -1553,6 +1585,15 @@ func (pf *PipeForwarder) EnableHLS(enable bool) {
 		}
 	} else if enable {
 		logger.LogPrintf("Cannot enable HLS for stream %s: HLS manager not initialized", pf.streamName)
+	}
+}
+
+// SetHLSFFmpegOptions 设置 HLS 的 FFmpeg 选项
+func (pf *PipeForwarder) SetHLSFFmpegOptions(options *FFmpegOptions) {
+	pf.hlsFFmpegOptions = options
+	// 同时更新 HLS 管理器的选项
+	if pf.hlsManager != nil {
+		pf.hlsManager.ffmpegOptions = options
 	}
 }
 

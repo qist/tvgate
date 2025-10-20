@@ -13,7 +13,7 @@ import (
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
-	"strings"
+	// "strings"
 	"sync"
 	"syscall"
 	"time"
@@ -27,7 +27,7 @@ type HLSSegmentManager struct {
 	segmentDuration int
 	segmentCount    int
 	needPull        bool
-	ffmpegOptions   *FFmpegOptions // 添加 FFmpeg 选项支持
+	ffmpegOptions   *FFmpegOptions // 添加 FFmpeg 选项支持，用于配置HLS输出参数
 
 	// hub 相关
 	hub          *stream.StreamHubs
@@ -46,14 +46,23 @@ type HLSSegmentManager struct {
 
 // NewHLSSegmentManager 创建新的管理器，每个流独立目录
 func NewHLSSegmentManager(parentCtx context.Context, streamName, baseDir string, segmentDuration int, ffmpegOptions *FFmpegOptions) *HLSSegmentManager {
-	// 🔧 自动防止路径重复，例如 baseDir 已经是 /tmp/hls/cctv1
+	// 规范化 baseDir 路径
+	baseDir = filepath.Clean(baseDir)
+
 	var segmentPath string
-	if strings.HasSuffix(baseDir, string(os.PathSeparator)+streamName) || filepath.Base(baseDir) == streamName {
+	baseDirBase := filepath.Base(baseDir)
+
+	// 检查 baseDir 是否已经以 streamName 结尾
+	if baseDirBase == streamName {
+		// 如果 baseDir 最后一级目录就是 streamName，则直接使用
 		segmentPath = baseDir
 	} else {
+		// 否则追加 streamName
 		segmentPath = filepath.Join(baseDir, streamName)
 	}
 
+	// 确保 segmentPath 也被规范化
+	segmentPath = filepath.Clean(segmentPath)
 	playlistPath := filepath.Join(segmentPath, "index.m3u8")
 	ctx, cancel := context.WithCancel(parentCtx)
 
@@ -64,7 +73,7 @@ func NewHLSSegmentManager(parentCtx context.Context, streamName, baseDir string,
 		segmentDuration: segmentDuration,
 		segmentCount:    5, // 默认保留 5 个片段，可调整
 		needPull:        true, // 默认为 true，后续会根据实际配置调整
-		ffmpegOptions:   ffmpegOptions, // 添加 ffmpegOptions
+		ffmpegOptions:   ffmpegOptions,
 		ctx:             ctx,
 		cancel:          cancel,
 	}
@@ -115,11 +124,6 @@ func (h *HLSSegmentManager) Start() error {
 
 	// 添加自定义 FFmpeg 选项
 	if h.ffmpegOptions != nil {
-		// 添加输入前参数
-		if len(h.ffmpegOptions.InputPreArgs) > 0 {
-			args = append(args, h.ffmpegOptions.InputPreArgs...)
-		}
-
 		// 添加视频编码器设置
 		if h.ffmpegOptions.VideoCodec != "" {
 			args = append(args, "-c:v", h.ffmpegOptions.VideoCodec)
@@ -164,7 +168,7 @@ func (h *HLSSegmentManager) Start() error {
 			args = append(args, "-g", fmt.Sprintf("%d", h.ffmpegOptions.GopSize))
 		}
 
-		// 添加输出前参数
+		// 添加输出前参数（这些参数会放在 -f hls 之前）
 		if len(h.ffmpegOptions.OutputPreArgs) > 0 {
 			args = append(args, h.ffmpegOptions.OutputPreArgs...)
 		}
