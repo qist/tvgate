@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
 	// "strconv"
 	"strings"
 	"sync"
@@ -313,7 +314,7 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 	hlsSegmentDuration := 5 // 默认值
 	hlsSegmentCount := 5    // 默认值
 	hlsPath := ""           // 默认空，使用默认路径
-	
+
 	manager := GetManager()
 	if manager != nil {
 		manager.mutex.RLock()
@@ -352,21 +353,32 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 		// 否则使用默认路径
 		segmentPath = filepath.Join("/tmp/hls", baseStreamName)
 	}
-	
+
 	// 确保目录存在
 	os.MkdirAll(segmentPath, 0755)
 
 	// 创建 HLS 管理器，传递正确的参数包括段时长和段数量
 	hlsManager := NewHLSSegmentManager(ctx, baseStreamName, segmentPath, hlsSegmentDuration, hlsFFmpegOptions)
 	hlsManager.segmentCount = hlsSegmentCount // 设置段数量
-	hlsManager.SetHub(h)
+	// 先不要直接绑定到本地 h；优先使用全局 StreamHub 的 hub（避免不同 hub 导致数据不通）
+	streamHub := GetStreamHub(streamName)
+	if streamHub != nil && streamHub.hub != nil {
+		hlsManager.SetHub(streamHub.hub)
+		// 保证 pipeForwarder 使用全局 hub，这样 Broadcast/Subscribe 在同一 hub 上
+		h = streamHub.hub
+	} else {
+		hlsManager.SetHub(h)
+	}
 	hlsManager.SetNeedPull(needPull) // 设置needPull标志
 
 	// 获取或创建 StreamHub
-	streamHub := GetStreamHub(streamName)
-	streamHub.hlsManager = hlsManager // 将 HLS 管理器设置到 StreamHub
+	streamHub = GetStreamHub(streamName)
+	if streamHub != nil {
+		// 将 HLS 管理器设置到 StreamHub，便于外部控制与访问
+		streamHub.hlsManager = hlsManager
+	}
 
-	// 创建新的 PipeForwarder 实例
+	// 创建新的 PipeForwarder 实例时使用统一的 h（已确保为 streamHub.hub 或本地 h）
 	pipeForwarder := &PipeForwarder{
 		streamName: streamName,
 		rtmpURL:    rtmpURL,
@@ -999,8 +1011,8 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 							case werr := <-wDone:
 								if werr != nil {
 									// 检查是否是预期的关闭错误
-									if werr == io.ErrClosedPipe || strings.Contains(werr.Error(), "file already closed") || 
-									   strings.Contains(werr.Error(), "broken pipe") || strings.Contains(werr.Error(), "read/write on closed pipe") {
+									if werr == io.ErrClosedPipe || strings.Contains(werr.Error(), "file already closed") ||
+										strings.Contains(werr.Error(), "broken pipe") || strings.Contains(werr.Error(), "read/write on closed pipe") {
 										logger.LogPrintf("[%s] Expected pipe close error: %v", pf.streamName, werr)
 									} else {
 										logger.LogPrintf("[%s] Error writing to RTMP stdin: %v", pf.streamName, werr)
