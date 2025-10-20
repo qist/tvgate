@@ -125,27 +125,27 @@ func convertConfig(cfg *config.PublisherConfig) *Config {
 		logger.LogPrintf("Added stream %s to publisher config", name)
 
 		// 打印最终有效参数
-		fmt.Printf("Stream %s Source FFmpegOptions: %+v\n", name, sourceOpts)
+		// fmt.Printf("Stream %s Source FFmpegOptions: %+v\n", name, sourceOpts)
 
-		// 打印接收者的FFmpeg选项
-		if stream.Stream.Receivers.Primary != nil {
-			fmt.Printf("Stream %s Primary Receiver FFmpegOptions: %+v\n", name, stream.Stream.Receivers.Primary.FFmpegOptions)
-			// 打印GlobalArgs和InputPreArgs的详细信息
-			fmt.Printf("Stream %s Primary Receiver GlobalArgs: %+v\n", name, stream.Stream.Receivers.Primary.FFmpegOptions.GlobalArgs)
-			fmt.Printf("Stream %s Primary Receiver InputPreArgs: %+v\n", name, stream.Stream.Receivers.Primary.FFmpegOptions.InputPreArgs)
-		}
-		if stream.Stream.Receivers.Backup != nil {
-			fmt.Printf("Stream %s Backup Receiver FFmpegOptions: %+v\n", name, stream.Stream.Receivers.Backup.FFmpegOptions)
-			// 打印GlobalArgs和InputPreArgs的详细信息
-			fmt.Printf("Stream %s Backup Receiver GlobalArgs: %+v\n", name, stream.Stream.Receivers.Backup.FFmpegOptions.GlobalArgs)
-			fmt.Printf("Stream %s Backup Receiver InputPreArgs: %+v\n", name, stream.Stream.Receivers.Backup.FFmpegOptions.InputPreArgs)
-		}
-		for i, receiver := range stream.Stream.Receivers.All {
-			fmt.Printf("Stream %s All Receiver[%d] FFmpegOptions: %+v\n", name, i, receiver.FFmpegOptions)
-			// 打印GlobalArgs和InputPreArgs的详细信息
-			fmt.Printf("Stream %s All Receiver[%d] GlobalArgs: %+v\n", name, i, receiver.FFmpegOptions.GlobalArgs)
-			fmt.Printf("Stream %s All Receiver[%d] InputPreArgs: %+v\n", name, i, receiver.FFmpegOptions.InputPreArgs)
-		}
+		// // 打印接收者的FFmpeg选项
+		// if stream.Stream.Receivers.Primary != nil {
+		// 	fmt.Printf("Stream %s Primary Receiver FFmpegOptions: %+v\n", name, stream.Stream.Receivers.Primary.FFmpegOptions)
+		// 	// 打印GlobalArgs和InputPreArgs的详细信息
+		// 	fmt.Printf("Stream %s Primary Receiver GlobalArgs: %+v\n", name, stream.Stream.Receivers.Primary.FFmpegOptions.GlobalArgs)
+		// 	fmt.Printf("Stream %s Primary Receiver InputPreArgs: %+v\n", name, stream.Stream.Receivers.Primary.FFmpegOptions.InputPreArgs)
+		// }
+		// if stream.Stream.Receivers.Backup != nil {
+		// 	fmt.Printf("Stream %s Backup Receiver FFmpegOptions: %+v\n", name, stream.Stream.Receivers.Backup.FFmpegOptions)
+		// 	// 打印GlobalArgs和InputPreArgs的详细信息
+		// 	fmt.Printf("Stream %s Backup Receiver GlobalArgs: %+v\n", name, stream.Stream.Receivers.Backup.FFmpegOptions.GlobalArgs)
+		// 	fmt.Printf("Stream %s Backup Receiver InputPreArgs: %+v\n", name, stream.Stream.Receivers.Backup.FFmpegOptions.InputPreArgs)
+		// }
+		// for i, receiver := range stream.Stream.Receivers.All {
+		// 	fmt.Printf("Stream %s All Receiver[%d] FFmpegOptions: %+v\n", name, i, receiver.FFmpegOptions)
+		// 	// 打印GlobalArgs和InputPreArgs的详细信息
+		// 	fmt.Printf("Stream %s All Receiver[%d] GlobalArgs: %+v\n", name, i, receiver.FFmpegOptions.GlobalArgs)
+		// 	fmt.Printf("Stream %s All Receiver[%d] InputPreArgs: %+v\n", name, i, receiver.FFmpegOptions.InputPreArgs)
+		// }
 
 	}
 
