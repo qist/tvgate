@@ -27,6 +27,7 @@ type HLSSegmentManager struct {
 	segmentDuration int
 	segmentCount    int
 	needPull        bool
+	ffmpegOptions   *FFmpegOptions // 添加 FFmpeg 选项支持
 
 	// hub 相关
 	hub          *stream.StreamHubs
@@ -44,7 +45,7 @@ type HLSSegmentManager struct {
 }
 
 // NewHLSSegmentManager 创建新的管理器，每个流独立目录
-func NewHLSSegmentManager(parentCtx context.Context, streamName, baseDir string, segmentDuration int) *HLSSegmentManager {
+func NewHLSSegmentManager(parentCtx context.Context, streamName, baseDir string, segmentDuration int, ffmpegOptions *FFmpegOptions) *HLSSegmentManager {
 	// 🔧 自动防止路径重复，例如 baseDir 已经是 /tmp/hls/cctv1
 	var segmentPath string
 	if strings.HasSuffix(baseDir, string(os.PathSeparator)+streamName) || filepath.Base(baseDir) == streamName {
@@ -62,7 +63,8 @@ func NewHLSSegmentManager(parentCtx context.Context, streamName, baseDir string,
 		playlistPath:    playlistPath,
 		segmentDuration: segmentDuration,
 		segmentCount:    5, // 默认保留 5 个片段，可调整
-		needPull:        true,
+		needPull:        true, // 默认为 true，后续会根据实际配置调整
+		ffmpegOptions:   ffmpegOptions, // 添加 ffmpegOptions
 		ctx:             ctx,
 		cancel:          cancel,
 	}
@@ -80,9 +82,10 @@ func (h *HLSSegmentManager) SetNeedPull(need bool) {
 
 // Start 启动输出目录、注册 hub（若有）、并启动 FFmpeg 进程
 func (h *HLSSegmentManager) Start() error {
-	if !h.needPull {
-		return fmt.Errorf("needPull disabled")
-	}
+	// 不再检查 needPull 标志，因为即使在转发模式下，HLS 也需要从 hub 获取数据
+	// if !h.needPull {
+	// 	return fmt.Errorf("needPull disabled")
+	// }
 
 	// 确保目录存在
 	if err := os.MkdirAll(h.segmentPath, 0755); err != nil {
@@ -104,17 +107,85 @@ func (h *HLSSegmentManager) Start() error {
 	segPattern := filepath.Join(h.segmentPath, fmt.Sprintf("%s_%%03d.ts", h.streamName))
 	m3u8Path := h.playlistPath
 
+	// 构建基础参数
 	args := []string{
 		"-f", "flv",
 		"-i", "pipe:0",
-		"-c:v", "copy",
-		"-c:a", "copy",
+	}
+
+	// 添加自定义 FFmpeg 选项
+	if h.ffmpegOptions != nil {
+		// 添加输入前参数
+		if len(h.ffmpegOptions.InputPreArgs) > 0 {
+			args = append(args, h.ffmpegOptions.InputPreArgs...)
+		}
+
+		// 添加视频编码器设置
+		if h.ffmpegOptions.VideoCodec != "" {
+			args = append(args, "-c:v", h.ffmpegOptions.VideoCodec)
+		} else {
+			args = append(args, "-c:v", "copy")
+		}
+
+		// 添加音频编码器设置
+		if h.ffmpegOptions.AudioCodec != "" {
+			args = append(args, "-c:a", h.ffmpegOptions.AudioCodec)
+		} else {
+			args = append(args, "-c:a", "copy")
+		}
+
+		// 添加视频码率
+		if h.ffmpegOptions.VideoBitrate != "" {
+			args = append(args, "-b:v", h.ffmpegOptions.VideoBitrate)
+		}
+
+		// 添加音频码率
+		if h.ffmpegOptions.AudioBitrate != "" {
+			args = append(args, "-b:a", h.ffmpegOptions.AudioBitrate)
+		}
+
+		// 添加预设
+		if h.ffmpegOptions.Preset != "" {
+			args = append(args, "-preset", h.ffmpegOptions.Preset)
+		}
+
+		// 添加 CRF
+		if h.ffmpegOptions.CRF > 0 {
+			args = append(args, "-crf", fmt.Sprintf("%d", h.ffmpegOptions.CRF))
+		}
+
+		// 添加像素格式
+		if h.ffmpegOptions.PixFmt != "" {
+			args = append(args, "-pix_fmt", h.ffmpegOptions.PixFmt)
+		}
+
+		// 添加 GOP 大小
+		if h.ffmpegOptions.GopSize > 0 {
+			args = append(args, "-g", fmt.Sprintf("%d", h.ffmpegOptions.GopSize))
+		}
+
+		// 添加输出前参数
+		if len(h.ffmpegOptions.OutputPreArgs) > 0 {
+			args = append(args, h.ffmpegOptions.OutputPreArgs...)
+		}
+	} else {
+		// 默认参数
+		args = append(args, "-c:v", "copy", "-c:a", "copy")
+	}
+
+	// 添加 HLS 相关参数
+	args = append(args, 
 		"-f", "hls",
 		"-hls_time", fmt.Sprintf("%d", h.segmentDuration),
 		"-hls_list_size", fmt.Sprintf("%d", h.segmentCount),
 		"-hls_flags", "delete_segments+append_list",
 		"-hls_segment_filename", segPattern,
 		m3u8Path,
+	)
+
+	// 添加输出后参数
+	if h.ffmpegOptions != nil && len(h.ffmpegOptions.OutputPostArgs) > 0 {
+		args = append(args, h.ffmpegOptions.OutputPostArgs...)
 	}
 
 	cmd := exec.CommandContext(h.ctx, "ffmpeg", args...)
@@ -151,22 +222,40 @@ func (h *HLSSegmentManager) Start() error {
 						return
 					}
 					if data, ok := item.([]byte); ok {
+						// 检查上下文是否已取消
+						if h.ctx.Err() != nil {
+							return
+						}
+						
+						h.mutex.Lock()
+						ffmpegIn := h.ffmpegIn
+						h.mutex.Unlock()
+						
+						// 检查ffmpegIn是否有效
+						if ffmpegIn == nil {
+							return
+						}
+						
 						writeDone := make(chan error, 1)
 						go func(d []byte) {
-							_, err := h.ffmpegIn.Write(d)
+							_, err := ffmpegIn.Write(d)
 							writeDone <- err
 						}(data)
 
 						select {
+						case <-h.ctx.Done():
+							return
 						case err := <-writeDone:
 							if err != nil {
 								logger.LogPrintf("[%s] write to ffmpeg stdin error: %v", h.streamName, err)
-								_ = h.Stop()
+								// 不直接调用h.Stop()，而是取消上下文让其他goroutine自行退出
+								h.cancel()
 								return
 							}
 						case <-time.After(5 * time.Second):
 							logger.LogPrintf("[%s] timeout writing to ffmpeg stdin", h.streamName)
-							_ = h.Stop()
+							// 不直接调用h.Stop()，而是取消上下文让其他goroutine自行退出
+							h.cancel()
 							return
 						}
 					}
@@ -200,6 +289,21 @@ func (h *HLSSegmentManager) Start() error {
 func (h *HLSSegmentManager) Stop() error {
 	h.cancel()
 
+	// 等待所有goroutine完成，设置超时
+	done := make(chan struct{})
+	go func() {
+		h.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// 正常完成
+	case <-time.After(5 * time.Second):
+		// 超时，强制清理
+		logger.LogPrintf("[%s] HLS manager stop timeout, forcing cleanup", h.streamName)
+	}
+
 	h.mutex.Lock()
 	if h.ffmpegIn != nil {
 		_ = h.ffmpegIn.Close()
@@ -219,19 +323,32 @@ func (h *HLSSegmentManager) Stop() error {
 		}
 		h.ffmpegCmd = nil
 	}
+	
+	// 清理clientBuffer
+	if h.clientBuffer != nil {
+		h.clientBuffer.Close()
+		h.clientBuffer = nil
+	}
 	h.mutex.Unlock()
 
-	h.wg.Wait()
-	// log.Printf("[%s] HLS manager stopped", h.streamName)
+	logger.LogPrintf("[%s] HLS manager stopped", h.streamName)
 	return nil
 }
 
 // ServePlaylist 返回 m3u8
 func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request) {
-	if !h.needPull {
-		http.Error(w, "HLS not available", http.StatusNotFound)
+	// 移除 needPull 检查，让所有模式都可以提供HLS服务
+	// if !h.needPull {
+	// 	http.Error(w, "HLS not available", http.StatusNotFound)
+	// 	return
+	// }
+	
+	// 检查文件是否存在
+	if _, err := os.Stat(h.playlistPath); os.IsNotExist(err) {
+		http.Error(w, "Playlist not available", http.StatusNotFound)
 		return
 	}
+	
 	data, err := os.ReadFile(h.playlistPath)
 	if err != nil {
 		http.Error(w, "Playlist not available", http.StatusNotFound)
@@ -245,10 +362,12 @@ func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request
 
 // ServeSegment 提供 ts 文件
 func (h *HLSSegmentManager) ServeSegment(w http.ResponseWriter, r *http.Request, segmentName string) {
-	if !h.needPull {
-		http.Error(w, "HLS not available", http.StatusNotFound)
-		return
-	}
+	// 移除 needPull 检查，让所有模式都可以提供HLS服务
+	// if !h.needPull {
+	// 	http.Error(w, "HLS not available", http.StatusNotFound)
+	// 	return
+	// }
+	
 	segmentPath := filepath.Join(h.segmentPath, segmentName)
 	if _, err := os.Stat(segmentPath); os.IsNotExist(err) {
 		log.Printf("[%s] Segment not found: %s", h.streamName, segmentPath)

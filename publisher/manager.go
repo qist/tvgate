@@ -678,6 +678,12 @@ func (sm *StreamManager) startStreaming() {
 						sm.pipeForwarder.EnableHLS(enableHLS)
 					}
 
+					// 获取或创建 StreamHub 并设置为主转发器
+					streamHub := GetStreamHub(sm.name)
+					if streamHub != nil && sm.pipeForwarder != nil {
+						streamHub.SetPrimary(sm.pipeForwarder)
+					}
+
 					// 启动主管道转发器
 					go func() {
 						if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
@@ -686,7 +692,15 @@ func (sm *StreamManager) startStreaming() {
 					}()
 				} else {
 					// 其他接收器创建独立的管道转发器
+					// 在 all 模式下，只有一个实例从源拉取数据，其他实例从共享 hub 读取数据
+					// 所以所有实例都应该使用 needPull=false
 					pipeForwarder := NewPipeForwarder(pipeName, rtmpURL, true, false, sm.pipeForwarder.hub)
+
+					// 获取 StreamHub 并注册为额外的转发器
+					streamHub := GetStreamHub(sm.name)
+					if streamHub != nil {
+						streamHub.AddExtraForwarder(pipeForwarder)
+					}
 
 					// 启动额外的管道转发器
 					go func(pf *PipeForwarder, name string) {
