@@ -314,6 +314,9 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 	hlsSegmentDuration := 5 // 默认值
 	hlsSegmentCount := 5    // 默认值
 	hlsPath := ""           // 默认空，使用默认路径
+	hlsRetentionDays := 7
+	tsFilenameTemplate := "{name}_{seq}.ts"
+	hlsEnablePlayback := false // 默认不启用回放模式
 
 	manager := GetManager()
 	if manager != nil {
@@ -338,6 +341,13 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 					if playURL.HlsPath != "" {
 						hlsPath = playURL.HlsPath
 					}
+					if playURL.HlsRetentionDays > 0 {
+						hlsRetentionDays = playURL.HlsRetentionDays
+					}
+					if playURL.TSFilenameTemplate != "" {
+						tsFilenameTemplate = playURL.TSFilenameTemplate
+					}
+					hlsEnablePlayback = playURL.HlsEnablePlayback // 直接赋值，不管是否为true或false
 					break
 				}
 			}
@@ -357,9 +367,12 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 	// 确保目录存在
 	os.MkdirAll(segmentPath, 0755)
 
-	// 创建 HLS 管理器，传递正确的参数包括段时长和段数量
+	// 创建 HLS 管理器，传递正确的参数包括段时长、段数量和TS文件名模板
 	hlsManager := NewHLSSegmentManager(ctx, baseStreamName, segmentPath, hlsSegmentDuration, hlsFFmpegOptions)
-	hlsManager.segmentCount = hlsSegmentCount // 设置段数量
+	hlsManager.segmentCount = hlsSegmentCount     // 设置段数量
+	hlsManager.retentionDays = hlsRetentionDays // 设置保留天数
+	hlsManager.tsFilenameTemplate = tsFilenameTemplate // 设置TS文件名模板
+	hlsManager.enablePlayback = hlsEnablePlayback      // 设置回放模式
 	// 先不要直接绑定到本地 h；优先使用全局 StreamHub 的 hub（避免不同 hub 导致数据不通）
 	streamHub := GetStreamHub(streamName)
 	if streamHub != nil && streamHub.hub != nil {

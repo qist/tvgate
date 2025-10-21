@@ -2,7 +2,6 @@ package publisher
 
 import (
 	"net/http"
-	"regexp"
 	"strings"
 )
 
@@ -38,17 +37,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// 从路径中提取流名称（去掉.m3u8或.ts后缀）
 			var streamID string
 			if strings.HasSuffix(streamPath, ".m3u8") {
+				// 对于.m3u8文件，去除后缀即为流ID
+				// 支持格式如: cctv2/index.m3u8 -> cctv2
 				streamID = strings.TrimSuffix(streamPath, ".m3u8")
+				if strings.Contains(streamID, "/") {
+					streamID = strings.Split(streamID, "/")[0]
+				}
 			} else { // .ts
-				// 对于.ts文件，需要提取流名称部分
-				// 使用正则表达式匹配 "stream_11.ts" 格式，提取 "stream" 部分
-				// 匹配模式: 以任意字符开头，后跟下划线和数字，以.ts结尾
-				re := regexp.MustCompile(`^(.+)_[0-9]+\.ts$`)
-				matches := re.FindStringSubmatch(streamPath)
-				if len(matches) >= 2 {
-					streamID = matches[1]
+				// 对于.ts文件，使用路径中的目录名作为流ID
+				// 支持格式如: cctv2/xxx.ts -> cctv2
+				if strings.Contains(streamPath, "/") {
+					streamID = strings.Split(streamPath, "/")[0]
 				} else {
-					// 如果不匹配模式，则使用原来的简单方式
+					// fallback到简单方式
 					parts := strings.Split(strings.TrimSuffix(streamPath, ".ts"), "_")
 					if len(parts) > 0 {
 						streamID = parts[0]
@@ -56,22 +57,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// 查找流管理器
-			h.manager.mutex.RLock()
-			streamManager, exists := h.manager.streams[streamID]
-			h.manager.mutex.RUnlock()
-
-			if !exists {
-				http.Error(w, "Stream not found", http.StatusNotFound)
+			// 获取流管理器并提供HLS服务
+			streamHub := GetStreamHub(streamID)
+			if streamHub != nil {
+				streamHub.ServeHLS(w, r)
 				return
 			}
 
-			// 提供HLS流服务
-			if streamManager.pipeForwarder != nil {
-				streamManager.pipeForwarder.ServeHLS(w, r)
-			} else {
-				http.Error(w, "HLS not available", http.StatusServiceUnavailable)
+			// 如果没有找到StreamHub，尝试直接查找PipeForwarder
+			manager := GetManager()
+			if manager != nil {
+				manager.mutex.RLock()
+				streamManager, exists := manager.streams[streamID]
+				manager.mutex.RUnlock()
+
+				if exists && streamManager != nil && streamManager.pipeForwarder != nil {
+					streamManager.pipeForwarder.ServeHLS(w, r)
+					return
+				}
 			}
+
+			http.Error(w, "Stream not found", http.StatusNotFound)
 			return
 		}
 
