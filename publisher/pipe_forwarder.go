@@ -692,27 +692,6 @@ func (pf *PipeForwarder) mergeFFmpegOptionsOrdered(baseArgs []string, sourceOpti
 	return finalArgs
 }
 
-// removeArg 从参数列表中移除指定的参数及其值
-func removeArg(args []string, argToRemove string) []string {
-	result := make([]string, 0, len(args))
-	i := 0
-	for i < len(args) {
-		arg := args[i]
-		if arg == argToRemove {
-			// 跳过参数和它的值（如果有的话）
-			if i+1 < len(args) && len(args[i+1]) > 0 && args[i+1][0] != '-' {
-				i += 2 // 跳过参数和值
-			} else {
-				i += 1 // 只跳过参数
-			}
-			continue
-		}
-		result = append(result, arg)
-		i++
-	}
-	return result
-}
-
 // forwardDataFromPipe 从 pipeReader 读取数据并分发到 hub 与可选 RTMP 推流
 func (pf *PipeForwarder) forwardDataFromPipe() {
 	var ffIn io.WriteCloser
