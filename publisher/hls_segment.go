@@ -313,16 +313,23 @@ func (h *HLSSegmentManager) Start() error {
 	}
 
 	// 添加 HLS 相关参数
-	hlsFlags := "append_list"
+	hlsFlags := "append_list+program_date_time"
 	// 如果不是由 Go 回放管理，允许 delete_segments 交给 ffmpeg
 	if !h.enablePlayback {
-		hlsFlags = "delete_segments+append_list"
+		hlsFlags = "delete_segments+append_list+program_date_time"
 	}
 	args = append(args,
 		"-f", "hls",
 		"-hls_time", fmt.Sprintf("%d", h.segmentDuration),
 		"-hls_list_size", fmt.Sprintf("%d", h.segmentCount),
 		"-hls_flags", hlsFlags,
+	)
+
+	if h.tsFilenameTemplate == "date_underscore" || h.tsFilenameTemplate == "date_T" {
+		args = append(args, "-strftime", "1")
+	}
+
+	args = append(args,
 		"-hls_segment_filename", segPattern,
 		m3u8Path,
 	)
@@ -625,13 +632,13 @@ func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request
 	// 	http.Error(w, "HLS not available", http.StatusNotFound)
 	// 	return
 	// }
-	
+
 	// 检查文件是否存在
 	if _, err := os.Stat(h.playlistPath); os.IsNotExist(err) {
 		http.Error(w, "Playlist not available", http.StatusNotFound)
 		return
 	}
-	
+
 	data, err := os.ReadFile(h.playlistPath)
 	if err != nil {
 		http.Error(w, "Playlist not available", http.StatusNotFound)
@@ -650,7 +657,7 @@ func (h *HLSSegmentManager) ServeSegment(w http.ResponseWriter, r *http.Request,
 	// 	http.Error(w, "HLS not available", http.StatusNotFound)
 	// 	return
 	// }
-	
+
 	segmentPath := filepath.Join(h.segmentPath, segmentName)
 	if _, err := os.Stat(segmentPath); os.IsNotExist(err) {
 		log.Printf("[%s] Segment not found: %s", h.streamName, segmentPath)
@@ -730,7 +737,7 @@ func (h *HLSSegmentManager) BuildSegmentFilenameTemplate() string {
 	switch h.tsFilenameTemplate {
 	case "epoch_hls":
 		// 例: 1761015675-1-%d.hls.ts
-		pattern = fmt.Sprintf("%d-1-%%d.hls.ts",baseUnix)
+		pattern = fmt.Sprintf("%d-1-%%d.hls.ts", baseUnix)
 
 	case "camera_hls":
 		// 例: CCTV1gqh265-10737903-%d-hls.ts
@@ -745,13 +752,13 @@ func (h *HLSSegmentManager) BuildSegmentFilenameTemplate() string {
 		pattern = fmt.Sprintf("%d%%d.ts", now.Unix())
 
 	case "date_underscore":
-		// ✅ 日期每天变化：20251021_%d.ts、20251022_%d.ts
+		// ✅ 日期每天变化：20251021_%173459.ts、20251022_%173459.ts
 		// 只用年月日，不带时分秒
-		pattern = fmt.Sprintf("%s_%%d.ts", now.Format("20060102"))
+		pattern = "%Y%m%d_%H%M%S.ts"
 
 	case "date_T":
-		// ✅ 日期每天变化：20251021T%d.ts
-		pattern = fmt.Sprintf("%sT%%d.ts", now.Format("20060102"))
+		// ✅ 日期每天变化：20251021T%173459.ts
+		pattern = "%Y%m%dT%H%M%S.ts"
 
 	case "name_index":
 		pattern = fmt.Sprintf("%s_%%03d.ts", h.streamName)
