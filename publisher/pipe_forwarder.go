@@ -311,10 +311,11 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 
 	// 获取 HLS 配置
 	var hlsFFmpegOptions *FFmpegOptions
+	var hlsRetentionDays time.Duration
 	hlsSegmentDuration := 5 // 默认值
 	hlsSegmentCount := 5    // 默认值
 	hlsPath := ""           // 默认空，使用默认路径
-	hlsRetentionDays := 7
+	hlsRetentionDays = 7 * 24 * time.Hour // 默认7天
 	tsFilenameTemplate := "name_index"
 	hlsEnablePlayback := false // 默认不启用回放模式
 
