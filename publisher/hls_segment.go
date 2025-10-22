@@ -467,15 +467,15 @@ func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request
 		}
 
 		// 打印日志以便调试
-		logger.LogPrintf("[%s] Playback request - Start: %v, End: %v",
-			h.streamName, startTime.Format(time.RFC3339),
-			endTime.Format(time.RFC3339))
+		// logger.LogPrintf("[%s] Playback request - Start: %v, End: %v",
+		// 	h.streamName, startTime.Format(time.RFC3339),
+		// 	endTime.Format(time.RFC3339))
 	}
 
 	// 读取 segment 目录
 	entries, err := os.ReadDir(h.segmentPath)
 	if err != nil {
-		logger.LogPrintf("[%s] Failed to read segment directory: %v", h.streamName, err)
+		// logger.LogPrintf("[%s] Failed to read segment directory: %v", h.streamName, err)
 		http.Error(w, "Playlist not available", http.StatusNotFound)
 		return
 	}
@@ -513,8 +513,8 @@ func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request
 
 	// 如果没有找到任何符合条件的片段
 	if len(segments) == 0 {
-		logger.LogPrintf("[%s] No segments found in time range %v - %v",
-			h.streamName, startTime, endTime)
+		// logger.LogPrintf("[%s] No segments found in time range %v - %v",
+		// 	h.streamName, startTime, endTime)
 		http.Error(w, "No segments available for the requested time range",
 			http.StatusNotFound)
 		return
@@ -569,8 +569,8 @@ func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	playlist := b.String()
-	logger.LogPrintf("[%s] Generated playlist with %d segments",
-		h.streamName, len(segments))
+	// logger.LogPrintf("[%s] Generated playlist with %d segments",
+		// h.streamName, len(segments))
 	_, _ = w.Write([]byte(playlist))
 }
 
