@@ -447,7 +447,10 @@ func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request
 		_, _ = w.Write(data)
 		return
 	}
-
+	if !h.enablePlayback {
+		http.Error(w, "Playback mode is disabled", http.StatusForbidden)
+		return
+	}
 	// 解析回看时间（使用本地时区 Asia/Shanghai）
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	var startTime, endTime time.Time
@@ -571,14 +574,30 @@ func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request
 	}
 
 	// 生成 m3u8
+	// 生成 m3u8
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n")
 	b.WriteString("#EXT-X-VERSION:3\n")
 	b.WriteString(fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", int(math.Ceil(actualDuration))))
 	b.WriteString(fmt.Sprintf("#EXT-X-MEDIA-SEQUENCE:%d\n", mediaSequence))
+
+	// 格式化回看时间范围
+	startStr := ""
+	endStr := ""
+	if !startTime.IsZero() {
+		startStr = startTime.Format("20060102150405")
+	}
+	if !endTime.IsZero() {
+		endStr = endTime.Format("20060102150405")
+	}
+	var playseekParam string
+	if startStr != "" && endStr != "" {
+		playseekParam = fmt.Sprintf("?playseek=%s-%s", startStr, endStr)
+	}
+
 	for _, seg := range segments {
 		b.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", actualDuration))
-		b.WriteString(seg.Name + "\n")
+		b.WriteString(seg.Name + playseekParam + "\n")
 	}
 	b.WriteString("#EXT-X-ENDLIST\n")
 
