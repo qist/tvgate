@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -430,21 +433,145 @@ func (h *HLSSegmentManager) Stop() error {
 
 // ServePlaylist 返回 m3u8
 func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request) {
-	// 检查文件是否存在
-	if _, err := os.Stat(h.playlistPath); os.IsNotExist(err) {
+	playseek := r.URL.Query().Get("playseek")
+	if playseek == "" {
+		// 直播模式，直接读取硬盘文件，不做修改
+		if _, err := os.Stat(h.playlistPath); os.IsNotExist(err) {
+			http.Error(w, "Playlist not available", http.StatusNotFound)
+			return
+		}
+
+		data, err := os.ReadFile(h.playlistPath)
+		if err != nil {
+			http.Error(w, "Playlist not available", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		_, _ = w.Write(data)
+		return
+	}
+
+	// 解析回看时间
+	var startTime, endTime time.Time
+	parts := strings.Split(playseek, "-")
+	if len(parts) == 2 {
+		startTime, _ = time.Parse("20060102150405", parts[0])
+		endTime, _ = time.Parse("20060102150405", parts[1])
+
+		// 如果结束时间早于开始时间，交换它们
+		if endTime.Before(startTime) {
+			startTime, endTime = endTime, startTime
+		}
+
+		// 打印日志以便调试
+		logger.LogPrintf("[%s] Playback request - Start: %v, End: %v",
+			h.streamName, startTime.Format(time.RFC3339),
+			endTime.Format(time.RFC3339))
+	}
+
+	// 读取 segment 目录
+	entries, err := os.ReadDir(h.segmentPath)
+	if err != nil {
+		logger.LogPrintf("[%s] Failed to read segment directory: %v", h.streamName, err)
 		http.Error(w, "Playlist not available", http.StatusNotFound)
 		return
 	}
 
+	// 收集 TS 文件信息
+	var segments []struct {
+		Name string
+		Mod  time.Time
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".ts") {
+			continue
+		}
+
+		info, err := e.Info()
+		if err != nil {
+			logger.LogPrintf("[%s] Failed to get file info for %s: %v",
+				h.streamName, e.Name(), err)
+			continue
+		}
+
+		modTime := info.ModTime()
+
+		// 检查文件是否在时间范围内
+		if (!startTime.IsZero() && modTime.Before(startTime)) ||
+			(!endTime.IsZero() && modTime.After(endTime)) {
+			continue
+		}
+
+		segments = append(segments, struct {
+			Name string
+			Mod  time.Time
+		}{e.Name(), modTime})
+	}
+
+	// 如果没有找到任何符合条件的片段
+	if len(segments) == 0 {
+		logger.LogPrintf("[%s] No segments found in time range %v - %v",
+			h.streamName, startTime, endTime)
+		http.Error(w, "No segments available for the requested time range",
+			http.StatusNotFound)
+		return
+	}
+
+	// 按 ModTime 排序
+	sort.Slice(segments, func(i, j int) bool {
+		return segments[i].Mod.Before(segments[j].Mod)
+	})
+
+	// 生成回看 m3u8
+	// 先读取原始 m3u8 文件来获取实际分片时长
 	data, err := os.ReadFile(h.playlistPath)
 	if err != nil {
 		http.Error(w, "Playlist not available", http.StatusNotFound)
 		return
 	}
+
+	// 解析 m3u8 内容，获取实际分片时长
+	var actualDuration float64 = float64(h.segmentDuration) // 默认值
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "#EXTINF:") {
+			// 格式如 #EXTINF:10.000000,
+			durationStr := strings.TrimPrefix(line, "#EXTINF:")
+			durationStr = strings.TrimSuffix(durationStr, ",")
+			if d, err := strconv.ParseFloat(durationStr, 64); err == nil {
+				actualDuration = d
+				break
+			}
+		}
+	}
+
+	// 生成回看 m3u8 时使用实际分片时长
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n")
+	b.WriteString("#EXT-X-VERSION:3\n")
+	b.WriteString(fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", int(math.Ceil(actualDuration))))
+	b.WriteString("#EXT-X-MEDIA-SEQUENCE:0\n")
+
+	// 添加片段时使用实际分片时长
+	for _, seg := range segments {
+		b.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", actualDuration))
+		b.WriteString(seg.Name + "\n")
+	}
+
+	b.WriteString("#EXT-X-ENDLIST\n")
+
+	// 输出
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	_, _ = w.Write(data)
+
+	playlist := b.String()
+	logger.LogPrintf("[%s] Generated playlist with %d segments",
+		h.streamName, len(segments))
+	_, _ = w.Write([]byte(playlist))
 }
 
 // ServeSegment 提供 ts 文件
