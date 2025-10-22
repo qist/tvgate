@@ -30,9 +30,9 @@ type HLSSegmentManager struct {
 	ffmpegOptions   *FFmpegOptions // 添加 FFmpeg 选项支持，用于配置HLS输出参数
 
 	// 回放与保留配置
-	enablePlayback     bool   // 若为 true，由 Go 渲染 m3u8 并由 Go 管理段删除
-	retentionDays      time.Duration    // 保留 TS 的天数，<=0 表示不按天删除
-	tsFilenameTemplate string // 模板，支持 {name} 和 {seq}，若为空使用默认 "%s_%03d.ts"
+	enablePlayback     bool          // 若为 true，由 Go 渲染 m3u8 并由 Go 管理段删除
+	retentionDays      time.Duration // 保留 TS 的天数，<=0 表示不按天删除
+	tsFilenameTemplate string        // 模板，支持 {name} 和 {seq}，若为空使用默认 "%s_%03d.ts"
 
 	// hub 相关
 	hub          *stream.StreamHubs
@@ -244,7 +244,7 @@ func (h *HLSSegmentManager) Start() error {
 		"-hls_flags", hlsFlags,
 	)
 
-	if h.tsFilenameTemplate == "date_underscore" || h.tsFilenameTemplate == "date_T" {
+	if needsStrftime(h.tsFilenameTemplate) {
 		args = append(args, "-strftime", "1")
 	}
 
@@ -406,7 +406,6 @@ func (h *HLSSegmentManager) Stop() error {
 	return nil
 }
 
-
 // ServePlaylist 返回 m3u8
 func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request) {
 	// 检查文件是否存在
@@ -446,26 +445,24 @@ func (h *HLSSegmentManager) ServeSegment(w http.ResponseWriter, r *http.Request,
 func (h *HLSSegmentManager) BuildSegmentFilenameTemplate() string {
 	os.MkdirAll(h.segmentPath, 0755)
 
-	now := time.Now()
-	baseUnix := now.Unix() // 会话固定时间戳
 	var pattern string
 
 	switch h.tsFilenameTemplate {
 	case "epoch_hls":
 		// 例: 1761015675-1-%d.hls.ts
-		pattern = fmt.Sprintf("%d-1-%%d.hls.ts", baseUnix)
+		pattern = "%03d-1-%03d.hls.ts"
 
 	case "camera_hls":
 		// 例: CCTV1gqh265-10737903-%d-hls.ts
-		pattern = fmt.Sprintf("%sgqh265-10737903-%%d-hls.ts", strings.ToUpper(h.streamName))
+		pattern = fmt.Sprintf("%s-%%Y%%m%%d-%%H%%M%%S-hls.ts", h.streamName)
 
 	case "epoch_dash":
 		// 例: 1761016086-1-%d.hls.ts
-		pattern = fmt.Sprintf("%d-1-%%d.hls.ts", now.Unix())
+		pattern = "%j-1-%H%M%S.hls.ts"
 
 	case "numeric":
 		// 例: 1761016086%d.ts
-		pattern = fmt.Sprintf("%d%%d.ts", now.Unix())
+		pattern = "%Y%m%d%H%M%S.ts"
 
 	case "date_underscore":
 		// ✅ 日期每天变化：20251021_%173459.ts、20251022_%173459.ts
@@ -480,7 +477,7 @@ func (h *HLSSegmentManager) BuildSegmentFilenameTemplate() string {
 		pattern = fmt.Sprintf("%s_%%03d.ts", h.streamName)
 
 	default:
-		pattern = fmt.Sprintf("%s_%%03d.ts", h.streamName)
+		pattern = h.tsFilenameTemplate
 	}
 
 	return filepath.ToSlash(filepath.Join(h.segmentPath, pattern))
@@ -492,4 +489,20 @@ func (h *HLSSegmentManager) updatePlaylist() {
 		return
 	}
 	_ = os.Chtimes(h.playlistPath, time.Now(), time.Now())
+}
+
+func needsStrftime(template string) bool {
+	// 固定模板必须开启
+	if template == "date_underscore" || template == "date_T" || template == "numeric" || template == "epoch_dash" || template == "camera_hls" {
+		return true
+	}
+	// 自定义模板中包含日期变量才开启
+	strftimeVars := []string{"%Y", "%m", "%H", "%M", "%S", "%j", "%w", "%a", "%b"}
+	for _, v := range strftimeVars {
+		if strings.Contains(template, v) {
+			return true
+		}
+	}
+
+	return false
 }
