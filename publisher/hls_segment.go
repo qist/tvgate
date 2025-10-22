@@ -120,32 +120,52 @@ func (h *HLSSegmentManager) cleanupSegments() {
 		return
 	}
 
-	entries, err := os.ReadDir(h.segmentPath)
-	if err != nil {
-		return
-	}
-
-	// 计算超时的时间点
-	cutoff := time.Now().Add(-h.retentionDays)
-
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if !strings.HasSuffix(strings.ToLower(e.Name()), ".ts") {
-			continue
-		}
-
-		info, err := e.Info()
+	go func() {
+		entries, err := os.ReadDir(h.segmentPath)
 		if err != nil {
-			continue
+			return
 		}
 
-		if info.ModTime().Before(cutoff) {
-			_ = os.Remove(filepath.Join(h.segmentPath, e.Name()))
-			logger.LogPrintf("[%s] removed old segment: %s", h.streamName, e.Name())
+		cutoff := time.Now().Add(-h.retentionDays)
+
+		// 并发控制，最多同时删除 5 个文件
+		concurrency := 5
+		sem := make(chan struct{}, concurrency)
+		var wg sync.WaitGroup
+
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			if !strings.HasSuffix(strings.ToLower(e.Name()), ".ts") {
+				continue
+			}
+
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+
+			if info.ModTime().Before(cutoff) {
+				wg.Add(1)
+				path := filepath.Join(h.segmentPath, e.Name())
+				name := e.Name()
+
+				// 使用 goroutine 删除文件，并受限并发
+				go func(p, n string) {
+					defer wg.Done()
+					sem <- struct{}{}        // 获取并发许可
+					defer func() { <-sem }() // 释放并发许可
+
+					if err := os.Remove(p); err == nil {
+						logger.LogPrintf("[%s] removed old segment: %s", h.streamName, n)
+					}
+				}(path, name)
+			}
 		}
-	}
+
+		wg.Wait() // 等待所有删除完成
+	}()
 }
 
 // Start 启动输出目录、注册 hub（若有）、并启动 FFmpeg 进程
@@ -346,7 +366,9 @@ func (h *HLSSegmentManager) Start() error {
 			case <-h.ctx.Done():
 				return
 			case <-ticker.C:
-				h.cleanupSegments()
+				if h.enablePlayback {
+					h.cleanupSegments()
+				}
 				h.updatePlaylist()
 			}
 		}
