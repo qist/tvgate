@@ -347,6 +347,7 @@ func (h *HLSSegmentManager) Start() error {
 				return
 			case <-ticker.C:
 				h.cleanupSegments()
+				h.updatePlaylist()
 			}
 		}
 	}()
@@ -483,4 +484,12 @@ func (h *HLSSegmentManager) BuildSegmentFilenameTemplate() string {
 	}
 
 	return filepath.ToSlash(filepath.Join(h.segmentPath, pattern))
+}
+
+// updatePlaylist 更新 playlist 文件 mtime
+func (h *HLSSegmentManager) updatePlaylist() {
+	if _, err := os.Stat(h.playlistPath); err != nil {
+		return
+	}
+	_ = os.Chtimes(h.playlistPath, time.Now(), time.Now())
 }
