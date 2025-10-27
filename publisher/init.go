@@ -458,7 +458,8 @@ func FindFFmpeg() (string, error) {
 	pathsToCheck := []string{
 		filepath.Join("ffmpeg", "bin", exeName),
 		filepath.Join("bin", exeName),
-		exeName, // 当前目录直接有 ffmpeg
+		filepath.Join(".", exeName),
+		exeName, // PATH 中查找
 	}
 
 	for _, relativePath := range pathsToCheck {
