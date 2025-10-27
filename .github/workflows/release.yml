@@ -51,6 +51,7 @@ jobs:
             linux-ppc64le) GOOS=linux; GOARCH=ppc64le; PACKAGE_ARCH=ppc64le ;;
             linux-s390x)   GOOS=linux; GOARCH=s390x;   PACKAGE_ARCH=s390x ;;
             windows-amd64) GOOS=windows; GOARCH=amd64; PACKAGE_ARCH=amd64 ;;
+            windows-arm64) GOOS=windows; GOARCH=arm64; PACKAGE_ARCH=arm64 ;;
             windows-386)   GOOS=windows; GOARCH=386;   PACKAGE_ARCH=386 ;;
             darwin-amd64)  GOOS=darwin; GOARCH=amd64;  PACKAGE_ARCH=amd64 ;;
             darwin-arm64)  GOOS=darwin; GOARCH=arm64;  PACKAGE_ARCH=arm64 ;;

@@ -24,6 +24,7 @@ TARGETS := \
 	$(OUT_DIR)/TVGate-linux-ppc64le \
 	$(OUT_DIR)/TVGate-linux-s390x \
 	$(OUT_DIR)/TVGate-windows-amd64.exe \
+	$(OUT_DIR)/TVGate-windows-arm64.exe \
 	$(OUT_DIR)/TVGate-windows-386.exe \
 	$(OUT_DIR)/TVGate-darwin-amd64 \
 	$(OUT_DIR)/TVGate-darwin-arm64 \
@@ -63,6 +64,11 @@ $(OUT_DIR)/TVGate-linux-s390x:
 # Windows amd64
 $(OUT_DIR)/TVGate-windows-amd64.exe:
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
+
+# Windows arm64
+$(OUT_DIR)/TVGate-windows-arm64.exe:
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
+
 
 # Windows 386
 $(OUT_DIR)/TVGate-windows-386.exe:
