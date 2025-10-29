@@ -6,8 +6,8 @@ github.com/ameshkov/dnsstamps v1.0.3 h1:Srzik+J9mivH1alRACTbys2xOxs0lRH9qnTA7Y1O
 github.com/ameshkov/dnsstamps v1.0.3/go.mod h1:Ii3eUu73dx4Vw5O4wjzmT5+lkCwovjzaEZZ4gKyIH5A=
 github.com/asticode/go-astikit v0.30.0 h1:DkBkRQRIxYcknlaU7W7ksNfn4gMFsB0tqMJflxkRsZA=
 github.com/asticode/go-astikit v0.30.0/go.mod h1:h4ly7idim1tNhaVkdVBeXQZEE3L0xblP7fCWbgwipF0=
-github.com/asticode/go-astits v1.13.0 h1:XOgkaadfZODnyZRR5Y0/DWkA9vrkLLPLeeOvDwfKZ1c=
-github.com/asticode/go-astits v1.13.0/go.mod h1:QSHmknZ51pf6KJdHKZHJTLlMegIrhega3LPWz3ND/iI=
+github.com/asticode/go-astits v1.14.0 h1:zkgnZzipx2XX5mWycqsSBeEyDH58+i4HtyF4j2ROb00=
+github.com/asticode/go-astits v1.14.0/go.mod h1:QSHmknZ51pf6KJdHKZHJTLlMegIrhega3LPWz3ND/iI=
 github.com/bluenviron/gortsplib/v5 v5.1.1 h1:GC4sfMFBfx7dNARfSS8m8k3hz37TZ9V4hEMus/LPlQ4=
 github.com/bluenviron/gortsplib/v5 v5.1.1/go.mod h1:+4E4JNF7dpDu8LgssZu9fB3Ndh6FNbvGYMKOKR/wvvI=
 github.com/bluenviron/mediacommon/v2 v2.5.1 h1:qB2fb5c0xyl5OB2gfSfulpEJn7Cdm3vI2n8wjiLMxKI=
