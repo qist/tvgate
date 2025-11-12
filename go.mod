@@ -13,7 +13,7 @@ require (
 	github.com/libp2p/go-reuseport v0.4.0
 	github.com/miekg/dns v1.1.68
 	github.com/pion/rtp v1.8.25
-	github.com/quic-go/quic-go v0.55.0
+	github.com/quic-go/quic-go v0.56.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.46.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
@@ -28,6 +28,7 @@ require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/pion/logging v0.2.4 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
