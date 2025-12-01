@@ -32,6 +32,19 @@
 ---
 changelog
 v2.1.4
+全局认证配置（用于所有转发）
+global_auth:
+    tokens_enabled: false
+    token_param_name: my_token
+    dynamic_tokens:
+        enable_dynamic: false
+        dynamic_ttl: 1h
+        secret: mysecretkey12345
+        salt: staticSaltValue
+    static_tokens:
+        enable_static: false
+        token: token123
+        expire_hours: 1h
 ```
 1、修复了一些bug
 ```
@@ -411,7 +424,18 @@ domainmap:
         ua: 1236545
       protocol: rtsp                
 reload: 5
-
+global_auth:
+    tokens_enabled: false
+    token_param_name: my_token
+    dynamic_tokens:
+        enable_dynamic: false
+        dynamic_ttl: 1h
+        secret: mysecretkey12345
+        salt: staticSaltValue
+    static_tokens:
+        enable_static: false
+        token: token123
+        expire_hours: 1h
 proxygroups:
   蜀小果:
     proxies:
