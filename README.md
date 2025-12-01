@@ -32,7 +32,9 @@
 ---
 changelog
 v2.1.4
+
 全局认证配置（用于所有转发）
+```
 global_auth:
     tokens_enabled: false
     token_param_name: my_token
@@ -45,6 +47,7 @@ global_auth:
         enable_static: false
         token: token123
         expire_hours: 1h
+```
 ```
 1、修复了一些bug
 ```
