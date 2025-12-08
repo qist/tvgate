@@ -110,24 +110,28 @@ func (t *timeoutReadCloser) Close() error {
 // handler 函数，整合读超时处理
 func Handler(client *http.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Header().Set("Server", "TVGate")
-
-			msg := fmt.Sprintf(
-				"TVGate running\nVersion: %s\nProtocols: HTTP/1.1, HTTP/2, HTTP/3\n",
-				config.Version,
-			)
-			_, _ = w.Write([]byte(msg))
+		if r.URL.Path == "/" || r.URL.Path == "/favicon.ico" {
+			drop(w)
 			return
 		}
+		// if r.URL.Path == "/" {
+		// 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		// 	w.Header().Set("Server", "TVGate")
 
-		if r.URL.Path == "/favicon.ico" {
-			w.Header().Set("Content-Type", "image/x-icon")
-			w.Header().Set("server", "TVGate")
-			w.Write(config.FaviconFile)
-			return
-		}
+		// 	msg := fmt.Sprintf(
+		// 		"TVGate running\nVersion: %s\nProtocols: HTTP/1.1, HTTP/2, HTTP/3\n",
+		// 		config.Version,
+		// 	)
+		// 	_, _ = w.Write([]byte(msg))
+		// 	return
+		// }
+		// if r.URL.Path == "/favicon.ico" {
+		// 	w.Header().Set("Content-Type", "image/x-icon")
+		//  w.Header().Set("server", "TVGate")
+		// 	w.Write(config.FaviconFile)
+		// 	return
+		// }
+
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/udp/"):
 			UdpRtpHandler(w, r, "/udp/")
@@ -478,4 +482,13 @@ func markProxyResult(group *config.ProxyGroupConfig, proxy *config.ProxyConfig, 
 	stats.Alive = alive
 	// stats.LastCheck = time.Now()
 	// 不一定每次都更新 TestURL 和 ResponseTime，可视需要添加
+}
+
+func drop(w http.ResponseWriter) {
+	if hj, ok := w.(http.Hijacker); ok {
+		conn, _, _ := hj.Hijack()
+		conn.Close()
+		return
+	}
+	w.WriteHeader(444)
 }
