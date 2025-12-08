@@ -484,11 +484,14 @@ func markProxyResult(group *config.ProxyGroupConfig, proxy *config.ProxyConfig, 
 	// 不一定每次都更新 TestURL 和 ResponseTime，可视需要添加
 }
 
+//	func drop(w http.ResponseWriter) {
+//		if hj, ok := w.(http.Hijacker); ok {
+//			conn, _, _ := hj.Hijack()
+//			conn.Close()
+//			return
+//		}
+//		w.WriteHeader(444)
+//	}
 func drop(w http.ResponseWriter) {
-	if hj, ok := w.(http.Hijacker); ok {
-		conn, _, _ := hj.Hijack()
-		conn.Close()
-		return
-	}
-	w.WriteHeader(444)
+	w.WriteHeader(http.StatusNotFound)
 }

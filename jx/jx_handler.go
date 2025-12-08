@@ -89,7 +89,7 @@ func (h *JXHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Server", "TVGate")
+	// w.Header().Set("Server", "TVGate")
 
 	if jxParam == "" {
 		JSONResponse(w, map[string]interface{}{"error": "jx 参数不能为空"})
