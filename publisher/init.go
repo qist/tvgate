@@ -3,14 +3,15 @@ package publisher
 import (
 	// "log"
 	"fmt"
-	"github.com/qist/tvgate/config"
-	"github.com/qist/tvgate/logger"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+
+	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/logger"
 )
 
 var (
@@ -25,7 +26,7 @@ func Init() error {
 	once.Do(func() {
 		// Check if publisher config exists
 		if config.Cfg.Publisher == nil {
-			logger.LogPrintf("Publisher config not found, skipping initialization")
+			// logger.LogPrintf("Publisher config not found, skipping initialization")
 			return
 		}
 		ffmpegPath, err := FindFFmpeg()
