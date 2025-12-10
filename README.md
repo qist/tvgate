@@ -558,7 +558,13 @@ proxygroups:
       - "edgeware-live.edgeware.tvb.com"
       - "*.edgeware.tvb.com"
       - "hki*-edge*.edgeware.tvb.com"
+      - 2001:::1
+      - 2409:8087:0::/48
+      - 2409:8087:1::/48
+      - 2409:8087:8::/48
+      - 2409:8087:9::/48
     interval: 180s
+    ipv6: true
     loadbalance: fastest
 
 ```
