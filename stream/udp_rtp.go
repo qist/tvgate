@@ -97,7 +97,6 @@ type hubClient struct {
 	connID string
 }
 
-
 // ====================
 // StreamHub 流转发核心
 // ====================
@@ -125,11 +124,6 @@ type StreamHub struct {
 	rtpBuffer      []byte // RTP拼接缓存
 	lastCCMap      map[int]byte
 	rtpSequenceMap map[uint32]*rtpSeqEntry
-	
-	// FCC相关字段
-	FCCManager *FCCManager
-	StreamID   string
-	sequenceCounter uint16
 }
 
 // ====================
@@ -151,8 +145,6 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		AddrList:    addrs,
 		state:       StatePlayings,
 		lastCCMap:   make(map[int]byte),
-		FCCManager:  NewFCCManager(), // 初始化FCC管理器
-		StreamID:    addrs[0],        // 使用第一个地址作为流ID
 	}
 	hub.stateCond = sync.NewCond(&hub.Mu)
 
@@ -308,8 +300,8 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 			return
 		}
 
-		// 处理RTP包，提取有效载荷并支持FCC
-		processedData := h.processRTPPacketWithFCC(data)
+		// 处理RTP包，提取有效载荷
+		processedData := h.processRTPPacket(data)
 
 		// 广播，不进行任何视频分析
 		h.broadcast(processedData)
@@ -524,28 +516,6 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 	return out
 }
 
-// processRTPPacketWithFCC 处理RTP包并支持FCC功能
-
-func (h *StreamHub) processRTPPacketWithFCC(data []byte) []byte {
-	// 首先处理RTP包
-	processedData := h.processRTPPacket(data)
-	
-	// 增加序列号
-	h.sequenceCounter++
-	
-	// 如果处理后的数据有效，且FCCManager存在，则添加到FCC缓冲区
-	if processedData != nil && len(processedData) > 0 && h.FCCManager != nil {
-		// 使用 calcFCCBufferSize 计算缓冲区大小
-		bufferSize := calcFCCBufferSize(0)
-		buffer := h.FCCManager.GetOrCreateBuffer(h.StreamID, bufferSize)
-		if buffer != nil {
-			buffer.AddPacket(processedData, h.sequenceCounter)
-		}
-	}
-	
-	return processedData
-}
-
 // ====================
 // 广播到所有客户端
 // ====================
@@ -651,11 +621,6 @@ func (h *StreamHub) run() {
 func (h *StreamHub) sendInitial(ch chan []byte) {
 	// 获取缓存快照，锁粒度最小化
 	h.Mu.Lock()
-	// 检查 CacheBuffer 是否为 nil
-	if h.CacheBuffer == nil {
-		h.Mu.Unlock()
-		return
-	}
 	cachedFrames := h.CacheBuffer.GetAll()
 	h.Mu.Unlock()
 
@@ -892,35 +857,20 @@ func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*Stre
 		return hub, nil
 	}
 
-	// 尝试创建FCCStreamHub
-	fccHub, err := NewFCCStreamHub(udpAddr, []string{udpAddr}, ifaces)
+	newHub, err := NewStreamHub([]string{udpAddr}, ifaces)
 	if err != nil {
-		// 如果FCCStreamHub创建失败，回退到普通的StreamHub
-		newHub, err := NewStreamHub([]string{udpAddr}, ifaces)
-		if err != nil {
-			return nil, err
-		}
-		
-		// 当客户端为0时自动删除 hub
-		newHub.OnEmpty = func(h *StreamHub) {
-			GlobalMultiChannelHub.RemoveHubEx(h.AddrList[0], ifaces)
-		}
-
-		m.Mu.Lock()
-		m.Hubs[key] = newHub
-		m.Mu.Unlock()
-		return newHub, nil
+		return nil, err
 	}
 
 	// 当客户端为0时自动删除 hub
-	fccHub.StreamHub.OnEmpty = func(h *StreamHub) {
+	newHub.OnEmpty = func(h *StreamHub) {
 		GlobalMultiChannelHub.RemoveHubEx(h.AddrList[0], ifaces)
 	}
 
 	m.Mu.Lock()
-	m.Hubs[key] = fccHub.StreamHub // 存储内部的StreamHub
+	m.Hubs[key] = newHub
 	m.Mu.Unlock()
-	return fccHub.StreamHub, nil
+	return newHub, nil
 }
 
 func (m *MultiChannelHub) RemoveHub(udpAddr string) {
