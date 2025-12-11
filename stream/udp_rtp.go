@@ -648,6 +648,11 @@ func (h *StreamHub) run() {
 func (h *StreamHub) sendInitial(ch chan []byte) {
 	// 获取缓存快照，锁粒度最小化
 	h.Mu.Lock()
+	// 检查 CacheBuffer 是否为 nil
+	if h.CacheBuffer == nil {
+		h.Mu.Unlock()
+		return
+	}
 	cachedFrames := h.CacheBuffer.GetAll()
 	h.Mu.Unlock()
 
