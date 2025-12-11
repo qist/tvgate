@@ -293,6 +293,24 @@ func NewFCCStreamHub(streamID string, addrs []string, ifaces []string) (*FCCStre
 	return fccHub, nil
 }
 
+const FCCBufferDuration = time.Millisecond * 600
+
+func calcFCCBufferSize(bitrate int) int {
+	// bitrate: bits per second
+	if bitrate <= 0 {
+		return 500 // fallback
+	}
+	packetsPerSec := bitrate / 8 / 1316
+	size := packetsPerSec * int(FCCBufferDuration/time.Second)
+	if size < 200 {
+		size = 200
+	}
+	if size > 2000 {
+		size = 2000
+	}
+	return size
+}
+
 // ProcessWithFCC processes incoming data with FCC support
 func (f *FCCStreamHub) ProcessWithFCC(data []byte, sequence uint16) []byte {
 	// 首先处理RTP包
@@ -301,7 +319,8 @@ func (f *FCCStreamHub) ProcessWithFCC(data []byte, sequence uint16) []byte {
 	// 如果处理后的数据有效，则添加到FCC缓冲区
 	if processedData != nil && len(processedData) > 0 {
 		// 获取或创建此流的FCC缓冲区 (默认缓冲区大小为500个包)
-		buffer := f.FCCManager.GetOrCreateBuffer(f.StreamID, 500)
+		bufferSize := calcFCCBufferSize(0)
+		buffer := f.FCCManager.GetOrCreateBuffer(f.StreamID, bufferSize)
 		if buffer != nil {
 			buffer.AddPacket(processedData, sequence)
 		}

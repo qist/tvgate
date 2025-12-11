@@ -525,6 +525,7 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 }
 
 // processRTPPacketWithFCC 处理RTP包并支持FCC功能
+
 func (h *StreamHub) processRTPPacketWithFCC(data []byte) []byte {
 	// 首先处理RTP包
 	processedData := h.processRTPPacket(data)
@@ -534,7 +535,9 @@ func (h *StreamHub) processRTPPacketWithFCC(data []byte) []byte {
 	
 	// 如果处理后的数据有效，且FCCManager存在，则添加到FCC缓冲区
 	if processedData != nil && len(processedData) > 0 && h.FCCManager != nil {
-		buffer := h.FCCManager.GetOrCreateBuffer(h.StreamID, 500)
+		// 使用 calcFCCBufferSize 计算缓冲区大小
+		bufferSize := calcFCCBufferSize(0)
+		buffer := h.FCCManager.GetOrCreateBuffer(h.StreamID, bufferSize)
 		if buffer != nil {
 			buffer.AddPacket(processedData, h.sequenceCounter)
 		}
