@@ -435,6 +435,19 @@
                     <button type="button" class="add-iface-btn" onclick="addMulticastIface()">添加接口</button>
                     <div class="help-text">组播监听的网络接口列表，留空表示使用默认接口</div>
                 </div>
+                
+                <div class="form-group">
+                    <label for="mcast_rejoin_interval">多播重新加入间隔:</label>
+                    <input type="text" id="mcast_rejoin_interval" class="form-control" 
+                           placeholder="0s" 
+                           value="{{ .config.mcast_rejoin_interval }}" 
+                           onchange="updateConfig('mcast_rejoin_interval', this.value)">
+                    <div class="help-text">多播重新加入间隔时间（默认0，表示禁用）<br>
+                    设置为正数（例如60s）以定期重新加入多播组<br>
+                    这是一个兼容性解决方案，适用于具有IGMP侦听交换机的网络<br>
+                    推荐值：30-120秒（小于典型交换机超时时间260秒）<br>
+                    仅在遇到多播流中断时启用</div>
+                </div>
             </div>
         </form>
     </div>
@@ -498,6 +511,13 @@
             document.getElementById('ssl_ecdh_curve').value = serverConfig.ssl_ecdh_curve || '';
             document.getElementById('http_to_https').checked = serverConfig.http_to_https || false;
             
+            // 处理 mcast_rejoin_interval，如果没有设置或者为0，显示默认值"0s"
+            var intervalValue = '0s';
+            if (serverConfig.mcast_rejoin_interval && serverConfig.mcast_rejoin_interval !== '0s' && serverConfig.mcast_rejoin_interval !== '0') {
+                intervalValue = serverConfig.mcast_rejoin_interval;
+            }
+            document.getElementById('mcast_rejoin_interval').value = intervalValue;
+            
             // TLS配置
             if (serverConfig.tls) {
                 document.getElementById('tls_https_port').value = serverConfig.tls.https_port || 0;
@@ -559,6 +579,13 @@
             // 特别处理multicast_ifaces字段
             const currentConfig = JSON.parse(JSON.stringify(serverConfig));
             currentConfig.multicast_ifaces = getMulticastIfaces();
+            
+            // 特别处理 mcast_rejoin_interval 字段
+            const intervalInput = document.getElementById('mcast_rejoin_interval');
+            if (intervalInput) {
+                currentConfig.mcast_rejoin_interval = intervalInput.value;
+            }
+            
             return JSON.stringify(currentConfig) !== JSON.stringify(originalConfig);
         }
 

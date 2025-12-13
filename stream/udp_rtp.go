@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/config"
 	"golang.org/x/net/ipv4"
 	"net"
 	"net/http"
@@ -124,6 +125,11 @@ type StreamHub struct {
 	rtpBuffer      []byte // RTP拼接缓存
 	lastCCMap      map[int]byte
 	rtpSequenceMap map[uint32]*rtpSeqEntry
+	
+	// 多播重新加入相关字段
+	RejoinTimer    *time.Timer
+	RejoinInterval time.Duration
+	ifaces         []string
 }
 
 // ====================
@@ -145,8 +151,17 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		AddrList:    addrs,
 		state:       StatePlayings,
 		lastCCMap:   make(map[int]byte),
+		ifaces:      ifaces,
 	}
 	hub.stateCond = sync.NewCond(&hub.Mu)
+	
+	// 初始化多播重新加入定时器
+	if config.Cfg.Server.McastRejoinInterval > 0 {
+		hub.RejoinInterval = config.Cfg.Server.McastRejoinInterval
+		hub.RejoinTimer = time.AfterFunc(hub.RejoinInterval, func() {
+			hub.RejoinMulticastGroups(addrs)
+		})
+	}
 
 	var lastErr error
 	for _, addr := range addrs {
@@ -252,6 +267,10 @@ func isMulticast(ip net.IP) bool {
 // 启动 UDPConn readLoop
 // ====================
 func (h *StreamHub) startReadLoops() {
+	// 清理之前的读循环（如果有的话）
+	// 由于UDP读循环在连接关闭时会自行退出，这里不需要特殊处理
+	
+	// 为每个连接启动一个新的读循环
 	for idx, conn := range h.UdpConns {
 		hubAddr := h.AddrList[idx%len(h.AddrList)]
 		go h.readLoop(conn, hubAddr)
@@ -742,6 +761,12 @@ func (h *StreamHub) Close() {
 		close(h.Closed)
 	}
 
+	// 停止重新加入定时器（如果存在）
+	if h.RejoinTimer != nil {
+		h.RejoinTimer.Stop()
+		h.RejoinTimer = nil
+	}
+
 	// 关闭 UDP 连接
 	for _, conn := range h.UdpConns {
 		if conn != nil {
@@ -770,6 +795,89 @@ func (h *StreamHub) Close() {
 	}
 
 	logger.LogPrintf("UDP监听已关闭，端口已释放: %s", h.AddrList[0])
+}
+
+// RejoinMulticastGroups 重新加入多播组
+func (h *StreamHub) RejoinMulticastGroups(addrs []string) {
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+	
+	// 检查hub是否已经关闭
+	select {
+	case <-h.Closed:
+		return
+	default:
+	}
+	
+	// 记录日志
+	logger.LogPrintf("🔄 正在重新加入多播组: %v", addrs)
+	
+	// 保存旧连接以便后续关闭
+	oldConns := h.UdpConns
+	newConns := make([]*net.UDPConn, 0, len(addrs))
+	
+	// 重新加入多播组
+	var lastErr error
+	for _, addr := range addrs {
+		udpAddr, err := net.ResolveUDPAddr("udp", addr)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if len(h.ifaces) == 0 {
+			conn, err := listenMulticast(udpAddr, nil)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			newConns = append(newConns, conn)
+		} else {
+			for _, name := range h.ifaces {
+				iface, ierr := net.InterfaceByName(name)
+				if ierr != nil {
+					lastErr = ierr
+					continue
+				}
+				conn, err := listenMulticast(udpAddr, []*net.Interface{iface})
+				if err == nil {
+					newConns = append(newConns, conn)
+					break
+				}
+				lastErr = err
+			}
+		}
+	}
+	
+	// 如果没有成功建立任何新连接，记录错误并返回
+	if len(newConns) == 0 {
+		logger.LogPrintf("❌ 所有多播组重新加入失败: %v, 错误: %v", addrs, lastErr)
+		// 重新安排下一次重新加入（如果是周期性的）
+		if h.RejoinInterval > 0 {
+			h.RejoinTimer.Reset(h.RejoinInterval)
+		}
+		return
+	}
+	
+	// 更新连接列表
+	h.UdpConns = newConns
+	
+	// 关闭旧连接
+	for _, conn := range oldConns {
+		if conn != nil {
+			conn.Close()
+		}
+	}
+	
+	logger.LogPrintf("✅ 成功重新加入多播组: %v", addrs)
+	
+	// 重启读循环
+	h.startReadLoops()
+	
+	// 重新安排下一次重新加入（如果是周期性的）
+	if h.RejoinInterval > 0 {
+		h.RejoinTimer.Reset(h.RejoinInterval)
+	}
 }
 
 // ====================

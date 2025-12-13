@@ -48,6 +48,7 @@ func (h *ConfigHandler) handleServerConfig(w http.ResponseWriter, r *http.Reques
 		"ssl_ecdh_curve":    server.SSLECDHCurve,
 		"http_to_https":     server.HTTPToHTTPS,
 		"multicast_ifaces":  server.MulticastIfaces,
+		"mcast_rejoin_interval": server.McastRejoinInterval.String(),
 		"tls": map[string]interface{}{
 			"https_port":    server.TLS.HTTPSPort,
 			"certfile":      server.TLS.CertFile,
@@ -231,6 +232,18 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 									&yaml.Node{Kind: yaml.ScalarNode, Value: "multicast_ifaces"},
 									ifacesNode)
 							}
+						}
+					}
+
+					// 添加 mcast_rejoin_interval
+					if mcastRejoinInterval, ok := serverConfig["mcast_rejoin_interval"]; ok {
+						mcastRejoinIntervalStr := fmt.Sprintf("%v", mcastRejoinInterval)
+						// 清理字符串，去除引号等可能的额外字符
+						mcastRejoinIntervalStr = strings.Trim(mcastRejoinIntervalStr, "\"")
+						if mcastRejoinIntervalStr != "" && mcastRejoinIntervalStr != "0s" && mcastRejoinIntervalStr != "0" {
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "mcast_rejoin_interval"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: mcastRejoinIntervalStr})
 						}
 					}
 

@@ -31,16 +31,17 @@ func init() {
 // Config 主配置结构
 type Config struct {
 	Server struct {
-		Port            int       `yaml:"port"`             // 旧端口
-		HTTPPort        int       `yaml:"http_port"`        // HTTP 可配置端口
-		CertFile        string    `yaml:"certfile"`         // TLS证书文件
-		KeyFile         string    `yaml:"keyfile"`          // TLS私钥文件
-		SSLProtocols    string    `yaml:"ssl_protocols"`    // 支持的TLS协议版本
-		SSLCiphers      string    `yaml:"ssl_ciphers"`      // 支持的TLS加密算法
-		SSLECDHCurve    string    `yaml:"ssl_ecdh_curve"`   // 支持的TLS曲线
-		TLS             TLSConfig `yaml:"tls"`              // TLS 配置
-		HTTPToHTTPS     bool      `yaml:"http_to_https"`    // HTTP 跳转 HTTPS
-		MulticastIfaces []string  `yaml:"multicast_ifaces"` // 多播网卡
+		Port                int           `yaml:"port"`                  // 旧端口
+		HTTPPort            int           `yaml:"http_port"`             // HTTP 可配置端口
+		CertFile            string        `yaml:"certfile"`              // TLS证书文件
+		KeyFile             string        `yaml:"keyfile"`               // TLS私钥文件
+		SSLProtocols        string        `yaml:"ssl_protocols"`         // 支持的TLS协议版本
+		SSLCiphers          string        `yaml:"ssl_ciphers"`           // 支持的TLS加密算法
+		SSLECDHCurve        string        `yaml:"ssl_ecdh_curve"`        // 支持的TLS曲线
+		TLS                 TLSConfig     `yaml:"tls"`                   // TLS 配置
+		HTTPToHTTPS         bool          `yaml:"http_to_https"`         // HTTP 跳转 HTTPS
+		MulticastIfaces     []string      `yaml:"multicast_ifaces"`      // 多播网卡
+		McastRejoinInterval time.Duration `yaml:"mcast_rejoin_interval"` // 多播重连间隔时间
 	} `yaml:"server"`
 
 	Log struct {
