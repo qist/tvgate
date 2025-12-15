@@ -127,8 +127,8 @@ type StreamHub struct {
 	rtpSequenceMap map[uint32]*rtpSeqEntry
 	
 	// 多播重新加入相关字段
-	RejoinTimer    *time.Timer
-	RejoinInterval time.Duration
+	rejoinTimer    *time.Timer
+	rejoinInterval time.Duration
 	ifaces         []string
 }
 
@@ -141,27 +141,25 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 	}
 
 	hub := &StreamHub{
-		Clients:     make(map[string]hubClient),
-		AddCh:       make(chan hubClient, 1024),
-		RemoveCh:    make(chan string, 1024),
-		UdpConns:    make([]*net.UDPConn, 0, len(addrs)),
-		CacheBuffer: NewRingBuffer(8192), // 默认缓存8192帧
-		Closed:      make(chan struct{}),
-		BufPool:     &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
-		AddrList:    addrs,
-		state:       StatePlayings,
-		lastCCMap:   make(map[int]byte),
-		ifaces:      ifaces,
+		Clients:        make(map[string]hubClient),
+		AddCh:          make(chan hubClient, 1024),
+		RemoveCh:       make(chan string, 1024),
+		UdpConns:       make([]*net.UDPConn, 0, len(addrs)),
+		CacheBuffer:    NewRingBuffer(8192), // 默认缓存8192帧
+		Closed:         make(chan struct{}),
+		BufPool:        &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
+		AddrList:       addrs,
+		state:          StatePlayings,
+		lastCCMap:      make(map[int]byte),
+		rtpSequenceMap: make(map[uint32]*rtpSeqEntry),
+		ifaces:         ifaces,
 	}
 	hub.stateCond = sync.NewCond(&hub.Mu)
 	
-	// 初始化多播重新加入定时器
-	if config.Cfg.Server.McastRejoinInterval > 0 {
-		hub.RejoinInterval = config.Cfg.Server.McastRejoinInterval
-		hub.RejoinTimer = time.AfterFunc(hub.RejoinInterval, func() {
-			hub.RejoinMulticastGroups(addrs)
-		})
-	}
+	// 获取多播重新加入间隔配置
+	config.CfgMu.RLock()
+	hub.rejoinInterval = config.Cfg.Server.McastRejoinInterval
+	config.CfgMu.RUnlock()
 
 	var lastErr error
 	for _, addr := range addrs {
@@ -197,6 +195,13 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 
 	if len(hub.UdpConns) == 0 {
 		return nil, fmt.Errorf("所有网卡监听失败: %v", lastErr)
+	}
+
+	// 如果配置了重新加入间隔并且大于0，则启动定时器
+	if hub.rejoinInterval > 0 {
+		hub.rejoinTimer = time.AfterFunc(hub.rejoinInterval, func() {
+			hub.rejoinMulticastGroups(addrs)
+		})
 	}
 
 	go hub.run()
@@ -299,6 +304,7 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 		if err != nil {
 			h.BufPool.Put(buf)
 			if !errors.Is(err, net.ErrClosed) {
+				logger.LogPrintf("❌ UDP 读取错误: %v", err)
 			}
 			return
 		}
@@ -321,6 +327,9 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 
 		// 处理RTP包，提取有效载荷
 		processedData := h.processRTPPacket(data)
+		if processedData == nil {
+			continue
+		}
 
 		// 广播，不进行任何视频分析
 		h.broadcast(processedData)
@@ -762,9 +771,9 @@ func (h *StreamHub) Close() {
 	}
 
 	// 停止重新加入定时器（如果存在）
-	if h.RejoinTimer != nil {
-		h.RejoinTimer.Stop()
-		h.RejoinTimer = nil
+	if h.rejoinTimer != nil {
+		h.rejoinTimer.Stop()
+		h.rejoinTimer = nil
 	}
 
 	// 关闭 UDP 连接
@@ -797,8 +806,8 @@ func (h *StreamHub) Close() {
 	logger.LogPrintf("UDP监听已关闭，端口已释放: %s", h.AddrList[0])
 }
 
-// RejoinMulticastGroups 重新加入多播组
-func (h *StreamHub) RejoinMulticastGroups(addrs []string) {
+// rejoinMulticastGroups 重新加入多播组
+func (h *StreamHub) rejoinMulticastGroups(addrs []string) {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 	
@@ -853,8 +862,8 @@ func (h *StreamHub) RejoinMulticastGroups(addrs []string) {
 	if len(newConns) == 0 {
 		logger.LogPrintf("❌ 所有多播组重新加入失败: %v, 错误: %v", addrs, lastErr)
 		// 重新安排下一次重新加入（如果是周期性的）
-		if h.RejoinInterval > 0 {
-			h.RejoinTimer.Reset(h.RejoinInterval)
+		if h.rejoinInterval > 0 && h.rejoinTimer != nil {
+			h.rejoinTimer.Reset(h.rejoinInterval)
 		}
 		return
 	}
@@ -875,8 +884,8 @@ func (h *StreamHub) RejoinMulticastGroups(addrs []string) {
 	h.startReadLoops()
 	
 	// 重新安排下一次重新加入（如果是周期性的）
-	if h.RejoinInterval > 0 {
-		h.RejoinTimer.Reset(h.RejoinInterval)
+	if h.rejoinInterval > 0 && h.rejoinTimer != nil {
+		h.rejoinTimer.Reset(h.rejoinInterval)
 	}
 }
 
@@ -1109,4 +1118,50 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 
 	h.Clients = make(map[string]hubClient)
 	logger.LogPrintf("🔄 客户端已迁移到新Hub，数量=%d", len(newHub.Clients))
+}
+
+// SetRejoinInterval 设置重新加入间隔
+func (h *StreamHub) SetRejoinInterval(interval time.Duration) {
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+	
+	h.rejoinInterval = interval
+}
+
+// GetRejoinInterval 获取重新加入间隔
+func (h *StreamHub) GetRejoinInterval() time.Duration {
+	h.Mu.RLock()
+	defer h.Mu.RUnlock()
+	
+	return h.rejoinInterval
+}
+
+// ResetRejoinTimer 重置重新加入定时器
+func (h *StreamHub) ResetRejoinTimer() {
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+	
+	if h.rejoinTimer != nil && h.rejoinInterval > 0 {
+		h.rejoinTimer.Reset(h.rejoinInterval)
+	}
+}
+
+// UpdateRejoinTimer 更新重新加入定时器
+func (h *StreamHub) UpdateRejoinTimer() {
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+	
+	// 如果定时器存在，先停止它
+	if h.rejoinTimer != nil {
+		h.rejoinTimer.Stop()
+	}
+	
+	// 如果间隔大于0，则重新启动定时器
+	if h.rejoinInterval > 0 {
+		h.rejoinTimer = time.AfterFunc(h.rejoinInterval, func() {
+			h.rejoinMulticastGroups(h.AddrList)
+		})
+	} else {
+		h.rejoinTimer = nil
+	}
 }

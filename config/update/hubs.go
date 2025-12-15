@@ -1,8 +1,6 @@
 package update
 
 import (
-	"time"
-	
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/stream"
@@ -17,37 +15,9 @@ func UpdateHubsOnConfigChange(newIfaces []string) {
 	
 	for oldKey, hub := range stream.GlobalMultiChannelHub.Hubs {
 		// 更新多播重新加入间隔
-		hub.Mu.Lock()
-		oldRejoinInterval := hub.RejoinInterval
-		hub.RejoinInterval = newRejoinInterval
-		
-		// 如果定时器存在，先停止它
-		if hub.RejoinTimer != nil {
-			hub.RejoinTimer.Stop()
-		}
-		
-		// 如果新的间隔大于0，则重新启动定时器
-		if newRejoinInterval > 0 {
-			hub.RejoinTimer = time.NewTimer(newRejoinInterval)
-			go func(h *stream.StreamHub, interval time.Duration) {
-				for {
-					select {
-					case <-h.RejoinTimer.C:
-						h.RejoinMulticastGroups(h.AddrList)
-						// 重置定时器
-						h.Mu.Lock()
-						if h.RejoinTimer != nil {
-							h.RejoinTimer.Reset(interval)
-						}
-						h.Mu.Unlock()
-					}
-				}
-			}(hub, newRejoinInterval)
-		} else {
-			// 如果新的间隔为0，则清除定时器
-			hub.RejoinTimer = nil
-		}
-		hub.Mu.Unlock()
+		oldRejoinInterval := hub.GetRejoinInterval()
+		hub.SetRejoinInterval(newRejoinInterval)
+		hub.UpdateRejoinTimer()
 		
 		// 记录日志（如果有变更）
 		if oldRejoinInterval != newRejoinInterval {
