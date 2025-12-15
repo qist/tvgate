@@ -808,87 +808,12 @@ func (h *StreamHub) Close() {
 
 // rejoinMulticastGroups 重新加入多播组
 func (h *StreamHub) rejoinMulticastGroups(addrs []string) {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
-	
-	// 检查hub是否已经关闭
-	select {
-	case <-h.Closed:
-		return
-	default:
-	}
-	
-	// 记录日志
-	logger.LogPrintf("🔄 正在重新加入多播组: %v", addrs)
-	
-	// 保存旧连接以便后续关闭
-	oldConns := h.UdpConns
-	newConns := make([]*net.UDPConn, 0, len(addrs))
-	
-	// 重新加入多播组
-	var lastErr error
-	for _, addr := range addrs {
-		udpAddr, err := net.ResolveUDPAddr("udp", addr)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		if len(h.ifaces) == 0 {
-			conn, err := listenMulticast(udpAddr, nil)
-			if err != nil {
-				lastErr = err
-				continue
-			}
-			newConns = append(newConns, conn)
-		} else {
-			for _, name := range h.ifaces {
-				iface, ierr := net.InterfaceByName(name)
-				if ierr != nil {
-					lastErr = ierr
-					continue
-				}
-				conn, err := listenMulticast(udpAddr, []*net.Interface{iface})
-				if err == nil {
-					newConns = append(newConns, conn)
-					break
-				}
-				lastErr = err
-			}
-		}
-	}
-	
-	// 如果没有成功建立任何新连接，记录错误并返回
-	if len(newConns) == 0 {
-		logger.LogPrintf("❌ 所有多播组重新加入失败: %v, 错误: %v", addrs, lastErr)
-		// 重新安排下一次重新加入（如果是周期性的）
-		if h.rejoinInterval > 0 && h.rejoinTimer != nil {
-			h.rejoinTimer.Reset(h.rejoinInterval)
-		}
-		return
-	}
-	
-	// 更新连接列表
-	h.UdpConns = newConns
-	
-	// 关闭旧连接
-	for _, conn := range oldConns {
-		if conn != nil {
-			conn.Close()
-		}
-	}
-	
-	logger.LogPrintf("✅ 成功重新加入多播组: %v", addrs)
-	
-	// 重启读循环
-	h.startReadLoops()
+	// 直接调用 smoothRejoinMulticast 方法来平滑刷新组播成员关系
+	h.smoothRejoinMulticast()
 	
 	// 重新安排下一次重新加入（如果是周期性的）
-	if h.rejoinInterval > 0 && h.rejoinTimer != nil {
-		h.rejoinTimer.Reset(h.rejoinInterval)
-	}
+	h.ResetRejoinTimer()
 }
-
 // ====================
 // 判断 Hub 是否关闭
 // ====================
@@ -1164,4 +1089,73 @@ func (h *StreamHub) UpdateRejoinTimer() {
 	} else {
 		h.rejoinTimer = nil
 	}
+}
+
+func (h *StreamHub) smoothRejoinMulticast() {
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+
+	// hub 已关闭就不处理
+	select {
+	case <-h.Closed:
+		return
+	default:
+	}
+
+	logger.LogPrintf("🔄 平滑刷新 IGMP 组播成员关系: %v", h.AddrList)
+
+	for _, conn := range h.UdpConns {
+		if conn == nil {
+			continue
+		}
+
+		p := ipv4.NewPacketConn(conn)
+
+		for _, addr := range h.AddrList {
+			udpAddr, err := net.ResolveUDPAddr("udp", addr)
+			if err != nil {
+				continue
+			}
+
+			groupIP := udpAddr.IP
+			if !isMulticast(groupIP) {
+				continue
+			}
+
+			// 1️⃣ Leave（即使失败也没关系）
+			if len(h.ifaces) == 0 {
+				_ = p.LeaveGroup(nil, &net.UDPAddr{IP: groupIP})
+			} else {
+				for _, ifname := range h.ifaces {
+					iface, err := net.InterfaceByName(ifname)
+					if err != nil {
+						continue
+					}
+					_ = p.LeaveGroup(iface, &net.UDPAddr{IP: groupIP})
+				}
+			}
+
+			// 2️⃣ Join（触发内核发送 IGMP Report）
+			if len(h.ifaces) == 0 {
+				if err := p.JoinGroup(nil, &net.UDPAddr{IP: groupIP}); err != nil {
+					logger.LogPrintf("⚠️ JoinGroup 失败 %v: %v", groupIP, err)
+				}
+			} else {
+				for _, ifname := range h.ifaces {
+					iface, err := net.InterfaceByName(ifname)
+					if err != nil {
+						continue
+					}
+					if err := p.JoinGroup(iface, &net.UDPAddr{IP: groupIP}); err != nil {
+						logger.LogPrintf(
+							"⚠️ JoinGroup %v@%s 失败: %v",
+							groupIP, iface.Name, err,
+						)
+					}
+				}
+			}
+		}
+	}
+
+	logger.LogPrintf("✅ IGMP 成员关系已刷新（未中断 socket）")
 }
