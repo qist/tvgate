@@ -3,9 +3,10 @@ package handler
 import (
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
-	// "github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/stream"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -59,6 +60,29 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 
 		http.Error(w, "Failed to listen UDP: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// 处理FCC相关参数
+	fccParam := r.URL.Query().Get("fcc")
+	operatorParam := r.URL.Query().Get("operator")
+
+	if fccParam != "" {
+		// 启用FCC功能
+		hub.EnableFCC(true)
+
+		// 设置FCC类型
+		if operatorParam != "" {
+			hub.SetFccType(operatorParam)
+		}
+
+		// 解析并设置FCC服务器地址
+		if _, err := net.ResolveUDPAddr("udp", fccParam); err == nil {
+			if err := hub.SetFccServerAddr(fccParam); err != nil {
+				logger.LogPrintf("设置FCC服务器地址失败: %v", err)
+			}
+		} else {
+			logger.LogPrintf("解析FCC服务器地址失败: %v", err)
+		}
 	}
 
 	// 注册客户端活跃信息

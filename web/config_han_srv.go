@@ -49,6 +49,10 @@ func (h *ConfigHandler) handleServerConfig(w http.ResponseWriter, r *http.Reques
 		"http_to_https":     server.HTTPToHTTPS,
 		"multicast_ifaces":  server.MulticastIfaces,
 		"mcast_rejoin_interval": server.McastRejoinInterval.String(),
+		"fcc_type":          server.FccType,
+		"fcc_cache_size":    server.FccCacheSize,
+		"fcc_listen_port_min": server.FccListenPortMin,
+		"fcc_listen_port_max": server.FccListenPortMax,
 		"tls": map[string]interface{}{
 			"https_port":    server.TLS.HTTPSPort,
 			"certfile":      server.TLS.CertFile,
@@ -244,6 +248,46 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 							newServerNode.Content = append(newServerNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "mcast_rejoin_interval"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: mcastRejoinIntervalStr})
+						}
+					}
+
+					// 添加fcc_type
+					if fccType, ok := serverConfig["fcc_type"]; ok {
+						fccTypeStr := fmt.Sprintf("%v", fccType)
+						if fccTypeStr != "" {
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "fcc_type"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: fccTypeStr})
+						}
+					}
+
+					// 添加fcc_cache_size
+					if fccCacheSize, ok := serverConfig["fcc_cache_size"]; ok {
+						fccCacheSizeValue := fmt.Sprintf("%v", fccCacheSize)
+						if fccCacheSizeValue != "" && fccCacheSizeValue != "0" {
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "fcc_cache_size"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: fccCacheSizeValue})
+						}
+					}
+
+					// 添加fcc_listen_port_min
+					if fccListenPortMin, ok := serverConfig["fcc_listen_port_min"]; ok {
+						fccListenPortMinValue := fmt.Sprintf("%v", fccListenPortMin)
+						if fccListenPortMinValue != "" && fccListenPortMinValue != "0" {
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "fcc_listen_port_min"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: fccListenPortMinValue})
+						}
+					}
+
+					// 添加fcc_listen_port_max
+					if fccListenPortMax, ok := serverConfig["fcc_listen_port_max"]; ok {
+						fccListenPortMaxValue := fmt.Sprintf("%v", fccListenPortMax)
+						if fccListenPortMaxValue != "" && fccListenPortMaxValue != "0" {
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "fcc_listen_port_max"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: fccListenPortMaxValue})
 						}
 					}
 

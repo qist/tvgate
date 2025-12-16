@@ -42,6 +42,10 @@ type Config struct {
 		HTTPToHTTPS         bool          `yaml:"http_to_https"`         // HTTP 跳转 HTTPS
 		MulticastIfaces     []string      `yaml:"multicast_ifaces"`      // 多播网卡
 		McastRejoinInterval time.Duration `yaml:"mcast_rejoin_interval"` // 多播重连间隔时间
+		FccType             string        `yaml:"fcc_type"`              // FCC类型: telecom, huawei
+		FccCacheSize        int           `yaml:"fcc_cache_size"`        // FCC缓存大小，默认16384
+		FccListenPortMin    int           `yaml:"fcc_listen_port_min"`   // FCC监听端口范围最小值
+		FccListenPortMax    int           `yaml:"fcc_listen_port_max"`   // FCC监听端口范围最大值
 	} `yaml:"server"`
 
 	Log struct {
@@ -427,6 +431,17 @@ func (c *Config) SetDefaults() {
 		c.HTTP.MaxConnsPerHost = 8
 	}
 
+	// Server 默认值
+	if c.Server.FccListenPortMin == 0 {
+		c.Server.FccListenPortMin = 40000
+	}
+	if c.Server.FccListenPortMax == 0 {
+		c.Server.FccListenPortMax = 40100
+	}
+	// 设置默认值
+	if c.Server.FccCacheSize <= 0 {
+		c.Server.FccCacheSize = 16384
+	}
 	// DNS 默认值
 	if c.DNS.Timeout == 0 {
 		c.DNS.Timeout = 5 * time.Second
