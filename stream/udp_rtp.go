@@ -886,9 +886,11 @@ func (h *StreamHub) run() {
 			}
 			// 如果没有客户端，清空累积缓存并关闭Hub
 			if len(h.Clients) == 0 {
-				// 清理FCC连接
-				h.cleanupFCC()
-				
+				// 只有在启用FCC时才清理FCC连接
+				if h.fccEnabled {
+					h.cleanupFCC()
+				}
+
 				h.Mu.Unlock()
 				h.Close()
 				if h.OnEmpty != nil {
@@ -1099,7 +1101,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 				}
 			}()
 		}
-		
+
 		// 注意：不在这里调用cleanupFCC()，而是在所有客户端都断开时调用
 	}()
 
@@ -1166,7 +1168,6 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 		}
 	}
 }
-
 
 // ====================
 // 关闭 Hub
