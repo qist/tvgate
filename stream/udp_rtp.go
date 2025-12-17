@@ -884,8 +884,11 @@ func (h *StreamHub) run() {
 				curCount := len(h.Clients)
 				logger.LogPrintf("➖ 客户端离开，当前客户端数量=%d", curCount)
 			}
-			// 如果没有客户端，清空累积缓存
+			// 如果没有客户端，清空累积缓存并关闭Hub
 			if len(h.Clients) == 0 {
+				// 清理FCC连接
+				h.cleanupFCC()
+				
 				h.Mu.Unlock()
 				h.Close()
 				if h.OnEmpty != nil {
@@ -1049,16 +1052,18 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 
 	// 如果启用了FCC，发送FCC请求
+	fccInitialized := false
 	if fccEnabled {
-		go func() {
-			for _, addr := range h.AddrList {
-				udpAddr, err := net.ResolveUDPAddr("udp", addr)
-				if err != nil {
-					continue
-				}
+		// 初始化FCC连接（如果尚未初始化）
+		fccInitialized = h.initFCCConnection()
+		if fccInitialized {
+			go func() {
+				for _, addr := range h.AddrList {
+					udpAddr, err := net.ResolveUDPAddr("udp", addr)
+					if err != nil {
+						continue
+					}
 
-				// 初始化FCC连接
-				if h.initFCCConnection() {
 					// 发送FCC请求
 					err = h.sendFCCRequest(udpAddr, h.fccUnicastPort)
 					if err != nil {
@@ -1068,15 +1073,15 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 						logger.LogPrintf("FCC请求已发送到 %s 用于客户端 %s", addr, host)
 					}
 				}
-			}
-		}()
+			}()
+		}
 	}
 
 	defer func() {
 		h.RemoveCh <- connID
 
-		// 如果启用了FCC，发送FCC终止包
-		if fccEnabled {
+		// 只有在FCC已初始化的情况下才发送终止包
+		if fccEnabled && fccInitialized {
 			seqNum := uint16(0) // 在实际应用中应该获取最后一个序列号
 			go func() {
 				for _, addr := range h.AddrList {
@@ -1094,9 +1099,8 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 				}
 			}()
 		}
-
-		// 清理FCC连接
-		h.cleanupFCC()
+		
+		// 注意：不在这里调用cleanupFCC()，而是在所有客户端都断开时调用
 	}()
 
 	w.Header().Set("Pragma", "no-cache")
@@ -1162,6 +1166,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 		}
 	}
 }
+
 
 // ====================
 // 关闭 Hub
@@ -2109,6 +2114,7 @@ func (h *StreamHub) processFCCMediaData(data []byte) {
 }
 
 // cleanupFCC 清理FCC连接
+// 注意：此方法仅在完全关闭hub时调用，不应该在单个客户端断开时调用
 func (h *StreamHub) cleanupFCC() {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
