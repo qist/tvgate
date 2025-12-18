@@ -1,6 +1,6 @@
 module github.com/qist/tvgate
 
-go 1.24.4
+go 1.25.5
 
 require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
