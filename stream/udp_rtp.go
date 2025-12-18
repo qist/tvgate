@@ -60,6 +60,19 @@ const (
 	StateErrors
 )
 
+var (
+	patBufferPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 188)
+		},
+	}
+	
+	pmtBufferPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 188)
+		},
+	}
+)
 type rtpSeqEntry struct {
 	sequences  []uint16
 	lastActive time.Time
@@ -537,19 +550,23 @@ func (bp *BufferPool) Put(buf []byte) {
 }
 
 // 全局内存池实例
-var tsBufferPool = NewBufferPool()
+var tsBufferPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 188)
+	},
+}
 
 // 修改makeNullTS函数以使用内存池
 func makeNullTS() []byte {
-	buf := tsBufferPool.Get()
-	buf[0] = 0x47
-	buf[1] = 0x1f
-	buf[2] = 0xff
-	buf[3] = 0x00
+	ts := tsBufferPool.Get().([]byte)
+	ts[0] = 0x47
+	ts[1] = 0x1F
+	ts[2] = 0xFF
+	ts[3] = 0x10
 	for i := 4; i < 188; i++ {
-		buf[i] = 0xff
+		ts[i] = 0xFF
 	}
-	return buf
+	return ts
 }
 
 // processFCCPacket 处理FCC相关数据包
@@ -668,17 +685,6 @@ func (h *StreamHub) processHuaweiFCCPacket(fmtField byte, data []byte) bool {
 }
 
 // 添加PAT/PMT缓冲区池以减少内存分配
-var patBufferPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 188)
-	},
-}
-
-var pmtBufferPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 188)
-	},
-}
 
 // 优化后的processRTPPacket函数，继续减少内存分配
 func (h *StreamHub) processRTPPacket(data []byte) []byte {
@@ -871,6 +877,18 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 				h.fccState = FCC_STATE_UNICAST_ACTIVE
 			}
 		}
+		
+		// 即使没有PAT/PMT包也要确保FCC状态能够进展
+		if h.fccState == FCC_STATE_MCAST_REQUESTED && len(out) > 0 {
+			// 如果我们处于MCAST_REQUESTED状态且有数据，则切换到MCAST_ACTIVE
+			h.fccState = FCC_STATE_MCAST_ACTIVE
+			
+			// 清除同步计时器（如果存在）
+			if h.fccSyncTimer != nil {
+				h.fccSyncTimer.Stop()
+				h.fccSyncTimer = nil
+			}
+		}
 		h.Mu.Unlock()
 	}
 
@@ -928,6 +946,23 @@ func (h *StreamHub) broadcast(data []byte) {
 			if h.fccSyncTimer != nil {
 				h.fccSyncTimer.Stop()
 				h.fccSyncTimer = nil
+			}
+		}
+		h.Mu.Unlock()
+	} else if fccEnabled && fccState == FCC_STATE_UNICAST_PENDING {
+		// 如果长时间停留在UNICAST_PENDING状态，自动切换到多播模式
+		h.Mu.Lock()
+		if h.fccState == FCC_STATE_UNICAST_PENDING {
+			// 设置一个定时器，如果在一定时间内没有收到单播数据，则切换到多播
+			if h.fccSyncTimer == nil {
+				h.fccSyncTimer = time.AfterFunc(3*time.Second, func() {
+					h.Mu.Lock()
+					if h.fccState == FCC_STATE_UNICAST_PENDING {
+						h.fccState = FCC_STATE_MCAST_ACTIVE
+						logger.LogPrintf("FCC: 未收到单播数据，自动切换到多播模式")
+					}
+					h.Mu.Unlock()
+				})
 			}
 		}
 		h.Mu.Unlock()
@@ -1078,19 +1113,33 @@ func (h *StreamHub) sendInitial(ch chan []byte) {
 					start = len(fccFrames) - 50
 				}
 				packets = append(packets, fccFrames[start:]...)
+			} else {
+				// 如果没有FCC帧，尝试使用常规缓存帧作为后备
+				cachedFrames := h.CacheBuffer.GetAll()
+				packets = append(packets, cachedFrames...)
 			}
+		} else {
+			// 如果没有FCC缓存，使用常规缓存作为后备
+			cachedFrames := h.CacheBuffer.GetAll()
+			packets = append(packets, cachedFrames...)
 		}
 
 	case FCC_STATE_MCAST_REQUESTED, FCC_STATE_MCAST_ACTIVE:
 		// 多播 FCC：完整 FCC 缓存
+		fccFramesAvailable := false
 		if h.fccPendingBuf != nil {
 			fccFrames := h.fccPendingBuf.GetAll()
-			packets = append(packets, fccFrames...)
+			if len(fccFrames) > 0 {
+				fccFramesAvailable = true
+				packets = append(packets, fccFrames...)
+			}
 		}
 
-		// 再补普通缓存
-		cachedFrames := h.CacheBuffer.GetAll()
-		packets = append(packets, cachedFrames...)
+		// 补充普通缓存（如果没有FCC帧或者需要更多数据）
+		if !fccFramesAvailable || len(packets) < 10 {
+			cachedFrames := h.CacheBuffer.GetAll()
+			packets = append(packets, cachedFrames...)
+		}
 	}
 
 	h.Mu.Unlock()
@@ -1925,12 +1974,33 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 			h.fccPendingBuf = NewRingBuffer(h.fccCacheSize)
 		}
 		h.fccState = FCC_STATE_INIT
+		
+		// 启动一个定时器，如果FCC在5秒内没有进展，则自动切换到多播模式
+		go func() {
+			time.Sleep(5 * time.Second)
+			h.Mu.Lock()
+			if h.fccEnabled && h.fccState == FCC_STATE_INIT {
+				h.fccState = FCC_STATE_MCAST_ACTIVE
+				logger.LogPrintf("FCC: 初始化超时，直接切换到多播模式")
+			}
+			h.Mu.Unlock()
+		}()
 	} else {
 		// 禁用FCC时清理相关资源
 		if h.fccPendingBuf != nil {
 			h.fccPendingBuf.Reset()
 		}
 		h.fccState = FCC_STATE_INIT
+		
+		// 清理PAT/PMT缓冲区
+		if h.patBuffer != nil {
+			patBufferPool.Put(h.patBuffer)
+			h.patBuffer = nil
+		}
+		if h.pmtBuffer != nil {
+			pmtBufferPool.Put(h.pmtBuffer)
+			h.pmtBuffer = nil
+		}
 	}
 }
 
