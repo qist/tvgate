@@ -1034,22 +1034,36 @@ func (h *StreamHub) run() {
 			logger.LogPrintf("➕ 客户端加入，当前客户端数量=%d", curCount)
 
 		case connID := <-h.RemoveCh:
+			var clientToClose *hubClient
+			var curCount int
+			var shouldCloseHub bool
+			
 			h.Mu.Lock()
 			if client, ok := h.Clients[connID]; ok {
+				clientToClose = &client
 				delete(h.Clients, connID)
-				close(client.ch)
-				curCount := len(h.Clients)
+				curCount = len(h.Clients)
 				logger.LogPrintf("➖ 客户端离开，当前客户端数量=%d", curCount)
+				
+				// 如果没有客户端了，准备关闭Hub
+				if curCount == 0 {
+					shouldCloseHub = true
+				}
+			}
+			h.Mu.Unlock()
+			
+			// 在锁外关闭客户端channel
+			if clientToClose != nil && clientToClose.ch != nil {
+				close(clientToClose.ch)
 			}
 			
-			// 如果没有客户端，清空累积缓存并关闭Hub
-			if len(h.Clients) == 0 {
+			// 如果没有客户端了，异步关闭Hub
+			if shouldCloseHub {
 				// 只有在启用FCC时才清理FCC连接
 				if h.fccEnabled {
 					h.cleanupFCC()
 				}
-
-				h.Mu.Unlock()
+				
 				// 在单独的goroutine中关闭以避免死锁
 				go h.Close()
 				if h.OnEmpty != nil {
@@ -1057,7 +1071,6 @@ func (h *StreamHub) run() {
 				}
 				return
 			}
-			h.Mu.Unlock()
 
 		case <-h.Closed:
 			h.Mu.Lock()
@@ -1378,7 +1391,10 @@ func (h *StreamHub) Close() {
 	}
 
 	h.Mu.Lock()
-	defer h.Mu.Unlock()
+	// 提前保存需要的信息，然后尽快释放锁
+	fccEnabled := h.fccEnabled
+	addrList := make([]string, len(h.AddrList))
+	copy(addrList, h.AddrList)
 
 	// 停止重新加入定时器（如果存在）
 	if h.rejoinTimer != nil {
@@ -1386,54 +1402,21 @@ func (h *StreamHub) Close() {
 		h.rejoinTimer = nil
 	}
 
-	// 如果启用了FCC，发送FCC终止包
-	if h.fccEnabled {
-		seqNum := uint16(0) // 在实际应用中应该获取最后一个序列号
-		for _, addr := range h.AddrList {
-			udpAddr, err := net.ResolveUDPAddr("udp", addr)
-			if err != nil {
-				continue
-			}
-
-			go func(ua *net.UDPAddr) {
-				err := h.sendFCCTermination(ua, seqNum)
-				if err != nil {
-					logger.LogPrintf("FCC终止包发送失败: %v", err)
-				} else {
-					logger.LogPrintf("FCC终止包已发送到 %s", ua.String())
-				}
-			}(udpAddr)
-		}
-	}
-
-	// 关闭 UDP 连接
-	for _, conn := range h.UdpConns {
-		if conn != nil {
-			_ = conn.Close()
-		}
-	}
+	// 暂存UDP连接用于稍后关闭
+	udpConns := h.UdpConns
 	h.UdpConns = nil
 
-	// 关闭客户端 channel
-	for id, client := range h.Clients {
-		if client.ch != nil {
-			close(client.ch)
-		}
-		delete(h.Clients, id)
-	}
+	// 暂存客户端连接用于稍后关闭
+	clients := h.Clients
 	h.Clients = nil
 
-	// 清理缓存
+	// 清理各种缓冲区
 	if h.CacheBuffer != nil {
 		h.CacheBuffer.Reset()
 		h.CacheBuffer = nil
 	}
 	h.LastFrame = nil
-	
-	// 清理RTP缓冲区
 	h.rtpBuffer = nil
-
-	// 清理FCC相关缓冲区
 	if h.fccPendingBuf != nil {
 		h.fccPendingBuf.Reset()
 		h.fccPendingBuf = nil
@@ -1449,13 +1432,53 @@ func (h *StreamHub) Close() {
 		h.pmtBuffer = nil
 	}
 
-	// 状态更新并广播
+	// 状态更新
 	h.state = StateStoppeds
-	if h.stateCond != nil {
-		h.stateCond.Broadcast()
+	stateCond := h.stateCond
+
+	h.Mu.Unlock() // 尽快释放主锁
+
+	// 在锁外关闭UDP连接
+	for _, conn := range udpConns {
+		if conn != nil {
+			_ = conn.Close()
+		}
 	}
 
-	logger.LogPrintf("UDP监听已关闭，端口已释放: %s", h.AddrList[0])
+	// 在锁外关闭所有客户端channel
+	for _, client := range clients {
+		if client.ch != nil {
+			close(client.ch)
+		}
+	}
+
+	// 最后发送FCC终止包，在锁外进行
+	if fccEnabled {
+		seqNum := uint16(0)
+		for _, addr := range addrList {
+			udpAddr, err := net.ResolveUDPAddr("udp", addr)
+			if err != nil {
+				continue
+			}
+
+			// 使用goroutine避免阻塞
+			go func(ua *net.UDPAddr) {
+				err := h.sendFCCTermination(ua, seqNum)
+				if err != nil {
+					logger.LogPrintf("FCC终止包发送失败: %v", err)
+				} else {
+					logger.LogPrintf("FCC终止包已发送到 %s", ua.String())
+				}
+			}(udpAddr)
+		}
+	}
+
+	// 广播状态变更（在所有资源清理后）
+	if stateCond != nil {
+		stateCond.Broadcast()
+	}
+
+	logger.LogPrintf("UDP监听已关闭，端口已释放: %s", addrList[0])
 }
 
 // rejoinMulticastGroups 重新加入多播组
