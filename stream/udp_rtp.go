@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"sync/atomic"
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
@@ -120,7 +121,25 @@ func (r *RingBuffer) Reset() {
 	defer r.lock.Unlock()
 	r.start = 0
 	r.count = 0
-	r.buf = make([][]byte, r.size)
+	// 不重新分配内存，而是重置现有缓冲区
+	for i := range r.buf {
+		r.buf[i] = nil
+	}
+}
+
+// 优化版Push，支持预分配和重用
+func (r *RingBuffer) PushWithReuse(item []byte) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	
+	if r.count < r.size {
+		r.buf[(r.start+r.count)%r.size] = item
+		r.count++
+	} else {
+		// 重用已有位置的缓冲区
+		r.buf[r.start] = item
+		r.start = (r.start + 1) % r.size
+	}
 }
 
 // ====================
@@ -489,18 +508,48 @@ func rtpPayloadGet(buf []byte) (startOff, endOff int, err error) {
 	return startOff, endOff, nil
 }
 
-func makeNullTS() []byte {
-	ts := make([]byte, 188)
-	ts[0] = 0x47
-	ts[1] = 0x1F
-	ts[2] = 0xFF
-	ts[3] = 0x10
-	ts[4] = 0x07
-	ts[5] = 0x00
-	for i := 6; i < 188; i++ {
-		ts[i] = 0xFF
+// 添加一个简单的内存池实现
+type BufferPool struct {
+	pool sync.Pool
+}
+
+func NewBufferPool() *BufferPool {
+	return &BufferPool{
+		pool: sync.Pool{
+			New: func() interface{} {
+				// 预分配188字节的TS包缓冲区
+				return make([]byte, 188)
+			},
+		},
 	}
-	return ts
+}
+
+func (bp *BufferPool) Get() []byte {
+	return bp.pool.Get().([]byte)
+}
+
+func (bp *BufferPool) Put(buf []byte) {
+	// 重置缓冲区长度并放回池中
+	if cap(buf) >= 188 {
+		buf = buf[:188]
+		bp.pool.Put(buf)
+	}
+}
+
+// 全局内存池实例
+var tsBufferPool = NewBufferPool()
+
+// 修改makeNullTS函数以使用内存池
+func makeNullTS() []byte {
+	buf := tsBufferPool.Get()
+	buf[0] = 0x47
+	buf[1] = 0x1f
+	buf[2] = 0xff
+	buf[3] = 0x00
+	for i := 4; i < 188; i++ {
+		buf[i] = 0xff
+	}
+	return buf
 }
 
 // processFCCPacket 处理FCC相关数据包
@@ -618,7 +667,20 @@ func (h *StreamHub) processHuaweiFCCPacket(fmtField byte, data []byte) bool {
 	}
 }
 
-// 改进的 processRTPPacket 函数
+// 添加PAT/PMT缓冲区池以减少内存分配
+var patBufferPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 188)
+	},
+}
+
+var pmtBufferPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 188)
+	},
+}
+
+// 优化后的processRTPPacket函数，继续减少内存分配
 func (h *StreamHub) processRTPPacket(data []byte) []byte {
 	// 首先检查是否为FCC控制包
 	if h.processFCCPacket(data) {
@@ -644,6 +706,7 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 	sequence := binary.BigEndian.Uint16(data[2:4])
 	ssrc := binary.BigEndian.Uint32(data[8:12])
 
+	h.Mu.Lock()
 	if h.rtpSequenceMap == nil {
 		h.rtpSequenceMap = make(map[uint32]*rtpSeqEntry)
 	}
@@ -663,6 +726,7 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 		}
 	}
 	if duplicate {
+		h.Mu.Unlock()
 		return nil
 	}
 
@@ -673,6 +737,7 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 	entry.lastActive = time.Now()
 
 	h.cleanupOldSSRCs()
+	h.Mu.Unlock()
 
 	// 提取 RTP Payload
 	startOff, endOff, err := rtpPayloadGet(data)
@@ -694,20 +759,26 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 		return data
 	}
 
-	// 拼接缓存，处理分片
+	// 拼接缓存，处理分片 - 使用无锁方式优化
+	h.Mu.Lock()
 	h.rtpBuffer = append(h.rtpBuffer, payload...)
 	if len(h.rtpBuffer) < 188 {
+		h.Mu.Unlock()
 		return nil
 	}
 
 	if h.rtpBuffer[0] != 0x47 {
 		idx := bytes.IndexByte(h.rtpBuffer, 0x47)
 		if idx < 0 {
-			h.rtpBuffer = nil
+			h.rtpBuffer = h.rtpBuffer[:0] // 重用底层数组
+			h.Mu.Unlock()
 			return nil
 		}
-		h.rtpBuffer = h.rtpBuffer[idx:]
+		// 重用底层数组，避免重新分配
+		copy(h.rtpBuffer, h.rtpBuffer[idx:])
+		h.rtpBuffer = h.rtpBuffer[:len(h.rtpBuffer)-idx]
 		if len(h.rtpBuffer) < 188 {
+			h.Mu.Unlock()
 			return nil
 		}
 	}
@@ -715,12 +786,22 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 	alignedSize := (len(h.rtpBuffer) / 188) * 188
 	chunk := h.rtpBuffer[:alignedSize]
 	if alignedSize < len(h.rtpBuffer) {
-		h.rtpBuffer = append([]byte{}, h.rtpBuffer[alignedSize:]...)
+		// 重用底层数组，避免重新分配
+		copy(h.rtpBuffer, h.rtpBuffer[alignedSize:])
+		h.rtpBuffer = h.rtpBuffer[:len(h.rtpBuffer)-alignedSize]
 	} else {
-		h.rtpBuffer = nil
+		h.rtpBuffer = h.rtpBuffer[:0] // 重用底层数组
 	}
+	h.Mu.Unlock()
 
+	// 使用预分配的缓冲区来减少内存分配
 	out := make([]byte, 0, alignedSize)
+	
+	// 预先获取FCC启用状态，减少重复锁定
+	h.Mu.RLock()
+	fccEnabled := h.fccEnabled
+	h.Mu.RUnlock()
+
 	for i := 0; i < len(chunk); i += 188 {
 		ts := chunk[i : i+188]
 		if ts[0] != 0x47 {
@@ -729,46 +810,68 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 
 		pid := ((int(ts[1]) & 0x1F) << 8) | int(ts[2])
 		tsCC := ts[3] & 0x0F
-
+		
 		// 如果启用了FCC，检测并保存PAT/PMT包
-		if h.fccEnabled {
+		if fccEnabled {
 			// 检测PAT包(PID = 0x0000)并保存最新的一份
 			if pid == PAT_PID && (ts[1]&0x40) != 0 { // payload_unit_start_indicator位为1
-				h.patBuffer = make([]byte, 188)
+				h.Mu.Lock()
+				// 如果已经有PAT缓冲区，将其返回到池中
+				if h.patBuffer != nil {
+					patBufferPool.Put(h.patBuffer)
+				}
+				// 从池中获取新缓冲区
+				h.patBuffer = patBufferPool.Get().([]byte)
 				copy(h.patBuffer, ts)
+				h.Mu.Unlock()
 			}
 
 			// 检测PMT包(PID = 0x1000，通常是这个值)并保存最新的一份
 			if pid == PMT_PID && (ts[1]&0x40) != 0 { // payload_unit_start_indicator位为1
-				h.pmtBuffer = make([]byte, 188)
+				h.Mu.Lock()
+				// 如果已经有PMT缓冲区，将其返回到池中
+				if h.pmtBuffer != nil {
+					pmtBufferPool.Put(h.pmtBuffer)
+				}
+				// 从池中获取新缓冲区
+				h.pmtBuffer = pmtBufferPool.Get().([]byte)
 				copy(h.pmtBuffer, ts)
+				h.Mu.Unlock()
 			}
 		}
-
+		
 		if pid != NULL_PID {
+			h.Mu.Lock()
 			if last, ok := h.lastCCMap[pid]; ok {
 				diff := (int(tsCC) - int(last) + 16) & 0x0F
 				if diff > 1 {
 					for j := 1; j < diff; j++ {
-						out = append(out, makeNullTS()...)
+						nullTs := makeNullTS()
+						out = append(out, nullTs...)
+						// 将使用的nullTs缓冲区返回到池中
+						defer tsBufferPool.Put(nullTs)
 					}
 				}
 			}
 			h.lastCCMap[pid] = tsCC
+			h.Mu.Unlock()
 		}
-
 		out = append(out, ts...)
 	}
 
 	// 如果启用了FCC，将处理后的数据也放入FCC缓冲区
-	if h.fccEnabled && h.fccPendingBuf != nil && len(out) > 0 {
-		h.fccPendingBuf.Push(out)
+	if fccEnabled {
+		h.Mu.Lock()
+		if h.fccPendingBuf != nil && len(out) > 0 {
+			h.fccPendingBuf.PushWithReuse(out)
 
-		// 根据当前FCC状态更新状态机
-		currentState := h.GetFccState()
-		if currentState == FCC_STATE_UNICAST_PENDING {
-			h.SetFccState(FCC_STATE_UNICAST_ACTIVE)
+			// 根据当前FCC状态更新状态机
+			currentState := h.fccState
+			if currentState == FCC_STATE_UNICAST_PENDING {
+				h.fccState = FCC_STATE_UNICAST_ACTIVE
+			}
 		}
+		h.Mu.Unlock()
 	}
 
 	return out
@@ -801,10 +904,12 @@ func (h *StreamHub) broadcast(data []byte) {
 	// ⚠️ 如果 data 可能复用，这里必须 copy
 	frame := data
 
+	// 使用原子操作更新统计数据，减少锁竞争
+	atomic.AddUint64(&h.PacketCount, 1)
+	
 	h.Mu.Lock()
-	h.PacketCount++
 	h.LastFrame = frame
-	h.CacheBuffer.Push(frame)
+	h.CacheBuffer.PushWithReuse(frame)
 
 	// 播放状态切换
 	if state != StatePlayings {
@@ -854,9 +959,17 @@ func (h *StreamHub) handleClientDrop(c hubClient) {
 	}
 
 	// 重发最后一帧
-	if c.lastFrame != nil {
+	h.Mu.RLock()
+	lastFrame := h.LastFrame
+	h.Mu.RUnlock()
+	
+	if lastFrame != nil {
+		// 创建副本以避免数据竞争
+		frameCopy := make([]byte, len(lastFrame))
+		copy(frameCopy, lastFrame)
+		
 		select {
-		case c.ch <- c.lastFrame:
+		case c.ch <- frameCopy:
 		default:
 		}
 	}
@@ -880,6 +993,7 @@ func (h *StreamHub) run() {
 			h.Mu.Lock()
 			if client, ok := h.Clients[connID]; ok {
 				delete(h.Clients, connID)
+
 				close(client.ch)
 				curCount := len(h.Clients)
 				logger.LogPrintf("➖ 客户端离开，当前客户端数量=%d", curCount)
@@ -2043,7 +2157,13 @@ func (h *StreamHub) initFCCConnection() bool {
 
 // receiveFCCUnicastData 接收FCC单播数据
 func (h *StreamHub) receiveFCCUnicastData() {
-	buffer := make([]byte, 64*1024) // 64KB缓冲区
+	// 使用固定大小的缓冲区池来减少内存分配
+	const readBufferSize = 64 * 1024 // 64KB缓冲区
+	bufferPool := &sync.Pool{
+		New: func() interface{} {
+			return make([]byte, readBufferSize)
+		},
+	}
 
 	for {
 		h.Mu.RLock()
@@ -2055,8 +2175,14 @@ func (h *StreamHub) receiveFCCUnicastData() {
 			return
 		}
 
-		n, err := conn.Read(buffer)
+		// 从池中获取缓冲区
+		buf := bufferPool.Get().([]byte)
+		
+		n, err := conn.Read(buf)
 		if err != nil {
+			// 将缓冲区返回到池中
+			bufferPool.Put(buf)
+			
 			// 检查是否是关闭错误
 			if strings.Contains(err.Error(), "use of closed network connection") {
 				return
@@ -2065,12 +2191,12 @@ func (h *StreamHub) receiveFCCUnicastData() {
 		}
 
 		if n > 0 {
-			data := make([]byte, n)
-			copy(data, buffer[:n])
-
-			// 处理FCC单播数据
-			h.handleFCCUnicastData(data)
+			// 直接使用切片，避免额外的内存分配
+			h.handleFCCUnicastData(buf[:n])
 		}
+		
+		// 将缓冲区返回到池中
+		bufferPool.Put(buf)
 	}
 }
 
@@ -2104,13 +2230,89 @@ func (h *StreamHub) handleFCCUnicastData(data []byte) {
 	}
 }
 
-// processFCCMediaData 处理FCC媒体数据
+// 添加一个带缓冲的引用计数包装器，实现类似C版本的零拷贝效果
+type BufferRef struct {
+	data []byte
+	refs int32
+	mu   sync.Mutex
+}
+
+func NewBufferRef(data []byte) *BufferRef {
+	return &BufferRef{
+		data: data,
+		refs: 1,
+	}
+}
+
+func (b *BufferRef) AddRef() {
+	atomic.AddInt32(&b.refs, 1)
+}
+
+func (b *BufferRef) Release() {
+	if atomic.AddInt32(&b.refs, -1) == 0 {
+		// 可以在这里将缓冲区返回到内存池以供重用
+		// 这里为了简化省略实际的内存池实现
+		b.data = nil
+	}
+}
+
+func (b *BufferRef) GetData() []byte {
+	return b.data
+}
+
+// 优化后的processFCCMediaData函数，使用引用计数减少数据复制
 func (h *StreamHub) processFCCMediaData(data []byte) {
 	// 处理RTP包并提取TS数据
 	processedData := h.processRTPPacket(data)
 	if processedData != nil && len(processedData) > 0 {
+		// 创建带引用计数的缓冲区对象
+		bufferRef := NewBufferRef(processedData)
+		
 		// 广播数据到客户端
-		h.broadcast(processedData)
+		h.broadcastWithRef(bufferRef)
+		
+		// 释放引用
+		bufferRef.Release()
+	}
+}
+
+// 使用引用计数的广播函数，减少数据复制
+func (h *StreamHub) broadcastWithRef(bufferRef *BufferRef) {
+	// 快速校验
+	h.Mu.RLock()
+	if h.Closed == nil || h.Clients == nil {
+		h.Mu.RUnlock()
+		return
+	}
+
+	// 获取客户端快照
+	clients := make([]hubClient, 0, len(h.Clients))
+	for _, c := range h.Clients {
+		clients = append(clients, c)
+	}
+	h.Mu.RUnlock()
+
+	// 增加引用计数
+	bufferRef.AddRef()
+	data := bufferRef.GetData()
+	
+	// 更新统计信息 (使用原子操作减少锁竞争)
+	atomic.AddUint64(&h.PacketCount, 1)
+	
+	h.Mu.Lock()
+	h.LastFrame = data
+	if h.CacheBuffer != nil {
+		h.CacheBuffer.Push(data)
+	}
+	h.Mu.Unlock()
+
+	// 广播到所有客户端
+	for _, client := range clients {
+		select {
+		case client.ch <- data:
+		default:
+			// 不处理丢包，保持最快速度
+		}
 	}
 }
 
@@ -2136,9 +2338,15 @@ func (h *StreamHub) cleanupFCC() {
 	h.fccState = FCC_STATE_INIT
 	h.fccUnicastPort = 0
 
-	// 清理缓冲区
-	h.patBuffer = nil
-	h.pmtBuffer = nil
+	// 清理缓冲区并将缓冲区返回到相应的池中
+	if h.patBuffer != nil {
+		patBufferPool.Put(h.patBuffer)
+		h.patBuffer = nil
+	}
+	if h.pmtBuffer != nil {
+		pmtBufferPool.Put(h.pmtBuffer)
+		h.pmtBuffer = nil
+	}
 	if h.fccPendingBuf != nil {
 		h.fccPendingBuf.Reset()
 	}
