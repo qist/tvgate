@@ -170,7 +170,7 @@ type hubClient struct {
 	ch        chan []byte
 	connID    string
 	dropCount uint64 // 客户端丢包计数
-	lastFrame []byte // 客户端最后一帧，用于重发
+	// lastFrame []byte // 客户端最后一帧，用于重发
 }
 
 type StreamHub struct {
@@ -708,6 +708,31 @@ func (h *StreamHub) processHuaweiFCCPacket(fmtField byte, data []byte) bool {
 
 // checkAndSwitchToMulticast 检查是否可以切换到多播并执行切换
 func (h *StreamHub) checkAndSwitchToMulticast() {
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+	
+	// 检查FCC缓冲区是否已满，如果满了则切换到多播模式
+	if h.fccPendingBuf != nil && h.fccPendingBuf.GetCount() >= int(float64(h.fccCacheSize)*0.8) {
+		// 缓冲区使用率达到80%，准备切换到多播
+		if h.fccState == FCC_STATE_UNICAST_ACTIVE {
+			h.fccState = FCC_STATE_MCAST_REQUESTED
+			logger.LogPrintf("FCC: 缓冲区接近满载，准备切换到多播模式")
+			
+			// 启动切换定时器
+			if h.fccSyncTimer != nil {
+				h.fccSyncTimer.Stop()
+			}
+			h.fccSyncTimer = time.AfterFunc(3*time.Second, func() {
+				h.Mu.Lock()
+				if h.fccState == FCC_STATE_MCAST_REQUESTED {
+					h.fccState = FCC_STATE_MCAST_ACTIVE
+					logger.LogPrintf("FCC: 自动切换到多播模式")
+				}
+				h.Mu.Unlock()
+			})
+		}
+	}
+	
 	if h.patBuffer == nil || h.pmtBuffer == nil {
 		return
 	}
@@ -910,9 +935,17 @@ func (h *StreamHub) processRTPPacket(data []byte) []byte {
 			}
 			
 			// 检查是否需要切换到多播
-			h.checkAndSwitchToMulticast()
+			// 只在特定条件下检查切换，避免频繁调用
+			if h.fccState == FCC_STATE_UNICAST_ACTIVE && 
+			   h.fccPendingBuf.GetCount() >= int(float64(h.fccCacheSize)*0.5) {
+				h.Mu.Unlock()
+				h.checkAndSwitchToMulticast()
+			} else {
+				h.Mu.Unlock()
+			}
+		} else {
+			h.Mu.Unlock()
 		}
-		h.Mu.Unlock()
 	}
 
 	return out
@@ -2494,6 +2527,44 @@ func (h *StreamHub) processFCCMediaData(data []byte) {
 	if processedData != nil && len(processedData) > 0 {
 		// 广播数据到客户端
 		h.broadcast(processedData)
+	}
+}
+func (h *StreamHub) broadcastWithRef(bufferRef *BufferRef) {
+	// 快速校验
+	h.Mu.RLock()
+	if h.Closed == nil || h.Clients == nil {
+		h.Mu.RUnlock()
+		return
+	}
+
+	// 获取客户端快照
+	clients := make([]hubClient, 0, len(h.Clients))
+	for _, c := range h.Clients {
+		clients = append(clients, c)
+	}
+	h.Mu.RUnlock()
+
+	// 增加引用计数
+	bufferRef.AddRef()
+	data := bufferRef.GetData()
+	
+	// 更新统计信息 (使用原子操作减少锁竞争)
+	atomic.AddUint64(&h.PacketCount, 1)
+	
+	h.Mu.Lock()
+	h.LastFrame = data
+	if h.CacheBuffer != nil {
+		h.CacheBuffer.Push(data)
+	}
+	h.Mu.Unlock()
+
+	// 广播到所有客户端
+	for _, client := range clients {
+		select {
+		case client.ch <- data:
+		default:
+			// 不处理丢包，保持最快速度
+		}
 	}
 }
 
