@@ -918,69 +918,6 @@ func (h *StreamHub) handleFCCUnicastRef(bufRef *BufferRef) {
 	}
 }
 
-// processFCCMediaData 处理FCC媒体数据
-func (h *StreamHub) processFCCMediaData(data []byte) {
-	h.Mu.Lock()
-	pending := h.fccState == FCC_STATE_UNICAST_PENDING
-	if pending && len(data) >= 12 {
-		h.fccStartSeq = binary.BigEndian.Uint16(data[2:4])
-		logger.LogPrintf("FCC: 起始序列号为 %d", h.fccStartSeq)
-	}
-	h.Mu.Unlock()
-
-	// 提取RTP有效载荷为TS帧切片
-	startOff, endOff, err := rtpPayloadGet(data)
-	if err == nil && startOff <= len(data) && endOff <= len(data) && startOff+endOff <= len(data) {
-		data = data[startOff : len(data)-endOff]
-	}
-
-	if pending {
-		h.fccSetState(FCC_STATE_UNICAST_ACTIVE, "收到第一个单播数据包")
-		logger.LogPrintf("FCC: 收到第一个单播数据包，切换到单播活动状态")
-	}
-
-	h.Mu.Lock()
-	// 如果处于单播活动状态，处理数据
-	if h.fccState == FCC_STATE_UNICAST_ACTIVE {
-		// 将数据添加到FCC缓冲区（使用零拷贝链表）
-		if len(data) > 0 {
-			bufRef := NewBufferRef(data)
-			bufRef.Get() // 增加引用计数
-			if h.fccPendingListHead == nil {
-				h.fccPendingListHead = bufRef
-				h.fccPendingListTail = bufRef
-			} else {
-				h.fccPendingListTail.next = bufRef
-				h.fccPendingListTail = bufRef
-			}
-			atomic.AddInt32(&h.fccPendingCount, 1)
-		}
-
-		// 检查是否应该终止FCC并切换到多播
-		// 这里模仿C版本的行为，基于序列号检查切换条件
-		if len(data) >= 12 {
-			currentSeq := binary.BigEndian.Uint16(data[2:4])
-
-			// 检查是否达到了终止序列号
-			if h.fccTermSent && seqAfter(currentSeq, h.fccTermSeq) {
-				h.Mu.Unlock()
-				h.fccSetState(FCC_STATE_MCAST_ACTIVE, fmt.Sprintf("达到终止序列号 %d", currentSeq))
-				logger.LogPrintf("FCC: 达到终止序列号 %d，切换到多播活动状态", currentSeq)
-				h.Mu.Lock()
-				// 停止定时器
-				if h.fccSyncTimer != nil {
-					h.fccSyncTimer.Stop()
-					h.fccSyncTimer = nil
-				}
-			}
-		}
-	}
-
-	h.Mu.Unlock()
-	// 检查是否需要切换到多播（统一调用）
-	h.checkAndSwitchToMulticast()
-}
-
 // processFCCMediaBufRef 使用BufferRef（真零拷贝）处理FCC媒体数据
 func (h *StreamHub) processFCCMediaBufRef(bufRef *BufferRef) {
 	data := bufRef.data
