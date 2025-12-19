@@ -37,6 +37,7 @@ v2.1.6
 1、修复组播断流。添加参数 mcast_rejoin_interval 组播重连间隔时间 10s
 2、优化fcc web添加fcc 配置。 
 访问 http://server:port/rtp/239.253.64.120:5140?fcc=10.255.14.152:15970&operator=huawei operator 后端配置可以不携带operator 参数。FCC类型: telecom, huawei
+访问 http://server:port/rtp/239.253.64.120:5140?fcc=10.255.14.152:15970
 ```
 
 v2.1.5
