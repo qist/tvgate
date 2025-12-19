@@ -348,7 +348,7 @@ func (h *StreamHub) buildHuaweiFCCTermPacket(multicastAddr *net.UDPAddr, seqNum 
 // getLocalIP 获取本地IP地址
 func getLocalIP() net.IP {
 	// 准备多个备选地址，提高获取本地IP的成功率
-	dnsServers := []string{"8.8.8.8:80", "8.8.4.4:80", "223.5.5.5:80", "223.6.6.6:80"}
+	dnsServers := []string{"223.5.5.5:80", "223.6.6.6:80","8.8.8.8:80", "8.8.4.4:80"}
 
 	for _, server := range dnsServers {
 		conn, err := net.DialTimeout("udp", server, 2*time.Second)
