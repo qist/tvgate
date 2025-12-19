@@ -90,20 +90,10 @@ func (h *StreamHub) processTelecomFCCPacket(fmtField byte, data []byte) bool {
 
 		h.fccSetState(FCC_STATE_MCAST_REQUESTED, "收到同步通知 (FMT 4)，准备切换到组播")
 		logger.LogPrintf("FCC (电信): 收到同步通知 (FMT 4)，准备切换到组播")
-
-		// 启动同步超时计时器
-		if h.fccSyncTimer != nil {
-			h.fccSyncTimer.Stop()
-		}
-		h.fccSyncTimer = time.AfterFunc(5*time.Second, func() {
-			h.Mu.Lock()
-			if h.fccState == FCC_STATE_MCAST_REQUESTED {
-				h.fccSetState(FCC_STATE_MCAST_ACTIVE, "同步超时，强制切换到组播")
-				logger.LogPrintf("FCC (电信): 同步超时，强制切换到组播")
-			}
-			h.Mu.Unlock()
-		})
 		h.Mu.Unlock()
+		
+		// 调用prepareSwitchToMulticast来准备切换到多播模式
+		h.prepareSwitchToMulticast()
 		return true
 
 	default:
@@ -143,19 +133,11 @@ func (h *StreamHub) processHuaweiFCCPacket(fmtField byte, data []byte) bool {
 		if h.fccState == FCC_STATE_UNICAST_ACTIVE {
 			h.fccSetState(FCC_STATE_MCAST_REQUESTED, "收到同步通知 (FMT 8)，准备切换到组播")
 			logger.LogPrintf("FCC (华为): 收到同步通知 (FMT 8)，准备切换到组播")
-
-			// 启动同步超时计时器
-			if h.fccSyncTimer != nil {
-				h.fccSyncTimer.Stop()
-			}
-			h.fccSyncTimer = time.AfterFunc(5*time.Second, func() {
-				h.Mu.Lock()
-				if h.fccState == FCC_STATE_MCAST_REQUESTED {
-					h.fccSetState(FCC_STATE_MCAST_ACTIVE, "同步超时，强制切换到组播")
-					logger.LogPrintf("FCC (华为): 同步超时，强制切换到组播")
-				}
-				h.Mu.Unlock()
-			})
+			h.Mu.Unlock()
+			
+			// 调用prepareSwitchToMulticast来准备切换到多播模式
+			h.prepareSwitchToMulticast()
+			return true
 		}
 		h.Mu.Unlock()
 		return true
@@ -220,6 +202,54 @@ func (h *StreamHub) checkAndSwitchToMulticast() {
 	h.fccState = FCC_STATE_MCAST_ACTIVE
 	logger.LogPrintf("FCC: 已成功切换到组播模式")
 }
+
+// prepareSwitchToMulticast 准备切换到多播模式
+func (h *StreamHub) prepareSwitchToMulticast() {
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+
+	// 只有在单播活动状态下才能切换到多播请求状态
+	if h.fccState != FCC_STATE_UNICAST_ACTIVE {
+		return
+	}
+
+	h.fccSetState(FCC_STATE_MCAST_REQUESTED, "准备切换到多播模式")
+	logger.LogPrintf("FCC: 准备切换到多播模式")
+
+	// 设置终止序列号（起始序列号+缓冲区大小）
+	h.fccTermSeq = h.fccStartSeq + uint16(h.fccCacheSize)
+	logger.LogPrintf("FCC: 终止序列号设置为 %d (起始序列号 %d + 缓冲区大小 %d)", 
+		h.fccTermSeq, h.fccStartSeq, h.fccCacheSize)
+
+	// 发送FCC终止包
+	if h.fccServerAddr != nil {
+		go func() {
+			err := h.sendFCCTermination(h.fccServerAddr, h.fccTermSeq)
+			if err != nil {
+				logger.LogPrintf("FCC: 发送终止包失败: %v", err)
+			} else {
+				h.Mu.Lock()
+				h.fccTermSent = true
+				h.Mu.Unlock()
+				logger.LogPrintf("FCC: 终止包已发送，终止序列号 %d", h.fccTermSeq)
+			}
+		}()
+	}
+
+	// 启动同步超时计时器
+	if h.fccSyncTimer != nil {
+		h.fccSyncTimer.Stop()
+	}
+	h.fccSyncTimer = time.AfterFunc(5*time.Second, func() {
+		h.Mu.Lock()
+		if h.fccState == FCC_STATE_MCAST_REQUESTED {
+			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "同步超时，强制切换到多播")
+			logger.LogPrintf("FCC: 同步超时，强制切换到多播模式")
+		}
+		h.Mu.Unlock()
+	})
+}
+
 
 // buildFCCRequestPacket 构建FCC请求包
 func (h *StreamHub) buildFCCRequestPacket(multicastAddr *net.UDPAddr, clientPort int) []byte {
@@ -348,7 +378,7 @@ func (h *StreamHub) buildHuaweiFCCTermPacket(multicastAddr *net.UDPAddr, seqNum 
 // getLocalIP 获取本地IP地址
 func getLocalIP() net.IP {
 	// 准备多个备选地址，提高获取本地IP的成功率
-	dnsServers := []string{"223.5.5.5:80", "223.6.6.6:80","8.8.8.8:80", "8.8.4.4:80"}
+	dnsServers := []string{"8.8.8.8:80", "8.8.4.4:80", "223.5.5.5:80", "223.6.6.6:80"}
 
 	for _, server := range dnsServers {
 		conn, err := net.DialTimeout("udp", server, 2*time.Second)
@@ -447,7 +477,7 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 			h.clientStateChan = make(chan int, 10) // 缓冲10个状态更新
 		}
 		
-		h.fccSetState(FCC_STATE_INIT, "FCC启用")
+		h.fccSetState(FCC_STATE_REQUESTED, "FCC启用并进入请求状态")
 		h.fccStartSeq = 0
 		h.fccTermSeq = 0
 		h.fccTermSent = false
@@ -846,9 +876,6 @@ func (h *StreamHub) handleFCCUnicastData(data []byte) {
 		// 同时处理媒体数据
 		h.processFCCMediaData(data)
 
-		// 检查是否应该终止FCC并切换到多播
-		h.checkFCCSwitchCondition()
-
 	case FCC_STATE_MCAST_ACTIVE:
 		// 已经切换到多播模式，忽略单播数据
 		return
@@ -858,25 +885,6 @@ func (h *StreamHub) handleFCCUnicastData(data []byte) {
 		return
 	}
 }
-
-// checkFCCSwitchCondition 检查FCC切换条件
-func (h *StreamHub) checkFCCSwitchCondition() {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
-
-	// 如果已经发送了终止消息并且达到了终止序列号，则切换到多播模式
-	if h.fccState == FCC_STATE_MCAST_REQUESTED {
-		// 在Go实现中，我们简化处理，直接切换到多播模式
-		h.fccState = FCC_STATE_MCAST_ACTIVE
-		logger.LogPrintf("FCC: 切换到多播模式")
-
-		if h.fccSyncTimer != nil {
-			h.fccSyncTimer.Stop()
-			h.fccSyncTimer = nil
-		}
-	}
-}
-
 
 // processFCCMediaData 处理FCC媒体数据
 func (h *StreamHub) processFCCMediaData(data []byte) {
@@ -898,8 +906,8 @@ func (h *StreamHub) processFCCMediaData(data []byte) {
 	if h.fccState == FCC_STATE_UNICAST_ACTIVE {
 		// 将数据添加到FCC缓冲区（使用零拷贝链表）
 		if len(data) > 0 {
-			// 使用工厂函数创建BufferRef，确保正确的引用计数
 			bufRef := NewBufferRef(data)
+			bufRef.Get() // 增加引用计数
 			if h.fccPendingListHead == nil {
 				h.fccPendingListHead = bufRef
 				h.fccPendingListTail = bufRef
@@ -908,56 +916,27 @@ func (h *StreamHub) processFCCMediaData(data []byte) {
 				h.fccPendingListTail = bufRef
 			}
 		}
+		
+		// 检查是否应该终止FCC并切换到多播
+		// 这里模仿C版本的行为，基于序列号检查切换条件
+		if len(data) >= 12 {
+			currentSeq := binary.BigEndian.Uint16(data[2:4])
+			
+			// 检查是否达到了终止序列号
+			if h.fccTermSent && currentSeq >= h.fccTermSeq {
+				h.fccSetState(FCC_STATE_MCAST_ACTIVE, fmt.Sprintf("达到终止序列号 %d", currentSeq))
+				logger.LogPrintf("FCC: 达到终止序列号 %d，切换到多播活动状态", currentSeq)
+				
+				// 停止定时器
+				if h.fccSyncTimer != nil {
+					h.fccSyncTimer.Stop()
+					h.fccSyncTimer = nil
+				}
+			}
+		}
 	}
 	
 	h.Mu.Unlock()
-}
-
-// prepareSwitchToMulticast 准备切换到多播模式
-func (h *StreamHub) prepareSwitchToMulticast() {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
-
-	// 只有在单播活动状态下才能切换到多播请求状态
-	if h.fccState != FCC_STATE_UNICAST_ACTIVE {
-		return
-	}
-
-	h.fccSetState(FCC_STATE_MCAST_REQUESTED, "准备切换到多播模式")
-	logger.LogPrintf("FCC: 准备切换到多播模式")
-
-	// 设置终止序列号（起始序列号+缓冲区大小）
-	h.fccTermSeq = h.fccStartSeq + uint16(h.fccCacheSize)
-	logger.LogPrintf("FCC: 终止序列号设置为 %d (起始序列号 %d + 缓冲区大小 %d)", 
-		h.fccTermSeq, h.fccStartSeq, h.fccCacheSize)
-
-	// 发送FCC终止包
-	if h.fccServerAddr != nil {
-		go func() {
-			err := h.sendFCCTermination(h.fccServerAddr, h.fccTermSeq)
-			if err != nil {
-				logger.LogPrintf("FCC: 发送终止包失败: %v", err)
-			} else {
-				h.Mu.Lock()
-				h.fccTermSent = true
-				h.Mu.Unlock()
-				logger.LogPrintf("FCC: 终止包已发送，终止序列号 %d", h.fccTermSeq)
-			}
-		}()
-	}
-
-	// 启动同步超时计时器
-	if h.fccSyncTimer != nil {
-		h.fccSyncTimer.Stop()
-	}
-	h.fccSyncTimer = time.AfterFunc(5*time.Second, func() {
-		h.Mu.Lock()
-		if h.fccState == FCC_STATE_MCAST_REQUESTED {
-			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "同步超时，强制切换到多播")
-			logger.LogPrintf("FCC: 同步超时，强制切换到多播模式")
-		}
-		h.Mu.Unlock()
-	})
 }
 
 
@@ -979,6 +958,25 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 	// 获取当前序列号
 	sequence := binary.BigEndian.Uint16(data[2:4])
 
+	// 如果还没有发送终止消息，则发送
+	if !h.fccTermSent {
+		// 发送FCC终止包
+		if h.fccServerAddr != nil {
+			go func() {
+				err := h.sendFCCTermination(h.fccServerAddr, sequence)
+				if err != nil {
+					logger.LogPrintf("FCC: 发送终止包失败: %v", err)
+				} else {
+					h.Mu.Lock()
+					h.fccTermSent = true
+					h.fccTermSeq = sequence // 记录终止序列号
+					h.Mu.Unlock()
+					logger.LogPrintf("FCC: 终止包已发送，序列号 %d", sequence)
+				}
+			}()
+		}
+	}
+
 	// 检查是否达到了终止序列号
 	if h.fccTermSent && sequence >= h.fccTermSeq && h.fccState == FCC_STATE_MCAST_REQUESTED {
 		// 切换到多播活动状态
@@ -994,8 +992,8 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 	
 	// 将数据添加到FCC缓冲区（使用零拷贝链表）
 	if len(data) > 0 {
-		// 使用工厂函数创建BufferRef，确保正确的引用计数
 		bufRef := NewBufferRef(data)
+		bufRef.Get() // 增加引用计数，防止数据被提前释放
 		if h.fccPendingListHead == nil {
 			h.fccPendingListHead = bufRef
 			h.fccPendingListTail = bufRef
@@ -1095,6 +1093,20 @@ func (h *StreamHub) fccSetState(newState int, reason string) bool {
 		h.fccStartSeq = 0
 		h.fccTermSeq = 0
 		h.fccTermSent = false
+		
+	case FCC_STATE_MCAST_REQUESTED:
+		// 启动同步超时计时器行为
+		if h.fccSyncTimer != nil {
+			h.fccSyncTimer.Stop()
+		}
+		h.fccSyncTimer = time.AfterFunc(5*time.Second, func() {
+			h.Mu.Lock()
+			if h.fccState == FCC_STATE_MCAST_REQUESTED {
+				h.fccSetState(FCC_STATE_MCAST_ACTIVE, "同步超时，强制切换到多播")
+				logger.LogPrintf("FCC: 同步超时，强制切换到多播模式")
+			}
+			h.Mu.Unlock()
+		})
 	}
 
 	return true // 状态已改变

@@ -863,38 +863,6 @@ func (h *StreamHub) broadcast(data []byte) {
 	}
 }
 
-func (h *StreamHub) handleClientDrop(c hubClient) {
-	// 客户端级 drop 计数（推荐）
-	c.dropCount++
-
-	// 每 100 次 drop，尝试恢复
-	if c.dropCount%100 != 0 {
-		return
-	}
-
-	// 丢弃一个旧帧
-	select {
-	case <-c.ch:
-	default:
-	}
-
-	// 重发最后一帧
-	h.Mu.RLock()
-	lastFrame := h.LastFrame
-	h.Mu.RUnlock()
-
-	if lastFrame != nil {
-		// 创建副本以避免数据竞争
-		frameCopy := make([]byte, len(lastFrame))
-		copy(frameCopy, lastFrame)
-
-		select {
-		case c.ch <- frameCopy:
-		default:
-		}
-	}
-}
-
 // ====================
 // 客户端管理循环
 // ====================
