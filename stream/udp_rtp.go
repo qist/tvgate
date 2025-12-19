@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/ipv4"
@@ -173,20 +174,20 @@ type hubClient struct {
 }
 
 type StreamHub struct {
-	Mu              sync.RWMutex
-	Clients         map[string]hubClient
-	isPlaying       bool
-	pktBuffer       *RingBuffer
-	patBuffer       []byte
-	pmtBuffer       []byte
-	isClosedFlag    int32
-	Closed          chan struct{}
-	notify          chan struct{}
-	SrcIP           net.IP
-	SrcPort         int
-	multicastSrcIP  net.IP
+	Mu               sync.RWMutex
+	Clients          map[string]hubClient
+	isPlaying        bool
+	pktBuffer        *RingBuffer
+	patBuffer        []byte
+	pmtBuffer        []byte
+	isClosedFlag     int32
+	Closed           chan struct{}
+	notify           chan struct{}
+	SrcIP            net.IP
+	SrcPort          int
+	multicastSrcIP   net.IP
 	multicastSrcPort int
-	Method          string
+	Method           string
 
 	// 原有缓冲区和连接相关字段
 	BufPool     *sync.Pool
@@ -200,44 +201,45 @@ type StreamHub struct {
 	OnEmpty     func(h *StreamHub) // 当客户端数量为0时触发
 
 	// UDP连接相关字段
-	UdpConns []*net.UDPConn
-	rtpBuffer []byte
-	rejoinTimer *time.Timer // 重新加入组播组的定时器
+	UdpConns       []*net.UDPConn
+	rtpBuffer      []byte
+	rejoinTimer    *time.Timer   // 重新加入组播组的定时器
 	rejoinInterval time.Duration // 重新加入组播组的时间间隔
-	ifaces []string // 指定的网络接口
+	ifaces         []string      // 指定的网络接口
 
 	// 客户端管理通道
 	AddCh    chan hubClient
 	RemoveCh chan string
 
 	// RTP包处理相关字段
-	lastCCMap      map[int]byte      // PID -> TS包中的CC字段
+	lastCCMap      map[int]byte            // PID -> TS包中的CC字段
 	rtpSequenceMap map[uint32]*rtpSeqEntry // SSRC -> RTP序列号信息
 
 	// FCC相关字段
-	fccEnabled      bool
-	fccType         int
-	fccState        int
-	fccCacheSize    int
-	fccPortMin      int
-	fccPortMax      int
-	fccPendingBuf   *RingBuffer
-	fccStartSeq     uint16
-	fccTermSeq      uint16
-	fccTermSent     bool
-	fccSyncTimer    *time.Timer
-	fccServerAddr   *net.UDPAddr
-	fccUnicastConn  *net.UDPConn
-	fccUnicastPort  int
+	fccEnabled        bool
+	fccType           int
+	fccState          int
+	fccCacheSize      int
+	fccPortMin        int
+	fccPortMax        int
+	fccPendingBuf     *RingBuffer
+	fccStartSeq       uint16
+	fccTermSeq        uint16
+	fccTermSent       bool
+	fccSyncTimer      *time.Timer
+	fccServerAddr     *net.UDPAddr
+	fccUnicastConn    *net.UDPConn
+	fccUnicastPort    int
+	fccUnicastBufPool *sync.Pool
+	fccPendingCount   int32
 
 	// 新增用于零拷贝缓冲区管理和状态转换的字段
 	fccPendingListHead *BufferRef
 	fccPendingListTail *BufferRef
-	
+
 	// 添加客户端状态更新通道
 	clientStateChan chan int
 }
-
 
 // 定义客户端状态常量
 const (
@@ -295,12 +297,13 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		ifaces:         ifaces,
 
 		// FCC相关初始化
-		fccEnabled:   false, // 默认不启用，通过URL参数控制
-		fccType:      fccType,
-		fccCacheSize: fccCacheSize,
-		fccPortMin:   fccPortMin,
-		fccPortMax:   fccPortMax,
-		fccState:     FCC_STATE_INIT,
+		fccEnabled:        false, // 默认不启用，通过URL参数控制
+		fccType:           fccType,
+		fccCacheSize:      fccCacheSize,
+		fccPortMin:        fccPortMin,
+		fccPortMax:        fccPortMax,
+		fccState:          FCC_STATE_INIT,
+		fccUnicastBufPool: &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
 	}
 	hub.stateCond = sync.NewCond(&hub.Mu)
 
@@ -466,9 +469,7 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 			continue
 		}
 
-		data := make([]byte, n)
-		copy(data, buf[:n])
-		h.BufPool.Put(buf)
+		inRef := NewPooledBufferRef(buf, buf[:n], h.BufPool)
 
 		h.Mu.RLock()
 		closed := h.state == StateStoppeds || h.CacheBuffer == nil
@@ -477,20 +478,175 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 			return
 		}
 
-		// 处理RTP包，提取有效载荷
-		processedData := h.processRTPPacket(data)
-		if processedData == nil {
+		// 处理RTP包（零拷贝引用）
+		outRef := h.processRTPPacketRef(inRef)
+		if outRef == nil {
+			inRef.Put()
 			continue
 		}
-
-		// 广播，不进行任何视频分析
-		h.broadcast(processedData)
+		if outRef != inRef {
+			inRef.Put()
+		}
+		// 广播后归还缓冲
+		h.broadcastRef(outRef)
 	}
 }
 
 // ====================
 // RTP处理相关函数
 // ====================
+
+// 处理RTP包，返回零拷贝引用
+func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
+	data := inRef.data
+	if h.processFCCPacket(data) {
+		return nil
+	}
+	if len(data) >= 188 && data[0] == 0x47 {
+		return inRef
+	}
+	if len(data) < 12 {
+		return inRef
+	}
+	version := (data[0] >> 6) & 0x03
+	if version != RTP_VERSION {
+		return inRef
+	}
+	sequence := binary.BigEndian.Uint16(data[2:4])
+	ssrc := binary.BigEndian.Uint32(data[8:12])
+	h.Mu.Lock()
+	if h.rtpSequenceMap == nil {
+		h.rtpSequenceMap = make(map[uint32]*rtpSeqEntry)
+	}
+	entry, ok := h.rtpSequenceMap[ssrc]
+	if !ok {
+		entry = &rtpSeqEntry{}
+		h.rtpSequenceMap[ssrc] = entry
+	}
+	duplicate := false
+	for _, seq := range entry.sequences {
+		if seq == sequence {
+			duplicate = true
+			break
+		}
+	}
+	if duplicate {
+		h.Mu.Unlock()
+		return nil
+	}
+	entry.sequences = append(entry.sequences, sequence)
+	if len(entry.sequences) > rtpSequenceWindow {
+		entry.sequences = entry.sequences[len(entry.sequences)-rtpSequenceWindow:]
+	}
+	entry.lastActive = time.Now()
+	h.cleanupOldSSRCs()
+	h.Mu.Unlock()
+	startOff, endOff, err := rtpPayloadGet(data)
+	if err != nil || startOff >= len(data)-endOff {
+		return inRef
+	}
+	payloadType := data[1] & 0x7F
+	if payloadType == P_MPGA || payloadType == P_MPGV {
+		if startOff+4 < len(data)-endOff {
+			startOff += 4
+		}
+	}
+	payload := data[startOff : len(data)-endOff]
+	if len(payload) < 188 || payload[0] != 0x47 || len(payload)%188 != 0 {
+		return inRef
+	}
+	h.Mu.Lock()
+	h.rtpBuffer = append(h.rtpBuffer, payload...)
+	if len(h.rtpBuffer) < 188 {
+		h.Mu.Unlock()
+		return nil
+	}
+	if h.rtpBuffer[0] != 0x47 {
+		idx := bytes.IndexByte(h.rtpBuffer, 0x47)
+		if idx < 0 {
+			h.rtpBuffer = h.rtpBuffer[:0]
+			h.Mu.Unlock()
+			return nil
+		}
+		copy(h.rtpBuffer, h.rtpBuffer[idx:])
+		h.rtpBuffer = h.rtpBuffer[:len(h.rtpBuffer)-idx]
+		if len(h.rtpBuffer) < 188 {
+			h.Mu.Unlock()
+			return nil
+		}
+	}
+	alignedSize := (len(h.rtpBuffer) / 188) * 188
+	chunk := h.rtpBuffer[:alignedSize]
+	if alignedSize < len(h.rtpBuffer) {
+		copy(h.rtpBuffer, h.rtpBuffer[alignedSize:])
+		h.rtpBuffer = h.rtpBuffer[:len(h.rtpBuffer)-alignedSize]
+	} else {
+		h.rtpBuffer = h.rtpBuffer[:0]
+	}
+	h.Mu.Unlock()
+	poolBuf := h.BufPool.Get().([]byte)
+	out := poolBuf[:0]
+	h.Mu.RLock()
+	fccEnabled := h.fccEnabled
+	currentFccState := h.fccState
+	h.Mu.RUnlock()
+	for i := 0; i < len(chunk); i += 188 {
+		ts := chunk[i : i+188]
+		if ts[0] != 0x47 {
+			continue
+		}
+		pid := ((int(ts[1]) & 0x1F) << 8) | int(ts[2])
+		tsCC := ts[3] & 0x0F
+		if fccEnabled {
+			if pid == PAT_PID && (ts[1]&0x40) != 0 {
+				h.Mu.Lock()
+				if h.patBuffer == nil {
+					h.patBuffer = patBufferPool.Get().([]byte)
+				}
+				copy(h.patBuffer, ts)
+				h.Mu.Unlock()
+			}
+			if pid == PMT_PID && (ts[1]&0x40) != 0 {
+				h.Mu.Lock()
+				if h.pmtBuffer == nil {
+					h.pmtBuffer = pmtBufferPool.Get().([]byte)
+				}
+				copy(h.pmtBuffer, ts)
+				h.Mu.Unlock()
+			}
+		}
+		if pid != NULL_PID {
+			h.Mu.Lock()
+			if last, ok := h.lastCCMap[pid]; ok {
+				diff := (int(tsCC) - int(last) + 16) & 0x0F
+				if diff > 1 {
+					for j := 1; j < diff; j++ {
+						out = append(out, makeNullTS()...)
+					}
+				}
+			}
+			h.lastCCMap[pid] = tsCC
+			h.Mu.Unlock()
+		}
+		out = append(out, ts...)
+	}
+	outRef := NewPooledBufferRef(poolBuf, out, h.BufPool)
+	if fccEnabled && currentFccState != FCC_STATE_MCAST_ACTIVE && len(out) > 0 {
+		outRef.Get()
+		h.Mu.Lock()
+		if h.fccPendingListHead == nil {
+			h.fccPendingListHead = outRef
+			h.fccPendingListTail = outRef
+		} else {
+			h.fccPendingListTail.next = outRef
+			h.fccPendingListTail = outRef
+		}
+		h.Mu.Unlock()
+		atomic.AddInt32(&h.fccPendingCount, 1)
+		h.checkAndSwitchToMulticast()
+	}
+	return outRef
+}
 
 // hexdumpPreview 返回前 n 个字节的十六进制预览
 func hexdumpPreview(buf []byte, n int) string {
@@ -602,206 +758,6 @@ func makeNullTS() []byte {
 	return ts
 }
 
-// 改进的 processRTPPacket 函数
-func (h *StreamHub) processRTPPacket(data []byte) []byte {
-	// 首先检查是否为FCC控制包
-	if h.processFCCPacket(data) {
-		// 如果是FCC控制包，不需要进一步处理
-		return nil
-	}
-
-	// 已经是完整 TS 包直接返回（兼容非 RTP 流）
-	if len(data) >= 188 && data[0] == 0x47 {
-		return data
-	}
-
-	// RTP Header 最小长度检查
-	if len(data) < 12 {
-		return data
-	}
-
-	version := (data[0] >> 6) & 0x03
-	if version != RTP_VERSION {
-		return data
-	}
-
-	sequence := binary.BigEndian.Uint16(data[2:4])
-	ssrc := binary.BigEndian.Uint32(data[8:12])
-
-	h.Mu.Lock()
-	if h.rtpSequenceMap == nil {
-		h.rtpSequenceMap = make(map[uint32]*rtpSeqEntry)
-	}
-
-	entry, ok := h.rtpSequenceMap[ssrc]
-	if !ok {
-		entry = &rtpSeqEntry{}
-		h.rtpSequenceMap[ssrc] = entry
-	}
-
-	// 去重检查
-	duplicate := false
-	for _, seq := range entry.sequences {
-		if seq == sequence {
-			duplicate = true
-			break
-		}
-	}
-	if duplicate {
-		h.Mu.Unlock()
-		return nil
-	}
-
-	entry.sequences = append(entry.sequences, sequence)
-	if len(entry.sequences) > rtpSequenceWindow {
-		entry.sequences = entry.sequences[len(entry.sequences)-rtpSequenceWindow:]
-	}
-	entry.lastActive = time.Now()
-
-	h.cleanupOldSSRCs()
-	h.Mu.Unlock()
-
-	// 提取 RTP Payload
-	startOff, endOff, err := rtpPayloadGet(data)
-	if err != nil || startOff >= len(data)-endOff {
-		return data // ✅ 兜底逻辑，返回原始数据
-	}
-
-	payloadType := data[1] & 0x7F
-	if payloadType == P_MPGA || payloadType == P_MPGV {
-		if startOff+4 < len(data)-endOff {
-			startOff += 4
-		}
-	}
-
-	payload := data[startOff : len(data)-endOff]
-
-	// ✅ 兜底检查，必须对齐 188
-	if len(payload) < 188 || payload[0] != 0x47 || len(payload)%188 != 0 {
-		return data
-	}
-
-	// 拼接缓存，处理分片 - 使用无锁方式优化
-	h.Mu.Lock()
-	h.rtpBuffer = append(h.rtpBuffer, payload...)
-	if len(h.rtpBuffer) < 188 {
-		h.Mu.Unlock()
-		return nil
-	}
-
-	if h.rtpBuffer[0] != 0x47 {
-		idx := bytes.IndexByte(h.rtpBuffer, 0x47)
-		if idx < 0 {
-			h.rtpBuffer = h.rtpBuffer[:0] // 重用底层数组
-			h.Mu.Unlock()
-			return nil
-		}
-		// 重用底层数组，避免重新分配
-		copy(h.rtpBuffer, h.rtpBuffer[idx:])
-		h.rtpBuffer = h.rtpBuffer[:len(h.rtpBuffer)-idx]
-		if len(h.rtpBuffer) < 188 {
-			h.Mu.Unlock()
-			return nil
-		}
-	}
-
-	alignedSize := (len(h.rtpBuffer) / 188) * 188
-	chunk := h.rtpBuffer[:alignedSize]
-	if alignedSize < len(h.rtpBuffer) {
-		// 重用底层数组，避免重新分配
-		copy(h.rtpBuffer, h.rtpBuffer[alignedSize:])
-		h.rtpBuffer = h.rtpBuffer[:len(h.rtpBuffer)-alignedSize]
-	} else {
-		h.rtpBuffer = h.rtpBuffer[:0] // 重用底层数组
-	}
-	h.Mu.Unlock()
-
-	// 使用预分配的缓冲区来减少内存分配
-	out := make([]byte, 0, alignedSize)
-
-	// 预先获取FCC启用状态，减少重复锁定
-	h.Mu.RLock()
-	fccEnabled := h.fccEnabled
-	currentFccState := h.fccState
-	h.Mu.RUnlock()
-
-	for i := 0; i < len(chunk); i += 188 {
-		ts := chunk[i : i+188]
-		if ts[0] != 0x47 {
-			continue
-		}
-
-		pid := ((int(ts[1]) & 0x1F) << 8) | int(ts[2])
-		tsCC := ts[3] & 0x0F
-
-		// 如果启用了FCC，检测并保存PAT/PMT包
-		if fccEnabled {
-			// 检测PAT包(PID = 0x0000)并保存最新的一份
-			if pid == PAT_PID && (ts[1]&0x40) != 0 { // payload_unit_start_indicator位为1
-				h.Mu.Lock()
-				if h.patBuffer == nil {
-					h.patBuffer = make([]byte, 188)
-				}
-				copy(h.patBuffer, ts)
-				h.Mu.Unlock()
-			}
-
-			// 检测PMT包(PID = 0x1000，通常是这个值)并保存最新的一份
-			if pid == PMT_PID && (ts[1]&0x40) != 0 { // payload_unit_start_indicator位为1
-				h.Mu.Lock()
-				if h.pmtBuffer == nil {
-					h.pmtBuffer = make([]byte, 188)
-				}
-				copy(h.pmtBuffer, ts)
-				h.Mu.Unlock()
-			}
-		}
-
-		if pid != NULL_PID {
-			h.Mu.Lock()
-			if last, ok := h.lastCCMap[pid]; ok {
-				diff := (int(tsCC) - int(last) + 16) & 0x0F
-				if diff > 1 {
-					for j := 1; j < diff; j++ {
-						out = append(out, makeNullTS()...)
-					}
-				}
-			}
-			h.lastCCMap[pid] = tsCC
-			h.Mu.Unlock()
-		}
-		out = append(out, ts...)
-	}
-
-	// 如果启用了FCC，将处理后的数据也放入FCC缓冲区
-	if fccEnabled && currentFccState != FCC_STATE_MCAST_ACTIVE {
-		h.Mu.Lock()
-		if h.fccPendingBuf != nil && len(out) > 0 {
-			h.fccPendingBuf.PushWithReuse(out)
-
-			// 根据当前FCC状态更新状态机
-			// 只有在特定状态下才更新状态
-			if currentFccState == FCC_STATE_UNICAST_PENDING {
-				h.fccState = FCC_STATE_UNICAST_ACTIVE
-			}
-
-			// 检查是否需要切换到多播
-			// 只在特定条件下检查切换，避免频繁调用
-			if h.fccState == FCC_STATE_UNICAST_ACTIVE &&
-				h.fccPendingBuf.GetCount() >= int(float64(h.fccCacheSize)*0.5) {
-				h.Mu.Unlock()
-				h.checkAndSwitchToMulticast()
-			} else {
-				h.Mu.Unlock()
-			}
-		} else {
-			h.Mu.Unlock()
-		}
-	}
-
-	return out
-}
-
 // ====================
 // 广播到所有客户端
 // ====================
@@ -811,7 +767,7 @@ func (h *StreamHub) broadcast(data []byte) {
 		h.Mu.RLock()
 		inTransition := h.fccState == FCC_STATE_MCAST_REQUESTED
 		h.Mu.RUnlock()
-		
+
 		if inTransition {
 			h.handleMcastDataDuringTransition(data)
 			return
@@ -820,10 +776,10 @@ func (h *StreamHub) broadcast(data []byte) {
 
 	// 检查是否是PAT或PMT包
 	pid := ((uint16(data[1]) & 0x1f) << 8) | uint16(data[2])
-	
+
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
-	
+
 	if pid == PAT_PID {
 		// 保存PAT包用于FCC
 		if h.patBuffer == nil {
@@ -861,6 +817,29 @@ func (h *StreamHub) broadcast(data []byte) {
 			// 注意：这里不能直接调用Close，因为hubClient没有Close方法
 		}
 	}
+}
+
+// 零拷贝引用广播，发送完成后归还池
+func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
+	// 检查是否是FCC多播过渡阶段
+	if h.IsFccEnabled() {
+		h.Mu.RLock()
+		inTransition := h.fccState == FCC_STATE_MCAST_REQUESTED
+		h.Mu.RUnlock()
+		if inTransition {
+			h.handleMcastDataDuringTransition(bufRef.data)
+			bufRef.Put()
+			return
+		}
+	}
+	data := bufRef.data
+	for _, c := range h.Clients {
+		select {
+		case c.ch <- data:
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	bufRef.Put()
 }
 
 // ====================
@@ -976,21 +955,22 @@ func (h *StreamHub) sendInitial(ch chan []byte) {
 
 	case FCC_STATE_UNICAST_ACTIVE:
 		// 单播 FCC：发送最近 FCC 缓存帧
-		if h.fccPendingBuf != nil {
-			fccFrames := h.fccPendingBuf.GetAll()
-			if len(fccFrames) > 0 {
-				start := 0
-				if len(fccFrames) > 50 {
-					start = len(fccFrames) - 50
-				}
-				packets = append(packets, fccFrames[start:]...)
-			} else {
-				// 如果没有FCC帧，尝试使用常规缓存帧作为后备
-				cachedFrames := h.CacheBuffer.GetAll()
-				packets = append(packets, cachedFrames...)
+		// 从链表中获取最近 50 帧
+		var frames [][]byte
+		h.Mu.RLock()
+		count := 0
+		for n := h.fccPendingListHead; n != nil; n = n.next {
+			count++
+			frames = append(frames, n.data)
+		}
+		h.Mu.RUnlock()
+		if len(frames) > 0 {
+			start := 0
+			if len(frames) > 50 {
+				start = len(frames) - 50
 			}
+			packets = append(packets, frames[start:]...)
 		} else {
-			// 如果没有FCC缓存，使用常规缓存作为后备
 			cachedFrames := h.CacheBuffer.GetAll()
 			packets = append(packets, cachedFrames...)
 		}
@@ -998,13 +978,12 @@ func (h *StreamHub) sendInitial(ch chan []byte) {
 	case FCC_STATE_MCAST_REQUESTED, FCC_STATE_MCAST_ACTIVE:
 		// 多播 FCC：完整 FCC 缓存
 		fccFramesAvailable := false
-		if h.fccPendingBuf != nil {
-			fccFrames := h.fccPendingBuf.GetAll()
-			if len(fccFrames) > 0 {
-				fccFramesAvailable = true
-				packets = append(packets, fccFrames...)
-			}
+		h.Mu.RLock()
+		for n := h.fccPendingListHead; n != nil; n = n.next {
+			packets = append(packets, n.data)
+			fccFramesAvailable = true
 		}
+		h.Mu.RUnlock()
 
 		// 补充普通缓存（如果没有FCC帧或者需要更多数据）
 		if !fccFramesAvailable || len(packets) < 10 {
@@ -1690,4 +1669,3 @@ func (h *StreamHub) isClosed() bool {
 		return false
 	}
 }
-
