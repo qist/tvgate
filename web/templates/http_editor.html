@@ -301,6 +301,13 @@
                         <label for="disable_keepalives">禁用KeepAlive</label>
                     </div>
                 </div>
+                
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="insecure_skip_verify">
+                        <label for="insecure_skip_verify">跳过TLS证书验证</label>
+                    </div>
+                </div>
             </div>
         </form>
 
@@ -369,6 +376,7 @@
                     document.getElementById('max_idle_conns_per_host').value = httpConfig.max_idle_conns_per_host || '';
                     document.getElementById('max_conns_per_host').value = httpConfig.max_conns_per_host || '';
                     document.getElementById('disable_keepalives').checked = httpConfig.disable_keepalives || false;
+                    document.getElementById('insecure_skip_verify').checked = httpConfig.insecure_skip_verify || false;
                     
                     // 移除对hidePathWarning的调用，因为path-warning元素不存在
                 } catch (error) {
@@ -396,7 +404,8 @@
                         max_idle_conns: parseInt(document.getElementById('max_idle_conns').value) || 0,
                         max_idle_conns_per_host: parseInt(document.getElementById('max_idle_conns_per_host').value) || 0,
                         max_conns_per_host: parseInt(document.getElementById('max_conns_per_host').value) || 0,
-                        disable_keepalives: document.getElementById('disable_keepalives').checked
+                        disable_keepalives: document.getElementById('disable_keepalives').checked,
+                        insecure_skip_verify: document.getElementById('insecure_skip_verify').checked
                     };
 
                     httpConfig = payload; // 更新配置副本

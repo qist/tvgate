@@ -51,14 +51,14 @@ func NewHTTPClient(c *config.Config, transport *http.Transport) *http.Client {
 			},
 
 			ResponseHeaderTimeout: c.HTTP.ResponseHeaderTimeout,
-			TLSClientConfig:       &tls.Config{},
+			TLSClientConfig:       &tls.Config{InsecureSkipVerify: *c.HTTP.InsecureSkipVerify},
 			IdleConnTimeout:       c.HTTP.IdleConnTimeout,
 			TLSHandshakeTimeout:   c.HTTP.TLSHandshakeTimeout,
 			ExpectContinueTimeout: c.HTTP.ExpectContinueTimeout,
 			MaxIdleConns:          c.HTTP.MaxIdleConns,
 			MaxIdleConnsPerHost:   c.HTTP.MaxIdleConnsPerHost,
 			MaxConnsPerHost:       c.HTTP.MaxConnsPerHost,
-			DisableKeepAlives:     c.HTTP.DisableKeepAlives,
+			DisableKeepAlives:     *c.HTTP.DisableKeepAlives,
 		}
 	}
 

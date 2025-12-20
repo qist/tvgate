@@ -66,10 +66,11 @@ type Config struct {
 		TLSHandshakeTimeout   time.Duration `yaml:"tls_handshake_timeout"`   // TLS握手超时
 		ExpectContinueTimeout time.Duration `yaml:"expect_continue_timeout"` // 100-continue 超时
 
-		MaxIdleConns        int  `yaml:"max_idle_conns"`          // 最大空闲连接数
-		MaxIdleConnsPerHost int  `yaml:"max_idle_conns_per_host"` // 每个主机的最大空闲连接数
-		MaxConnsPerHost     int  `yaml:"max_conns_per_host"`      // 每个主机的最大连接数
-		DisableKeepAlives   bool `yaml:"disable_keepalives"`      // 禁用keepalive
+		MaxIdleConns        int   `yaml:"max_idle_conns"`          // 最大空闲连接数
+		MaxIdleConnsPerHost int   `yaml:"max_idle_conns_per_host"` // 每个主机的最大空闲连接数
+		MaxConnsPerHost     int   `yaml:"max_conns_per_host"`      // 每个主机的最大连接数
+		DisableKeepAlives   *bool `yaml:"disable_keepalives"`      // 禁用keepalive
+		InsecureSkipVerify  *bool `yaml:"insecure_skip_verify"`    // 是否跳过TLS验证
 	} `yaml:"http"`
 
 	Monitor struct {
@@ -430,13 +431,19 @@ func (c *Config) SetDefaults() {
 	if c.HTTP.MaxConnsPerHost == 0 {
 		c.HTTP.MaxConnsPerHost = 8
 	}
-
+	if c.HTTP.DisableKeepAlives == nil {
+		c.HTTP.DisableKeepAlives = ptr(false)
+	}
+	if c.HTTP.InsecureSkipVerify == nil {
+		c.HTTP.InsecureSkipVerify = ptr(false)
+	}
 	// Server 默认值
 	if c.Server.FccListenPortMin == 0 {
 		c.Server.FccListenPortMin = 40000
 	}
 	if c.Server.FccListenPortMax == 0 {
 		c.Server.FccListenPortMax = 40100
+
 	}
 	// 设置默认值
 	if c.Server.FccCacheSize <= 0 {
@@ -465,3 +472,5 @@ func InitStartTime() {
 		StartTime = time.Now()
 	})
 }
+
+func ptr[T any](v T) *T { return &v }

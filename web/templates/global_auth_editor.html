@@ -48,7 +48,11 @@
             transition: background-color 0.3s;
             margin-left: 10px;
         }
-
+        .help-text {
+            font-size: 13px;
+            color: var(--win11-text-tertiary);
+            margin-top: 5px;
+        }
         .auth-section a.logout {
             background-color: var(--win11-danger);
         }
@@ -239,10 +243,14 @@
                         <label for="tokens_enabled">启用 Token 认证</label>
                     </div>
                 </div>
-                
+             
                 <div class="form-group">
                     <label for="token_param_name">Token 参数名:</label>
                     <input type="text" id="token_param_name" class="form-control" onchange="updateGlobalAuth('token_param_name', this.value)">
+                    <div class="help-text">url访问参数名字：<br>
+                    例如：token<br>
+                    例如：/your-api-endpoint?token=1234567<br>
+                    例如：/your-api-endpoint?id=cctv1&token=1234567</div>
                 </div>
             </div>
 
@@ -285,11 +293,14 @@
                 <div class="form-group">
                     <label for="static_tokens_token">Token 值:</label>
                     <input type="text" id="static_tokens_token" class="form-control" onchange="updateStaticTokens('token', this.value)">
+                    <div class="help-text">Token 参数名后面的值例如：1234569 <br>
+                    例如：/your-api-endpoint?token=1234569</div>
                 </div>
                 
                 <div class="form-group">
                     <label for="static_tokens_expire_hours">过期时间:</label>
                     <input type="text" id="static_tokens_expire_hours" class="form-control" placeholder="例如: 24h" onchange="updateStaticTokens('expire_hours', this.value)">
+                    <div class="help-text">0s 表示永不过期</div>
                 </div>
             </div>
         </form>

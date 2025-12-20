@@ -46,6 +46,7 @@ func (h *ConfigHandler) handleHTTPConfig(w http.ResponseWriter, r *http.Request)
 		"max_idle_conns_per_host": httpCfg.MaxIdleConnsPerHost,
 		"max_conns_per_host":      httpCfg.MaxConnsPerHost,
 		"disable_keepalives":      httpCfg.DisableKeepAlives,
+		"insecure_skip_verify":    httpCfg.InsecureSkipVerify,
 	}
 
 	if err := json.NewEncoder(w).Encode(resp); err != nil {

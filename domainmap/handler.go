@@ -885,8 +885,8 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		MaxIdleConns:          httpCfg.MaxIdleConns,
 		MaxIdleConnsPerHost:   httpCfg.MaxIdleConnsPerHost,
 		MaxConnsPerHost:       httpCfg.MaxConnsPerHost,
-		DisableKeepAlives:     httpCfg.DisableKeepAlives,
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: false},
+		DisableKeepAlives:     *httpCfg.DisableKeepAlives,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: *httpCfg.InsecureSkipVerify},
 	}
 
 	// 创建 Client
