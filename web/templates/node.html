@@ -284,7 +284,7 @@
                         <p>配置服务器基础设置</p>
                         <a href="{{.webPath}}server-editor" class="btn">编辑服务器</a>
                     </div>
-                    <div class="card" {{if not .hasServerMonitorConfig}}style="display: none;" {{end}}>
+                    <div class="card">
                         <h2>服务器监控编辑</h2>
                         <p>配置服务器监控设置，包括监控路径和重新加载间隔。</p>
                         <a href="{{.webPath}}server-monitor-editor" class="btn">进入编辑</a>
@@ -302,19 +302,19 @@
                         <a href="{{.webPath}}log-editor" class="btn">进入编辑</a>
                     </div>
                     
-                    <div class="card" {{if not .hasDomainMap}}style="display: none;" {{end}}>
+                    <div class="card">
                         <h2>域名映射编辑器</h2>
                         <p>配置域名映射规则，将请求从一个域名转发到另一个域名。</p>
                         <a href="{{.webPath}}domainmap-editor" class="btn">进入编辑器</a>
                     </div>
 
-                    <div class="card" {{if not .hasProxyGroups}}style="display: none;" {{end}}>
+                    <div class="card">
                         <h2>代理组配置编辑器</h2>
                         <p>配置和管理代理服务器组，包括代理服务器和域名规则。</p>
                         <a href="{{.webPath}}proxygroups-editor" class="btn">进入编辑器</a>
                     </div>
 
-                    <div class="card" {{if not .hasJXConfig}}style="display: none;" {{end}}>
+                    <div class="card">
                         <h2>JX配置编辑器</h2>
                         <p>配置和管理视频解析接口组。</p>
                         <a href="{{.webPath}}jx-editor" class="btn">进入编辑器</a>

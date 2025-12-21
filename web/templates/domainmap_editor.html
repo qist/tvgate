@@ -562,7 +562,6 @@
                         </div>
                         <button type="button" class="btn btn-sm" onclick="addHeaderField('server')">添加响应头</button>
                     </div>
-                    {{if .hasAuthConfig}}
                     <div class="form-group">
                         <div class="checkbox-group">
                             <input type="checkbox" id="show-auth" ${hasAuth ? 'checked' : ''} onchange="toggleAuthSection(this.checked)">
@@ -629,11 +628,10 @@
                             
                             <div class="form-group">
                                 <label for="auth-static-expire-hours">过期时间:</label>
-                                <input type="text" id="auth-static-expire-hours" class="form-control" placeholder="例如: 24h" value="${domainMap.auth && domainMap.auth.static_tokens && domainMap.auth.static_tokens.expire_hours ? parseDuration(domainMap.auth.static_tokens.expire_hours) : ''}" onchange="updateCurrentAuthStaticTokens('expire_hours', this.value)">
+                                <input type="text" id="auth-static-expire-hours" class="form-control" placeholder="例如: 24h,0s永不过期" value="${domainMap.auth && domainMap.auth.static_tokens && domainMap.auth.static_tokens.expire_hours ? parseDuration(domainMap.auth.static_tokens.expire_hours) : ''}" onchange="updateCurrentAuthStaticTokens('expire_hours', this.value)">
                             </div>
                         </div>
                     </div>
-                    {{end}}
                 </div>
             `;
         }

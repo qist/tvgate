@@ -69,6 +69,12 @@
             color: var(--win11-text-secondary);
         }
 
+        .help-text {
+            font-size: 13px;
+            color: var(--win11-text-tertiary);
+            margin-top: 5px;
+        }
+
         .form-control {
             width: 100%;
             padding: 12px;
@@ -409,7 +415,7 @@
         .add-domain-btn:hover {
             background-color: #57a357;
         }
-        
+
         /* 添加状态信息表格样式 */
         .proxy-status-table {
             width: 100%;
@@ -417,38 +423,38 @@
             font-size: 12px;
             margin-top: 5px;
         }
-        
+
         .proxy-status-table th,
         .proxy-status-table td {
             border: 1px solid #333;
             padding: 4px;
             text-align: left;
         }
-        
+
         .proxy-status-table th {
             background-color: var(--win11-surface);
             font-weight: bold;
         }
-        
+
         .proxy-status-table tr:nth-child(even) {
             background-color: var(--win11-bg);
         }
-        
+
         .status-alive {
             color: #4CAF50;
             font-weight: bold;
         }
-        
+
         .status-dead {
             color: #f44336;
             font-weight: bold;
         }
-        
+
         .status-cooldown {
             color: #ff9800;
             font-weight: bold;
         }
-        
+
         .status-unknown {
             color: #9E9E9E;
             font-weight: bold;
@@ -462,8 +468,13 @@
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
         }
     </style>
     <script src="{{.webPath}}static/js/theme.js"></script>
@@ -535,14 +546,6 @@
                 </div>
 
                 <div class="subsection">
-                    <h3 class="subsection-title">域名规则</h3>
-                    <div id="domains-container">
-                        <div class="empty-message">暂无域名规则</div>
-                    </div>
-                    <button class="add-domain-btn" onclick="addDomainField()">添加域名规则</button>
-                </div>
-
-                <div class="subsection">
                     <h3 class="subsection-title">代理服务器
                         <button class="btn btn-sm btn-success" style="float: right;"
                             onclick="showAddProxyModal()">添加代理</button>
@@ -555,6 +558,22 @@
                 <div class="btn-group">
                     <button class="btn cancel" onclick="closeProxyGroupModal()">取消</button>
                     <button class="btn save" id="saveProxyGroupBtn">添加</button>
+                </div>
+
+                <div class="subsection">
+                    <h3 class="subsection-title">域名规则</h3>
+                    <div class="help-text">规则配置 <br>
+                        域名："edgeware-live.edgeware.tvb.com" <br>
+                        "*.edgeware.tvb.com" <br>
+                        "hki*-edge*.edgeware.tvb.com" <br>
+                        ipv4: "1.2.3.4" <br>
+                        16.0.0.0/12 <br>
+                        ipv6: 2001:db8::1 <br>
+                        2001:db8::/32 </div>
+                    <div id="domains-container">
+                        <div class="empty-message">暂无域名规则</div>
+                    </div>
+                    <button class="add-domain-btn" onclick="addDomainField()">添加域名规则</button>
                 </div>
             </div>
         </div>
@@ -583,7 +602,7 @@
                 <div class="form-group">
                     <label for="proxyServer">服务器地址:</label>
                     <input type="text" id="proxyServer" class="form-control"
-                        placeholder="例如: 127.0.0.1 或 proxy.example.com">
+                        placeholder='例如: 127.0.0.1 或 proxy.example.com 或 "[::1]"'>
                 </div>
                 <div class="form-group">
                     <label for="proxyPort">端口:</label>
@@ -679,7 +698,7 @@
         function createProxyGroupCard(name, proxyGroup) {
             const cardDiv = document.createElement('div');
             cardDiv.className = 'domainmap-card';
-            
+
             // 初始化状态信息占位符
             cardDiv.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -699,32 +718,32 @@
                 if (e.target.closest('.btn')) return;
                 showEditProxyGroupModal(name);
             };
-            
+
             // 异步加载状态信息
             loadProxyGroupStatus(name, proxyGroup, cardDiv);
-            
+
             return cardDiv;
         }
-        
+
         // 加载代理组状态信息
         function loadProxyGroupStatus(groupName, proxyGroup, cardElement) {
             const statusContainer = cardElement.querySelector('.proxy-status-container');
-            
+
             // 直接使用当前配置中的统计信息
             try {
                 let statusHTML = '<div class="proxy-status-details">';
-                
+
                 // 显示每个代理的状态信息
                 if (proxyGroup.proxies && proxyGroup.stats && proxyGroup.stats.ProxyStats) {
                     statusHTML += '<table class="proxy-status-table">';
                     statusHTML += '<tr><th>代理</th><th>延迟</th><th>服务器</th><th>HTTP状态</th><th>状态</th></tr>';
-                    
+
                     proxyGroup.proxies.forEach(proxy => {
                         const stats = proxyGroup.stats.ProxyStats[proxy.name] || {};
                         const responseTime = stats.ResponseTime > 0 ? `${(stats.ResponseTime / 1000000).toFixed(0)} ms` : '-';
                         const server = proxy.server ? `${proxy.server}:${proxy.port}` : '-';
                         const statusCode = stats.StatusCode > 0 ? stats.StatusCode : '-';
-                        
+
                         let statusText = '⚪ 未测试';
                         let statusClass = 'status-unknown';
                         if (stats.Alive && (stats.ResponseTime > 0 || stats.FailCount > 0)) {
@@ -737,7 +756,7 @@
                             statusText = '❌ 失败';
                             statusClass = 'status-dead';
                         }
-                        
+
                         statusHTML += `
                             <tr>
                                 <td>${proxy.name}</td>
@@ -1080,8 +1099,8 @@
 
             // 确保代理组存在
             if (!proxyGroups[groupName]) {
-                proxyGroups[groupName] = { 
-                    proxies: [], 
+                proxyGroups[groupName] = {
+                    proxies: [],
                     domains: [],
                     loadbalance: 'round-robin',
                     interval: '180s',
@@ -1091,12 +1110,12 @@
                     ipv6: false
                 };
             }
-            
+
             // 确保proxies数组存在
             if (!proxyGroups[groupName].proxies) {
                 proxyGroups[groupName].proxies = [];
             }
-            
+
             proxyGroups[groupName].proxies.push(proxy);
 
             renderProxyList(proxyGroups[groupName].proxies);
@@ -1199,13 +1218,13 @@
             if (editName && editName.value.trim()) {
                 return editName.value.trim();
             }
-            
+
             // 如果隐藏字段为空，则尝试从代理组名称输入框获取
             let groupNameInput = document.getElementById('proxyGroupName');
             if (groupNameInput && groupNameInput.value.trim()) {
                 return groupNameInput.value.trim();
             }
-            
+
             // 如果都获取不到，返回空字符串
             return '';
         }
