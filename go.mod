@@ -13,7 +13,7 @@ require (
 	github.com/libp2p/go-reuseport v0.4.0
 	github.com/miekg/dns v1.1.69
 	github.com/pion/rtp v1.8.27
-	github.com/quic-go/quic-go v0.57.1
+	github.com/quic-go/quic-go v0.58.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.48.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
