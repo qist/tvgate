@@ -5,18 +5,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/qist/tvgate/auth"
-	"net"
 	"github.com/qist/tvgate/logger"
+
 	// "github.com/qist/tvgate/monitor"
-	"github.com/qist/tvgate/utils/buffer"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 	"sync"
-	"time"
+
+	"github.com/qist/tvgate/utils/buffer"
 )
 
 // 定义任务结构体用于sync.Pool
@@ -62,16 +63,16 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	w.WriteHeader(resp.StatusCode)
 
 	done := make(chan struct{})
-	
+
 	// 从池中获取任务对象
 	task := handleTaskPool.Get().(*handleTask)
 	task.f = func() {
 		defer close(done)
-		if err := CopyWithContext(ctx, w, resp.Body, buf, updateActive); err != nil {
+		if err := CopyWithContext(ctx, w, resp.Body, buf, bufSize,updateActive, resp.Request.URL.String()); err != nil {
 			HandleCopyError(r, err, resp)
 		}
 	}
-	
+
 	// 在goroutine内部执行任务并确保完成后放回池中
 	go func() {
 		defer func() {
@@ -170,91 +171,19 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 			targetURL += "?" + r.URL.RawQuery
 		}
 	}
-	logger.LogPrintf("getTargetURL 处理: 原始路径=%s, 查询参数=%s, 最终URL=%s",
-		path, r.URL.RawQuery, targetURL)
+	//logger.LogPrintf("getTargetURL 处理: 原始路径=%s, 查询参数=%s, 最终URL=%s",
+	//	path, r.URL.RawQuery, targetURL)
 
 	return targetURL
 }
 
-// CopyWithContext 流式复制 src -> dst，使用 buffer 池，bufio 内部缓存可控
-func CopyWithContext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, updateActive func()) error {
-	// 活跃时间心跳
-	var activeTicker *time.Ticker
-	if updateActive != nil {
-		activeTicker = time.NewTicker(5 * time.Second)
-		defer activeTicker.Stop()
-		defer updateActive() // 退出前更新一次
-	}
-
-	// flush 定时器（降低延迟）
-	flushTicker := time.NewTicker(200 * time.Millisecond)
-	defer flushTicker.Stop()
-
-	// 是否支持 http flush
-	flusher, canFlush := dst.(http.Flusher)
-
-	// 统计写入字节数
-	bytesWritten := 0
-
-	// 如果 src 是 net.Conn，给它绑 ctx
-	if c, ok := src.(net.Conn); ok {
-		go func() {
-			<-ctx.Done()
-			// 打断阻塞 read
-			_ = c.SetReadDeadline(time.Now())
-		}()
-	}
-
-	for {
-		// 读取数据
-		n, readErr := src.Read(buf)
-		if n > 0 {
-			// monitor.AddAppInboundBytes(uint64(n))
-			written := 0
-			for written < n {
-				wn, writeErr := dst.Write(buf[written:n])
-				if writeErr != nil {
-					return fmt.Errorf("写入错误: %w", writeErr)
-				}
-				written += wn
-				bytesWritten += wn
-			}
-			// monitor.AddAppOutboundBytes(uint64(n))
-
-			// 大数据量触发 flush
-			if canFlush && bytesWritten >= 32*1024 {
-				flusher.Flush()
-				bytesWritten = 0
-			}
-		}
-
-		// 错误处理
-		if readErr != nil {
-			if canFlush && bytesWritten > 0 {
-				flusher.Flush()
-			}
-			if errors.Is(readErr, io.EOF) {
-				return nil
-			}
-			return fmt.Errorf("读取错误: %w", readErr)
-		}
-
-		// 非阻塞检查 ctx / ticker
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-flushTicker.C:
-			if canFlush && bytesWritten > 0 {
-				flusher.Flush()
-				bytesWritten = 0
-			}
-		case <-activeTicker.C:
-			if updateActive != nil {
-				updateActive()
-			}
-		default:
-		}
-	}
+// CopyWithContext 支持 HTTP hub 模式：按后端URL为键，单上游广播到所有前端
+func CopyWithContext(ctx context.Context, dst http.ResponseWriter, src io.Reader, buf []byte, bufSize int, updateActive func(), backendKey string) error {
+	h := GetOrCreateHTTPHub(backendKey)
+	client := h.AddClient(dst, bufSize)
+	defer h.RemoveClient(client)
+	h.EnsureProducer(ctx, src, buf)
+	return client.WriteLoop(ctx, updateActive)
 }
 
 func HandleCopyError(r *http.Request, err error, proxyResp *http.Response) {
