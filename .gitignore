@@ -8,3 +8,4 @@ cmd/
 tvgate
 test_start_time
 ffmpeg/
+src/
