@@ -2,12 +2,13 @@ package stream
 
 import (
 	"context"
-	"github.com/qist/tvgate/logger"
 	"io"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/qist/tvgate/logger"
 )
 
 type HTTPHubClient struct {
@@ -54,15 +55,14 @@ func GetOrCreateHTTPHub(key string) *HTTPHub {
 	h := &HTTPHub{
 		clients:       make(map[*HTTPHubClient]struct{}),
 		key:           normalizedKey,
-		idleTimeout:   30 * time.Second,
+		idleTimeout:   60 * time.Second,
 		cache:         make([][]byte, 0),
 		cacheBytes:    0,
-		maxCacheBytes: 16 << 20, // 16MB 缓存，更适合 4K 视频流
+		maxCacheBytes: 32 << 20, // 32MB 缓存，更适合 4K 视频流
 	}
 	httpHubs[normalizedKey] = h
 	return h
 }
-
 
 // URL 标准化
 func normalizeHubKey(raw string) string {
@@ -70,8 +70,8 @@ func normalizeHubKey(raw string) string {
 	if err != nil {
 		return raw
 	}
-	u.RawQuery = ""  // 去掉 query
-	u.Fragment = ""  // 去掉 fragment
+	u.RawQuery = "" // 去掉 query
+	u.Fragment = "" // 去掉 fragment
 	return u.String()
 }
 
@@ -138,11 +138,9 @@ func (h *HTTPHub) AddClient(w http.ResponseWriter, bufSize int) *HTTPHubClient {
 	}
 	h.clients[c] = struct{}{}
 
-	// 发送缓存给新客户端
 	for _, cached := range h.cache {
-		select {
-		case c.ch <- cached:
-		default:
+		if !h.trySend(c, cached) {
+			break
 		}
 	}
 	h.mu.Unlock()
@@ -192,25 +190,22 @@ func (h *HTTPHub) Broadcast(data []byte) {
 	}
 	h.mu.Unlock()
 
-	// 发送给客户端
 	for _, c := range clients {
-		select {
-		case c.ch <- buf:
-			// 正常发送
-		default:
-			// 缓冲满了，丢弃当前数据，不直接移除客户端
-			logger.LogPrintf("客户端缓冲满，丢弃当前数据 (Hub: %s)", h.key)
+		if !h.trySend(c, buf) {
+			logger.LogPrintf("客户端缓冲无法接收，丢弃数据 (Hub: %s)", h.key)
 		}
 	}
 }
 
-
 // 确保生产者启动
 func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte) {
 	h.mu.Lock()
-	if h.closed || h.producerRunning {
+	if h.closed {
 		h.mu.Unlock()
 		return
+	}
+	if h.producerRunning && h.producerCancelFn != nil {
+		h.producerCancelFn()
 	}
 	h.producerRunning = true
 	pCtx, cancel := context.WithCancel(ctx)
@@ -229,7 +224,13 @@ func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte)
 				h.Broadcast(buf[:n])
 			}
 			if err != nil {
-				RemoveHTTPHub(h.key)
+				h.mu.Lock()
+				h.producerRunning = false
+				clientsCount := len(h.clients)
+				h.mu.Unlock()
+				if clientsCount == 0 {
+					h.scheduleIdleClose()
+				}
 				return
 			}
 			select {
@@ -258,6 +259,22 @@ func (h *HTTPHub) scheduleIdleClose() {
 		}
 	})
 	h.mu.Unlock()
+}
+
+func (h *HTTPHub) trySend(c *HTTPHubClient, data []byte) bool {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return false
+	}
+	ok := true
+	select {
+	case c.ch <- data:
+	default:
+		ok = false
+	}
+	c.mu.Unlock()
+	return ok
 }
 
 // 客户端安全关闭
