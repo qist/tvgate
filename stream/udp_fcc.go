@@ -519,9 +519,6 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 	h.fccEnabled = enabled
 	if enabled {
 		// 初始化状态和参数
-		if h.fccPendingBuf == nil {
-			h.fccPendingBuf = NewRingBuffer(h.fccCacheSize)
-		}
 
 		// 初始化链表缓冲区
 		h.fccPendingListHead = nil
@@ -560,9 +557,6 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 		}()
 	} else {
 		// 禁用FCC时清理相关资源
-		if h.fccPendingBuf != nil {
-			h.fccPendingBuf.Reset()
-		}
 
 		// 清理链表缓冲区
 		for h.fccPendingListHead != nil {
@@ -611,15 +605,7 @@ func (h *StreamHub) SetFccParams(cacheSize, portMin, portMax int) {
 	h.fccPortMin = portMin
 	h.fccPortMax = portMax
 
-	if h.fccEnabled && h.fccPendingBuf != nil {
-		// 重建缓冲区以适应新的大小
-		h.fccPendingBuf = NewRingBuffer(cacheSize)
-	}
-}
-
-// SetFccState 设置FCC状态并记录状态转换日志
-func (h *StreamHub) SetFccState(state int) {
-	h.fccSetState(state, "SetFccState")
+	// 参数更新后无需重建缓冲区，统一使用链表BufferRef
 }
 
 // GetFccState 获取FCC状态
@@ -1030,16 +1016,6 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 		}
 		h.Mu.Unlock()
 		// 重发并清理链表缓存
-		h.Mu.RLock()
-		pat := h.patBuffer
-		pmt := h.pmtBuffer
-		h.Mu.RUnlock()
-		if pat != nil {
-			h.broadcast(pat)
-		}
-		if pmt != nil {
-			h.broadcast(pmt)
-		}
 		var head *BufferRef
 		h.Mu.Lock()
 		head = h.fccPendingListHead
@@ -1101,10 +1077,6 @@ func (h *StreamHub) cleanupFCC() {
 		pmtBufferPool.Put(h.pmtBuffer)
 		h.pmtBuffer = nil
 	}
-	if h.fccPendingBuf != nil {
-		h.fccPendingBuf.Reset()
-		h.fccPendingBuf = nil
-	}
 	h.Mu.Unlock()
 	// 清理链表缓冲区
 	for h.fccPendingListHead != nil {
@@ -1119,11 +1091,10 @@ func (h *StreamHub) cleanupFCC() {
 }
 
 // fccSetState 统一的状态转换函数
+// 注意：此函数由调用方负责加锁
 func (h *StreamHub) fccSetState(newState int, reason string) bool {
-	// 外部不得持锁调用；此函数内部负责加锁
+	// 外部必须持锁调用
 
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
 	if h.fccState == newState {
 		return false // 状态未改变
 	}
@@ -1147,9 +1118,7 @@ func (h *StreamHub) fccSetState(newState int, reason string) bool {
 	switch newState {
 	case FCC_STATE_MCAST_ACTIVE:
 		// 清理FCC资源
-		if h.fccPendingBuf != nil {
-			h.fccPendingBuf.Reset()
-		}
+		// 移除 fccPendingBuf.Reset()，统一使用链表BufferRef
 
 		// 停止并清理定时器
 		if h.fccSyncTimer != nil {

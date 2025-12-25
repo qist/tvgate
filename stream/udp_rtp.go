@@ -222,7 +222,6 @@ type StreamHub struct {
 	fccCacheSize      int
 	fccPortMin        int
 	fccPortMax        int
-	fccPendingBuf     *RingBuffer
 	fccStartSeq       uint16
 	fccTermSeq        uint16
 	fccTermSent       bool
@@ -233,7 +232,7 @@ type StreamHub struct {
 	fccUnicastBufPool *sync.Pool
 	fccPendingCount   int32
 
-	// 新增用于零拷贝缓冲区管理和状态转换的字段
+	// 统一使用零拷贝缓冲区管理和状态转换的字段
 	fccPendingListHead *BufferRef
 	fccPendingListTail *BufferRef
 
@@ -355,9 +354,7 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		})
 	}
 
-	// 注意：即使没有启用FCC，我们也初始化FCC缓冲区，以备将来使用
-	// 但只有在实际启用FCC时才使用它
-	hub.fccPendingBuf = NewRingBuffer(hub.fccCacheSize)
+	// 注意：不再初始化 fccPendingBuf，统一使用 fccPendingListHead/Tail 链表
 
 	go hub.run()
 	hub.startReadLoops()
@@ -1240,10 +1237,7 @@ func (h *StreamHub) Close() {
 	}
 	h.LastFrame = nil
 	h.rtpBuffer = nil
-	if h.fccPendingBuf != nil {
-		h.fccPendingBuf.Reset()
-		h.fccPendingBuf = nil
-	}
+	// 移除了对 fccPendingBuf 的清理，因为该字段已被移除
 
 	// 清理PAT/PMT缓冲区
 	if h.patBuffer != nil {
@@ -1668,4 +1662,11 @@ func (h *StreamHub) isClosed() bool {
 	default:
 		return false
 	}
+}
+
+// SetFccState 设置FCC状态并记录状态转换日志
+func (h *StreamHub) SetFccState(state int) {
+	h.Mu.Lock()
+	defer h.Mu.Unlock()
+	h.fccSetState(state, "SetFccState")
 }
