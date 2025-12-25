@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/qist/tvgate/logger"
@@ -32,8 +33,9 @@ type HTTPHub struct {
 
 	// 缓存相关
 	cache         [][]byte
-	cacheBytes    int
-	maxCacheBytes int // 最大缓存总字节数
+	cacheBytes    int64  // 使用原子操作
+	maxCacheBytes int64  // 使用原子操作
+	cacheMu       sync.RWMutex  // 单独的缓存锁，减少锁争用
 }
 
 var (
@@ -58,7 +60,8 @@ func GetOrCreateHTTPHub(key string) *HTTPHub {
 		idleTimeout:   60 * time.Second,
 		cache:         make([][]byte, 0),
 		cacheBytes:    0,
-		maxCacheBytes: 32 << 20, // 32MB 缓存，更适合 4K 视频流
+		maxCacheBytes: 64 << 20, // 64MB 缓存，更适合 4K 视频流
+		cacheMu:       sync.RWMutex{},
 	}
 	httpHubs[normalizedKey] = h
 	return h
@@ -138,11 +141,14 @@ func (h *HTTPHub) AddClient(w http.ResponseWriter, bufSize int) *HTTPHubClient {
 	}
 	h.clients[c] = struct{}{}
 
+	// 读取缓存数据并发送给新客户端
+	h.cacheMu.RLock()
 	for _, cached := range h.cache {
 		if !h.trySend(c, cached) {
 			break
 		}
 	}
+	h.cacheMu.RUnlock()
 	h.mu.Unlock()
 	return c
 }
@@ -165,23 +171,28 @@ func (h *HTTPHub) RemoveClient(c *HTTPHubClient) {
 
 // 广播数据并缓存（优化：客户端阻塞时丢弃当前数据，而非直接移除）
 func (h *HTTPHub) Broadcast(data []byte) {
-	h.mu.Lock()
-	if h.closed {
-		h.mu.Unlock()
-		return
-	}
-
+	// 创建数据副本
 	buf := make([]byte, len(data))
 	copy(buf, data)
 
 	// 添加到缓存
+	h.cacheMu.Lock()
 	h.cache = append(h.cache, buf)
-	h.cacheBytes += len(buf)
+	newCacheBytes := atomic.AddInt64(&h.cacheBytes, int64(len(buf)))
 
 	// 超出最大字节数时，从头部删除最旧块
-	for h.cacheBytes > h.maxCacheBytes && len(h.cache) > 0 {
-		h.cacheBytes -= len(h.cache[0])
+	for newCacheBytes > atomic.LoadInt64(&h.cacheBytes) && len(h.cache) > 0 {
+		removed := h.cache[0]
 		h.cache = h.cache[1:]
+		atomic.AddInt64(&h.cacheBytes, -int64(len(removed)))
+		newCacheBytes = atomic.LoadInt64(&h.cacheBytes)
+	}
+	h.cacheMu.Unlock()
+
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return
 	}
 
 	clients := make([]*HTTPHubClient, 0, len(h.clients))
