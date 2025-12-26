@@ -5,10 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/logger"
-
+	"net"
+	"time"
 	// "github.com/qist/tvgate/monitor"
 	"io"
 	"net/http"
@@ -61,34 +61,211 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	// 复制响应头
 	CopyHeader(w.Header(), resp.Header, r.ProtoMajor)
 	w.WriteHeader(resp.StatusCode)
+	if isWebPageContent(resp.Header.Get("Content-Type"), u.Path) {
+		done := make(chan struct{})
 
-	done := make(chan struct{})
+		// 从池中获取任务对象
+		task := handleTaskPool.Get().(*handleTask)
+		task.f = func() {
+			defer close(done)
+			if err := Copytext(ctx, w, resp.Body, buf, updateActive); err != nil {
+				HandleCopyError(r, err, resp)
+			}
+		}
 
-	// 从池中获取任务对象
-	task := handleTaskPool.Get().(*handleTask)
-	task.f = func() {
-		defer close(done)
-		if err := CopyWithContext(ctx, w, resp.Body, buf, bufSize,updateActive, resp.Request.URL.String()); err != nil {
-			HandleCopyError(r, err, resp)
+		// 在goroutine内部执行任务并确保完成后放回池中
+		go func() {
+			defer func() {
+				// 清空任务并放回池中
+				task.f = nil
+				handleTaskPool.Put(task)
+			}()
+			task.f()
+		}()
+
+		select {
+		case <-ctx.Done():
+			logger.LogPrintf("客户端断开连接: %s", targetURL)
+		case <-done:
+			logger.LogPrintf("响应成功完成: %s", targetURL)
+		}
+	} else {
+
+		done := make(chan struct{})
+
+		// 从池中获取任务对象
+		task := handleTaskPool.Get().(*handleTask)
+		task.f = func() {
+			defer close(done)
+			if err := CopyWithContext(ctx, w, resp.Body, buf, bufSize, updateActive, resp.Request.URL.String()); err != nil {
+				HandleCopyError(r, err, resp)
+			}
+		}
+
+		// 在goroutine内部执行任务并确保完成后放回池中
+		go func() {
+			defer func() {
+				// 清空任务并放回池中
+				task.f = nil
+				handleTaskPool.Put(task)
+			}()
+			task.f()
+		}()
+
+		select {
+		case <-ctx.Done():
+			logger.LogPrintf("客户端断开连接: %s", targetURL)
+		case <-done:
+			logger.LogPrintf("响应成功完成: %s", targetURL)
 		}
 	}
+}
 
-	// 在goroutine内部执行任务并确保完成后放回池中
-	go func() {
-		defer func() {
-			// 清空任务并放回池中
-			task.f = nil
-			handleTaskPool.Put(task)
-		}()
-		task.f()
-	}()
-
-	select {
-	case <-ctx.Done():
-		logger.LogPrintf("客户端断开连接: %s", targetURL)
-	case <-done:
-		logger.LogPrintf("响应成功完成: %s", targetURL)
+// Copytext 流式复制 src -> dst，使用 buffer 池，bufio 内部缓存可控
+func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, updateActive func()) error {
+	// 活跃时间心跳
+	var activeTicker *time.Ticker
+	if updateActive != nil {
+		activeTicker = time.NewTicker(5 * time.Second)
+		defer activeTicker.Stop()
+		defer updateActive() // 退出前更新一次
 	}
+
+	// flush 定时器（降低延迟）
+	flushTicker := time.NewTicker(200 * time.Millisecond)
+	defer flushTicker.Stop()
+
+	// 是否支持 http flush
+	flusher, canFlush := dst.(http.Flusher)
+
+	// 统计写入字节数
+	bytesWritten := 0
+
+	// 如果 src 是 net.Conn，给它绑 ctx
+	if c, ok := src.(net.Conn); ok {
+		go func() {
+			<-ctx.Done()
+			// 打断阻塞 read
+			_ = c.SetReadDeadline(time.Now())
+		}()
+	}
+
+	for {
+		// 读取数据
+		n, readErr := src.Read(buf)
+		if n > 0 {
+			// monitor.AddAppInboundBytes(uint64(n))
+			written := 0
+			for written < n {
+				wn, writeErr := dst.Write(buf[written:n])
+				if writeErr != nil {
+					return fmt.Errorf("写入错误: %w", writeErr)
+				}
+				written += wn
+				bytesWritten += wn
+			}
+			// monitor.AddAppOutboundBytes(uint64(n))
+
+			// 大数据量触发 flush
+			if canFlush && bytesWritten >= 32*1024 {
+				flusher.Flush()
+				bytesWritten = 0
+			}
+		}
+
+		// 错误处理
+		if readErr != nil {
+			if canFlush && bytesWritten > 0 {
+				flusher.Flush()
+			}
+			if errors.Is(readErr, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("读取错误: %w", readErr)
+		}
+
+		// 非阻塞检查 ctx / ticker
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-flushTicker.C:
+			if canFlush && bytesWritten > 0 {
+				flusher.Flush()
+				bytesWritten = 0
+			}
+		case <-activeTicker.C:
+			if updateActive != nil {
+				updateActive()
+			}
+		default:
+		}
+	}
+}
+
+func isWebPageContent(contentType, path string) bool {
+	ct := strings.ToLower(contentType)
+	p := strings.ToLower(path)
+
+	// 去掉参数（; charset=xxx）
+	if i := strings.Index(ct, ";"); i != -1 {
+		ct = ct[:i]
+	}
+
+	// ===== 明确排除流媒体 =====
+	if strings.HasPrefix(ct, "video/") ||
+		strings.HasPrefix(ct, "audio/") {
+		return false
+	}
+
+	// ===== image 特判：只允许 svg =====
+	if strings.HasPrefix(ct, "image/") {
+		return ct == "image/svg+xml"
+	}
+
+	// ===== 明确允许的 Web / 文本类型 =====
+	switch ct {
+	case
+		"text/html",
+		"text/plain",
+		"text/css",
+		"text/markdown",
+
+		"application/javascript",
+		"application/x-javascript",
+		"application/json",
+		"application/xml",
+		"application/xhtml+xml",
+		"application/rss+xml",
+		"application/atom+xml",
+
+		"image/svg+xml",
+		"application/wasm":
+		return true
+	}
+
+	// ===== 处理 path（去 query / fragment）=====
+	if i := strings.IndexAny(p, "?#"); i != -1 {
+		p = p[:i]
+	}
+
+	// ===== 扩展名兜底 =====
+	switch {
+	case strings.HasSuffix(p, ".html"),
+		strings.HasSuffix(p, ".htm"),
+		strings.HasSuffix(p, ".css"),
+		strings.HasSuffix(p, ".js"),
+		strings.HasSuffix(p, ".mjs"),
+		strings.HasSuffix(p, ".json"),
+		strings.HasSuffix(p, ".xml"),
+		strings.HasSuffix(p, ".txt"),
+		strings.HasSuffix(p, ".md"),
+		strings.HasSuffix(p, ".map"),
+		strings.HasSuffix(p, ".svg"),
+		strings.HasSuffix(p, ".wasm"):
+		return true
+	}
+
+	return false
 }
 
 // getRequestScheme 返回客户端真实使用的协议 (http/https)
