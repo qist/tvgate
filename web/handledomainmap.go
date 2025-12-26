@@ -330,6 +330,7 @@ func (h *ConfigHandler) handleDomainMapConfigSave(w http.ResponseWriter, r *http
 		doc := fullNode.Content[0]
 		if doc.Kind == yaml.MappingNode {
 			// 查找domainmap节点并更新
+			domainmapFound := false
 			for i := 0; i < len(doc.Content); i += 2 {
 				keyNode := doc.Content[i]
 				if keyNode.Kind == yaml.ScalarNode && keyNode.Value == "domainmap" {
@@ -338,8 +339,22 @@ func (h *ConfigHandler) handleDomainMapConfigSave(w http.ResponseWriter, r *http
 					seqNode.Content = yamlDomainMaps
 					// 替换值节点
 					doc.Content[i+1] = seqNode
+					domainmapFound = true
 					break
 				}
+			}
+			
+			// 如果没有找到domainmap节点，则添加它
+			if !domainmapFound {
+				// 创建domainmap键节点
+				keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: "domainmap"}
+				
+				// 创建domainmap值节点（序列）
+				seqNode := &yaml.Node{Kind: yaml.SequenceNode}
+				seqNode.Content = yamlDomainMaps
+				
+				// 将新节点添加到文档内容中
+				doc.Content = append(doc.Content, keyNode, seqNode)
 			}
 		}
 	}

@@ -1037,11 +1037,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		buf := buffer.GetBuffer(bufSize)
 		defer buffer.PutBuffer(bufSize, buf)
-		err := stream.CopyResponse(r.Context(), w, r, resp, originalReqURL.String(), buf, bufSize, updateActive)
-		if err != nil {
-			http.Error(w, "复制响应失败: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
+		stream.CopyResponse(r.Context(), w, r, resp, originalReqURL.String(), buf, bufSize, updateActive)
 	}
 
 	logger.LogRequestAndResponse(r, originalReqURL.String(), resp)
