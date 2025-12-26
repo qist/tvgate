@@ -1037,7 +1037,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		buf := buffer.GetBuffer(bufSize)
 		defer buffer.PutBuffer(bufSize, buf)
-		stream.CopyResponse(r.Context(), w, r, resp, originalReqURL.String(), buf, bufSize, updateActive)
+		stream.Copytext(r.Context(), w, resp.Body, buf, updateActive)
 	}
 
 	logger.LogRequestAndResponse(r, originalReqURL.String(), resp)
