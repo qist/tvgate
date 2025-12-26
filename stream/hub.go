@@ -17,7 +17,7 @@ const (
 )
 
 type StreamHubs struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex  // 使用读写锁提高并发性能
 	clients  map[*ringbuffer.RingBuffer]struct{}
 	isClosed bool
 	// 添加流状态管理
@@ -42,7 +42,6 @@ func NewStreamHubs() *StreamHubs {
 }
 
 func (hub *StreamHubs) AddClient(ch *ringbuffer.RingBuffer) {
-
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	if hub.isClosed {
@@ -65,24 +64,38 @@ func (hub *StreamHubs) RemoveClient(ch *ringbuffer.RingBuffer) {
 }
 
 func (hub *StreamHubs) Broadcast(data []byte) {
-	hub.mu.Lock()
+	hub.mu.RLock()  // 使用读锁，提高并发性能
 	clients := make([]*ringbuffer.RingBuffer, 0, len(hub.clients))
 	for ch := range hub.clients {
 		clients = append(clients, ch)
 	}
-	hub.mu.Unlock()
+	hub.mu.RUnlock()
 
 	for _, ch := range clients {
 		buf := make([]byte, len(data))
 		copy(buf, data)
-		ch.Push(buf)
+		if !ch.Push(buf) {
+			// 如果推送失败，可能是通道已关闭，从客户端列表中移除
+			hub.removeClientIfNotExist(ch)
 		}
-	// logger.LogPrintf("DEBUG: Broadcasted %d bytes to %d clients", len(data), len(clients))
+	}
+}
+
+// removeClientIfNotExist 从客户端列表中移除已不存在的客户端
+func (hub *StreamHubs) removeClientIfNotExist(ch *ringbuffer.RingBuffer) {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	
+	// 再次确认客户端是否还在列表中
+	if _, exists := hub.clients[ch]; exists {
+		delete(hub.clients, ch)
+		ch.Close()
+	}
 }
 
 func (hub *StreamHubs) ClientCount() int {
-	hub.mu.Lock()
-	defer hub.mu.Unlock()
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
 	return len(hub.clients)
 }
 
@@ -161,17 +174,22 @@ func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 		return true
 	}
 	
-	// 等待状态变为播放中或上下文取消
+	// 使用select来同时等待状态变化和context取消
 	for hub.state == 0 && !hub.isClosed {
-		// 使用 Done channel 监听 context 取消
-		done := make(chan struct{})
+		// 创建一个channel用于等待状态变化
+		stateChanged := make(chan struct{}, 1)
+		
+		// 在goroutine中等待状态变化
 		go func() {
-			defer close(done)
+			hub.mu.Lock()
+			defer hub.mu.Unlock()
+			// 等待状态变化
 			hub.stateCond.Wait()
+			stateChanged <- struct{}{}
 		}()
 		
 		select {
-		case <-done:
+		case <-stateChanged:
 			// 检查唤醒后的新状态
 			if hub.state == 2 { // error state
 				return false
@@ -179,8 +197,9 @@ func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 			if hub.state == 1 { // playing state
 				return true
 			}
+			// 如果状态还是0，继续循环
 		case <-ctx.Done():
-			// context 被取消
+			// context 被取消，返回false
 			return false
 		}
 	}
@@ -197,15 +216,15 @@ func (hub *StreamHubs) SetRtspClient(client *gortsplib.Client) {
 
 // 新增方法：获取RTSP客户端
 func (hub *StreamHubs) GetRtspClient() *gortsplib.Client {
-	hub.mu.Lock()
-	defer hub.mu.Unlock()
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
 	return hub.rtspClient
 }
 
 // 新增方法：检查RTSP客户端是否存在
 func (hub *StreamHubs) HasRtspClient() bool {
-	hub.mu.Lock()
-	defer hub.mu.Unlock()
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
 	return hub.rtspClient != nil
 }
 
