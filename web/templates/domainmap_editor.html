@@ -432,7 +432,7 @@
             cardDiv.className = 'domainmap-card';
             cardDiv.innerHTML = `
                 <h3>${domainMap.name || '未命名'}</h3>
-                <p><strong>源域名:</strong> ${domainMap.source || '未设置'}</p>
+                <p><strong>源域名《自己的域名或者ip》:</strong> ${domainMap.source || '未设置'}</p>
                 <p><strong>目标域名:</strong> ${domainMap.target || '未设置'}</p>
                 <p><strong>协议:</strong> ${!domainMap.protocol ? '默认' : domainMap.protocol.toUpperCase()}</p>
             `;
@@ -514,7 +514,7 @@
                         <input type="text" id="name" class="form-control" value="${domainMap.name || ''}" onchange="updateCurrentDomainMap('name', this.value)">
                     </div>
                     <div class="form-group">
-                        <label for="source">源域名:</label>
+                        <label for="source">源域名《自己的域名或者ip》:</label>
                         <input type="text" id="source" class="form-control" value="${domainMap.source || ''}" onchange="updateCurrentDomainMap('source', this.value)">
                     </div>
                     <div class="form-group">
