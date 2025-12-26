@@ -44,16 +44,16 @@ var (
 )
 
 // 获取或创建 Hub
-func GetOrCreateHTTPHub(key string) *HTTPHub {
-	normalizedKey := normalizeHubKey(key)
+func GetOrCreateHTTPHub(rawURL string, statusCode int) *HTTPHub {
+	normalizedKey := normalizeHubKey(rawURL, statusCode)
 
 	httpHubsMu.Lock()
 	defer httpHubsMu.Unlock()
 	if h, ok := httpHubs[normalizedKey]; ok {
-		// logger.LogPrintf("复用已存在的hub: %s (原始key: %s)", normalizedKey, key)
+		// logger.LogPrintf("复用已存在的hub: %s (原始URL: %s, 状态码: %d)", normalizedKey, rawURL, statusCode)
 		return h
 	}
-	// logger.LogPrintf("创建新的hub: %s (原始key: %s)", normalizedKey, key)
+	// logger.LogPrintf("创建新的hub: %s (原始URL: %s, 状态码: %d)", normalizedKey, rawURL, statusCode)
 	h := &HTTPHub{
 		clients:       make(map[*HTTPHubClient]struct{}),
 		key:           normalizedKey,
@@ -68,14 +68,14 @@ func GetOrCreateHTTPHub(key string) *HTTPHub {
 }
 
 // URL 标准化
-func normalizeHubKey(raw string) string {
-	u, err := url.Parse(raw)
+func normalizeHubKey(rawURL string, statusCode int) string {
+	u, err := url.Parse(rawURL)
 	if err != nil {
-		return raw
+		return rawURL + "#" + string(statusCode)
 	}
 	u.RawQuery = "" // 去掉 query
 	u.Fragment = "" // 去掉 fragment
-	return u.String()
+	return u.String() + "#" + string(statusCode)
 }
 
 // 删除 Hub
