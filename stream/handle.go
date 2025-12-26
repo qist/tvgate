@@ -61,63 +61,51 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	// 复制响应头
 	CopyHeader(w.Header(), resp.Header, r.ProtoMajor)
 	w.WriteHeader(resp.StatusCode)
+
+	// 根据内容类型选择不同的复制函数
+	var copyFunc func() error
 	if isWebPageContent(resp.Header.Get("Content-Type"), u.Path) {
-		done := make(chan struct{})
-
-		// 从池中获取任务对象
-		task := handleTaskPool.Get().(*handleTask)
-		task.f = func() {
-			defer close(done)
-			if err := Copytext(ctx, w, resp.Body, buf, updateActive); err != nil {
-				HandleCopyError(r, err, resp)
-			}
-		}
-
-		// 在goroutine内部执行任务并确保完成后放回池中
-		go func() {
-			defer func() {
-				// 清空任务并放回池中
-				task.f = nil
-				handleTaskPool.Put(task)
-			}()
-			task.f()
-		}()
-
-		select {
-		case <-ctx.Done():
-			logger.LogPrintf("客户端断开连接: %s", targetURL)
-		case <-done:
-			logger.LogPrintf("响应成功完成: %s", targetURL)
+		copyFunc = func() error {
+			return Copytext(ctx, w, resp.Body, buf, updateActive)
 		}
 	} else {
-
-		done := make(chan struct{})
-
-		// 从池中获取任务对象
-		task := handleTaskPool.Get().(*handleTask)
-		task.f = func() {
-			defer close(done)
-			if err := CopyWithContext(ctx, w, resp.Body, buf, bufSize, updateActive, resp.Request.URL.String()); err != nil {
-				HandleCopyError(r, err, resp)
-			}
+		copyFunc = func() error {
+			return CopyWithContext(ctx, w, resp.Body, buf, bufSize, updateActive, resp.Request.URL.String())
 		}
+	}
 
-		// 在goroutine内部执行任务并确保完成后放回池中
-		go func() {
-			defer func() {
-				// 清空任务并放回池中
-				task.f = nil
-				handleTaskPool.Put(task)
-			}()
-			task.f()
+	// 使用统一的执行函数处理复制操作
+	executeCopyWithPool(ctx, r, targetURL, copyFunc, resp)
+}
+
+// executeCopyWithPool 使用任务池执行复制操作
+func executeCopyWithPool(ctx context.Context, r *http.Request, targetURL string, copyFunc func() error, resp *http.Response) {
+	done := make(chan struct{})
+
+	// 从池中获取任务对象
+	task := handleTaskPool.Get().(*handleTask)
+	task.f = func() {
+		defer close(done)
+		if err := copyFunc(); err != nil {
+			HandleCopyError(r, err, resp)
+		}
+	}
+
+	// 在goroutine内部执行任务并确保完成后放回池中
+	go func() {
+		defer func() {
+			// 清空任务并放回池中
+			task.f = nil
+			handleTaskPool.Put(task)
 		}()
+		task.f()
+	}()
 
-		select {
-		case <-ctx.Done():
-			logger.LogPrintf("客户端断开连接: %s", targetURL)
-		case <-done:
-			logger.LogPrintf("响应成功完成: %s", targetURL)
-		}
+	select {
+	case <-ctx.Done():
+		logger.LogPrintf("客户端断开连接: %s", targetURL)
+	case <-done:
+		logger.LogPrintf("响应成功完成: %s", targetURL)
 	}
 }
 
