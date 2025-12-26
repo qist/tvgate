@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"net/http"
@@ -74,7 +75,7 @@ func (h *ConfigHandler) handleJXConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(jxMap)
 }
 
-// handleJXConfigSave 处理jx配置保存请求
+// handleJXConfigSave 保存JX配置
 func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Request) {
 	// 检查请求方法
 	if r.Method != http.MethodPost {
@@ -340,4 +341,85 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(jxMap)
+}
+
+// TestAPIEndpoint 测试API接口
+func (h *ConfigHandler) TestAPIEndpoint(w http.ResponseWriter, r *http.Request) {
+	// 检查请求方法
+	if r.Method != http.MethodPost {
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 读取请求体
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "读取请求体失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// 解析JSON数据
+	var requestData struct {
+		Endpoint string `json:"endpoint"`
+	}
+	if err := json.Unmarshal(body, &requestData); err != nil {
+		http.Error(w, "解析JSON失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// 验证API接口地址
+	if requestData.Endpoint == "" {
+		http.Error(w, "API接口地址不能为空", http.StatusBadRequest)
+		return
+	}
+
+	// 发送测试请求
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// 尝试发送一个简单的GET请求测试API接口
+	resp, err := client.Get(requestData.Endpoint)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		// 尝试读取响应体的一部分来验证API是否返回有效数据
+		buffer := make([]byte, 1024) // 读取前1024字节
+		n, err := resp.Body.Read(buffer)
+		if err != nil && err != io.EOF {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "读取响应失败: " + err.Error(),
+			})
+			return
+		}
+
+		responsePreview := string(buffer[:n])
+		// 检查是否包含JSON响应的特征
+		isJSON := strings.Contains(responsePreview, "{") || strings.Contains(responsePreview, "[")
+		
+		message := fmt.Sprintf("状态码: %d", resp.StatusCode)
+		if isJSON {
+			message += ", 检测到JSON响应"
+		}
+		
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": message,
+		})
+	} else {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("API返回错误状态码: %d", resp.StatusCode),
+		})
+	}
 }

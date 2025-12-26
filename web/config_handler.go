@@ -196,6 +196,7 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/save-global-auth", h.cookieAuth(h.handleGlobalAuthConfigSave))
 	mux.HandleFunc(webPath+"config/jx", h.cookieAuth(h.handleJXConfig))
 	mux.HandleFunc(webPath+"config/save-jx", h.cookieAuth(h.handleJXConfigSave))
+	mux.HandleFunc(webPath+"config/test-endpoint", h.cookieAuth(h.TestAPIEndpoint))
 	mux.HandleFunc(webPath+"config/server-monitor", h.cookieAuth(h.handleServerMonitorConfig))
 	mux.HandleFunc(webPath+"config/save-server-monitor", h.cookieAuth(h.handleServerMonitorConfigSave))
 	mux.HandleFunc(webPath+"config/server", h.cookieAuth(h.handleServerConfig))

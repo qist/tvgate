@@ -241,6 +241,37 @@
         .detail-view {
             display: none;
         }
+        
+        .info-section {
+            background-color: var(--win11-card);
+            border: 1px solid var(--win11-border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .info-section h2 {
+            margin-top: 0;
+            color: var(--win11-text-primary);
+            border-bottom: 1px solid var(--win11-border);
+            padding-bottom: 10px;
+        }
+        
+        .info-content ul {
+            padding-left: 20px;
+        }
+        
+        .info-content li {
+            margin-bottom: 8px;
+        }
+        
+        .info-content code {
+            background-color: var(--win11-surface);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            color: var(--win11-accent);
+        }
 
         .filters-container {
             margin-top: 10px;
@@ -312,6 +343,26 @@
         
         .remove-endpoint:hover {
             background-color: #c40f1d;
+        }
+        
+        .test-endpoint {
+            background-color: var(--win11-warning);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 8px 12px;
+            margin: 0 5px;
+            transition: background-color 0.3s;
+        }
+        
+        .test-endpoint:hover {
+            background-color: #d4a70d;
+        }
+        
+        .test-endpoint:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
         }
         
         .add-endpoint {
@@ -396,6 +447,46 @@
         </div>
 
         <h1>JX编辑器</h1>
+
+        <!-- 说明文档 -->
+        <div class="info-section">
+            <h2>说明文档</h2>
+            <div class="info-content">
+                <p><strong>jx</strong> - 视频解析接口配置，用于对接第三方视频API</p>
+                <ul>
+                    <li><strong>path</strong> - JX接口路径，例如: <code>/jx</code>，用户访问 http://yourdomain:port/jx 来使用视频解析服务</li>
+                    <li><strong>default_id</strong> - 默认集数，如果请求未传 id 参数，则使用此值，例如: <code>1</code></li>
+                </ul>
+                
+                <p><strong>api_groups</strong> - 视频API组配置，可以配置不同的视频源</p>
+                <ul>
+                    <li><strong>endpoints</strong> - API接口列表，例如:
+                        <ul>
+                            <li><code>http://23.224.101.30</code> - 主API地址</li>
+                            <li><code>https://mozhuazy.com</code> - 备用API地址</li>
+                        </ul>
+                    </li>
+                    <li><strong>timeout</strong> - 请求超时时间，例如: <code>10s</code> (10秒)</li>
+                    <li><strong>query_template</strong> - 查询URL模板，例如: <code>%s/api.php/provide/vod/?ac=detail&wd=%s</code>，其中 %s 会被替换为 endpoint 和搜索关键词</li>
+                    <li><strong>primary</strong> - 是否主API，例如: <code>true</code> 表示这是主API</li>
+                    <li><strong>weight</strong> - 权重，用于负载均衡，例如: <code>2</code> 表示较高的优先级</li>
+                    <li><strong>fallback</strong> - 是否可以作为备用API，例如: <code>true</code> 表示当主API失败时可以作为备用</li>
+                    <li><strong>max_retries</strong> - 请求失败重试次数，例如: <code>3</code> 表示最多重试3次</li>
+                    <li><strong>filters</strong> - 过滤条件，例如:
+                        <ul>
+                            <li><strong>exclude</strong> - 排除包含指定关键字的视频，例如: <code>电影解说,完美世界剧场版</code> 表示排除包含这些关键字的视频</li>
+                        </ul>
+                    </li>
+                </ul>
+                
+                <h3>使用示例</h3>
+                <p>配置完成后，可以通过以下方式访问：</p>
+                <ul>
+                    <li>直接访问: <code>http://yourdomain:port/jx?jx=https://v.xx.com/x/cover/...&id=1</code></li>
+                    <li>TVBox配置: <code>http://yourdomain:port/jx?jx=视频地址</code></li>
+                </ul>
+            </div>
+        </div>
 
         <div id="alert-container" class="hidden"></div>
 
@@ -1026,12 +1117,118 @@
                         <input type="text" class="form-control" value="${endpoint || ''}" 
                             placeholder="例如: https://api.example.com/jx" 
                             onchange="updateAPIEndpointValue('current', ${index}, this.value)">
+                        <button class="test-endpoint" onclick="testAPIEndpoint('${endpoint || ''}', ${index})">测试</button>
                         <button class="remove-endpoint" onclick="removeAPIEndpoint('current', ${index})">删除</button>
                     </div>
                 `;
             });
             
             container.innerHTML = endpointsHTML;
+        }
+        
+        // 为API接口列表项添加点击功能，如测试接口
+        function addEndpointClickFunction() {
+            // 这里可以添加更多与API接口相关的功能
+        }
+
+        // 测试API接口
+        function testAPIEndpoint(endpoint, index) {
+            if (!endpoint) {
+                showAlert('请先输入有效的API接口地址', 'danger');
+                return;
+            }
+            
+            // 验证URL格式
+            try {
+                new URL(endpoint);
+            } catch (e) {
+                showAlert('API接口地址格式不正确', 'danger');
+                return;
+            }
+            
+            // 显示测试中提示
+            const endpointItems = document.querySelectorAll('.endpoint-item');
+            if (endpointItems[index]) {
+                const testBtn = endpointItems[index].querySelector('.test-endpoint');
+                const originalText = testBtn.textContent;
+                testBtn.textContent = '测试中...';
+                testBtn.disabled = true;
+                
+                // 发送测试请求
+                fetch(webPath + 'config/test-endpoint', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        endpoint: endpoint
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showAlert(`API接口测试成功: ${data.message}`, 'success');
+                    } else {
+                        showAlert(`API接口测试失败: ${data.message}`, 'danger');
+                    }
+                })
+                .catch(error => {
+                    console.error('测试API接口失败:', error);
+                    showAlert(`API接口测试失败: ${error.message}`, 'danger');
+                })
+                .finally(() => {
+                    // 恢复按钮状态
+                    testBtn.textContent = originalText;
+                    testBtn.disabled = false;
+                });
+            }
+        }
+        
+        // 保存当前API组
+        function saveCurrentAPIGroup() {
+            // 验证当前组名
+            if (!currentEditGroupName) {
+                const groupName = document.querySelector('#detail-form input[onchange="updateCurrentGroupName(this.value)"]').value;
+                if (!groupName) {
+                    showAlert('组名不能为空', 'danger');
+                    return;
+                }
+                
+                // 检查组名是否已存在
+                if (jxConfig.api_groups[groupName] && groupName !== currentEditGroupName) {
+                    showAlert('组名已存在', 'danger');
+                    return;
+                }
+                
+                // 如果是新组，将临时组数据移动到新组名下
+                if (window.isNewGroup) {
+                    jxConfig.api_groups[groupName] = jxConfig.api_groups[""];
+                    delete jxConfig.api_groups[""];
+                    currentEditGroupName = groupName;
+                } else {
+                    // 如果是编辑现有组且组名被修改
+                    jxConfig.api_groups[groupName] = jxConfig.api_groups[currentEditGroupName];
+                    delete jxConfig.api_groups[currentEditGroupName];
+                    currentEditGroupName = groupName;
+                }
+            }
+            
+            // 验证接口列表
+            const endpoints = jxConfig.api_groups[currentEditGroupName].endpoints || [];
+            const validEndpoints = endpoints.filter(endpoint => endpoint && endpoint.trim() !== "");
+            if (validEndpoints.length === 0) {
+                showAlert('至少需要一个有效的接口地址', 'danger');
+                return;
+            }
+            
+            // 更新组的接口列表
+            jxConfig.api_groups[currentEditGroupName].endpoints = validEndpoints;
+            
+            // 显示成功提示
+            showAlert('API组已保存', 'success');
+            
+            // 返回列表视图
+            backToListView();
         }
 
         // 添加API组
@@ -1063,112 +1260,6 @@
             }
         }
  
-        // 保存当前API组
-        function saveCurrentAPIGroup() {
-            // 验证当前编辑的组
-            if (currentEditGroupName && jxConfig.api_groups && jxConfig.api_groups[currentEditGroupName]) {
-                // 编辑现有API组
-                const group = jxConfig.api_groups[currentEditGroupName];
-                if (!group.endpoints || group.endpoints.length === 0 || 
-                    (group.endpoints.length === 1 && group.endpoints[0] === "")) {
-                    showAlert('至少需要一个有效的接口地址', 'danger');
-                    return;
-                }
-                
-                // 检查是否有有效的端点
-                const hasValidEndpoint = group.endpoints.some(endpoint => endpoint && endpoint.trim() !== "");
-                if (!hasValidEndpoint) {
-                    showAlert('至少需要一个有效的接口地址', 'danger');
-                    return;
-                }
-            } else if (currentEditGroupName === "") {
-                // 新增API组，需要输入组名
-                const newGroupName = prompt('请输入组名称:');
-                if (!newGroupName) {
-                    showAlert('组名称不能为空', 'danger');
-                    return;
-                }
-                
-                // 检查组名是否已存在
-                if (jxConfig.api_groups && jxConfig.api_groups[newGroupName]) {
-                    showAlert('组名已存在', 'danger');
-                    return;
-                }
-                
-                // 验证新组的数据
-                const newGroup = jxConfig.api_groups[""] || {
-                    endpoints: [],
-                    timeout: "",
-                    query_template: "",
-                    primary: false,
-                    weight: 0,
-                    fallback: false,
-                    max_retries: 0,
-                    filters: {}
-                };
-                
-                if (!newGroup.endpoints || newGroup.endpoints.length === 0 || 
-                    (newGroup.endpoints.length === 1 && newGroup.endpoints[0] === "")) {
-                    showAlert('至少需要一个有效的接口地址', 'danger');
-                    return;
-                }
-                
-                // 检查是否有有效的端点
-                const hasValidEndpoint = newGroup.endpoints.some(endpoint => endpoint && endpoint.trim() !== "");
-                if (!hasValidEndpoint) {
-                    showAlert('至少需要一个有效的接口地址', 'danger');
-                    return;
-                }
-                
-                // 将临时组数据移动到新的组名下
-                jxConfig.api_groups[newGroupName] = newGroup;
-                delete jxConfig.api_groups[""];
-                currentEditGroupName = newGroupName;
-            } else {
-                showAlert('无效的组名', 'danger');
-                return;
-            }
-            
-            // 添加日志，确认发送的数据
-            // console.log('保存当前API组时发送的数据:', JSON.stringify(jxConfig));
-
-            fetch(webPath + 'config/save-jx', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(jxConfig)
-            })
-            .then(response => {
-                // console.log('保存当前API组响应状态:', response.status);
-                if (!response.ok) {
-                    return response.text().then(text => {
-                        console.error('保存当前API组失败响应内容:', text);
-                        throw new Error(text || '保存配置失败');
-                    });
-                }
-                return response.json();
-            })
-            .then(data => {
-                // console.log('保存当前API组成功响应:', data);
-                // if (data && data.path !== undefined && data.default_id !== undefined) {
-                    // 如果返回了配置数据，则更新本地配置
-                    jxConfig = data;
-                // }
-                // console.log('保存当前API组成功响应:', jxConfig);
-                originalJXConfig = JSON.parse(JSON.stringify(jxConfig)); // 更新原始配置副本
-                showAlert('配置已保存,点击重新加载', 'success');
-                // 保存成功后更新界面显示，但不重新加载配置
-                renderMainConfig();
-                renderAPIGroupList(); // 同时更新API组列表显示
-                backToListView();
-            })
-            .catch(error => {
-                console.error('保存配置失败:', error);
-                showAlert('保存配置失败: ' + error.message, 'danger');
-            });
-        }
-
         // 重新加载配置
         function reloadConfig() {
             if (JSON.stringify(jxConfig) === JSON.stringify(originalJXConfig)) {
