@@ -41,20 +41,17 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}()
 
 	logger.LogRequestAndResponse(r, targetURL, resp) // 日志记录
-	u, _ := url.Parse(targetURL)
+	
 	contentType := resp.Header.Get("Content-Type")
-	bufSize := buffer.GetOptimalBufferSize(contentType, u.Path)
-
-	buf := buffer.GetBuffer(bufSize)
-	defer buffer.PutBuffer(bufSize, buf)
+	
 	switch resp.StatusCode {
 	case http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect:
 		handleRedirect(w, r, resp)
 		return
 	}
 
-	if IsSupportedContentType(resp.Header.Get("Content-Type")) {
-		handleSpecialContent(w, r, resp, buf)
+	if IsSupportedContentType(contentType) {
+		handleSpecialContent(w, r, resp, nil) // 这里不需要buf，因为handleSpecialContent内部会自己获取
 		return
 	}
 
@@ -62,16 +59,19 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	CopyHeader(w.Header(), resp.Header, r.ProtoMajor)
 	w.WriteHeader(resp.StatusCode)
 
-	// 根据内容类型选择不同的复制函数
-	var copyFunc func() error
-	if isWebPageContent(resp.Header.Get("Content-Type"), u.Path) {
-		copyFunc = func() error {
-			return Copytext(ctx, w, resp.Body, buf, updateActive)
-		}
-	} else {
-		copyFunc = func() error {
-			return CopyWithContext(ctx, w, resp.Body, buf, bufSize, updateActive, resp.Request.URL.String())
-		}
+	// 解析URL并获取最优缓冲区大小
+	u, err := url.Parse(targetURL)
+	if err != nil {
+		logger.LogPrintf("解析目标URL失败: %v", err)
+		return
+	}
+	bufSize := buffer.GetOptimalBufferSize(contentType, u.Path)
+	buf := buffer.GetBuffer(bufSize)
+	defer buffer.PutBuffer(bufSize, buf)
+
+	// 使用统一的响应复制函数
+	copyFunc := func() error {
+		return CopyResponse(ctx, w, r, resp, targetURL, buf, bufSize, updateActive)
 	}
 
 	// 使用统一的执行函数处理复制操作
@@ -591,4 +591,23 @@ func generateToken(tm *auth.TokenManager, path string) string {
 		}
 	}
 	return ""
+}
+
+// CopyResponse 根据内容类型选择适当的复制方法
+func CopyResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, resp *http.Response, targetURL string, buf []byte, bufSize int, updateActive func()) error {
+	// 解析URL以获取路径和内容类型
+	u, err := url.Parse(targetURL)
+	if err != nil {
+		return err
+	}
+	
+	contentType := resp.Header.Get("Content-Type")
+	
+	if isWebPageContent(contentType, u.Path) {
+		// 对于网页内容，直接复制
+		return Copytext(ctx, w, resp.Body, buf, updateActive)
+	} else {
+		// 对于流媒体内容，使用Hub机制
+		return CopyWithContext(ctx, w, resp.Body, buf, bufSize, updateActive, resp.Request.URL.String())
+	}
 }
