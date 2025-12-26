@@ -71,7 +71,7 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 
 	// 使用统一的响应复制函数
 	copyFunc := func() error {
-		return CopyResponse(ctx, w, r, resp, targetURL, buf, bufSize, updateActive)
+		return CopyWithContext(ctx, w, resp.Body, buf, bufSize, updateActive, resp.Request.URL.String())
 	}
 
 	// 使用统一的执行函数处理复制操作
@@ -596,18 +596,18 @@ func generateToken(tm *auth.TokenManager, path string) string {
 // CopyResponse 根据内容类型选择适当的复制方法
 func CopyResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, resp *http.Response, targetURL string, buf []byte, bufSize int, updateActive func()) error {
 	// 解析URL以获取路径和内容类型
-	u, err := url.Parse(targetURL)
-	if err != nil {
-		return err
-	}
+	// u, err := url.Parse(targetURL)
+	// if err != nil {
+	// 	return err
+	// }
 	
-	contentType := resp.Header.Get("Content-Type")
+	// contentType := resp.Header.Get("Content-Type")
 	
-	if isWebPageContent(contentType, u.Path) {
-		// 对于网页内容，直接复制
-		return Copytext(ctx, w, resp.Body, buf, updateActive)
-	} else {
+	// if isWebPageContent(contentType, u.Path) {
+	// 	// 对于网页内容，直接复制
+	// 	return Copytext(ctx, w, resp.Body, buf, updateActive)
+	// } else {
 		// 对于流媒体内容，使用Hub机制
 		return CopyWithContext(ctx, w, resp.Body, buf, bufSize, updateActive, resp.Request.URL.String())
-	}
+	// }
 }

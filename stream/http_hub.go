@@ -50,7 +50,7 @@ func GetOrCreateHTTPHub(key string) *HTTPHub {
 	httpHubsMu.Lock()
 	defer httpHubsMu.Unlock()
 	if h, ok := httpHubs[normalizedKey]; ok {
-		//logger.LogPrintf("复用已存在的hub: %s (原始key: %s)", normalizedKey, key)
+		// logger.LogPrintf("复用已存在的hub: %s (原始key: %s)", normalizedKey, key)
 		return h
 	}
 	// logger.LogPrintf("创建新的hub: %s (原始key: %s)", normalizedKey, key)
@@ -301,47 +301,82 @@ func (c *HTTPHubClient) safeClose() {
 }
 
 // 客户端写循环（优化：动态 flush，时间+字节双条件）
-func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) error {
-	var bytesWritten int
-	lastFlush := time.Now()
+func (c *HTTPHubClient) WriteLoop(
+	ctx context.Context,
+	updateActive func(),
+) error {
 
-	flushTicker := time.NewTicker(50 * time.Millisecond) // 高频轮询，动态 flush
+	const (
+		tsIdleTimeout = 6 * time.Second
+		flushInterval = 100 * time.Millisecond
+		maxFlushBytes = 32 * 1024
+	)
+
+	var (
+		lastDataAt   = time.Now()
+		bytesWritten = 0
+	)
+
+	flushTicker := time.NewTicker(flushInterval)
+	idleTicker  := time.NewTicker(500 * time.Millisecond)
 	defer flushTicker.Stop()
+	defer idleTicker.Stop()
 
-	activeTicker := (*time.Ticker)(nil)
+	// 只要 client 生命周期内，hub 就算活跃
 	if updateActive != nil {
-		activeTicker = time.NewTicker(5 * time.Second)
-		defer activeTicker.Stop()
-		defer updateActive()
+		updateActive()
 	}
 
 	for {
 		select {
+
 		case data, ok := <-c.ch:
 			if !ok {
 				return nil
 			}
+
+			lastDataAt = time.Now()
+
 			written := 0
 			for written < len(data) {
-				wn, err := c.w.Write(data[written:])
+				n, err := c.w.Write(data[written:])
 				if err != nil {
 					return err
 				}
-				written += wn
-				bytesWritten += wn
+				written += n
+				bytesWritten += n
 			}
-		case <-flushTicker.C:
-			if c.canFlush && (bytesWritten >= 32*1024 || time.Since(lastFlush) >= 200*time.Millisecond) {
-				c.flusher.Flush()
-				bytesWritten = 0
-				lastFlush = time.Now()
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-activeTicker.C:
+
+			// 写到数据，说明流真的在走
 			if updateActive != nil {
 				updateActive()
 			}
+
+		case <-flushTicker.C:
+			if c.canFlush && bytesWritten >= maxFlushBytes {
+				c.flusher.Flush()
+				bytesWritten = 0
+
+				// flush 也算“仍在服务中”
+				if updateActive != nil {
+					updateActive()
+				}
+			}
+
+		case <-idleTicker.C:
+			// TS 无数据，但在 idle timeout 内
+			// 仍然认为 hub 是活跃的
+			if updateActive != nil {
+				updateActive()
+			}
+
+			if time.Since(lastDataAt) > tsIdleTimeout {
+				// 只结束 TS，不影响 hub
+				return io.EOF
+			}
+
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }
