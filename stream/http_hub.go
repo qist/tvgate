@@ -310,10 +310,12 @@ func (c *HTTPHubClient) WriteLoop(
 		tsIdleTimeout = 6 * time.Second
 		flushInterval = 100 * time.Millisecond
 		maxFlushBytes = 32 * 1024
+		maxFlushDelay = 200 * time.Millisecond
 	)
 
 	var (
 		lastDataAt   = time.Now()
+		lastFlush    = time.Now()
 		bytesWritten = 0
 	)
 
@@ -353,9 +355,13 @@ func (c *HTTPHubClient) WriteLoop(
 			}
 
 		case <-flushTicker.C:
-			if c.canFlush && bytesWritten >= maxFlushBytes {
+			if c.canFlush && bytesWritten > 0 &&
+				(bytesWritten >= maxFlushBytes ||
+					time.Since(lastFlush) >= maxFlushDelay) {
+
 				c.flusher.Flush()
 				bytesWritten = 0
+				lastFlush = time.Now()
 
 				// flush 也算“仍在服务中”
 				if updateActive != nil {
@@ -380,3 +386,4 @@ func (c *HTTPHubClient) WriteLoop(
 		}
 	}
 }
+
