@@ -6,10 +6,9 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
-	"sync/atomic"
+	// "sync/atomic"
 	"time"
-
-	"github.com/qist/tvgate/logger"
+	// "github.com/qist/tvgate/logger"
 )
 
 type HTTPHubClient struct {
@@ -17,8 +16,13 @@ type HTTPHubClient struct {
 	w        http.ResponseWriter
 	flusher  http.Flusher
 	canFlush bool
-	mu       sync.Mutex
-	closed   bool
+
+	mu     sync.Mutex
+	closed bool
+
+	// 慢客户端控制
+	slowCount int
+	lastSlow  time.Time
 }
 
 type HTTPHub struct {
@@ -33,9 +37,9 @@ type HTTPHub struct {
 
 	// 缓存相关
 	cache         [][]byte
-	cacheBytes    int64  // 使用原子操作
-	maxCacheBytes int64  // 使用原子操作
-	cacheMu       sync.RWMutex  // 单独的缓存锁，减少锁争用
+	cacheBytes    int64        // 使用原子操作
+	maxCacheBytes int64        // 使用原子操作
+	cacheMu       sync.RWMutex // 单独的缓存锁，减少锁争用
 }
 
 var (
@@ -120,11 +124,10 @@ func (h *HTTPHub) Close() {
 // 添加客户端
 func (h *HTTPHub) AddClient(w http.ResponseWriter, bufSize int) *HTTPHubClient {
 	c := &HTTPHubClient{
-		ch:       make(chan []byte, bufSize),
-		w:        w,
-		flusher:  nil,
-		canFlush: false,
+		ch: make(chan []byte, bufSize),
+		w:  w,
 	}
+
 	if f, ok := w.(http.Flusher); ok {
 		c.flusher = f
 		c.canFlush = true
@@ -135,21 +138,16 @@ func (h *HTTPHub) AddClient(w http.ResponseWriter, bufSize int) *HTTPHubClient {
 		h.mu.Unlock()
 		return c
 	}
+
 	if h.idleTimer != nil {
 		h.idleTimer.Stop()
 		h.idleTimer = nil
 	}
-	h.clients[c] = struct{}{}
 
-	// 读取缓存数据并发送给新客户端
-	h.cacheMu.RLock()
-	for _, cached := range h.cache {
-		if !h.trySend(c, cached) {
-			break
-		}
-	}
-	h.cacheMu.RUnlock()
+	h.clients[c] = struct{}{}
 	h.mu.Unlock()
+
+	// ❗ 不 replay cache，新 client 只接实时流
 	return c
 }
 
@@ -171,23 +169,9 @@ func (h *HTTPHub) RemoveClient(c *HTTPHubClient) {
 
 // 广播数据并缓存（优化：客户端阻塞时丢弃当前数据，而非直接移除）
 func (h *HTTPHub) Broadcast(data []byte) {
-	// 创建数据副本
+	// 拷贝数据，避免复用
 	buf := make([]byte, len(data))
 	copy(buf, data)
-
-	// 添加到缓存
-	h.cacheMu.Lock()
-	h.cache = append(h.cache, buf)
-	newCacheBytes := atomic.AddInt64(&h.cacheBytes, int64(len(buf)))
-
-	// 超出最大字节数时，从头部删除最旧块
-	for newCacheBytes > atomic.LoadInt64(&h.cacheBytes) && len(h.cache) > 0 {
-		removed := h.cache[0]
-		h.cache = h.cache[1:]
-		atomic.AddInt64(&h.cacheBytes, -int64(len(removed)))
-		newCacheBytes = atomic.LoadInt64(&h.cacheBytes)
-	}
-	h.cacheMu.Unlock()
 
 	h.mu.Lock()
 	if h.closed {
@@ -203,7 +187,8 @@ func (h *HTTPHub) Broadcast(data []byte) {
 
 	for _, c := range clients {
 		if !h.trySend(c, buf) {
-			logger.LogPrintf("客户端缓冲无法接收，丢弃数据 (Hub: %s)", h.key)
+			// 连续慢 → 移除
+			h.RemoveClient(c)
 		}
 	}
 }
@@ -274,18 +259,37 @@ func (h *HTTPHub) scheduleIdleClose() {
 
 func (h *HTTPHub) trySend(c *HTTPHubClient, data []byte) bool {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.closed {
-		c.mu.Unlock()
 		return false
 	}
-	ok := true
+
 	select {
 	case c.ch <- data:
+		// 成功发送，重置慢计数
+		c.slowCount = 0
+		return true
+
 	default:
-		ok = false
+		now := time.Now()
+
+		// 判断是否“连续慢”
+		if c.slowCount == 0 || now.Sub(c.lastSlow) < 2*time.Second {
+			c.slowCount++
+		} else {
+			c.slowCount = 1
+		}
+		c.lastSlow = now
+
+		// 阈值：连续 5 次跟不上
+		if c.slowCount >= 5 {
+			return false
+		}
+
+		// 允许偶发慢：丢当前块
+		return true
 	}
-	c.mu.Unlock()
-	return ok
 }
 
 // 客户端安全关闭
@@ -320,7 +324,7 @@ func (c *HTTPHubClient) WriteLoop(
 	)
 
 	flushTicker := time.NewTicker(flushInterval)
-	idleTicker  := time.NewTicker(500 * time.Millisecond)
+	idleTicker := time.NewTicker(500 * time.Millisecond)
 	defer flushTicker.Stop()
 	defer idleTicker.Stop()
 
@@ -386,4 +390,3 @@ func (c *HTTPHubClient) WriteLoop(
 		}
 	}
 }
-
