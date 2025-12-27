@@ -7,8 +7,8 @@ import (
 	"net/url"
 	"sync"
 	// "sync/atomic"
+	"github.com/qist/tvgate/logger"
 	"time"
-	// "github.com/qist/tvgate/logger"
 )
 
 type HTTPHubClient struct {
@@ -54,10 +54,10 @@ func GetOrCreateHTTPHub(rawURL string, statusCode int) *HTTPHub {
 	httpHubsMu.Lock()
 	defer httpHubsMu.Unlock()
 	if h, ok := httpHubs[normalizedKey]; ok {
-		// logger.LogPrintf("复用已存在的hub: %s (原始URL: %s, 状态码: %d)", normalizedKey, rawURL, statusCode)
+		logger.LogPrintf("复用已存在的hub: %s (原始URL: %s, 状态码: %d)", normalizedKey, rawURL, statusCode)
 		return h
 	}
-	// logger.LogPrintf("创建新的hub: %s (原始URL: %s, 状态码: %d)", normalizedKey, rawURL, statusCode)
+	logger.LogPrintf("创建新的hub: %s (原始URL: %s, 状态码: %d)", normalizedKey, rawURL, statusCode)
 	h := &HTTPHub{
 		clients:       make(map[*HTTPHubClient]struct{}),
 		key:           normalizedKey,
@@ -187,8 +187,9 @@ func (h *HTTPHub) Broadcast(data []byte) {
 
 	for _, c := range clients {
 		if !h.trySend(c, buf) {
+			logger.LogPrintf("客户端缓冲无法接收，丢弃数据 (Hub: %s)", h.key)
 			// 连续慢 → 移除
-			h.RemoveClient(c)
+			// h.RemoveClient(c)
 		}
 	}
 }
@@ -275,7 +276,7 @@ func (h *HTTPHub) trySend(c *HTTPHubClient, data []byte) bool {
 		now := time.Now()
 
 		// 判断是否“连续慢”
-		if c.slowCount == 0 || now.Sub(c.lastSlow) < 2*time.Second {
+		if c.slowCount == 0 || now.Sub(c.lastSlow) < 10*time.Second {
 			c.slowCount++
 		} else {
 			c.slowCount = 1
