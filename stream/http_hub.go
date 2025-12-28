@@ -180,11 +180,7 @@ func (h *HTTPHub) Broadcast(data []byte) {
 	h.mu.Unlock()
 
 	for _, c := range clients {
-		select {
-		case c.ch <- buf:
-		default:
-			h.RemoveClient(c) // ❗不是丢包，是断连接
-		}
+		c.ch <- buf // ✅ 阻塞，交给 WriteLoop / TCP
 	}
 }
 
