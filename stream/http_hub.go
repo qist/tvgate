@@ -169,16 +169,10 @@ func (h *HTTPHub) RemoveClient(c *HTTPHubClient) {
 
 // 广播数据并缓存（优化：客户端阻塞时丢弃当前数据，而非直接移除）
 func (h *HTTPHub) Broadcast(data []byte) {
-	// 拷贝数据，避免复用
 	buf := make([]byte, len(data))
 	copy(buf, data)
 
 	h.mu.Lock()
-	if h.closed {
-		h.mu.Unlock()
-		return
-	}
-
 	clients := make([]*HTTPHubClient, 0, len(h.clients))
 	for c := range h.clients {
 		clients = append(clients, c)
@@ -186,10 +180,10 @@ func (h *HTTPHub) Broadcast(data []byte) {
 	h.mu.Unlock()
 
 	for _, c := range clients {
-		if !h.trySend(c, buf) {
-			logger.LogPrintf("客户端缓冲无法接收，丢弃数据 (Hub: %s)", h.key)
-			// 连续慢 → 移除
-			// h.RemoveClient(c)
+		select {
+		case c.ch <- buf:
+		default:
+			h.RemoveClient(c) // ❗不是丢包，是断连接
 		}
 	}
 }
@@ -256,41 +250,6 @@ func (h *HTTPHub) scheduleIdleClose() {
 		}
 	})
 	h.mu.Unlock()
-}
-
-func (h *HTTPHub) trySend(c *HTTPHubClient, data []byte) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return false
-	}
-
-	select {
-	case c.ch <- data:
-		// 成功发送，重置慢计数
-		c.slowCount = 0
-		return true
-
-	default:
-		now := time.Now()
-
-		// 判断是否“连续慢”
-		if c.slowCount == 0 || now.Sub(c.lastSlow) < 10*time.Second {
-			c.slowCount++
-		} else {
-			c.slowCount = 1
-		}
-		c.lastSlow = now
-
-		// 阈值：连续 5 次跟不上
-		if c.slowCount >= 5 {
-			return false
-		}
-
-		// 允许偶发慢：丢当前块
-		return true
-	}
 }
 
 // 客户端安全关闭
