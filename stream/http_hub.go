@@ -369,3 +369,33 @@ func (c *HTTPHubClient) WriteLoop(
 		}
 	}
 }
+
+
+func StreamTS(backendKey string, src io.Reader, dst io.Writer) error {
+	key := normalizeCacheKey(backendKey)
+
+	return GlobalTSCache.FetchOrGetStream(key, dst, func(w io.Writer) error {
+		buf := make([]byte, 32*1024) // 32KB 分片
+		for {
+			n, err := src.Read(buf)
+			if n > 0 {
+				chunk := buf[:n]
+				if _, wErr := w.Write(chunk); wErr != nil {
+					return wErr
+				}
+
+				// 如果 dst 支持 http.Flusher，立即 flush
+				if f, ok := dst.(http.Flusher); ok {
+					f.Flush()
+				}
+			}
+
+			if err != nil {
+				if err == io.EOF {
+					return nil
+				}
+				return err
+			}
+		}
+	})
+}

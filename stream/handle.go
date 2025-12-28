@@ -355,36 +355,60 @@ func CopyWithContext(
 ) error {
 	h := GetOrCreateHTTPHub(backendKey, statusCode)
 
-	// 检查是否为TS请求，以决定处理方式
+	// ---------------- TS 流分支 ----------------
 	if h.IsTSRequest(backendKey) {
-
 		key := normalizeCacheKey(backendKey)
 
-		data, err := GlobalTSCache.FetchOrGet(key, func() ([]byte, error) {
-			return io.ReadAll(src)
-		})
-		if err != nil {
-			return err
+		// 先尝试缓存命中
+		if chunks, ok := GlobalTSCache.Get(key); ok {
+			for _, chunk := range chunks {
+				if _, err := dst.Write(chunk); err != nil {
+					return err
+				}
+			}
+			if f, ok := dst.(http.Flusher); ok {
+				f.Flush()
+			}
+			return nil
 		}
 
-		_, err = dst.Write(data)
-		if err != nil {
-			return err
-		}
+		// 单次 fetch + 缓存 + 顺序写
+		var chunks [][]byte
+		bufRead := make([]byte, 32*1024) // 32KB 分片
+		for {
+			n, err := src.Read(bufRead)
+			if n > 0 {
+				chunk := make([]byte, n)
+				copy(chunk, bufRead[:n])
+				chunks = append(chunks, chunk)
 
-		if f, ok := dst.(http.Flusher); ok {
-			f.Flush()
-		}
+				if _, wErr := dst.Write(chunk); wErr != nil {
+					return wErr
+				}
+				if f, ok := dst.(http.Flusher); ok {
+					f.Flush()
+				}
+			}
 
-		return nil
+			if err != nil {
+				if err == io.EOF {
+					// 缓存完整 TS
+					GlobalTSCache.SetChunks(key, chunks)
+					return nil
+				}
+				return err
+			}
+		}
 	}
 
+	// ---------------- 非 TS 流分支 ----------------
 	client := h.AddClient(dst, bufSize)
 	defer h.RemoveClient(client)
 
-	// 传递backendKey以区分处理方式
+	// 启动生产者，将 src 数据推入 hub
 	h.EnsureProducer(ctx, src, buf)
 
+	// 客户端循环写入
 	return client.WriteLoop(ctx, updateActive)
 }
 
