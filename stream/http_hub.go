@@ -40,9 +40,6 @@ type HTTPHub struct {
 	cacheBytes    int64        // 使用原子操作
 	maxCacheBytes int64        // 使用原子操作
 	cacheMu       sync.RWMutex // 单独的缓存锁，减少锁争用
-		// ⭐ 最新 TS snapshot（关键）
-	latest   []byte
-	latestMu sync.RWMutex
 }
 
 var (
@@ -126,37 +123,33 @@ func (h *HTTPHub) Close() {
 
 // 添加客户端
 func (h *HTTPHub) AddClient(w http.ResponseWriter, bufSize int) *HTTPHubClient {
-    c := &HTTPHubClient{
-        ch: make(chan []byte, bufSize),
-        w:  w,
-    }
+	c := &HTTPHubClient{
+		ch: make(chan []byte, bufSize),
+		w:  w,
+	}
 
-    if f, ok := w.(http.Flusher); ok {
-        c.flusher = f
-        c.canFlush = true
-    }
+	if f, ok := w.(http.Flusher); ok {
+		c.flusher = f
+		c.canFlush = true
+	}
 
-    // ⭐ 关键：先推最新 TS
-    h.latestMu.RLock()
-    if len(h.latest) > 0 {
-        select {
-        case c.ch <- h.latest:
-        default:
-        }
-    }
-    h.latestMu.RUnlock()
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return c
+	}
 
-    h.mu.Lock()
-    if h.closed {
-        h.mu.Unlock()
-        return c
-    }
-    h.clients[c] = struct{}{}
-    h.mu.Unlock()
+	if h.idleTimer != nil {
+		h.idleTimer.Stop()
+		h.idleTimer = nil
+	}
 
-    return c
+	h.clients[c] = struct{}{}
+	h.mu.Unlock()
+
+	// ❗ 不 replay cache，新 client 只接实时流
+	return c
 }
-
 
 // 移除客户端
 func (h *HTTPHub) RemoveClient(c *HTTPHubClient) {
@@ -176,31 +169,20 @@ func (h *HTTPHub) RemoveClient(c *HTTPHubClient) {
 
 // 广播数据并缓存（优化：客户端阻塞时丢弃当前数据，而非直接移除）
 func (h *HTTPHub) Broadcast(data []byte) {
-    buf := make([]byte, len(data))
-    copy(buf, data)
+	buf := make([]byte, len(data))
+	copy(buf, data)
 
-    // ① 更新“当前最新 TS”
-    h.latestMu.Lock()
-    h.latest = buf
-    h.latestMu.Unlock()
+	h.mu.Lock()
+	clients := make([]*HTTPHubClient, 0, len(h.clients))
+	for c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.mu.Unlock()
 
-    // ② 广播给当前 clients
-    h.mu.Lock()
-    clients := make([]*HTTPHubClient, 0, len(h.clients))
-    for c := range h.clients {
-        clients = append(clients, c)
-    }
-    h.mu.Unlock()
-
-    for _, c := range clients {
-        select {
-        case c.ch <- buf:
-        default:
-            // 不踢！慢就慢
-        }
-    }
+	for _, c := range clients {
+		c.ch <- buf // ✅ 阻塞，交给 WriteLoop / TCP
+	}
 }
-
 
 // 确保生产者启动
 func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte) {
