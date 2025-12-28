@@ -343,11 +343,43 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 }
 
 // CopyWithContext 支持 HTTP hub 模式：按后端URL为键，单上游广播到所有前端
-func CopyWithContext(ctx context.Context, dst http.ResponseWriter, src io.Reader, buf []byte, bufSize int, updateActive func(), backendKey string, statusCode int) error {
+func CopyWithContext(
+	ctx context.Context,
+	dst http.ResponseWriter,
+	src io.Reader,
+	buf []byte,
+	bufSize int,
+	updateActive func(),
+	backendKey string,
+	statusCode int,
+) error {
 	h := GetOrCreateHTTPHub(backendKey, statusCode)
+
+	// 检查是否为TS请求，以决定处理方式
+	if h.IsTSRequest(backendKey) {
+		// 检查TS缓存是否存在
+		if tsData, exists := h.GetTS(backendKey); exists {
+			logger.LogPrintf("直接从缓存发送TS数据: %s", backendKey)
+			// 直接返回缓存的TS数据
+			_, err := dst.Write(tsData)
+			if err != nil {
+				return err
+			}
+			if flusher, ok := dst.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			return nil
+		} else {
+			logger.LogPrintf("TS未在缓存中，创建Hub处理: %s", backendKey)
+		}
+	}
+
 	client := h.AddClient(dst, bufSize)
 	defer h.RemoveClient(client)
-	h.EnsureProducer(ctx, src, buf)
+
+	// 传递backendKey以区分处理方式
+	h.EnsureProducer(ctx, src, buf, backendKey)
+
 	return client.WriteLoop(ctx, updateActive)
 }
 
