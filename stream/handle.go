@@ -357,28 +357,33 @@ func CopyWithContext(
 
 	// 检查是否为TS请求，以决定处理方式
 	if h.IsTSRequest(backendKey) {
-		// 检查TS缓存是否存在
-		if tsData, exists := h.GetTS(backendKey); exists {
-			logger.LogPrintf("直接从缓存发送TS数据: %s", backendKey)
-			// 直接返回缓存的TS数据
-			_, err := dst.Write(tsData)
-			if err != nil {
-				return err
-			}
-			if flusher, ok := dst.(http.Flusher); ok {
-				flusher.Flush()
-			}
-			return nil
-		} else {
-			logger.LogPrintf("TS未在缓存中，创建Hub处理: %s", backendKey)
+
+		key := normalizeCacheKey(backendKey)
+
+		data, err := GlobalTSCache.FetchOrGet(key, func() ([]byte, error) {
+			return io.ReadAll(src)
+		})
+		if err != nil {
+			return err
 		}
+
+		_, err = dst.Write(data)
+		if err != nil {
+			return err
+		}
+
+		if f, ok := dst.(http.Flusher); ok {
+			f.Flush()
+		}
+
+		return nil
 	}
 
 	client := h.AddClient(dst, bufSize)
 	defer h.RemoveClient(client)
 
 	// 传递backendKey以区分处理方式
-	h.EnsureProducer(ctx, src, buf, backendKey)
+	h.EnsureProducer(ctx, src, buf)
 
 	return client.WriteLoop(ctx, updateActive)
 }
