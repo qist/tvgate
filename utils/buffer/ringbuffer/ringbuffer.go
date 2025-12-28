@@ -15,6 +15,13 @@ type RingBuffer struct {
 	readIndex  uint64
 	writeIndex uint64
 	closed     bool
+	dataChan   chan interface{}
+	mask       uint64
+}
+
+// Chan returns a channel that can be used in select statements
+func (r *RingBuffer) Chan() <-chan interface{} {
+	return r.dataChan
 }
 
 // type ctxWrapper struct {
@@ -33,18 +40,25 @@ type RingBuffer struct {
 // 	}
 // }
 
-// New allocates a RingBuffer.
+// New creates a new ring buffer with the given size.
 func New(size uint64) (*RingBuffer, error) {
-	if (size & (size - 1)) != 0 {
-		return nil, fmt.Errorf("size must be a power of two")
+	if size == 0 {
+		return nil, fmt.Errorf("size must be positive")
 	}
 
-	r := &RingBuffer{
-		size:   size,
-		buffer: make([]interface{}, size),
+	// make sure size is power of 2
+	if (size & (size - 1)) != 0 {
+		return nil, fmt.Errorf("size must be a power of 2")
 	}
-	r.cond = sync.NewCond(&r.mutex)
-	return r, nil
+
+	rb := &RingBuffer{
+		buffer:     make([]interface{}, size),
+		size:       size,
+		mask:       size - 1,
+		dataChan:   make(chan interface{}, 8192), // 大幅增加channel缓冲区大小
+	}
+	rb.cond = sync.NewCond(&rb.mutex)
+	return rb, nil
 }
 
 // Close makes Pull() return false.
@@ -56,6 +70,7 @@ func (r *RingBuffer) Close() {
 	}
 	r.mutex.Unlock()
 	r.cond.Broadcast()
+	close(r.dataChan)
 }
 
 // Reset restores Pull() behavior after a Close().
@@ -83,6 +98,14 @@ func (r *RingBuffer) Push(data interface{}) bool {
 
 	r.buffer[r.writeIndex] = data
 	r.writeIndex = (r.writeIndex + 1) % r.size
+
+	// 发送到内部channel，使用非阻塞方式，但增加缓冲区大小来减少丢包
+	select {
+	case r.dataChan <- data:
+	default:
+		// 如果channel满了，跳过，但ring buffer本身仍保存数据
+		// 这种情况应该很少发生，因为缓冲区已经增大
+	}
 
 	r.cond.Signal()
 	return true
