@@ -197,7 +197,13 @@ func (h *HTTPHub) Broadcast(data []byte) {
 	h.mu.Unlock()
 
 	for _, c := range clients {
-		c.ch <- buf // ✅ 阻塞，交给 WriteLoop / TCP
+		select {
+		case c.ch <- buf:
+			// 成功写入
+		default:
+			logger.LogPrintf("hub %s: 移除慢客户端 %p", h.key, c)
+			h.RemoveClient(c) // 阻塞保护
+		}
 	}
 }
 
