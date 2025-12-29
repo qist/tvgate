@@ -154,9 +154,16 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 			c.mutex.RUnlock()
 			
 			if len(data) > 0 {
-				if _, err := dst.Write(data); err != nil {
+				n, err := dst.Write(data)
+				if err != nil {
+					// 客户端连接可能已断开，返回错误
 					return err
 				}
+				// 检查是否只写入了部分数据
+				if n < len(data) {
+					return io.ErrShortWrite
+				}
+				
 				if f, ok := dst.(http.Flusher); ok {
 					f.Flush()
 				}

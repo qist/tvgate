@@ -367,7 +367,11 @@ func CopyWithContext(
 			
 			// 从缓存流式读取并写入响应
 			if err := cacheItem.ReadAll(dst, done); err != nil {
-				return err
+				// 客户端连接可能已断开，记录但不视为错误
+				if err != io.EOF {
+					logger.LogPrintf("从缓存读取TS数据时出错: %v", err)
+				}
+				return nil // 客户端断开连接不是服务器错误
 			}
 			
 			if f, ok := dst.(http.Flusher); ok {
@@ -396,9 +400,14 @@ func CopyWithContext(
 					cacheItem.WriteChunk(chunk)
 
 					// 同时写入响应
-					if _, wErr := dst.Write(chunk); wErr != nil {
+					written, wErr := dst.Write(chunk)
+					if wErr != nil {
 						return nil, wErr
 					}
+					if written != n {
+						return nil, io.ErrShortWrite
+					}
+					
 					if f, ok := dst.(http.Flusher); ok {
 						f.Flush()
 					}
