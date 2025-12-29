@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
 	github.com/asticode/go-astits v1.14.0
-	github.com/bluenviron/gortsplib/v5 v5.2.1
+	github.com/bluenviron/gortsplib/v5 v5.2.2
 	github.com/bluenviron/mediacommon/v2 v2.6.0
 	github.com/cloudflare/tableflip v1.2.3
 	github.com/fsnotify/fsnotify v1.9.0
@@ -34,7 +34,7 @@ require (
 	github.com/pion/logging v0.2.4 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/rtcp v1.2.16 // indirect
-	github.com/pion/sdp/v3 v3.0.16 // indirect
+	github.com/pion/sdp/v3 v3.0.17 // indirect
 	github.com/pion/srtp/v3 v3.0.9 // indirect
 	github.com/pion/transport/v3 v3.1.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
