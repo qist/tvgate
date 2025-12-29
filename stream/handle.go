@@ -342,7 +342,7 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 	return targetURL
 }
 
-// CopyWithContext 支持 HTTP hub 模式：按后端URL为键，单上游广播到所有前端
+
 // CopyWithContext 支持 HTTP hub 模式：按后端URL为键，单上游广播到所有前端
 func CopyWithContext(
 	ctx context.Context,
