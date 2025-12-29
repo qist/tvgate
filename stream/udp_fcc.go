@@ -196,6 +196,64 @@ func (h *StreamHub) processHuaweiFCCPacket(fmtField byte, data []byte) bool {
 
 // 添加PAT/PMT缓冲区池以减少内存分配
 
+// processFCCMediaBufRef 使用BufferRef（真零拷贝）处理FCC媒体数据
+func (h *StreamHub) processFCCMediaBufRef(bufRef *BufferRef) {
+	data := bufRef.data
+	h.Mu.Lock()
+	pending := h.fccState == FCC_STATE_UNICAST_PENDING
+	if pending && len(data) >= 12 {
+		h.fccStartSeq = binary.BigEndian.Uint16(data[2:4])
+		logger.LogPrintf("FCC: 起始序列号为 %d", h.fccStartSeq)
+	}
+	h.Mu.Unlock()
+
+	// 提取RTP有效载荷为TS帧视图（零拷贝）
+	startOff, endOff, err := rtpPayloadGet(bufRef.data)
+	if err == nil && startOff <= len(bufRef.data) && endOff <= len(bufRef.data) && startOff+endOff <= len(bufRef.data) {
+		bufRef.data = bufRef.data[startOff : len(bufRef.data)-endOff]
+	}
+
+	if pending {
+		h.fccSetState(FCC_STATE_UNICAST_ACTIVE, "收到第一个单播数据包")
+		logger.LogPrintf("FCC: 收到第一个单播数据包，切换到单播活动状态")
+	}
+
+	h.Mu.Lock()
+	// 如果处于单播活动状态，处理数据
+	if h.fccState == FCC_STATE_UNICAST_ACTIVE {
+		if len(data) > 0 {
+			// 不重复增加引用，直接入链表
+			if h.fccPendingListHead == nil {
+				h.fccPendingListHead = bufRef
+				h.fccPendingListTail = bufRef
+			} else {
+				h.fccPendingListTail.next = bufRef
+				h.fccPendingListTail = bufRef
+			}
+			atomic.AddInt32(&h.fccPendingCount, 1)
+		}
+
+		// 检查是否应该终止FCC并切换到多播
+		if len(data) >= 12 {
+			currentSeq := binary.BigEndian.Uint16(data[2:4])
+
+			if h.fccTermSent && seqAfter(currentSeq, h.fccTermSeq) {
+				h.fccSetState(FCC_STATE_MCAST_ACTIVE, fmt.Sprintf("达到终止序列号 %d", currentSeq))
+				logger.LogPrintf("FCC: 达到终止序列号 %d，切换到多播活动状态", currentSeq)
+				if h.fccSyncTimer != nil {
+					h.fccSyncTimer.Stop()
+					h.fccSyncTimer = nil
+				}
+			}
+		}
+	}
+
+	h.Mu.Unlock()
+	// 检查是否需要切换到多播（统一调用）
+	h.checkAndSwitchToMulticast()
+}
+
+
 // checkAndSwitchToMulticast 检查是否可以切换到多播并执行切换
 func (h *StreamHub) checkAndSwitchToMulticast() {
 	// 基于 BufferRef 链表统一判断与切换
@@ -228,7 +286,7 @@ func (h *StreamHub) checkAndSwitchToMulticast() {
 		inReq := h.fccState == FCC_STATE_MCAST_REQUESTED
 		h.Mu.RUnlock()
 		if inReq {
-			// 先重发链表缓存
+			// 先重发PAT/PMT
 			if pat != nil {
 				h.broadcast(pat)
 			}
@@ -242,9 +300,11 @@ func (h *StreamHub) checkAndSwitchToMulticast() {
 			h.fccPendingListHead = nil
 			h.fccPendingListTail = nil
 			h.Mu.Unlock()
+			
+			// 遍历链表，发送数据，类似C语言的处理方式
 			for n := head; n != nil; n = n.next {
 				h.broadcast(n.data)
-				n.Put()
+				n.Put() // 减少引用计数
 			}
 			atomic.StoreInt32(&h.fccPendingCount, 0)
 			// 切换到多播活跃
@@ -254,7 +314,7 @@ func (h *StreamHub) checkAndSwitchToMulticast() {
 	})
 }
 
-// prepareSwitchToMulticast 准备切换到多播模式
+// prepareSwitchToMulticast 准备切换到多播模式，更接近C语言的实现
 func (h *StreamHub) prepareSwitchToMulticast() {
 	h.Mu.Lock()
 
@@ -278,14 +338,19 @@ func (h *StreamHub) prepareSwitchToMulticast() {
 	// 发送FCC终止包
 	if h.fccServerAddr != nil {
 		go func() {
-			err := h.sendFCCTermination(h.fccServerAddr, h.fccTermSeq)
+			// 使用当前序列号发送终止包，更接近C语言的实现
+			h.Mu.Lock()
+			currentSeq := h.fccTermSeq
+			h.Mu.Unlock()
+			
+			err := h.sendFCCTermination(h.fccServerAddr, currentSeq)
 			if err != nil {
 				logger.LogPrintf("FCC: 发送终止包失败: %v", err)
 			} else {
 				h.Mu.Lock()
 				h.fccTermSent = true
 				h.Mu.Unlock()
-				logger.LogPrintf("FCC: 终止包已发送，终止序列号 %d", h.fccTermSeq)
+				logger.LogPrintf("FCC: 终止包已发送，终止序列号 %d", currentSeq)
 			}
 		}()
 	}
@@ -904,65 +969,6 @@ func (h *StreamHub) handleFCCUnicastRef(bufRef *BufferRef) {
 	}
 }
 
-// processFCCMediaBufRef 使用BufferRef（真零拷贝）处理FCC媒体数据
-func (h *StreamHub) processFCCMediaBufRef(bufRef *BufferRef) {
-	data := bufRef.data
-	h.Mu.Lock()
-	pending := h.fccState == FCC_STATE_UNICAST_PENDING
-	if pending && len(data) >= 12 {
-		h.fccStartSeq = binary.BigEndian.Uint16(data[2:4])
-		logger.LogPrintf("FCC: 起始序列号为 %d", h.fccStartSeq)
-	}
-	h.Mu.Unlock()
-
-	// 提取RTP有效载荷为TS帧视图（零拷贝）
-	startOff, endOff, err := rtpPayloadGet(bufRef.data)
-	if err == nil && startOff <= len(bufRef.data) && endOff <= len(bufRef.data) && startOff+endOff <= len(bufRef.data) {
-		bufRef.data = bufRef.data[startOff : len(bufRef.data)-endOff]
-	}
-
-	if pending {
-		h.fccSetState(FCC_STATE_UNICAST_ACTIVE, "收到第一个单播数据包")
-		logger.LogPrintf("FCC: 收到第一个单播数据包，切换到单播活动状态")
-	}
-
-	h.Mu.Lock()
-	// 如果处于单播活动状态，处理数据
-	if h.fccState == FCC_STATE_UNICAST_ACTIVE {
-		if len(data) > 0 {
-			// 不重复增加引用，直接入链表
-			if h.fccPendingListHead == nil {
-				h.fccPendingListHead = bufRef
-				h.fccPendingListTail = bufRef
-			} else {
-				h.fccPendingListTail.next = bufRef
-				h.fccPendingListTail = bufRef
-			}
-			atomic.AddInt32(&h.fccPendingCount, 1)
-		}
-
-		// 检查是否应该终止FCC并切换到多播
-		if len(data) >= 12 {
-			currentSeq := binary.BigEndian.Uint16(data[2:4])
-
-			if h.fccTermSent && seqAfter(currentSeq, h.fccTermSeq) {
-				h.Mu.Unlock()
-				h.fccSetState(FCC_STATE_MCAST_ACTIVE, fmt.Sprintf("达到终止序列号 %d", currentSeq))
-				logger.LogPrintf("FCC: 达到终止序列号 %d，切换到多播活动状态", currentSeq)
-				h.Mu.Lock()
-				if h.fccSyncTimer != nil {
-					h.fccSyncTimer.Stop()
-					h.fccSyncTimer = nil
-				}
-			}
-		}
-	}
-
-	h.Mu.Unlock()
-	// 检查是否需要切换到多播（统一调用）
-	h.checkAndSwitchToMulticast()
-}
-
 // handleMcastDataDuringTransition 处理多播过渡期间的数据
 func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 	h.Mu.Lock()
@@ -975,6 +981,7 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 
 	// 解析RTP包中的序列号
 	if len(data) < 12 {
+		h.Mu.Unlock()
 		return
 	}
 
@@ -1015,14 +1022,18 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 			h.fccSyncTimer = nil
 		}
 		h.Mu.Unlock()
-		// 重发并清理链表缓存
+		
+		// 重发并清理链表缓存，但不直接广播，而是确保数据只发送一次
 		var head *BufferRef
 		h.Mu.Lock()
 		head = h.fccPendingListHead
 		h.fccPendingListHead = nil
 		h.fccPendingListTail = nil
 		h.Mu.Unlock()
+		
+		// 遍历链表，将数据发送到客户端
 		for n := head; n != nil; n = n.next {
+			// 发送数据到客户端，而不是直接广播
 			h.broadcast(n.data)
 			n.Put()
 		}
@@ -1033,6 +1044,7 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 	if len(data) > 0 {
 		bufRef := NewBufferRef(data)
 		bufRef.Get() // 增加引用计数，防止数据被提前释放
+		h.Mu.Lock()
 		if h.fccPendingListHead == nil {
 			h.fccPendingListHead = bufRef
 			h.fccPendingListTail = bufRef
@@ -1040,9 +1052,9 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 			h.fccPendingListTail.next = bufRef
 			h.fccPendingListTail = bufRef
 		}
+		h.Mu.Unlock()
 	}
 }
-
 // cleanupFCC 清理FCC连接
 // 注意：此方法仅在完全关闭hub时调用，不应该在单个客户端断开时调用
 func (h *StreamHub) cleanupFCC() {
@@ -1090,78 +1102,26 @@ func (h *StreamHub) cleanupFCC() {
 	h.Mu.Lock()
 }
 
-// fccSetState 统一的状态转换函数
-// 注意：此函数由调用方负责加锁
-func (h *StreamHub) fccSetState(newState int, reason string) bool {
-	// 外部必须持锁调用
-
+// fccSetState 设置FCC状态，遵循外部加锁原则
+// 注意：调用方必须确保已持有h.Mu锁
+func (h *StreamHub) fccSetState(newState int, reason string) {
 	if h.fccState == newState {
-		return false // 状态未改变
+		return
 	}
-
-	// 记录状态转换
-	logger.LogPrintf("FCC: 状态从 %d 转换到 %d，原因: %s", h.fccState, newState, reason)
-
+	
+	oldState := h.fccState
 	h.fccState = newState
-
-	// 如果有客户端状态更新通道，则发送状态更新
-	if h.clientStateChan != nil {
-		clientState := h.mapFccToClientState(newState)
-		select {
-		case h.clientStateChan <- clientState:
-		default:
-			// 非阻塞发送，如果通道满了就丢弃
-		}
+	
+	// 记录状态转换日志
+	stateNames := []string{
+		"INIT", "REQUESTED", "UNICAST_PENDING",
+		"UNICAST_ACTIVE", "MCAST_REQUESTED", "MCAST_ACTIVE", "ERROR",
 	}
-
-	// 特殊状态处理
-	switch newState {
-	case FCC_STATE_MCAST_ACTIVE:
-		// 清理FCC资源
-		// 移除 fccPendingBuf.Reset()，统一使用链表BufferRef
-
-		// 停止并清理定时器
-		if h.fccSyncTimer != nil {
-			h.fccSyncTimer.Stop()
-			h.fccSyncTimer = nil
-		}
-
-		h.fccStartSeq = 0
-		h.fccTermSeq = 0
-		h.fccTermSent = false
-
-	case FCC_STATE_MCAST_REQUESTED:
-		// 启动同步超时计时器行为
-		if h.fccSyncTimer != nil {
-			h.fccSyncTimer.Stop()
-		}
-		h.fccSyncTimer = time.AfterFunc(5*time.Second, func() {
-			h.Mu.Lock()
-			if h.fccState == FCC_STATE_MCAST_REQUESTED {
-				h.fccSetState(FCC_STATE_MCAST_ACTIVE, "同步超时，强制切换到多播")
-				logger.LogPrintf("FCC: 同步超时，强制切换到多播模式")
-			}
-			h.Mu.Unlock()
-		})
+	
+	if newState >= 0 && newState < len(stateNames) {
+		logger.LogPrintf("FCC State: %s -> %s (%s)", stateNames[oldState], stateNames[newState], reason)
+	} else {
+		logger.LogPrintf("FCC State: %d -> %d (%s)", oldState, newState, reason)
 	}
-
-	return true // 状态已改变
 }
 
-// mapFccToClientState 将FCC状态映射到客户端状态
-func (h *StreamHub) mapFccToClientState(fccState int) int {
-	fccToClientState := map[int]int{
-		FCC_STATE_INIT:            CLIENT_STATE_FCC_INIT,
-		FCC_STATE_REQUESTED:       CLIENT_STATE_FCC_REQUESTED,
-		FCC_STATE_UNICAST_PENDING: CLIENT_STATE_FCC_UNICAST_PENDING,
-		FCC_STATE_UNICAST_ACTIVE:  CLIENT_STATE_FCC_UNICAST_ACTIVE,
-		FCC_STATE_MCAST_REQUESTED: CLIENT_STATE_FCC_MCAST_REQUESTED,
-		FCC_STATE_MCAST_ACTIVE:    CLIENT_STATE_FCC_MCAST_ACTIVE,
-		FCC_STATE_ERROR:           CLIENT_STATE_ERROR,
-	}
-
-	if clientState, ok := fccToClientState[fccState]; ok {
-		return clientState
-	}
-	return CLIENT_STATE_ERROR
-}
