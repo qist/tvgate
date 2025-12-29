@@ -106,6 +106,11 @@ func (c *TSCache) createItem(key string) *tsCacheItem {
 }
 
 func (c *tsCacheItem) WriteChunk(data []byte) {
+	// 检查数据是否为nil
+	if data == nil {
+		return
+	}
+	
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	
@@ -150,7 +155,14 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 		
 		// 读取所有已有的数据
 		for current != nil {
+			// 检查current是否为nil，防止并发访问问题
+			if current == nil {
+				c.mutex.RUnlock()
+				break
+			}
+			
 			data := current.data
+			next := current.next  // 保存next指针，避免在持有读锁时访问可能被修改的节点
 			c.mutex.RUnlock()
 			
 			if len(data) > 0 {
@@ -169,8 +181,11 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 				}
 			}
 			
+			// 移动到下一个块
+			current = next
+			
+			// 重新获取读锁以检查状态
 			c.mutex.RLock()
-			current = current.next
 		}
 		
 		// 检查是否已关闭

@@ -134,8 +134,10 @@ func (h *HTTPHub) AddClient(w http.ResponseWriter, bufSize int) *HTTPHubClient {
 		c.canFlush = true
 	}
 	h.mu.Lock()
+	defer h.mu.Unlock()  // 使用defer确保解锁
+	
 	if h.closed {
-		h.mu.Unlock()
+		// 如果hub已关闭，仍然返回client，但客户端会在WriteLoop中检测到并退出
 		return c
 	}
 	if h.idleTimer != nil {
@@ -143,16 +145,21 @@ func (h *HTTPHub) AddClient(w http.ResponseWriter, bufSize int) *HTTPHubClient {
 		h.idleTimer = nil
 	}
 	h.clients[c] = struct{}{}
-	h.mu.Unlock()
 	return c
 }
 
 func (h *HTTPHub) RemoveClient(c *HTTPHubClient) {
 	h.mu.Lock()
-	delete(h.clients, c)
-	empty := !h.closed && len(h.clients) == 0
+	defer h.mu.Unlock()  // 使用defer确保解锁
+	
+	if !h.closed {  // 只有在hub未关闭时才删除客户端
+		delete(h.clients, c)
+	}
+	empty := len(h.clients) == 0 && !h.closed  // 确保只有在hub未关闭时才调度清理
 	h.mu.Unlock()
+	
 	c.safeClose()
+	
 	if empty {
 		h.scheduleIdleClose()
 	}
@@ -258,10 +265,12 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 	)
 	flushTicker := time.NewTicker(flushInterval)
 	defer flushTicker.Stop()
+	
 	for {
 		select {
 		case data, ok := <-c.ch:
 			if !ok {
+				// 通道已关闭，退出循环
 				return nil
 			}
 			written := 0
@@ -277,6 +286,7 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 				updateActive()
 			}
 		case <-flushTicker.C:
+			c.mu.Lock()  // 在访问flusher前加锁
 			if c.canFlush && bytesWritten > 0 &&
 				(bytesWritten >= maxFlushBytes || time.Since(lastFlush) >= maxFlushDelay) {
 				c.flusher.Flush()
@@ -286,6 +296,7 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 					updateActive()
 				}
 			}
+			c.mu.Unlock()
 		case <-ctx.Done():
 			return ctx.Err()
 		}
