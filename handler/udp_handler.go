@@ -16,26 +16,51 @@ import (
 func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 	clientIP := monitor.GetClientIP(r)
 	connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	// 全局 token 验证
-	if auth.GetGlobalTokenManager() != nil {
-		tokenParam := "my_token"
-		if auth.GetGlobalTokenManager().TokenParamName != "" {
-			tokenParam = auth.GetGlobalTokenManager().TokenParamName
-		}
-		token := r.URL.Query().Get(tokenParam)
 
-		if !auth.GetGlobalTokenManager().ValidateToken(token, r.URL.Path, connID) {
+	// 全局 token 验证
+	var tokenParam, token string
+	if gt := auth.GetGlobalTokenManager(); gt != nil {
+		tokenParam = "my_token"
+		if gt.TokenParamName != "" {
+			tokenParam = gt.TokenParamName
+		}
+		token = r.URL.Query().Get(tokenParam)
+
+		// 验证 token
+		if !gt.ValidateToken(token, r.URL.Path, connID) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 
-		auth.GetGlobalTokenManager().KeepAlive(token, connID, clientIP, r.URL.Path)
+		// keep-alive
+		gt.KeepAlive(token, connID, clientIP, r.URL.Path)
+
+		// 删除 token 参数，用于拼接 URL
+		query := r.URL.Query()
+		query.Del(tokenParam)
+		r.URL.RawQuery = query.Encode()
 	}
 
-	// 解析 UDP 地址
-	addr := r.URL.Path[len(prefix):]
+	// 解析 UDP 地址并去除前后空格、重复斜杠
+	addr := strings.TrimSpace(r.URL.Path[len(prefix):])
+	addr = strings.TrimPrefix(addr, "/")
+	addr = strings.ReplaceAll(addr, "//", "/")
+	addr = strings.TrimSuffix(addr, "/") // 去掉末尾多余的 /
+
 	if addr == "" || !strings.Contains(addr, ":") {
 		http.Error(w, "Address must be ip:port", http.StatusBadRequest)
+		return
+	}
+
+	// 验证端口是否合法
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil || host == "" {
+		http.Error(w, "Invalid address format", http.StatusBadRequest)
+		return
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		http.Error(w, "Invalid port number", http.StatusBadRequest)
 		return
 	}
 
@@ -57,25 +82,19 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 	// 使用 MultiChannelHub 获取或创建 Hub
 	hub, err := stream.GlobalMultiChannelHub.GetOrCreateHub(addr, ifaces)
 	if err != nil {
-
 		http.Error(w, "Failed to listen UDP: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// 处理FCC相关参数
+	// 处理 FCC 相关参数
 	fccParam := r.URL.Query().Get("fcc")
 	operatorParam := r.URL.Query().Get("operator")
 
 	if fccParam != "" {
-		// 启用FCC功能
 		hub.EnableFCC(true)
-
-		// 设置FCC类型
 		if operatorParam != "" {
 			hub.SetFccType(operatorParam)
 		}
-
-		// 解析并设置FCC服务器地址
 		if _, err := net.ResolveUDPAddr("udp", fccParam); err == nil {
 			if err := hub.SetFccServerAddr(fccParam); err != nil {
 				logger.LogPrintf("设置FCC服务器地址失败: %v", err)
@@ -90,9 +109,16 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 	if strings.HasPrefix(prefix, "/rtp/") {
 		connectionType = "RTP"
 	}
+
+	// 拼接完整 URL
+	fullURL := addr
+	if rawQuery := r.URL.RawQuery; rawQuery != "" {
+		fullURL += "?" + rawQuery
+	}
+
 	monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
 		IP:             clientIP,
-		URL:            addr,
+		URL:            fullURL,
 		UserAgent:      r.UserAgent(),
 		ConnectionType: connectionType,
 		ConnectedAt:    time.Now(),
