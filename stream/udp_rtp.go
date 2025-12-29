@@ -1237,7 +1237,15 @@ func (h *StreamHub) Close() {
 	}
 	h.LastFrame = nil
 	h.rtpBuffer = nil
-	// 移除了对 fccPendingBuf 的清理，因为该字段已被移除
+
+	// 清理FCC链表缓冲区
+	for h.fccPendingListHead != nil {
+		bufRef := h.fccPendingListHead
+		h.fccPendingListHead = bufRef.next
+		bufRef.Put() // 减少引用计数，允许内存回收
+	}
+	h.fccPendingListTail = nil
+	atomic.StoreInt32(&h.fccPendingCount, 0)
 
 	// 清理PAT/PMT缓冲区
 	if h.patBuffer != nil {

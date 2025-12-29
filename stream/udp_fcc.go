@@ -1050,6 +1050,9 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
             n = next
         }
         atomic.StoreInt32(&h.fccPendingCount, 0)
+        
+        // 状态已切换到MCAST_ACTIVE，不再将当前数据添加到FCC缓冲区
+        return
     }
 
     // 将数据添加到FCC缓冲区（使用零拷贝链表）
