@@ -2,8 +2,31 @@ package dns
 
 import (
 	"context"
+	"fmt"
 	"net"
 )
+
+// LookupIPWithIPv6Disabled 使用默认解析器解析IP地址，但只返回IPv4地址
+func LookupIPWithIPv6Disabled(ctx context.Context, host string) ([]net.IPAddr, error) {
+	ips, err := GetInstance().LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	
+	// 过滤IPv4地址
+	var ipv4Addrs []net.IPAddr
+	for _, ip := range ips {
+		if ip.IP.To4() != nil {
+			ipv4Addrs = append(ipv4Addrs, ip)
+		}
+	}
+	
+	if len(ipv4Addrs) == 0 {
+		return nil, fmt.Errorf("no IPv4 addresses found for %s", host)
+	}
+	
+	return ipv4Addrs, nil
+}
 
 // LookupIP 使用默认解析器解析IP地址
 func LookupIP(host string) ([]net.IP, error) {

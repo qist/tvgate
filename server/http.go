@@ -317,6 +317,7 @@ func RegisterJXAndProxyMux(mux *http.ServeMux, cfg *config.Config) {
 		}
 	}
 
+	// 默认启用IPv6以保持向后兼容
 	client := httpclient.NewHTTPClient(cfg, nil)
 	defaultHandler := SecurityHeaders(http.HandlerFunc(h.Handler(client)))
 

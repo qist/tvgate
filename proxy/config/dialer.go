@@ -138,8 +138,14 @@ func SafeDialContext(base *net.Dialer, enableIPv6 bool) func(ctx context.Context
 
 		host, port, err := net.SplitHostPort(addr)
 		if err == nil {
-			// 优先尝试自定义 resolver
-			ips, err := resolver.LookupIPAddr(ctx, host)
+			var ips []net.IPAddr
+			// 根据IPv6设置选择解析函数
+			if !enableIPv6 {
+				ips, err = dns.LookupIPWithIPv6Disabled(ctx, host)
+			} else {
+				ips, err = resolver.LookupIPAddr(ctx, host)
+			}
+			
 			if err == nil && len(ips) > 0 {
 				ip := ips[0].IP.String()
 				target := net.JoinHostPort(ip, port)

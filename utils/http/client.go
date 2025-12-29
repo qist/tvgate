@@ -20,14 +20,14 @@ const (
 func NewHTTPClient(c *config.Config, transport *http.Transport) *http.Client {
 	// 获取自定义 Resolver 实例
 	resolver := dns.GetInstance()
-	if transport == nil {
-		// 基础 dialer
-		baseDialer := &net.Dialer{
-			Timeout:   c.HTTP.ConnectTimeout,
-			KeepAlive: c.HTTP.KeepAlive,
-			DualStack: true,
-		}
 
+	// 基础 dialer
+	baseDialer := &net.Dialer{
+		Timeout:   c.HTTP.ConnectTimeout,
+		KeepAlive: c.HTTP.KeepAlive,
+	}
+
+	if transport == nil {
 		// ✅ 自定义 DialContext，强制走 dns.GetInstance()
 		transport = &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -36,7 +36,6 @@ func NewHTTPClient(c *config.Config, transport *http.Transport) *http.Client {
 					return nil, err
 				}
 
-				// 用自定义 resolver 解析
 				ips, err := resolver.LookupIPAddr(ctx, host)
 				if err != nil || len(ips) == 0 {
 					// logger.LogPrintf("⚠️ 自定义DNS解析失败 %s: %v, 尝试系统解析", host, err)
