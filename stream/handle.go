@@ -397,7 +397,7 @@ func CopyWithContext(
 					// 将数据写入缓存
 					chunk := make([]byte, n)
 					copy(chunk, bufRead[:n])
-					cacheItem.WriteChunk(chunk)
+					GlobalTSCache.WriteChunkWithByteTracking(cacheItem, chunk)
 
 					// 同时写入响应
 					written, wErr := dst.Write(chunk)

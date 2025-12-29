@@ -41,8 +41,8 @@ type TSCache struct {
 }
 
 var GlobalTSCache = NewTSCache(
-	512<<20,        // 512MB
-	5*time.Minute, // TS TTL
+	128<<20,        // 128MB
+	1*time.Minute, // TS TTL
 )
 
 func NewTSCache(maxBytes int64, ttl time.Duration) *TSCache {
@@ -93,6 +93,60 @@ func (c *TSCache) GetOrCreate(key string) (*tsCacheItem, bool) {
 	return c.createItem(key), true
 }
 
+// WriteChunkToItem 将数据块写入指定的缓存项，并管理缓存大小
+func (c *TSCache) WriteChunkToItem(item *tsCacheItem, data []byte) {
+	// 检查数据是否为nil
+	if data == nil || item == nil {
+		return
+	}
+	
+	item.mutex.Lock()
+	defer item.mutex.Unlock()
+	
+	if item.closed {
+		return
+	}
+	
+	// 创建新的块
+	newChunk := &tsCacheChunk{
+		data: make([]byte, len(data)),
+	}
+	copy(newChunk.data, data)
+	
+	if item.tail == nil {
+		item.head = newChunk
+		item.tail = newChunk
+	} else {
+		item.tail.next = newChunk
+		item.tail = newChunk
+	}
+	
+	// 通知等待的读取者有新数据
+	select {
+	case item.waitCh <- struct{}{}:
+	default:
+		// 如果通道已满，说明已经有通知在队列中，无需重复发送
+	}
+	
+	// 更新缓存的字节计数
+	c.mu.Lock()
+	c.curBytes += int64(len(data))
+	
+	// 检查是否超过最大字节数，如果超过则触发清理
+	for c.curBytes > c.maxBytes && c.ll.Back() != nil {
+		// 获取最旧的缓存项并移除
+		oldestElement := c.ll.Back()
+		if oldestElement != nil {
+			oldestItem := oldestElement.Value.(*tsCacheItem)
+			// 计算并减去该缓存项的字节数
+			itemBytes := oldestItem.calculateTotalBytes()
+			c.curBytes -= itemBytes
+			c.removeItem(oldestItem)
+		}
+	}
+	c.mu.Unlock()
+}
+
 func (c *TSCache) createItem(key string) *tsCacheItem {
 	it := &tsCacheItem{
 		key:      key,
@@ -132,13 +186,80 @@ func (c *tsCacheItem) WriteChunk(data []byte) {
 		c.tail = newChunk
 	}
 	
-	
 	// 通知等待的读取者有新数据
 	select {
 	case c.waitCh <- struct{}{}:
 	default:
 		// 如果通道已满，说明已经有通知在队列中，无需重复发送
 	}
+}
+
+// WriteChunkWithByteTracking 向缓存项写入数据块，并跟踪字节计数到父缓存
+func (c *TSCache) WriteChunkWithByteTracking(item *tsCacheItem, data []byte) {
+	// 检查数据是否为nil
+	if data == nil || item == nil {
+		return
+	}
+	
+	item.mutex.Lock()
+	defer item.mutex.Unlock()
+	
+	if item.closed {
+		return
+	}
+	
+	// 创建新的块
+	newChunk := &tsCacheChunk{
+		data: make([]byte, len(data)),
+	}
+	copy(newChunk.data, data)
+	
+	if item.tail == nil {
+		item.head = newChunk
+		item.tail = newChunk
+	} else {
+		item.tail.next = newChunk
+		item.tail = newChunk
+	}
+	
+	// 更新缓存的字节计数
+	c.mu.Lock()
+	c.curBytes += int64(len(data))
+	
+	// 检查是否超过最大字节数，如果超过则触发清理
+	for c.curBytes > c.maxBytes && c.ll.Back() != nil {
+		// 获取最旧的缓存项并移除
+		oldestElement := c.ll.Back()
+		if oldestElement != nil {
+			oldestItem := oldestElement.Value.(*tsCacheItem)
+			// 计算并减去该缓存项的字节数
+			itemBytes := oldestItem.calculateTotalBytes()
+			c.curBytes -= itemBytes
+			c.removeItem(oldestItem)
+		}
+	}
+	c.mu.Unlock()
+	
+	// 通知等待的读取者有新数据
+	select {
+	case item.waitCh <- struct{}{}:
+	default:
+		// 如果通道已满，说明已经有通知在队列中，无需重复发送
+	}
+}
+
+// 计算缓存项的总字节数
+func (c *tsCacheItem) calculateTotalBytes() int64 {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	
+	var total int64
+	current := c.head
+	for current != nil {
+		total += int64(len(current.data))
+		current = current.next
+	}
+	return total
 }
 
 func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
@@ -245,8 +366,9 @@ func (c *TSCache) removeItem(it *tsCacheItem) {
 	delete(c.items, it.key)
 	c.ll.Remove(it.element)
 	
-	// 注意：这里我们不计算实际的字节数，因为流式缓存难以精确计算
-	// 可以考虑在WriteChunk时跟踪字节计数
+	// 减少缓存中的字节数
+	itemBytes := it.calculateTotalBytes()
+	c.curBytes -= itemBytes
 }
 
 func (c *TSCache) Remove(key string) {
