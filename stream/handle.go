@@ -343,6 +343,7 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 }
 
 // CopyWithContext 支持 HTTP hub 模式：按后端URL为键，单上游广播到所有前端
+// CopyWithContext 支持 HTTP hub 模式：按后端URL为键，单上游广播到所有前端
 func CopyWithContext(
 	ctx context.Context,
 	dst http.ResponseWriter,
@@ -355,60 +356,36 @@ func CopyWithContext(
 ) error {
 	h := GetOrCreateHTTPHub(backendKey, statusCode)
 
-	// ---------------- TS 流分支 ----------------
+	// 检查是否为TS请求，以决定处理方式
 	if h.IsTSRequest(backendKey) {
+
 		key := normalizeCacheKey(backendKey)
 
-		// 先尝试缓存命中
-		if chunks, ok := GlobalTSCache.Get(key); ok {
-			for _, chunk := range chunks {
-				if _, err := dst.Write(chunk); err != nil {
-					return err
-				}
-			}
-			if f, ok := dst.(http.Flusher); ok {
-				f.Flush()
-			}
-			return nil
+		data, err := GlobalTSCache.FetchOrGet(key, func() ([]byte, error) {
+			return io.ReadAll(src)
+		})
+		if err != nil {
+			return err
 		}
 
-		// 单次 fetch + 缓存 + 顺序写
-		var chunks [][]byte
-		bufRead := make([]byte, 32*1024) // 32KB 分片
-		for {
-			n, err := src.Read(bufRead)
-			if n > 0 {
-				chunk := make([]byte, n)
-				copy(chunk, bufRead[:n])
-				chunks = append(chunks, chunk)
-
-				if _, wErr := dst.Write(chunk); wErr != nil {
-					return wErr
-				}
-				if f, ok := dst.(http.Flusher); ok {
-					f.Flush()
-				}
-			}
-
-			if err != nil {
-				if err == io.EOF {
-					// 缓存完整 TS
-					GlobalTSCache.SetChunks(key, chunks)
-					return nil
-				}
-				return err
-			}
+		_, err = dst.Write(data)
+		if err != nil {
+			return err
 		}
+
+		if f, ok := dst.(http.Flusher); ok {
+			f.Flush()
+		}
+
+		return nil
 	}
 
-	// ---------------- 非 TS 流分支 ----------------
 	client := h.AddClient(dst, bufSize)
 	defer h.RemoveClient(client)
 
-	// 启动生产者，将 src 数据推入 hub
+	// 传递backendKey以区分处理方式
 	h.EnsureProducer(ctx, src, buf)
 
-	// 客户端循环写入
 	return client.WriteLoop(ctx, updateActive)
 }
 

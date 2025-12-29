@@ -2,34 +2,35 @@ package stream
 
 import (
 	"container/list"
-	"io"
 	"sync"
 	"time"
 
 	"golang.org/x/sync/singleflight"
 )
-
 type tsCacheItem struct {
-	key      string
-	chunks   [][]byte   // 分片缓存
-	expireAt time.Time
-	element  *list.Element
-	size     int64      // 总字节数
+	key        string
+	data       []byte
+	expireAt   time.Time
+	element    *list.Element
 }
 
 type TSCache struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+
 	maxBytes int64
 	curBytes int64
-	ttl      time.Duration
-	ll       *list.List
-	items    map[string]*tsCacheItem
-	sf       singleflight.Group
+
+	ttl time.Duration
+
+	ll    *list.List
+	items map[string]*tsCacheItem
+
+	sf singleflight.Group
 }
 
 var GlobalTSCache = NewTSCache(
-	512<<20,       // 512MB
-	5*time.Minute, // TTL
+	512<<20,        // 512MB
+	5*time.Minute, // TS TTL
 )
 
 func NewTSCache(maxBytes int64, ttl time.Duration) *TSCache {
@@ -41,50 +42,44 @@ func NewTSCache(maxBytes int64, ttl time.Duration) *TSCache {
 	}
 }
 
-// ----------------- LRU缓存 -----------------
-
-func (c *TSCache) Get(key string) ([][]byte, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	it, ok := c.items[key]
-	if !ok || time.Now().After(it.expireAt) {
-		if ok {
-			c.removeItem(it)
-		}
-		return nil, false
-	}
-	c.ll.MoveToFront(it.element)
-	return it.chunks, true
-}
-
-func (c *TSCache) SetChunks(key string, chunks [][]byte) {
-	var total int64
-	for _, b := range chunks {
-		total += int64(len(b))
-	}
-
+func (c *TSCache) Get(key string) ([]byte, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if it, ok := c.items[key]; ok {
-		c.curBytes -= it.size
-		it.chunks = chunks
-		it.expireAt = time.Now().Add(c.ttl)
-		it.size = total
-		c.curBytes += total
-		c.ll.MoveToFront(it.element)
-	} else {
-		it := &tsCacheItem{
-			key:      key,
-			chunks:   chunks,
-			expireAt: time.Now().Add(c.ttl),
-			size:     total,
+		if time.Now().After(it.expireAt) {
+			c.removeItem(it)
+			return nil, false
 		}
-		it.element = c.ll.PushFront(it)
-		c.items[key] = it
-		c.curBytes += total
-		c.evictIfNeeded()
+		c.ll.MoveToFront(it.element)
+		return it.data, true
 	}
+	return nil, false
+}
+
+func (c *TSCache) Set(key string, data []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if it, ok := c.items[key]; ok {
+		c.curBytes -= int64(len(it.data))
+		it.data = data
+		it.expireAt = time.Now().Add(c.ttl)
+		c.curBytes += int64(len(data))
+		c.ll.MoveToFront(it.element)
+		return
+	}
+
+	it := &tsCacheItem{
+		key:      key,
+		data:     data,
+		expireAt: time.Now().Add(c.ttl),
+	}
+	it.element = c.ll.PushFront(it)
+	c.items[key] = it
+	c.curBytes += int64(len(data))
+
+	c.evictIfNeeded()
 }
 
 func (c *TSCache) evictIfNeeded() {
@@ -101,79 +96,39 @@ func (c *TSCache) evictIfNeeded() {
 func (c *TSCache) removeItem(it *tsCacheItem) {
 	delete(c.items, it.key)
 	c.ll.Remove(it.element)
-	c.curBytes -= it.size
+	c.curBytes -= int64(len(it.data))
 }
 
-// ----------------- 流式接口 -----------------
+func (c *TSCache) FetchOrGet(
+	key string,
+	fetch func() ([]byte, error),
+) ([]byte, error) {
 
-// FetchOrGetStream 分片缓存 + 边流式写入
-// w: 前端 io.Writer
-// fetch: 接收 io.Writer，一边写一边返回
-func (c *TSCache) FetchOrGetStream(key string, w io.Writer, fetch func(io.Writer) error) error {
-	// 1. 先尝试从 cache 拿
-	if chunks, ok := c.Get(key); ok {
-		for _, chunk := range chunks {
-			_, _ = w.Write(chunk)
-		}
-		return nil
+	// 1. 先查 cache
+	if data, ok := c.Get(key); ok {
+		return data, nil
 	}
 
-	// 2. singleflight 保证同 key 只 fetch 一次
+	// 2. singleflight
 	v, err, _ := c.sf.Do(key, func() (interface{}, error) {
+
 		// double check
-		if chunks, ok := c.Get(key); ok {
-			for _, chunk := range chunks {
-				_, _ = w.Write(chunk)
-			}
-			return chunks, nil
+		if data, ok := c.Get(key); ok {
+			return data, nil
 		}
 
-		pr, pw := io.Pipe()
-		chunks := make([][]byte, 0)
-		var fetchErr error
-		wg := sync.WaitGroup{}
-		wg.Add(1)
-
-		// 异步读取 pipe，边写前端边累积分片
-		go func() {
-			defer wg.Done()
-			buf := make([]byte, 32*1024) // 32KB 分片
-			for {
-				n, err := pr.Read(buf)
-				if n > 0 {
-					chunk := make([]byte, n)
-					copy(chunk, buf[:n])
-					chunks = append(chunks, chunk)
-					_, _ = w.Write(chunk)
-				}
-				if err != nil {
-					if err == io.EOF {
-						return
-					}
-					fetchErr = err
-					return
-				}
-			}
-		}()
-
-		// fetch 写入 pipe
-		fetchErr = fetch(pw)
-		pw.Close()
-		wg.Wait()
-		if fetchErr != nil {
-			return nil, fetchErr
+		data, err := fetch()
+		if err != nil {
+			return nil, err
 		}
 
-		// 缓存分片
-		c.SetChunks(key, chunks)
-		return chunks, nil
+		c.Set(key, data)
+		return data, nil
 	})
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// 已经边流式写入前端，无需再次写
-	_ = v.([][]byte)
-	return nil
+	return v.([]byte), nil
 }
