@@ -13,6 +13,9 @@ import (
 	"github.com/qist/tvgate/logger"
 )
 
+// 注意：以下常量 (FCC_TYPE_*, FCC_FMT_*, FCC_STATE_*) 已从本文件移除，
+// 因为它们被认为是重复定义，应在项目的其他公共头文件或常量文件中统一定义。
+
 func isRTCP205(data []byte) bool {
 	if len(data) < 8 {
 		return false
@@ -110,49 +113,15 @@ func (h *StreamHub) processFCCPacket(data []byte) bool {
 	}
 }
 
-// processTelecomFCCPacket 处理电信FCC数据包
-func (h *StreamHub) processTelecomFCCPacket(fmtField byte, data []byte) bool {
-	switch fmtField {
-	case FCC_FMT_TELECOM_RESP: // FMT 3 - 服务器响应
-		h.Mu.RLock()
-		should := h.fccState == FCC_STATE_REQUESTED
-		h.Mu.RUnlock()
-		if should {
-			h.fccSetState(FCC_STATE_UNICAST_PENDING, "收到服务器响应 (FMT 3)")
-			logger.LogPrintf("FCC (电信): 收到服务器响应 (FMT 3)")
-		}
-		return true
-
-	case FCC_FMT_TELECOM_SYNC: // FMT 4 - 同步通知
-		h.Mu.RLock()
-		inMcast := h.fccState == FCC_STATE_MCAST_REQUESTED || h.fccState == FCC_STATE_MCAST_ACTIVE
-		h.Mu.RUnlock()
-		if inMcast {
-			return true
-		}
-		h.fccSetState(FCC_STATE_MCAST_REQUESTED, "收到同步通知 (FMT 4)，准备切换到组播")
-		logger.LogPrintf("FCC (电信): 收到同步通知 (FMT 4)，准备切换到组播")
-
-		// 调用prepareSwitchToMulticast来准备切换到多播模式
-		h.prepareSwitchToMulticast()
-		return true
-
-	default:
-		return false
-	}
-}
-
-// processHuaweiFCCPacket 处理华为FCC数据包
 func (h *StreamHub) processHuaweiFCCPacket(fmtField byte, data []byte) bool {
 	switch fmtField {
 	case FCC_FMT_HUAWEI_RESP: // FMT 6 - 服务器响应
-		h.Mu.RLock()
-		should := h.fccState == FCC_STATE_REQUESTED
-		h.Mu.RUnlock()
-		if should {
+		h.Mu.Lock()
+		if h.fccState == FCC_STATE_REQUESTED {
 			h.fccSetState(FCC_STATE_UNICAST_PENDING, "收到服务器响应 (FMT 6)")
 			logger.LogPrintf("FCC (华为): 收到服务器响应 (FMT 6)")
 
+			// 检查是否需要NAT穿越
 			if len(data) >= 32 {
 				flag := binary.BigEndian.Uint32(data[28:32])
 				if flag&0x01000000 != 0 {
@@ -161,32 +130,68 @@ func (h *StreamHub) processHuaweiFCCPacket(fmtField byte, data []byte) bool {
 				}
 			}
 		}
+		h.Mu.Unlock()
 		return true
 
 	case FCC_FMT_HUAWEI_SYNC: // FMT 8 - 同步通知
-		h.Mu.RLock()
-		inMcast := h.fccState == FCC_STATE_MCAST_REQUESTED || h.fccState == FCC_STATE_MCAST_ACTIVE
-		active := h.fccState == FCC_STATE_UNICAST_ACTIVE
-		h.Mu.RUnlock()
-		if inMcast {
+		h.Mu.Lock()
+		// Ignore if already using mcast stream
+		if h.fccState == FCC_STATE_MCAST_REQUESTED || h.fccState == FCC_STATE_MCAST_ACTIVE {
+			h.Mu.Unlock()
 			return true
 		}
-		if active {
+
+		if h.fccState == FCC_STATE_UNICAST_ACTIVE {
 			h.fccSetState(FCC_STATE_MCAST_REQUESTED, "收到同步通知 (FMT 8)，准备切换到组播")
 			logger.LogPrintf("FCC (华为): 收到同步通知 (FMT 8)，准备切换到组播")
+			h.Mu.Unlock()
+			
+			// 调用prepareSwitchToMulticast来准备切换到多播模式
 			h.prepareSwitchToMulticast()
 			return true
 		}
+		h.Mu.Unlock()
 		return true
 
 	case FCC_FMT_HUAWEI_NAT: // FMT 12 - NAT穿越包
-		h.Mu.RLock()
-		should := h.fccState == FCC_STATE_UNICAST_PENDING
-		h.Mu.RUnlock()
-		if should {
+		h.Mu.Lock()
+		if h.fccState == FCC_STATE_UNICAST_PENDING {
 			h.fccSetState(FCC_STATE_UNICAST_ACTIVE, "收到NAT穿越包 (FMT 12)")
 			logger.LogPrintf("FCC (华为): 收到NAT穿越包 (FMT 12)")
 		}
+		h.Mu.Unlock()
+		return true
+
+	default:
+		return false
+	}
+}
+
+func (h *StreamHub) processTelecomFCCPacket(fmtField byte, data []byte) bool {
+	switch fmtField {
+	case FCC_FMT_TELECOM_RESP: // FMT 3 - 服务器响应
+		h.Mu.Lock()
+		if h.fccState == FCC_STATE_REQUESTED {
+			h.fccSetState(FCC_STATE_UNICAST_PENDING, "收到服务器响应 (FMT 3)")
+			logger.LogPrintf("FCC (电信): 收到服务器响应 (FMT 3)")
+		}
+		h.Mu.Unlock()
+		return true
+
+	case FCC_FMT_TELECOM_SYNC: // FMT 4 - 同步通知
+		h.Mu.Lock()
+		// Ignore if already using mcast stream
+		if h.fccState == FCC_STATE_MCAST_REQUESTED || h.fccState == FCC_STATE_MCAST_ACTIVE {
+			h.Mu.Unlock()
+			return true
+		}
+
+		h.fccSetState(FCC_STATE_MCAST_REQUESTED, "收到同步通知 (FMT 4)，准备切换到组播")
+		logger.LogPrintf("FCC (电信): 收到同步通知 (FMT 4)，准备切换到组播")
+		h.Mu.Unlock()
+		
+		// 调用prepareSwitchToMulticast来准备切换到多播模式
+		h.prepareSwitchToMulticast()
 		return true
 
 	default:
@@ -456,7 +461,7 @@ func (h *StreamHub) buildTelecomFCCTermPacket(multicastAddr *net.UDPAddr, seqNum
 	pk := make([]byte, 16)
 
 	// RTCP Header (8 bytes)
-	pk[0] = 0x80 | FCC_FMT_TELECOM_TERM    // Version 2, Padding 0, FMT 5
+	pk[0] = 0x80 | 5                       // Version 2, Padding 0, FMT 5
 	pk[1] = 205                            // Type: Generic RTP Feedback (205)
 	binary.BigEndian.PutUint16(pk[2:4], 3) // Length = 4 words - 1 = 3
 
@@ -480,7 +485,7 @@ func (h *StreamHub) buildHuaweiFCCTermPacket(multicastAddr *net.UDPAddr, seqNum 
 	pk := make([]byte, 16)
 
 	// RTCP Header (8 bytes)
-	pk[0] = 0x80 | FCC_FMT_HUAWEI_TERM     // V=2, P=0, FMT=9
+	pk[0] = 0x80 | 9                       // V=2, P=0, FMT=9
 	pk[1] = 205                            // PT=205 (Generic RTP Feedback)
 	binary.BigEndian.PutUint16(pk[2:4], 3) // Length = 4 words - 1 = 3
 
