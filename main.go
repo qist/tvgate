@@ -21,6 +21,7 @@ import (
 	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/groupstats"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/publisher"
 	"github.com/qist/tvgate/server"
@@ -180,6 +181,7 @@ func main() {
 		Compress:   config.Cfg.Log.Compress,
 	})
 
+	stream.InitTSCacheFromConfig()
 	// -------------------------
 	// 启动配置文件监控
 	// -------------------------

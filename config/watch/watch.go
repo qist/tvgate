@@ -13,10 +13,10 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/qist/tvgate/auth"
-	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/update"
+	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/server"
 	"github.com/qist/tvgate/stream"
@@ -102,17 +102,22 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 		}
 		logger.LogPrintf("✅ 配置文件重新加载完成")
 		// 🔹 这里刷新 DNS 实例
-		dns.HandleConfigUpdate(	&config.Config{}, &config.Cfg)
+		dns.HandleConfigUpdate(&config.Config{}, &config.Cfg)
 		config.CfgMu.RLock()
 		update.UpdateHubsOnConfigChange(config.Cfg.Server.MulticastIfaces)
-		
+
 		// 更新TS缓存配置
 		if stream.GlobalTSCache != nil {
 			cacheSize := int64(config.Cfg.Server.TS.CacheSize) << 20 // 转换为字节
 			cacheTTL := config.Cfg.Server.TS.CacheTTL
 			stream.GlobalTSCache.UpdateConfig(cacheSize, cacheTTL)
+			logger.LogPrintf(
+				"TS缓存配置更新: size=%dMB ttl=%v",
+				cacheSize>>20,
+				cacheTTL,
+			)
 		}
-		
+
 		config.CfgMu.RUnlock()
 
 		muxMu.Lock()
