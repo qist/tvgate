@@ -378,6 +378,39 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 						}
 					}
 
+					// 添加ts配置块
+					if tsConfig, ok := serverConfig["ts"]; ok {
+						if tsMap, ok := tsConfig.(map[string]interface{}); ok {
+							tsNode := &yaml.Node{Kind: yaml.MappingNode}
+							
+							// 添加cache_size
+							if cacheSize, ok := tsMap["cache_size"]; ok {
+								cacheSizeValue := fmt.Sprintf("%v", cacheSize)
+								if cacheSizeValue != "" && cacheSizeValue != "0" {
+									tsNode.Content = append(tsNode.Content,
+										&yaml.Node{Kind: yaml.ScalarNode, Value: "cache_size"},
+										&yaml.Node{Kind: yaml.ScalarNode, Value: cacheSizeValue})
+								}
+							}
+							
+							// 添加cache_ttl
+							if cacheTTL, ok := tsMap["cache_ttl"]; ok {
+								cacheTTLValue := fmt.Sprintf("%v", cacheTTL)
+								if cacheTTLValue != "" && cacheTTLValue != "0s" && cacheTTLValue != "0" {
+									tsNode.Content = append(tsNode.Content,
+										&yaml.Node{Kind: yaml.ScalarNode, Value: "cache_ttl"},
+										&yaml.Node{Kind: yaml.ScalarNode, Value: cacheTTLValue})
+								}
+							}
+							
+							if len(tsNode.Content) > 0 {
+								newServerNode.Content = append(newServerNode.Content,
+									&yaml.Node{Kind: yaml.ScalarNode, Value: "ts"},
+									tsNode)
+							}
+						}
+					}
+
 					// 替换server节点
 					doc.Content[i+1] = newServerNode
 					serverFound = true

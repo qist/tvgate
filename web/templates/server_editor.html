@@ -491,6 +491,28 @@
                     </div>
                 </div>
             </div>
+            
+            <div class="section">
+                <h2 class="section-title">TS缓存配置</h2>
+                
+                <div class="form-group">
+                    <label for="ts_cache_size">TS缓存大小:</label>
+                    <input type="number" id="ts_cache_size" class="form-control" 
+                           placeholder="128" 
+                           value="{{ if and .config.ts .config.ts.cache_size }}{{ .config.ts.cache_size }}{{ else }}128{{ end }}"
+                           onchange="updateTSConfig('cache_size', parseInt(this.value))">
+                    <div class="help-text">TS缓存大小，单位MB（默认128MB）</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="ts_cache_ttl">TS缓存TTL:</label>
+                    <input type="text" id="ts_cache_ttl" class="form-control" 
+                           placeholder="2m" 
+                           value="{{ if and .config.ts .config.ts.cache_ttl }}{{ .config.ts.cache_ttl }}{{ else }}2m{{ end }}"
+                           onchange="updateTSConfig('cache_ttl', this.value)">
+                    <div class="help-text">TS缓存生存时间（默认2m，如：2m表示2分钟，1h表示1小时）</div>
+                </div>
+            </div>
         </form>
     </div>
 
@@ -532,6 +554,10 @@
                     // 确保tls字段存在
                     if (!serverConfig.tls) {
                         serverConfig.tls = {};
+                    }
+                    // 确保ts字段存在
+                    if (!serverConfig.ts) {
+                        serverConfig.ts = {};
                     }
                     originalConfig = JSON.parse(JSON.stringify(serverConfig)); // 保存原始配置副本
                     populateForm();
@@ -587,6 +613,12 @@
             document.getElementById('fcc_listen_port_min').value = serverConfig.fcc_listen_port_min || '';
             document.getElementById('fcc_listen_port_max').value = serverConfig.fcc_listen_port_max || '';
             
+            // 填充TS配置
+            if (serverConfig.ts) {
+                document.getElementById('ts_cache_size').value = serverConfig.ts.cache_size || '';
+                document.getElementById('ts_cache_ttl').value = serverConfig.ts.cache_ttl || '';
+            }
+            
             // 确保所有onchange事件触发以更新内部状态
             document.getElementById('port').dispatchEvent(new Event('change'));
             document.getElementById('http_port').dispatchEvent(new Event('change'));
@@ -605,7 +637,7 @@
                 document.getElementById('tls_ssl_ciphers').dispatchEvent(new Event('change'));
                 document.getElementById('tls_ssl_ecdh_curve').dispatchEvent(new Event('change'));
                 document.getElementById('enable_h3').dispatchEvent(new Event('change'));
-        }
+            }
             
             document.getElementById('mcast_rejoin_interval').dispatchEvent(new Event('change'));
             
@@ -614,6 +646,10 @@
             document.getElementById('fcc_cache_size').dispatchEvent(new Event('change'));
             document.getElementById('fcc_listen_port_min').dispatchEvent(new Event('change'));
             document.getElementById('fcc_listen_port_max').dispatchEvent(new Event('change'));
+            
+            // 触发TS配置更新事件
+            document.getElementById('ts_cache_size').dispatchEvent(new Event('change'));
+            document.getElementById('ts_cache_ttl').dispatchEvent(new Event('change'));
         }
 
         // 添加组播接口输入框
@@ -669,7 +705,7 @@
                 delete serverConfig[key];
             } else {
                 serverConfig[key] = value;
-        }
+            }
             console.log('Updated config:', key, '=', value);
         }
 
@@ -684,8 +720,23 @@
                 delete serverConfig.tls[key];
             } else {
                 serverConfig.tls[key] = value;
-        }
+            }
             console.log('Updated TLS config:', key, '=', value);
+        }
+
+        // 更新TS配置值
+        function updateTSConfig(key, value) {
+            if (!serverConfig.ts) {
+                serverConfig.ts = {};
+            }
+            
+            if (value === '' || value === null || value === undefined || 
+                (typeof value === 'number' && isNaN(value))) {
+                delete serverConfig.ts[key];
+            } else {
+                serverConfig.ts[key] = value;
+            }
+            console.log('Updated TS config:', key, '=', value);
         }
 
         // 保存配置
@@ -726,7 +777,7 @@
                 .then(response => {
                     if (!response.ok) {
                         return response.text().then(text => { throw new Error(text); });
-                }
+                    }
                     return response.text();
                 })
                 .then(data => {
