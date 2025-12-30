@@ -52,7 +52,7 @@ func handleHTMLRequest(w http.ResponseWriter, r *http.Request) {
 <html>
 <head>
 <meta charset="UTF-8">
-<title>TVGate 状态监控</title>
+<title> 状态监控</title>
 <style>
 body { 
     font-family: 'Segoe UI', sans-serif; 
@@ -126,7 +126,7 @@ body {
 <body>
 
 <div class="header">
-<h1>TVGate 状态监控</h1>
+<h1> 状态监控</h1>
 <p>更新时间: {{.Timestamp.Format "2006-01-02 15:04:05"}}</p>
 </div>
 
