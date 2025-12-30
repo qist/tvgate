@@ -62,6 +62,10 @@ func (h *ConfigHandler) handleServerConfig(w http.ResponseWriter, r *http.Reques
 			"ssl_ecdh_curve": server.TLS.ECDHCurve,
 			"enable_h3":     server.TLS.EnableH3,
 		},
+		"ts": map[string]interface{}{
+			"cache_size": server.TS.CacheSize,
+			"cache_ttl":  server.TS.CacheTTL.String(),
+		},
 	}
 
 	// 返回JSON格式的配置

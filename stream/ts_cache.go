@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/qist/tvgate/config"
 )
 
 type tsCacheChunk struct {
@@ -40,10 +42,17 @@ type TSCache struct {
 	sf singleflight.Group
 }
 
-var GlobalTSCache = NewTSCache(
-	128<<20,        // 128MB
-	1*time.Minute, // TS TTL
-)
+var GlobalTSCache *TSCache
+
+func init() {
+	// 从配置读取缓存大小和TTL值
+	config.CfgMu.RLock()
+	cacheSize := int64(config.Cfg.Server.TS.CacheSize << 20) // 转换为字节
+	cacheTTL := config.Cfg.Server.TS.CacheTTL
+	config.CfgMu.RUnlock()
+
+	GlobalTSCache = NewTSCache(cacheSize, cacheTTL)
+}
 
 func NewTSCache(maxBytes int64, ttl time.Duration) *TSCache {
 	cache := &TSCache{

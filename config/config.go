@@ -46,6 +46,7 @@ type Config struct {
 		FccCacheSize        int           `yaml:"fcc_cache_size"`        // FCC缓存大小，默认16384
 		FccListenPortMin    int           `yaml:"fcc_listen_port_min"`   // FCC监听端口范围最小值
 		FccListenPortMax    int           `yaml:"fcc_listen_port_max"`   // FCC监听端口范围最大值
+		TS                  TSConfig      `yaml:"ts"`                    // TS 配置
 	} `yaml:"server"`
 
 	Log struct {
@@ -101,6 +102,11 @@ type Config struct {
 
 	// Publisher配置 - 修改为直接包含streams
 	Publisher *PublisherConfig `yaml:"publisher"` // 推流配置
+}
+
+type TSConfig struct {
+	CacheSize int           `yaml:"cache_size"` // TS缓存大小，默认128MB
+	CacheTTL  time.Duration `yaml:"cache_ttl"`  // TS缓存TTL，默认2分钟
 }
 
 // PublisherConfig represents the publisher configuration structure
@@ -449,6 +455,15 @@ func (c *Config) SetDefaults() {
 	if c.Server.FccCacheSize <= 0 {
 		c.Server.FccCacheSize = 16384
 	}
+
+	// TS缓存默认值
+	if c.Server.TS.CacheSize <= 0 {
+		c.Server.TS.CacheSize = 128 // 默认128MB
+	}
+	if c.Server.TS.CacheTTL <= 0 {
+		c.Server.TS.CacheTTL = 2 * time.Minute // 默认2分钟
+	}
+
 	// DNS 默认值
 	if c.DNS.Timeout == 0 {
 		c.DNS.Timeout = 5 * time.Second
