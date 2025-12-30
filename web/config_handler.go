@@ -663,7 +663,7 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 
 		data := map[string]interface{}{
-			"title":   "Web管理 - 登录",
+			"title":   "登录",
 			"webPath": webPath,
 		}
 
