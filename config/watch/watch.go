@@ -19,6 +19,7 @@ import (
 	"github.com/qist/tvgate/config/update"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/server"
+	"github.com/qist/tvgate/stream"
 )
 
 // WatchConfigFile 监控配置文件变更并平滑更新服务
@@ -104,6 +105,14 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 		dns.HandleConfigUpdate(	&config.Config{}, &config.Cfg)
 		config.CfgMu.RLock()
 		update.UpdateHubsOnConfigChange(config.Cfg.Server.MulticastIfaces)
+		
+		// 更新TS缓存配置
+		if stream.GlobalTSCache != nil {
+			cacheSize := int64(config.Cfg.Server.TS.CacheSize) << 20 // 转换为字节
+			cacheTTL := config.Cfg.Server.TS.CacheTTL
+			stream.GlobalTSCache.UpdateConfig(cacheSize, cacheTTL)
+		}
+		
 		config.CfgMu.RUnlock()
 
 		muxMu.Lock()

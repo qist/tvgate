@@ -388,3 +388,28 @@ func (c *TSCache) Remove(key string) {
 		c.removeItem(it)
 	}
 }
+
+// UpdateConfig 更新缓存配置
+func (c *TSCache) UpdateConfig(newMaxBytes int64, newTTL time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	// 更新缓存大小限制
+	c.maxBytes = newMaxBytes
+	
+	// 更新TTL
+	c.ttl = newTTL
+	
+	// 如果新限制更小，清理超出的部分
+	if c.curBytes > c.maxBytes {
+		for c.curBytes > c.maxBytes && c.ll.Back() != nil {
+			oldestElement := c.ll.Back()
+			if oldestElement != nil {
+				oldestItem := oldestElement.Value.(*tsCacheItem)
+				itemBytes := oldestItem.calculateTotalBytes()
+				c.curBytes -= itemBytes
+				c.removeItem(oldestItem)
+			}
+		}
+	}
+}
