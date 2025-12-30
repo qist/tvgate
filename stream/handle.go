@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"path/filepath"
 
 	"github.com/qist/tvgate/utils/buffer"
 )
@@ -55,16 +56,24 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// 复制响应头
-	CopyHeader(w.Header(), resp.Header, r.ProtoMajor)
-	w.WriteHeader(resp.StatusCode)
-
-	// 解析URL并获取最优缓冲区大小
+	// 检查是否为TS请求，如果是，需要提前清理可能的问题头部
 	u, err := url.Parse(targetURL)
 	if err != nil {
 		logger.LogPrintf("解析目标URL失败: %v", err)
 		return
 	}
+	
+	if strings.EqualFold(filepath.Ext(u.Path), ".ts") {
+		// 删除可能引起问题的头部，特别是Content-Length
+		// 这必须在写入任何响应数据之前完成
+		resp.Header.Del("Content-Length")
+	}
+
+	// 复制响应头
+	CopyHeader(w.Header(), resp.Header, r.ProtoMajor)
+	w.WriteHeader(resp.StatusCode)
+
+	// 解析URL并获取最优缓冲区大小
 	bufSize := buffer.GetOptimalBufferSize(contentType, u.Path)
 	buf := buffer.GetBuffer(bufSize)
 	defer buffer.PutBuffer(bufSize, buf)
@@ -365,6 +374,11 @@ func CopyWithContext(
 			done := make(chan struct{})
 			defer close(done)
 			
+			// 对于TS缓存读取，删除Content-Length头部以避免长度不匹配问题
+			if rw, ok := dst.(http.ResponseWriter); ok {
+				rw.Header().Del("Content-Length")
+			}
+			
 			// 从缓存流式读取并写入响应
 			if err := cacheItem.ReadAll(dst, done); err != nil {
 				// 客户端连接可能已断开，记录但不视为错误
@@ -389,6 +403,11 @@ func CopyWithContext(
 				// 无论成功还是失败，都要关闭缓存项
 				cacheItem.Close()
 			}()
+			
+			// 对于TS缓存写入，删除Content-Length头部以避免长度不匹配问题
+			if rw, ok := dst.(http.ResponseWriter); ok {
+				rw.Header().Del("Content-Length")
+			}
 			
 			bufRead := make([]byte, 32*1024) // 32KB 分片
 			for {
@@ -690,8 +709,15 @@ func CopyResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, r
 
 	contentType := resp.Header.Get("Content-Type")
 
+	// 检查是否为TS请求，如果是，需要提前清理可能的问题头部
+	if strings.EqualFold(filepath.Ext(u.Path), ".ts") {
+		// 删除可能引起问题的头部，特别是Content-Length
+		// 这必须在写入任何响应数据之前完成
+		w.Header().Del("Content-Length")
+	}
+
 	if isWebPageContent(contentType, u.Path) {
-		// 	// 对于网页内容，直接复制
+		// 对于网页内容，直接复制
 		return Copytext(ctx, w, resp.Body, buf, updateActive)
 	} else {
 		// 对于流媒体内容，使用Hub机制

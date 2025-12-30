@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/logger"
 )
 
 type tsCacheChunk struct {
@@ -46,11 +47,12 @@ var GlobalTSCache *TSCache
 
 func init() {
 	// 从配置读取缓存大小和TTL值
+	config.Cfg.SetDefaults()
 	config.CfgMu.RLock()
 	cacheSize := int64(config.Cfg.Server.TS.CacheSize << 20) // 转换为字节
 	cacheTTL := config.Cfg.Server.TS.CacheTTL
 	config.CfgMu.RUnlock()
-
+    logger.LogPrintf("TS缓存初始化: 大小 %dMB, TTL %v", cacheSize>>20, cacheTTL)
 	GlobalTSCache = NewTSCache(cacheSize, cacheTTL)
 }
 
