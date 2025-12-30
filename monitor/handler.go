@@ -189,7 +189,7 @@ body {
   </div>
   
   <div class="card">
-    <h3>TVGate监控</h3>
+    <h3>监控</h3>
     <ul style="list-style: none; padding: 0;">
       <li><strong>CPU:</strong> {{printf "%.2f%%" .TrafficStats.App.CPUPercent}} <small style="color:#aaa; font-size:10px;">（多核 CPU 时可能超过 100%）</small></li>
       <li><strong>内存:</strong> {{FormatBytes .TrafficStats.App.MemoryUsage}}</li>
