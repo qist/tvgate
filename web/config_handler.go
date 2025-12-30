@@ -399,7 +399,11 @@ func (h *ConfigHandler) handleSyncTheme(w http.ResponseWriter, r *http.Request) 
 		h.themeMutex.Lock()
 		h.currentTheme = req.Theme
 		h.themeMutex.Unlock()
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"status": "success",
+			"theme":  h.currentTheme,
+		})
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
