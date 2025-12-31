@@ -92,4 +92,7 @@ func UpdateHubsOnConfigChange(newIfaces []string) {
 		stream.GlobalMultiChannelHub.Hubs[newKey] = newHub
 		stream.GlobalMultiChannelHub.Mu.Unlock()
 	}
+	
+	// 调用新增的接口，更新所有StreamHubs的配置
+	stream.UpdateAllHubsConfig(nil)
 }

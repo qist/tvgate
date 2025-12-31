@@ -433,7 +433,7 @@
                         <!-- 动态添加接口项 -->
                     </div>
                     <button type="button" class="add-iface-btn" onclick="addMulticastIface()">添加接口</button>
-                    <div class="help-text">组播监听的网络接口列表，留空表示使用默认接口</div>
+                    <div class="help-text">用于接收组播流量的网络接口列表，留空表示使用默认接口</div>
                 </div>
                 
                 <div class="form-group">
@@ -489,6 +489,24 @@
                                onchange="updateConfig('fcc_listen_port_max', parseInt(this.value))">
                         <div class="help-text">FCC监听端口范围的最大值（默认40100）</div>
                     </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="upstream_interface">上游接口 (多播/通用):</label>
+                    <input type="text" id="upstream_interface" class="form-control" 
+                           placeholder="eth0" 
+                           value="{{ if .config.upstream_interface }}{{ .config.upstream_interface }}{{ end }}"
+                           onchange="updateConfig('upstream_interface', this.value)">
+                    <div class="help-text">通用上游接口，用于多播和非FCC连接（可选）</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="upstream_interface_fcc">FCC专用上游接口:</label>
+                    <input type="text" id="upstream_interface_fcc" class="form-control" 
+                           placeholder="eth0" 
+                           value="{{ if .config.upstream_interface_fcc }}{{ .config.upstream_interface_fcc }}{{ end }}"
+                           onchange="updateConfig('upstream_interface_fcc', this.value)">
+                    <div class="help-text">FCC专用上游接口，优先级高于通用接口。留空则使用通用接口</div>
                 </div>
             </div>
             
@@ -612,6 +630,8 @@
             document.getElementById('fcc_cache_size').value = serverConfig.fcc_cache_size || '';
             document.getElementById('fcc_listen_port_min').value = serverConfig.fcc_listen_port_min || '';
             document.getElementById('fcc_listen_port_max').value = serverConfig.fcc_listen_port_max || '';
+            document.getElementById('upstream_interface').value = serverConfig.upstream_interface || '';
+            document.getElementById('upstream_interface_fcc').value = serverConfig.upstream_interface_fcc || '';
             
             // 填充TS配置
             if (serverConfig.ts) {
@@ -646,6 +666,8 @@
             document.getElementById('fcc_cache_size').dispatchEvent(new Event('change'));
             document.getElementById('fcc_listen_port_min').dispatchEvent(new Event('change'));
             document.getElementById('fcc_listen_port_max').dispatchEvent(new Event('change'));
+            document.getElementById('upstream_interface').dispatchEvent(new Event('change'));
+            document.getElementById('upstream_interface_fcc').dispatchEvent(new Event('change'));
             
             // 触发TS配置更新事件
             document.getElementById('ts_cache_size').dispatchEvent(new Event('change'));

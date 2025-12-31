@@ -53,6 +53,8 @@ func (h *ConfigHandler) handleServerConfig(w http.ResponseWriter, r *http.Reques
 		"fcc_cache_size":    server.FccCacheSize,
 		"fcc_listen_port_min": server.FccListenPortMin,
 		"fcc_listen_port_max": server.FccListenPortMax,
+		"upstream_interface": server.UpstreamInterface,
+		"upstream_interface_fcc":  server.UpstreamInterfaceFcc,
 		"tls": map[string]interface{}{
 			"https_port":    server.TLS.HTTPSPort,
 			"certfile":      server.TLS.CertFile,
@@ -295,6 +297,26 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 						}
 					}
 
+					// 添加upstream_interface
+					if upstreamInterface, ok := serverConfig["upstream_interface"]; ok {
+						upstreamInterfaceStr := fmt.Sprintf("%v", upstreamInterface)
+						if upstreamInterfaceStr != "" {
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "upstream_interface"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: upstreamInterfaceStr})
+						}
+					}
+					
+					// 添加upstream_interface_fcc
+					if upstreamInterfaceFcc, ok := serverConfig["upstream_interface_fcc"]; ok {
+						upstreamInterfaceFccStr := fmt.Sprintf("%v", upstreamInterfaceFcc)
+						if upstreamInterfaceFccStr != "" {
+							newServerNode.Content = append(newServerNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "upstream_interface_fcc"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: upstreamInterfaceFccStr})
+						}
+					}
+					
 					// 添加tls配置块
 					if tlsConfig, ok := serverConfig["tls"]; ok {
 						if tlsMap, ok := tlsConfig.(map[string]interface{}); ok {
