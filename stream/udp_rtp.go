@@ -186,6 +186,7 @@ type StreamHub struct {
 	fccState             int
 	fccServerAddr        *net.UDPAddr
 	fccClientAddr        *net.UDPAddr
+	fccConn              *net.UDPConn      // FCC连接
 	fccUnicastConn       *net.UDPConn
 	fccUnicastStartTime  time.Time
 	fccStartSeq          uint16
@@ -206,6 +207,9 @@ type StreamHub struct {
 	rtpBuffer            []byte
 	LastFrame            []byte
 	OnEmpty              func(*StreamHub)
+	multicastAddr        *net.UDPAddr      // 多播地址
+	fccResponseCancel    context.CancelFunc // 用于取消FCC响应监听器
+	ctx                  context.Context   // StreamHub的上下文
 }
 
 // 定义客户端状态常量
@@ -278,7 +282,17 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		fccState:             FCC_STATE_INIT,
 		fccUnicastBufPool:    &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
 		lastFccDataTime:      time.Now().UnixNano() / 1e6, // 初始化为当前时间
+		ctx:                  context.Background(), // 初始化上下文
 	}
+
+	// 设置多播地址，用于构建FCC包
+	if len(addrs) > 0 {
+		addr, err := net.ResolveUDPAddr("udp", addrs[0])
+		if err == nil {
+			hub.multicastAddr = addr
+		}
+	}
+
 	hub.stateCond = sync.NewCond(&hub.Mu)
 
 	// 获取多播重新加入间隔配置
