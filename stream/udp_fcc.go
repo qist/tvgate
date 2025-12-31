@@ -560,20 +560,18 @@ func (h *StreamHub) GetFccPortMax() int {
 }
 
 // SetFccServerAddr 设置FCC服务器地址
-func (h *StreamHub) SetFccServerAddr(addr *net.UDPAddr) {
+func (h *StreamHub) SetFccServerAddr(addr string) error {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
-	h.fccServerAddr = addr
-
-	// 如果FCC已启用且没有处于请求状态，则设置为请求状态
-	if h.fccEnabled && h.fccState == FCC_STATE_INIT {
-		h.fccSetState(FCC_STATE_REQUESTED, "FCC服务器地址设置，进入请求状态")
-
-		// 在ServeHTTP中会调用initFCCConnection和sendFCCRequest
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return err
 	}
-}
 
+	h.fccServerAddr = udpAddr
+	return nil
+}
 // GetFccServerAddr 获取FCC服务器地址
 func (h *StreamHub) GetFccServerAddr() *net.UDPAddr {
 	h.Mu.RLock()

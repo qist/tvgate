@@ -96,6 +96,7 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 			hub.SetFccType(operatorParam)
 		}
 		if _, err := net.ResolveUDPAddr("udp", fccParam); err == nil {
+			
 			if err := hub.SetFccServerAddr(fccParam); err != nil {
 				logger.LogPrintf("设置FCC服务器地址失败: %v", err)
 			}
