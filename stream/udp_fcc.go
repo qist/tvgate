@@ -1052,26 +1052,26 @@ func (h *StreamHub) fccSetState(state int, reason string) {
 		return
 	}
 
-	// 使用字符串数组表示状态名称
-	stateNames := []string{
-		"INIT",
-		"REQUESTED", 
-		"UNICAST_PENDING",
-		"UNICAST_ACTIVE",
-		"MCAST_REQUESTED",
-		"MCAST_ACTIVE",
-		"ERROR",
+	// 使用映射表示状态名称
+	stateNames := map[int]string{
+		FCC_STATE_INIT:          "INIT",
+		FCC_STATE_REQUESTED:     "REQUESTED",
+		FCC_STATE_UNICAST_PENDING: "UNICAST_PENDING",
+		FCC_STATE_UNICAST_ACTIVE:  "UNICAST_ACTIVE",
+		FCC_STATE_MCAST_REQUESTED: "MCAST_REQUESTED",
+		FCC_STATE_MCAST_ACTIVE:    "MCAST_ACTIVE",
+		FCC_STATE_ERROR:           "ERROR",
 	}
 
 	var fromState, toState string
-	if h.fccState >= 0 && h.fccState < len(stateNames) {
-		fromState = stateNames[h.fccState]
+	if name, ok := stateNames[h.fccState]; ok {
+		fromState = name
 	} else {
 		fromState = fmt.Sprintf("UNKNOWN(%d)", h.fccState)
 	}
 
-	if state >= 0 && state < len(stateNames) {
-		toState = stateNames[state]
+	if name, ok := stateNames[state]; ok {
+		toState = name
 	} else {
 		toState = fmt.Sprintf("UNKNOWN(%d)", state)
 	}
