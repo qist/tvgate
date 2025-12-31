@@ -46,6 +46,8 @@ type Config struct {
 		FccCacheSize        int           `yaml:"fcc_cache_size"`        // FCC缓存大小，默认16384
 		FccListenPortMin    int           `yaml:"fcc_listen_port_min"`   // FCC监听端口范围最小值
 		FccListenPortMax    int           `yaml:"fcc_listen_port_max"`   // FCC监听端口范围最大值
+		UpstreamInterface   string        `yaml:"upstream_interface"`    // 默认上游接口
+		UpstreamInterfaceFcc string       `yaml:"upstream_interface_fcc"` // FCC专用上游接口
 		TS                  TSConfig      `yaml:"ts"`                    // TS 配置
 	} `yaml:"server"`
 

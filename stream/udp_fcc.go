@@ -680,6 +680,64 @@ func (h *StreamHub) sendFCCRequestWithConn(fccConn *net.UDPConn, multicastAddr *
 	return nil
 }
 
+// makeTelecomFCCRequest 构建电信FCC请求包
+func makeTelecomFCCRequest(multicastIP net.IP, multicastPort uint16, clientPort uint16, cacheSize uint16) []byte {
+	pk := make([]byte, 24)
+	
+	// RTCP Header (8 bytes)
+	pk[0] = 0x80 | FCC_FMT_TELECOM_REQ // Version 2, Padding 0, FMT 2
+	pk[1] = 205                       // Type: Generic RTP Feedback (205)
+	lenWords := uint16(5)              // Length in 32-bit words minus 1
+	binary.BigEndian.PutUint16(pk[2:4], lenWords)
+	// pk[4-7]: Sender SSRC = 0 (already zeroed by make)
+
+	// Media source SSRC (4 bytes) - multicast IP address
+	ip := multicastIP.To4()
+	if ip != nil {
+		binary.BigEndian.PutUint32(pk[8:12], binary.BigEndian.Uint32(ip))
+	}
+
+	// FCI - Feedback Control Information
+	// pk[12-15]: Version 0, Reserved 3 bytes (already zeroed)
+	binary.BigEndian.PutUint16(pk[16:18], clientPort) // FCC client port
+	binary.BigEndian.PutUint16(pk[18:20], multicastPort) // Mcast group port
+	// pk[20-24]: Mcast group IP (already zeroed for test)
+	if ip != nil {
+		copy(pk[20:24], ip)
+	}
+
+	return pk
+}
+
+// makeHuaweiFCCRequest 构建华为FCC请求包
+func makeHuaweiFCCRequest(multicastIP net.IP, multicastPort uint16, clientPort uint16, cacheSize uint16) []byte {
+	pk := make([]byte, 32)
+	
+	// RTCP Header (8 bytes)
+	pk[0] = 0x80 | FCC_FMT_HUAWEI_REQ // Version 2, Padding 0, FMT 5
+	pk[1] = 205                       // Type: Generic RTP Feedback (205)
+	binary.BigEndian.PutUint16(pk[2:4], 7) // Length = 8 words - 1 = 7
+	// pk[4-7]: Sender SSRC = 0 (already zeroed by make)
+
+	// Media source SSRC (4 bytes) - multicast IP address
+	ip := multicastIP.To4()
+	if ip != nil {
+		binary.BigEndian.PutUint32(pk[8:12], binary.BigEndian.Uint32(ip))
+	}
+
+	// FCI - Status byte and sequence number (4 bytes)
+	pk[12] = 0x00                                    // Status: initializing
+	binary.BigEndian.PutUint16(pk[14:16], 0)        // Sequence number
+	// Additional fields for Huawei FCC
+	binary.BigEndian.PutUint32(pk[16:20], 0)        // Local IP placeholder
+	binary.BigEndian.PutUint16(pk[20:22], clientPort) // Client port
+	// pk[22-24]: reserved
+	binary.BigEndian.PutUint16(pk[24:26], multicastPort) // Multicast port
+	// pk[26-32]: reserved
+
+	return pk
+}
+
 // cleanupFCC 清理FCC连接
 // 注意：此方法仅在完全关闭hub时调用，不应该在单个客户端断开时调用
 func (h *StreamHub) cleanupFCC() {
@@ -879,8 +937,79 @@ func fccStateToString(state int) string {
 	}
 }
 
-// makeTelecomFCCRequest 构建电信FCC请求包
-func makeTelecomFCCRequest(multicastIP net.IP, multicastPort uint16, clientPort uint16, cacheSize uint16) []byte {
+// buildFCCRequestPacket 构建FCC请求包
+func (h *StreamHub) buildFCCRequestPacket(multicastAddr *net.UDPAddr, clientPort int) []byte {
+	var localIP net.IP
+	
+	switch h.fccType {
+	case FCC_TYPE_HUAWEI:
+		// 华为FCC需要使用专门的IP获取方法
+		localIP = h.getLocalIPForFCC()
+	case FCC_TYPE_TELECOM:
+		fallthrough
+	default:
+		// 电信FCC可以使用通用方法
+		localIP = getLocalIP()
+	}
+
+	switch h.fccType {
+	case FCC_TYPE_HUAWEI:
+		return h.buildHuaweiFCCRequestPacket(multicastAddr, localIP, clientPort)
+	case FCC_TYPE_TELECOM:
+		fallthrough
+	default:
+		return h.buildTelecomFCCRequestPacket(multicastAddr, clientPort)
+	}
+}
+
+func getLocalIP() net.IP {
+	// 准备多个备选地址，提高获取本地IP的成功率
+	dnsServers := []string{"8.8.8.8:80", "8.8.4.4:80", "223.5.5.5:80", "223.6.6.6:80"}
+
+	for _, server := range dnsServers {
+		conn, err := net.DialTimeout("udp", server, 2*time.Second)
+		if err != nil {
+			continue // 当前服务器失败，尝试下一个
+		}
+		defer conn.Close()
+		localAddr := conn.LocalAddr().(*net.UDPAddr)
+		return localAddr.IP
+	}
+
+	// 如果通过连接外部服务器无法获取本地IP，则尝试通过网络接口获取
+	ifaces, err := net.Interfaces()
+	if err == nil {
+		for _, iface := range ifaces {
+			// 跳过本地回环接口
+			if iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+
+			// 跳过禁用的接口
+			if iface.Flags&net.FlagUp == 0 {
+				continue
+			}
+
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+
+			for _, addr := range addrs {
+				if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+					if ipnet.IP.To4() != nil {
+						return ipnet.IP
+					}
+				}
+			}
+		}
+	}
+
+	// 所有方法都失败，返回nil
+	return nil
+}
+// buildTelecomFCCRequestPacket 构建电信FCC请求包
+func (h *StreamHub) buildTelecomFCCRequestPacket(multicastAddr *net.UDPAddr, clientPort int) []byte {
 	pk := make([]byte, 24)
 	
 	// RTCP Header (8 bytes)
@@ -891,15 +1020,15 @@ func makeTelecomFCCRequest(multicastIP net.IP, multicastPort uint16, clientPort 
 	// pk[4-7]: Sender SSRC = 0 (already zeroed by make)
 
 	// Media source SSRC (4 bytes) - multicast IP address
-	ip := multicastIP.To4()
+	ip := multicastAddr.IP.To4()
 	if ip != nil {
-		binary.BigEndian.PutUint32(pk[8:12], binary.LittleEndian.Uint32(ip))
+		binary.BigEndian.PutUint32(pk[8:12], binary.BigEndian.Uint32(ip))
 	}
 
 	// FCI - Feedback Control Information
 	// pk[12-15]: Version 0, Reserved 3 bytes (already zeroed)
-	binary.BigEndian.PutUint16(pk[16:18], clientPort) // FCC client port
-	binary.BigEndian.PutUint16(pk[18:20], multicastPort) // Mcast group port
+	binary.BigEndian.PutUint16(pk[16:18], uint16(clientPort)) // FCC client port
+	binary.BigEndian.PutUint16(pk[18:20], uint16(multicastAddr.Port)) // Mcast group port
 	// pk[20-24]: Mcast group IP (already zeroed for test)
 	if ip != nil {
 		copy(pk[20:24], ip)
@@ -908,8 +1037,8 @@ func makeTelecomFCCRequest(multicastIP net.IP, multicastPort uint16, clientPort 
 	return pk
 }
 
-// makeHuaweiFCCRequest 构建华为FCC请求包
-func makeHuaweiFCCRequest(multicastIP net.IP, multicastPort uint16, clientPort uint16, cacheSize uint16) []byte {
+// buildHuaweiFCCRequestPacket 构建华为FCC请求包
+func (h *StreamHub) buildHuaweiFCCRequestPacket(multicastAddr *net.UDPAddr, localIP net.IP, clientPort int) []byte {
 	pk := make([]byte, 32)
 	
 	// RTCP Header (8 bytes)
@@ -919,20 +1048,115 @@ func makeHuaweiFCCRequest(multicastIP net.IP, multicastPort uint16, clientPort u
 	// pk[4-7]: Sender SSRC = 0 (already zeroed by make)
 
 	// Media source SSRC (4 bytes) - multicast IP address
-	ip := multicastIP.To4()
+	ip := multicastAddr.IP.To4()
 	if ip != nil {
-		binary.BigEndian.PutUint32(pk[8:12], binary.LittleEndian.Uint32(ip))
+		binary.BigEndian.PutUint32(pk[8:12], binary.BigEndian.Uint32(ip))
 	}
 
-	// FCI - Status byte and sequence number (4 bytes)
-	pk[12] = 0x00                                    // Status: initializing
-	binary.BigEndian.PutUint16(pk[14:16], 0)        // Sequence number
-	// Additional fields for Huawei FCC
-	binary.BigEndian.PutUint32(pk[16:20], 0)        // Local IP placeholder
-	binary.BigEndian.PutUint16(pk[20:22], clientPort) // Client port
-	// pk[22-24]: reserved
-	binary.BigEndian.PutUint16(pk[24:26], multicastPort) // Multicast port
-	// pk[26-32]: reserved
+	// FCI - Feedback Control Information (16 bytes)
+	// Local IP address (4 bytes) - network byte order
+	if localIP != nil && localIP.To4() != nil {
+		copy(pk[20:24], localIP.To4())
+	}
+
+	// FCC client port (2 bytes) + Flag (2 bytes)
+	binary.BigEndian.PutUint16(pk[24:26], uint16(clientPort))
+	binary.BigEndian.PutUint16(pk[26:28], 0x8000)
+
+	// Redirect support flag (4 bytes) - 0x20000000
+	binary.BigEndian.PutUint32(pk[28:32], 0x20000000)
 
 	return pk
+}
+
+// getLocalIPForFCC 获取用于FCC的本地IP地址，支持指定接口
+func (h *StreamHub) getLocalIPForFCC() net.IP {
+	h.Mu.RLock()
+	serverConfig := config.Cfg.Server
+	h.Mu.RUnlock()
+	
+	// 获取FCC专用接口，如果未配置则使用通用上游接口
+	var interfaceName string
+	if serverConfig.UpstreamInterfaceFcc != "" {
+		interfaceName = serverConfig.UpstreamInterfaceFcc
+	} else if serverConfig.UpstreamInterface != "" {
+		interfaceName = serverConfig.UpstreamInterface
+	}
+	
+	if interfaceName != "" {
+		// 如果指定了接口，则从该接口获取IP
+		iface, err := net.InterfaceByName(interfaceName)
+		if err != nil {
+			logger.LogPrintf("FCC: 获取接口 %s 失败: %v", interfaceName, err)
+			return h.getDefaultLocalIP()
+		}
+		
+		addrs, err := iface.Addrs()
+		if err != nil {
+			logger.LogPrintf("FCC: 获取接口 %s 地址失败: %v", interfaceName, err)
+			return h.getDefaultLocalIP()
+		}
+		
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
+				if !ipnet.IP.IsLoopback() {
+					logger.LogPrintf("FCC: Using local IP from interface %s: %s", interfaceName, ipnet.IP.String())
+					return ipnet.IP
+				}
+			}
+		}
+		logger.LogPrintf("FCC: 未在接口 %s 中找到有效的IPv4地址", interfaceName)
+	}
+	
+	// 如果没有配置特定接口或获取失败，则使用默认方法获取IP
+	return h.getDefaultLocalIP()
+}
+
+// getDefaultLocalIP 默认获取本地IP的方法
+func (h *StreamHub) getDefaultLocalIP() net.IP {
+	// 准备多个备选地址，提高获取本地IP的成功率
+	dnsServers := []string{"8.8.8.8:80", "8.8.4.4:80", "223.5.5.5:80", "223.6.6.6:80"}
+
+	for _, server := range dnsServers {
+		conn, err := net.DialTimeout("udp", server, 2*time.Second)
+		if err != nil {
+			continue // 当前服务器失败，尝试下一个
+		}
+		conn.Close() // 使用完后立即关闭连接
+		localAddr := conn.LocalAddr().(*net.UDPAddr)
+		return localAddr.IP
+	}
+
+	// 如果通过连接外部服务器无法获取本地IP，则尝试通过网络接口获取
+	ifaces, err := net.Interfaces()
+	if err == nil {
+		for _, iface := range ifaces {
+			// 跳过本地回环接口
+			if iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+
+			// 跳过禁用的接口
+			if iface.Flags&net.FlagUp == 0 {
+				continue
+			}
+
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+
+			for _, addr := range addrs {
+				if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+					if ipnet.IP.To4() != nil {
+						return ipnet.IP
+					}
+				}
+			}
+		}
+	}
+
+	// 所有方法都失败，返回nil
+	logger.LogPrintf("FCC: Could not determine local IP address")
+	return nil
 }
