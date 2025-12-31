@@ -616,7 +616,7 @@ func (h *StreamHub) startFCCTimeoutTimer() {
 // sendFCCRequestWithConn 发送FCC请求使用客户端自己的连接
 func (h *StreamHub) sendFCCRequestWithConn(fccConn *net.UDPConn, multicastAddr *net.UDPAddr, clientPort int, fccServerAddr *net.UDPAddr) error {
 	if fccConn == nil || fccServerAddr == nil {
-		return fmt.Errorf("fcc connection or server address is nil")
+		return fmt.Errorf("FCC 连接或服务器地址为空")
 	}
 
 	// 使用buildFCCRequestPacket函数构建请求包
@@ -783,7 +783,7 @@ func (h *StreamHub) sendFCCTermination(fccServerAddr *net.UDPAddr, seqNum uint16
 	}
 
 	if fccConn == nil || fccServerAddr == nil {
-		return fmt.Errorf("fcc connection or server address not initialized")
+		return fmt.Errorf("FCC 连接或服务器地址为空")
 	}
 
 	// 构建FCC终止包
@@ -798,7 +798,7 @@ func (h *StreamHub) sendFCCTermination(fccServerAddr *net.UDPAddr, seqNum uint16
 		if multicastAddr != nil {
 			termPacket = h.buildHuaweiFCCTermPacket(multicastAddr, seqNum)
 		} else {
-			return fmt.Errorf("multicast address not available for huawei termination packet")
+			return fmt.Errorf("多播地址不可用于华为终止包")
 		}
 	case FCC_TYPE_TELECOM:
 		h.Mu.RLock()
@@ -808,10 +808,10 @@ func (h *StreamHub) sendFCCTermination(fccServerAddr *net.UDPAddr, seqNum uint16
 		if multicastAddr != nil {
 			termPacket = h.buildTelecomFCCTermPacket(multicastAddr, seqNum)
 		} else {
-			return fmt.Errorf("multicast address not available for telecom termination packet")
+			return fmt.Errorf("多播地址不可用于电信终止包")
 		}
 	default:
-		return fmt.Errorf("unsupported fcc type: %d", fccType)
+		return fmt.Errorf("不支持的FCC类型: %d", fccType)
 	}
 
 	// 发送三次以确保送达 - 与C语言版本一致
@@ -830,7 +830,7 @@ func (h *StreamHub) sendFCCTermination(fccServerAddr *net.UDPAddr, seqNum uint16
 		time.Sleep(10 * time.Millisecond) // 短暂延迟以提高可靠性
 	}
 
-	logger.LogPrintf("FCC: Termination packet sent successfully, type: %s, seq: %d",
+	logger.LogPrintf("FCC: 终止包发送成功, 类型: %s, 序号: %d",
 		map[int]string{FCC_TYPE_TELECOM: "Telecom", FCC_TYPE_HUAWEI: "Huawei"}[fccType], seqNum)
 
 	return nil
@@ -868,41 +868,6 @@ func (h *StreamHub) buildFCCRequestPacket(multicastAddr *net.UDPAddr, clientPort
 	default:
 		return h.buildTelecomFCCRequestPacket(multicastAddr, clientPort)
 	}
-}
-
-
-// startUnicastTimeoutTimer 启动单播超时计时器
-func (h *StreamHub) startUnicastTimeoutTimer() {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
-	
-	// 停止现有的超时计时器
-	if h.fccTimeoutTimer != nil {
-		h.fccTimeoutTimer.Stop()
-		h.fccTimeoutTimer = nil
-	}
-
-	// 启动新的超时计时器 - 与C语言版本一致，使用80ms
-	h.fccTimeoutTimer = time.AfterFunc(80*time.Millisecond, func() {
-		h.Mu.Lock()
-		currentState := h.fccState
-		// 在超时后停止定时器，避免重复触发
-		if h.fccTimeoutTimer != nil {
-			h.fccTimeoutTimer.Stop()
-			h.fccTimeoutTimer = nil
-		}
-		h.Mu.Unlock()
-		
-		logger.LogPrintf("FCC: Unicast timeout triggered, current state=%d", currentState)
-		
-		// 如果在超时时间内仍处于UNICAST_PENDING状态，说明没有收到第一个单播包
-		if currentState == FCC_STATE_UNICAST_PENDING {
-			logger.LogPrintf("FCC: No unicast packet received, falling back to multicast")
-			
-			// 更新状态为MCAST_ACTIVE，降级到组播播放
-			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "No unicast packet received, fallback to multicast")
-		}
-	})
 }
 
 // buildTelecomFCCRequestPacket 构建电信FCC请求包
@@ -1044,7 +1009,7 @@ func (h *StreamHub) getLocalIPForFCC() net.IP {
 		for _, addr := range addrs {
 			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
 				if !ipnet.IP.IsLoopback() {
-					logger.LogPrintf("FCC: Using local IP from interface %s: %s", interfaceName, ipnet.IP.String())
+					logger.LogPrintf("FCC: 从接口 %s 使用本地IP: %s", interfaceName, ipnet.IP.String())
 					return ipnet.IP
 				}
 			}
@@ -1101,6 +1066,6 @@ func (h *StreamHub) getDefaultLocalIP() net.IP {
 	}
 
 	// 所有方法都失败，返回nil
-	logger.LogPrintf("FCC: Could not determine local IP address")
+	logger.LogPrintf("FCC: 无法确定本地IP地址")
 	return nil
 }
