@@ -235,6 +235,8 @@ type StreamHub struct {
 	// 统一使用零拷贝缓冲区管理和状态转换的字段
 	fccPendingListHead *BufferRef
 	fccPendingListTail *BufferRef
+	fccTimeoutTimer    *time.Timer  // FCC请求超时定时器
+	fccUnicastTimer    *time.Timer  // FCC单播超时切换定时器
 
 	// 添加客户端状态更新通道
 	clientStateChan chan int
@@ -1077,6 +1079,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 				for _, addr := range h.AddrList {
 					udpAddr, err := net.ResolveUDPAddr("udp", addr)
 					if err != nil {
+						logger.LogPrintf("FCC: 无法解析UDP地址 %s: %v", addr, err)
 						continue
 					}
 
@@ -1085,11 +1088,13 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 					if err != nil {
 						logger.LogPrintf("FCC请求发送失败: %v", err)
 					} else {
-						h.SetFccState(FCC_STATE_REQUESTED)
+						h.fccSetState(FCC_STATE_REQUESTED, "FCC启用并进入请求状态")
 						logger.LogPrintf("FCC请求已发送到 %s 用于客户端 %s", addr, host)
 					}
 				}
 			}()
+		} else {
+			logger.LogPrintf("FCC: 初始化连接失败，跳过FCC请求发送")
 		}
 	}
 
@@ -1114,11 +1119,20 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 						continue
 					}
 
-					err = h.sendFCCTermination(udpAddr, seqNum)
-					if err != nil {
-						logger.LogPrintf("FCC终止包发送失败: %v", err)
+					// 检查FCC连接是否已初始化再发送终止包
+					h.Mu.RLock()
+					hasFccConn := h.fccUnicastConn != nil
+					h.Mu.RUnlock()
+					
+					if hasFccConn {
+						err = h.sendFCCTermination(udpAddr, seqNum)
+						if err != nil {
+							logger.LogPrintf("FCC终止包发送失败: %v", err)
+						} else {
+							logger.LogPrintf("FCC终止包已发送到 %s", addr)
+						}
 					} else {
-						logger.LogPrintf("FCC终止包已发送到 %s", addr)
+						logger.LogPrintf("FCC连接未初始化，跳过终止包发送")
 					}
 				}
 			}()
@@ -1672,6 +1686,13 @@ func (h *StreamHub) isClosed() bool {
 		return false
 	}
 }
+
+// 以下函数已在 udp_fcc.go 中定义，不再重复定义
+// - sendFCCRequest
+// - sendFCCTermination
+// - makeTelecomFCCPacket
+// - makeHuaweiFCCPacket
+// 统一由 udp_fcc.go 维护
 
 // SetFccState 设置FCC状态并记录状态转换日志
 func (h *StreamHub) SetFccState(state int) {
