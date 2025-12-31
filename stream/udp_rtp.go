@@ -8,9 +8,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +20,7 @@ import (
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
 )
 
 const (
@@ -29,31 +30,6 @@ const (
 	NULL_PID    = 0x1FFF
 	PAT_PID     = 0x0000
 	PMT_PID     = 0x1000
-
-	// FCC类型
-	FCC_TYPE_TELECOM = 0
-	FCC_TYPE_HUAWEI  = 1
-
-	// FCC格式类型
-	FCC_FMT_TELECOM_REQ  = 2 // 电信请求
-	FCC_FMT_TELECOM_RESP = 3 // 电信响应
-	FCC_FMT_TELECOM_SYNC = 4 // 电信同步
-	FCC_FMT_TELECOM_TERM = 5 // 电信终止
-
-	FCC_FMT_HUAWEI_REQ  = 5  // 华为请求
-	FCC_FMT_HUAWEI_RESP = 6  // 华为响应
-	FCC_FMT_HUAWEI_NAT  = 12 // 华为NAT穿越
-	FCC_FMT_HUAWEI_SYNC = 8  // 华为同步
-	FCC_FMT_HUAWEI_TERM = 9  // 华为终止
-
-	// FCC状态
-	FCC_STATE_INIT = iota
-	FCC_STATE_REQUESTED
-	FCC_STATE_UNICAST_PENDING
-	FCC_STATE_UNICAST_ACTIVE
-	FCC_STATE_MCAST_REQUESTED
-	FCC_STATE_MCAST_ACTIVE
-	FCC_STATE_ERROR
 
 	StateStoppeds = iota
 	StatePlayings
@@ -167,79 +143,69 @@ func (r *RingBuffer) PushWithReuse(item []byte) {
 // StreamHub 流处理中心
 // ====================
 type hubClient struct {
-	ch        chan []byte
-	connID    string
-	dropCount uint64 // 客户端丢包计数
-	// lastFrame []byte // 客户端最后一帧，用于重发
+	ch         chan []byte
+	connID     string
+	dropCount  uint64 // 客户端丢包计数
+	initialData [][]byte // 客户端初始数据缓存，用于FCC快速启动
+	fccConn    *net.UDPConn // 每个客户端独立的FCC连接
+	fccState   int // 客户端特定的FCC状态
+	fccSession *FccSession // FCC会话，用于缓存管理
+	fccTimeoutTimer *time.Timer // 客户端独立的FCC超时定时器
+	fccUnicastStartTime time.Time // 单播开始时间，用于超时检测
+	fccStartSeq  uint16 // FCC起始序列号
+	fccTermSeq   uint16 // FCC终止序列号
+	fccTermSent  bool   // FCC终止包是否已发送
 }
 
+// StreamHub represents a multicast/unicast streaming hub
 type StreamHub struct {
-	Mu               sync.RWMutex
-	Clients          map[string]hubClient
-	isPlaying        bool
-	pktBuffer        *RingBuffer
-	patBuffer        []byte
-	pmtBuffer        []byte
-	isClosedFlag     int32
-	Closed           chan struct{}
-	notify           chan struct{}
-	SrcIP            net.IP
-	SrcPort          int
-	multicastSrcIP   net.IP
-	multicastSrcPort int
-	Method           string
+	Mu            sync.RWMutex
+	Clients       map[string]hubClient
+	AddCh         chan hubClient
+	RemoveCh      chan string
+	UdpConns      []*net.UDPConn
+	CacheBuffer   *RingBuffer
+	Closed        chan struct{}
+	BufPool       *sync.Pool
+	AddrList      []string
+	state         int
+	stateCond     *sync.Cond
+	lastCCMap     map[int]byte
+	rtpSequenceMap map[uint32]*rtpSeqEntry
+	ifaces        []string
 
-	// 原有缓冲区和连接相关字段
-	BufPool     *sync.Pool
-	LastFrame   []byte
-	CacheBuffer *RingBuffer
-	AddrList    []string
-	PacketCount uint64
-	DropCount   uint64
-	state       int // 0: stopped, 1: playing, 2: error
-	stateCond   *sync.Cond
-	OnEmpty     func(h *StreamHub) // 当客户端数量为0时触发
+	// 多播重新加入相关
+	rejoinInterval time.Duration
+	rejoinTimer    *time.Timer
 
-	// UDP连接相关字段
-	UdpConns       []*net.UDPConn
-	rtpBuffer      []byte
-	rejoinTimer    *time.Timer   // 重新加入组播组的定时器
-	rejoinInterval time.Duration // 重新加入组播组的时间间隔
-	ifaces         []string      // 指定的网络接口
-
-	// 客户端管理通道
-	AddCh    chan hubClient
-	RemoveCh chan string
-
-	// RTP包处理相关字段
-	lastCCMap      map[int]byte            // PID -> TS包中的CC字段
-	rtpSequenceMap map[uint32]*rtpSeqEntry // SSRC -> RTP序列号信息
-
-	// FCC相关字段
-	fccEnabled        bool
-	fccType           int
-	fccState          int
-	fccCacheSize      int
-	fccPortMin        int
-	fccPortMax        int
-	fccStartSeq       uint16
-	fccTermSeq        uint16
-	fccTermSent       bool
-	fccSyncTimer      *time.Timer
-	fccServerAddr     *net.UDPAddr
-	fccUnicastConn    *net.UDPConn
-	fccUnicastPort    int
-	fccUnicastBufPool *sync.Pool
-	fccPendingCount   int32
-
-	// 统一使用零拷贝缓冲区管理和状态转换的字段
-	fccPendingListHead *BufferRef
-	fccPendingListTail *BufferRef
-	fccTimeoutTimer    *time.Timer  // FCC请求超时定时器
-	fccUnicastTimer    *time.Timer  // FCC单播超时切换定时器
-
-	// 添加客户端状态更新通道
-	clientStateChan chan int
+	// FCC (Fast Channel Change) 相关
+	fccEnabled           bool
+	fccType              int
+	fccCacheSize         int
+	fccPortMin, fccPortMax int
+	fccState             int
+	fccServerAddr        *net.UDPAddr
+	fccClientAddr        *net.UDPAddr
+	fccUnicastConn       *net.UDPConn
+	fccUnicastStartTime  time.Time
+	fccStartSeq          uint16
+	fccTermSeq           uint16
+	fccTermSent          bool
+	fccPendingListHead   *BufferRef
+	fccPendingListTail   *BufferRef
+	fccPendingCount      int32
+	fccUnicastBufPool    *sync.Pool
+	fccSyncTimer         *time.Timer
+	fccTimeoutTimer      *time.Timer
+	fccUnicastTimer      *time.Timer
+	fccUnicastPort       int
+	clientStateChan      chan int
+	patBuffer            []byte
+	pmtBuffer            []byte
+	lastFccDataTime      int64
+	rtpBuffer            []byte
+	LastFrame            []byte
+	OnEmpty              func(*StreamHub)
 }
 
 // 定义客户端状态常量
@@ -272,6 +238,12 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 	if fccCacheSize <= 0 {
 		fccCacheSize = 16384
 	}
+	if fccPortMin == 0 {
+		fccPortMin = 50000  // 默认端口范围
+	}
+	if fccPortMax == 0 {
+		fccPortMax = 60000
+	}
 
 	// 确定FCC类型
 	fccType := FCC_TYPE_TELECOM // 默认为电信类型
@@ -297,14 +269,15 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		rtpSequenceMap: make(map[uint32]*rtpSeqEntry),
 		ifaces:         ifaces,
 
-		// FCC相关初始化
-		fccEnabled:        false, // 默认不启用，通过URL参数控制
-		fccType:           fccType,
-		fccCacheSize:      fccCacheSize,
-		fccPortMin:        fccPortMin,
-		fccPortMax:        fccPortMax,
-		fccState:          FCC_STATE_INIT,
-		fccUnicastBufPool: &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
+		// FCC相关初始化 - 但默认不启用FCC
+		fccEnabled:           false, // 只有在收到fcc参数时才启用
+		fccType:              fccType,
+		fccCacheSize:         fccCacheSize,
+		fccPortMin:           fccPortMin,
+		fccPortMax:           fccPortMax,
+		fccState:             FCC_STATE_INIT,
+		fccUnicastBufPool:    &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
+		lastFccDataTime:      time.Now().UnixNano() / 1e6, // 初始化为当前时间
 	}
 	hub.stateCond = sync.NewCond(&hub.Mu)
 
@@ -426,68 +399,46 @@ func isMulticast(ip net.IP) bool {
 // 启动 UDPConn readLoop
 // ====================
 func (h *StreamHub) startReadLoops() {
-	// 清理之前的读循环（如果有的话）
-	// 由于UDP读循环在连接关闭时会自行退出，这里不需要特殊处理
+	// 创建缓冲池
+	buf := h.BufPool.Get().([]byte)
+	h.BufPool.Put(buf)
 
-	// 为每个连接启动一个新的读循环
-	for idx, conn := range h.UdpConns {
-		hubAddr := h.AddrList[idx%len(h.AddrList)]
-		go h.readLoop(conn, hubAddr)
-	}
-}
+	for i, conn := range h.UdpConns {
+		go func(index int, c *net.UDPConn) {
+			buf := make([]byte, 64*1024) // 64KB buffer
 
-func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
-	if conn == nil {
-		return
-	}
+			for {
+				// 检查hub是否已关闭
+				select {
+				case <-h.Closed:
+					return
+				default:
+				}
 
-	udpAddr, _ := net.ResolveUDPAddr("udp", hubAddr)
-	dstIP := udpAddr.IP.String()
-	pconn := ipv4.NewPacketConn(conn)
-	_ = pconn.SetControlMessage(ipv4.FlagDst, true)
+				n, err := c.Read(buf)
+				if err != nil {
+					if !h.IsClosed() {
+						logger.LogPrintf("读取UDP连接错误: %v", err)
+					}
+					return
+				}
 
-	for {
-		select {
-		case <-h.Closed:
-			return
-		default:
-		}
-
-		buf := h.BufPool.Get().([]byte)
-		n, cm, _, err := pconn.ReadFrom(buf)
-		if err != nil {
-			h.BufPool.Put(buf)
-			if !errors.Is(err, net.ErrClosed) {
-				logger.LogPrintf("❌ UDP 读取错误: %v", err)
+				if n > 0 {
+					// 创建BufferRef来处理数据
+					data := make([]byte, n)
+					copy(data, buf[:n])
+					
+					inRef := NewBufferRef(data)
+					outRef := h.processRTPPacketRef(inRef)
+					if outRef == nil {
+						continue // 包被丢弃或处理中
+					}
+					
+					// 使用零拷贝引用广播方法发送数据到所有客户端
+					h.broadcastRef(outRef)
+				}
 			}
-			return
-		}
-
-		if cm != nil && cm.Dst.String() != dstIP {
-			h.BufPool.Put(buf)
-			continue
-		}
-
-		inRef := NewPooledBufferRef(buf, buf[:n], h.BufPool)
-
-		h.Mu.RLock()
-		closed := h.state == StateStoppeds || h.CacheBuffer == nil
-		h.Mu.RUnlock()
-		if closed {
-			return
-		}
-
-		// 处理RTP包（零拷贝引用）
-		outRef := h.processRTPPacketRef(inRef)
-		if outRef == nil {
-			inRef.Put()
-			continue
-		}
-		if outRef != inRef {
-			inRef.Put()
-		}
-		// 广播后归还缓冲
-		h.broadcastRef(outRef)
+		}(i, conn)
 	}
 }
 
@@ -649,12 +600,12 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 }
 
 // hexdumpPreview 返回前 n 个字节的十六进制预览
-func hexdumpPreview(buf []byte, n int) string {
-	if len(buf) > n {
-		buf = buf[:n]
-	}
-	return hex.EncodeToString(buf)
-}
+// func hexdumpPreview(buf []byte, n int) string {
+// 	if len(buf) > n {
+// 		buf = buf[:n]
+// 	}
+// 	return hex.EncodeToString(buf)
+// }
 
 func (h *StreamHub) cleanupOldSSRCs() {
 	now := time.Now()
@@ -761,63 +712,6 @@ func makeNullTS() []byte {
 // ====================
 // 广播到所有客户端
 // ====================
-func (h *StreamHub) broadcast(data []byte) {
-	// 检查是否是FCC多播过渡阶段
-	if h.IsFccEnabled() {
-		h.Mu.RLock()
-		inTransition := h.fccState == FCC_STATE_MCAST_REQUESTED
-		h.Mu.RUnlock()
-
-		if inTransition {
-			h.handleMcastDataDuringTransition(data)
-			return
-		}
-	}
-
-	// 检查是否是PAT或PMT包
-	pid := ((uint16(data[1]) & 0x1f) << 8) | uint16(data[2])
-
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
-
-	if pid == PAT_PID {
-		// 保存PAT包用于FCC
-		if h.patBuffer == nil {
-			h.patBuffer = patBufferPool.Get().([]byte)
-		}
-		copy(h.patBuffer, data)
-	} else if pid == PMT_PID {
-		// 保存PMT包用于FCC
-		if h.pmtBuffer == nil {
-			h.pmtBuffer = pmtBufferPool.Get().([]byte)
-		}
-		copy(h.pmtBuffer, data)
-	}
-
-	// 如果FCC处于活动状态，将数据包添加到FCC缓冲区
-	if h.fccEnabled && h.fccState != FCC_STATE_MCAST_ACTIVE {
-		// 使用零拷贝链表存储数据
-		bufRef := NewBufferRef(data)
-		bufRef.Get() // 增加引用计数
-		if h.fccPendingListHead == nil {
-			h.fccPendingListHead = bufRef
-			h.fccPendingListTail = bufRef
-		} else {
-			h.fccPendingListTail.next = bufRef
-			h.fccPendingListTail = bufRef
-		}
-	}
-
-	// 发送数据给所有客户端
-	for _, c := range h.Clients {
-		select {
-		case c.ch <- data:
-		case <-time.After(100 * time.Millisecond):
-			// 如果发送超时，则断开客户端连接
-			// 注意：这里不能直接调用Close，因为hubClient没有Close方法
-		}
-	}
-}
 
 // 零拷贝引用广播，发送完成后归还池
 func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
@@ -840,71 +734,131 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 		}
 	}
 	bufRef.Put()
+	
+	// 将TS包写入频道缓存
+	h.Mu.RLock()
+	if len(data) >= 188 && data[0] == 0x47 { // TS包标识
+		for _, addr := range h.AddrList {
+			// 提取频道ID（使用地址作为频道标识）
+			channelID := addr
+			channel := GlobalChannelManager.GetOrCreate(channelID)
+			if channel != nil {
+				channel.AddTsPacket(data)
+			}
+		}
+	}
+	h.Mu.RUnlock()
 }
 
 // ====================
 // 客户端管理循环
 // ====================
+// 运行hub主循环
 func (h *StreamHub) run() {
+	// 启动清理器（只在FCC启用时启动）
+	h.Mu.RLock()
+	fccEnabled := h.fccEnabled
+	h.Mu.RUnlock()
+	
+	if fccEnabled {
+		GlobalChannelManager.StartCleaner()
+	}
+	
 	for {
 		select {
 		case client := <-h.AddCh:
 			h.Mu.Lock()
 			h.Clients[client.connID] = client
-			curCount := len(h.Clients)
 			h.Mu.Unlock()
-			go h.sendInitial(client.ch)
-			logger.LogPrintf("➕ 客户端加入，当前客户端数量=%d", curCount)
-
+			
+			logger.LogPrintf("客户端加入: %s, 当前客户端数: %d", client.connID, len(h.Clients))
+			
+			// 如果启用了FCC，发送缓存数据给新客户端
+			h.Mu.RLock()
+			addrList := h.AddrList
+			h.Mu.RUnlock()
+			
+			if client.fccSession != nil && len(addrList) > 0 {
+				// 从频道缓存获取数据
+				channelID := addrList[0] // 使用第一个地址作为频道ID
+				channel := GlobalChannelManager.GetOrCreate(channelID)
+				packets := channel.ReadForSession(client.fccSession)
+				
+				// 发送缓存数据给客户端
+				if len(packets) > 0 {
+					go func(ch chan []byte, pkts [][]byte) {
+						for _, pkt := range pkts {
+							select {
+							case ch <- pkt:
+							case <-time.After(5 * time.Second): // 5秒超时
+								logger.LogPrintf("发送缓存数据超时，客户端可能已断开: %s", client.connID)
+								return
+							}
+						}
+					}(client.ch, packets)
+				}
+			}
+			
 		case connID := <-h.RemoveCh:
-			var clientToClose *hubClient
-			var curCount int
-			var shouldCloseHub bool
-
 			h.Mu.Lock()
-			if client, ok := h.Clients[connID]; ok {
-				clientToClose = &client
+			if client, exists := h.Clients[connID]; exists {
+				// 关闭客户端通道
+				close(client.ch)
+				
+				// 如果有FCC连接，清理它
+				if client.fccConn != nil {
+					client.fccConn.Close()
+				}
+				
+				// 停止客户端的FCC超时定时器
+				if client.fccTimeoutTimer != nil {
+					client.fccTimeoutTimer.Stop()
+					client.fccTimeoutTimer = nil
+				}
+				
+				// 从FCC缓存管理器中移除会话
+				if client.fccSession != nil {
+					channelID := h.AddrList[0] // 使用第一个地址作为频道ID
+					GlobalChannelManager.GetOrCreate(channelID).RemoveSession(connID)
+				}
+				
 				delete(h.Clients, connID)
-				curCount = len(h.Clients)
-				logger.LogPrintf("➖ 客户端离开，当前客户端数量=%d", curCount)
-
-				// 如果没有客户端了，准备关闭Hub
-				if curCount == 0 {
-					shouldCloseHub = true
+				logger.LogPrintf("客户端移除: %s, 当前客户端数: %d", connID, len(h.Clients))
+				
+				// 检查是否还有客户端，如果没有则根据规范可能需要关闭hub
+				if len(h.Clients) == 0 {
+					logger.LogPrintf("所有客户端已断开，频道: %s", h.AddrList[0])
 				}
 			}
 			h.Mu.Unlock()
-
-			// 在锁外关闭客户端channel
-			if clientToClose != nil && clientToClose.ch != nil {
-				close(clientToClose.ch)
-			}
-
-			// 如果没有客户端了，异步关闭Hub
-			if shouldCloseHub {
-				// 只有在启用FCC时才清理FCC连接
-				if h.fccEnabled {
-					h.cleanupFCC()
-				}
-
-				// 在单独的goroutine中关闭以避免死锁
-				go h.Close()
-				if h.OnEmpty != nil {
-					h.OnEmpty(h) // 自动删除 hub
-				}
-				return
-			}
-
+			
 		case <-h.Closed:
+			// 清理所有客户端
 			h.Mu.Lock()
-			// 安全地关闭所有客户端通道
-			for _, client := range h.Clients {
-				if client.ch != nil {
-					close(client.ch)
+			for connID, client := range h.Clients {
+				close(client.ch)
+				if client.fccConn != nil {
+					client.fccConn.Close()
+				}
+				
+				// 停止客户端的FCC超时定时器
+				if client.fccTimeoutTimer != nil {
+					client.fccTimeoutTimer.Stop()
+					client.fccTimeoutTimer = nil
+				}
+				
+				// 从FCC缓存管理器中移除会话
+				if client.fccSession != nil {
+					channelID := h.AddrList[0] // 使用第一个地址作为频道ID
+					GlobalChannelManager.GetOrCreate(channelID).RemoveSession(connID)
 				}
 			}
-			h.Clients = nil
+			h.Clients = make(map[string]hubClient)
 			h.Mu.Unlock()
+			
+			// 清理FCC相关资源
+			h.cleanupFCC()
+			
 			return
 		}
 	}
@@ -920,6 +874,7 @@ func (h *StreamHub) sendInitial(ch chan []byte) {
 	h.Mu.Lock()
 	fccEnabled := h.fccEnabled
 	currentState := h.fccState
+	addrList := h.AddrList // 保存地址列表用于频道查找
 	h.Mu.Unlock()
 
 	// ---------- 非 FCC 或 FCC 未激活 ----------
@@ -994,6 +949,17 @@ func (h *StreamHub) sendInitial(ch chan []byte) {
 
 	h.Mu.Unlock()
 
+	// 如果启用了FCC，尝试从频道缓存获取数据
+	if fccEnabled && len(addrList) > 0 {
+		// 从频道缓存获取数据
+		channelID := addrList[0] // 使用第一个地址作为频道ID
+		channelPackets := h.GetInitialDataForFcc("", channelID) // connID为空，获取频道的全部数据
+		if channelPackets != nil && len(channelPackets) > 0 {
+			// 将频道缓存的数据添加到发送队列开头，以确保快速切换
+			packets = append(channelPackets, packets...)
+		}
+	}
+
 	// 异步非阻塞发送
 	go h.sendPacketsNonBlocking(ch, packets)
 }
@@ -1024,194 +990,191 @@ func (h *StreamHub) sendPacketsNonBlocking(ch chan []byte, packets [][]byte) {
 // HTTP 播放
 // ====================
 func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentType string, updateActive func()) {
-	select {
-	case <-h.Closed:
-		http.Error(w, "Stream hub closed", http.StatusServiceUnavailable)
+	clientIP := monitor.GetClientIP(r)
+	connID := clientIP + "_" + r.RemoteAddr
+
+	// 检查是否已经关闭
+	h.Mu.RLock()
+	closed := h.state == StateStoppeds
+	h.Mu.RUnlock()
+	if closed {
+		http.Error(w, "Hub closed", http.StatusServiceUnavailable)
 		return
-	default:
 	}
 
-	connID := r.Header.Get("X-ConnID")
-	if connID == "" {
-		connID = strconv.FormatInt(time.Now().UnixNano(), 10)
-	}
-
-	// 增加缓冲区大小
-	ch := make(chan []byte, 4096)
-	h.AddCh <- hubClient{ch: ch, connID: connID}
-
-	// 检查是否启用了FCC
-	h.Mu.Lock()
-	fccEnabled := h.fccEnabled
-	h.Mu.Unlock()
-
-	// 客户端端口，用于FCC请求
-	clientPort := 0
-	remoteAddr := r.RemoteAddr
-	host, port, err := net.SplitHostPort(remoteAddr)
-	if err == nil {
-		if portNum, err := strconv.Atoi(port); err == nil {
-			clientPort = portNum
-		}
-	}
-
-	// 如果没有成功获取客户端端口，且启用了FCC，则使用配置的端口范围作为默认值
-	if clientPort == 0 && fccEnabled {
-		h.Mu.RLock()
-		portMin, portMax := h.fccPortMin, h.fccPortMax
-		h.Mu.RUnlock()
-
-		if portMin > 0 && portMax > 0 && portMin <= portMax {
-			clientPort = portMin
-		}
-	}
-
-	// 如果启用了FCC，发送FCC请求
-	fccInitialized := false
-	fccTerminationSent := make(chan struct{}) // 用于确保FCC终止包只发送一次
-	if fccEnabled {
-		// 初始化FCC连接（如果尚未初始化）
-		fccInitialized = h.initFCCConnection()
-		if fccInitialized {
-			go func() {
-				defer close(fccTerminationSent) // 标记FCC终止包已处理
-
-				for _, addr := range h.AddrList {
-					udpAddr, err := net.ResolveUDPAddr("udp", addr)
-					if err != nil {
-						logger.LogPrintf("FCC: 无法解析UDP地址 %s: %v", addr, err)
-						continue
-					}
-
-					// 发送FCC请求
-					err = h.sendFCCRequest(udpAddr, h.fccUnicastPort)
-					if err != nil {
-						logger.LogPrintf("FCC请求发送失败: %v", err)
-					} else {
-						h.fccSetState(FCC_STATE_REQUESTED, "FCC启用并进入请求状态")
-						logger.LogPrintf("FCC请求已发送到 %s 用于客户端 %s", addr, host)
-					}
-				}
-			}()
+	// 检查URL参数中是否包含fcc参数，决定是否启用FCC
+	fccEnabled := r.URL.Query().Get("fcc") != ""
+	
+	// 检查FCC服务器地址参数
+	fccServerParam := r.URL.Query().Get("fcc")
+	var fccServerAddr *net.UDPAddr
+	if fccServerParam != "" {
+		addr, err := net.ResolveUDPAddr("udp", fccServerParam)
+		if err != nil {
+			logger.LogPrintf("FCC服务器地址解析失败: %v", err)
+			fccEnabled = false
 		} else {
-			logger.LogPrintf("FCC: 初始化连接失败，跳过FCC请求发送")
+			fccServerAddr = addr
 		}
 	}
 
-	defer func() {
-		h.RemoveCh <- connID
-
-		// 只有在FCC已初始化的情况下才发送终止包
-		if fccEnabled && fccInitialized {
-			// 等待FCC请求完成后再发送终止包
+	// 创建响应式通道，缓冲区大小适中
+	ch := make(chan []byte, 64)
+	
+	// 创建客户端结构体
+	client := hubClient{
+		ch:         ch,
+		connID:     connID,
+		initialData: nil, // 初始化为空，后续填充
+		fccState:   FCC_STATE_INIT, // 初始化FCC状态
+		fccConn:    nil, // 初始化为nil，如果启用FCC会创建
+		fccSession: nil, // 初始化为nil，如果启用FCC会创建
+		fccTimeoutTimer: nil, // 初始化为nil
+		fccStartSeq: 0,
+		fccTermSeq: 0,
+		fccTermSent: false,
+	}
+	
+	// 如果启用了FCC，为客户端创建独立的FCC连接
+	if fccEnabled && fccServerAddr != nil {
+		// 为这个客户端创建独立的FCC连接
+		fccConn, err := h.initFCCConnectionForClient()
+		if err != nil {
+			logger.LogPrintf("客户端FCC连接初始化失败 %s: %v", connID, err)
+			fccEnabled = false
+		} else {
+			client.fccConn = fccConn
+			
+			// 添加到FCC缓存管理器
+			channelID := h.AddrList[0] // 使用第一个地址作为频道ID
+			client.fccSession = GlobalChannelManager.GetOrCreate(channelID).AddSession(connID)
+			
+			// 设置客户端FCC状态为REQUESTED
+			client.fccState = FCC_STATE_REQUESTED
+			client.fccUnicastStartTime = time.Now()
+			
+			// 发送FCC请求给这个客户端的服务器
 			go func() {
-				// 等待FCC请求goroutine完成，设置超时防止无限等待
-				select {
-				case <-fccTerminationSent: // 等待FCC请求goroutine完成
-				case <-time.After(5 * time.Second): // 最多等待5秒
-					logger.LogPrintf("等待FCC请求完成超时")
+				h.Mu.RLock()
+				multicastAddr, err := net.ResolveUDPAddr("udp", h.AddrList[0]) // 使用第一个地址作为多播地址
+				h.Mu.RUnlock()
+				
+				if err != nil {
+					logger.LogPrintf("多播地址解析失败: %v", err)
+					return
 				}
-
-				seqNum := uint16(0) // 在实际应用中应该获取最后一个序列号
-				for _, addr := range h.AddrList {
-					udpAddr, err := net.ResolveUDPAddr("udp", addr)
-					if err != nil {
-						continue
-					}
-
-					// 检查FCC连接是否已初始化再发送终止包
-					h.Mu.RLock()
-					hasFccConn := h.fccUnicastConn != nil
-					h.Mu.RUnlock()
-					
-					if hasFccConn {
-						err = h.sendFCCTermination(udpAddr, seqNum)
-						if err != nil {
-							logger.LogPrintf("FCC终止包发送失败: %v", err)
-						} else {
-							logger.LogPrintf("FCC终止包已发送到 %s", addr)
-						}
-					} else {
-						logger.LogPrintf("FCC连接未初始化，跳过终止包发送")
-					}
+				
+				err = h.sendFCCRequestWithConn(fccConn, multicastAddr, fccConn.LocalAddr().(*net.UDPAddr).Port, fccServerAddr)
+				if err != nil {
+					logger.LogPrintf("发送FCC请求失败: %v", err)
+					return
 				}
+				
+				// 启动客户端独立的FCC超时定时器
+				client.startClientFCCTimeoutTimer(fccConn, fccServerAddr, multicastAddr)
 			}()
 		}
+	}
 
-		// 注意：不在这里调用cleanupFCC()，而是在所有客户端都断开时调用
-	}()
+	// 添加客户端到hub
+	h.AddCh <- client
 
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("ContentFeatures.DLNA.ORG", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
-	w.Header().Set("TransferMode.DLNA.ORG", "Streaming")
+	// 设置响应头
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Type", contentType)
 
-	userAgent := r.Header.Get("User-Agent")
-	switch {
-	case strings.Contains(userAgent, "VLC"):
-		w.Header().Del("Transfer-Encoding")
-		w.Header().Set("Accept-Ranges", "none")
-	default:
-		w.Header().Set("Transfer-Encoding", "chunked")
-		w.Header().Set("Accept-Ranges", "none")
-	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+	// 等待Hub进入播放状态，使用请求上下文，这样当客户端断开时可以及时返回
+	if !h.WaitForPlaying(r.Context()) {
+		logger.LogPrintf("等待Hub播放状态超时或失败: %s", connID)
+		http.Error(w, "Service timeout", http.StatusServiceUnavailable)
+		// 从hub中移除客户端
+		h.RemoveCh <- connID
 		return
 	}
 
-	ctx := r.Context()
-	bufferedBytes := 0
-	const maxBufferSize = 128 * 1024 // 128KB缓冲区
-	flushTicker := time.NewTicker(50 * time.Millisecond)
-	defer flushTicker.Stop()
-	activeTicker := time.NewTicker(5 * time.Second)
-	defer activeTicker.Stop()
-
-	if !h.WaitForPlaying(ctx) {
+	// HTTP流处理 - 检查是否支持flush
+	if _, ok := w.(http.Flusher); !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		// 从hub中移除客户端
+		h.RemoveCh <- connID
 		return
 	}
 
-	// 检查客户端是否已经断开连接
-	clientDisconnected := make(chan struct{})
+	// 创建响应写入器
+	pr, pw := io.Pipe()
+	
+	// 启动goroutine将通道数据写入响应
 	go func() {
-		<-ctx.Done()
-		close(clientDisconnected)
-	}()
-
-	for {
-		select {
-		case data, ok := <-ch:
-			if !ok {
+		defer pw.Close()
+		
+		// 发送初始数据
+		h.sendInitialToClient(client)
+		
+		// 使用for range遍历通道，更简洁高效
+		for data := range ch {
+			// 写入数据到响应
+			if _, err := pw.Write(data); err != nil {
+				// 客户端可能已断开连接，记录日志但不panic
+				logger.LogPrintf("写入pipe失败: %v", err)
 				return
 			}
-			n, err := w.Write(data)
-			if err != nil {
-				return
-			}
-			bufferedBytes += n
-			if bufferedBytes >= maxBufferSize {
-				flusher.Flush()
-				bufferedBytes = 0
-			}
-		case <-flushTicker.C:
-			if bufferedBytes > 0 {
-				flusher.Flush()
-				bufferedBytes = 0
-			}
-		case <-activeTicker.C:
+			
+			// 更新活跃状态
 			if updateActive != nil {
 				updateActive()
 			}
-		case <-clientDisconnected:
-			// 客户端断开连接，退出循环
-			return
-		case <-h.Closed:
-			return
 		}
+	}()
+
+	// 将pipe的内容复制到响应，并实时刷新
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		
+		// 使用io.Copy将数据从pipe复制到响应writer
+		_, err := io.Copy(w, pr)
+		if err != nil {
+			// 客户端可能已断开连接，记录日志但不panic
+			logger.LogPrintf("响应写入错误: %v", err)
+		}
+	}()
+
+	// 定期更新活跃状态
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		
+		for {
+			select {
+			case <-done:
+				// 复制完成，退出
+				return
+			case <-ticker.C:
+				// 定期更新活跃状态
+				if updateActive != nil {
+					updateActive()
+				}
+			case <-r.Context().Done():
+				// 请求结束，退出
+				return
+			}
+		}
+	}()
+
+	// 等待响应完成或请求结束
+	select {
+	case <-done:
+		// 复制完成
+	case <-r.Context().Done():
+		// 请求结束，关闭pipe writer以停止数据写入
+		pw.Close()
 	}
+	
+	// 从hub中移除客户端
+	h.RemoveCh <- connID
 }
+
 
 // ====================
 // 关闭 Hub
@@ -1677,26 +1640,163 @@ func (h *StreamHub) smoothRejoinMulticast() {
 	logger.LogPrintf("✅ IGMP 成员关系已刷新（未中断 socket）")
 }
 
-// isClosed 检查hub是否已关闭
-func (h *StreamHub) isClosed() bool {
-	select {
-	case <-h.Closed:
-		return true
-	default:
-		return false
-	}
-}
 
-// 以下函数已在 udp_fcc.go 中定义，不再重复定义
-// - sendFCCRequest
-// - sendFCCTermination
-// - makeTelecomFCCPacket
-// - makeHuaweiFCCPacket
-// 统一由 udp_fcc.go 维护
+
+// startClientFCCTimeoutTimer 为客户端启动独立的FCC超时定时器
+func (c *hubClient) startClientFCCTimeoutTimer(fccConn *net.UDPConn, fccServerAddr *net.UDPAddr, multicastAddr *net.UDPAddr) {
+	// 如果已有定时器在运行，先停止
+	if c.fccTimeoutTimer != nil {
+		c.fccTimeoutTimer.Stop()
+		c.fccTimeoutTimer = nil
+	}
+
+	// 创建新的定时器 - 使用80ms超时时间
+	c.fccTimeoutTimer = time.AfterFunc(FCC_TIMEOUT_SIGNALING_MS*time.Millisecond, func() {
+		c.fccState = FCC_STATE_MCAST_ACTIVE
+		logger.LogPrintf("FCC客户端超时: 服务器无响应，降级到组播播放，客户端: %s", c.connID)
+		
+		// 停止当前定时器
+		if c.fccTimeoutTimer != nil {
+			c.fccTimeoutTimer.Stop()
+			c.fccTimeoutTimer = nil
+		}
+	})
+}
 
 // SetFccState 设置FCC状态并记录状态转换日志
 func (h *StreamHub) SetFccState(state int) {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 	h.fccSetState(state, "SetFccState")
+}
+
+// sendInitialToClient 为特定客户端发送初始数据
+func (h *StreamHub) sendInitialToClient(client hubClient) {
+	h.Mu.Lock()
+	fccEnabled := h.fccEnabled
+	currentState := h.fccState
+	addrList := h.AddrList // 保存地址列表用于频道查找
+	h.Mu.Unlock()
+
+	// ---------- 非 FCC 或 FCC 未激活 ----------
+	if !fccEnabled ||
+		(currentState != FCC_STATE_UNICAST_ACTIVE &&
+			currentState != FCC_STATE_MCAST_REQUESTED &&
+			currentState != FCC_STATE_MCAST_ACTIVE) {
+
+		// 获取缓存快照
+		h.Mu.Lock()
+		cachedFrames := h.CacheBuffer.GetAll()
+		h.Mu.Unlock()
+
+		// 异步非阻塞发送
+		go h.sendPacketsNonBlocking(client.ch, cachedFrames)
+		return
+	}
+
+	// ---------- FCC 模式 ----------
+	h.Mu.Lock()
+
+	var packets [][]byte
+
+	// PAT / PMT 优先
+	h.Mu.RLock()
+	if h.patBuffer != nil {
+		packets = append(packets, h.patBuffer)
+	}
+	if h.pmtBuffer != nil {
+		packets = append(packets, h.pmtBuffer)
+	}
+	h.Mu.RUnlock()
+
+	// 检查客户端特定的FCC状态
+	clientFccState := client.fccState
+
+	switch clientFccState {
+	case FCC_STATE_UNICAST_ACTIVE:
+		// 单播 FCC：发送最近 FCC 缓存帧
+		// 从链表中获取最近 50 帧
+		var frames [][]byte
+		h.Mu.RLock()
+		count := 0
+		for n := h.fccPendingListHead; n != nil; n = n.next {
+			count++
+			frames = append(frames, n.data)
+		}
+		h.Mu.RUnlock()
+		if len(frames) > 0 {
+			start := 0
+			if len(frames) > 50 {
+				start = len(frames) - 50
+			}
+			packets = append(packets, frames[start:]...)
+		} else {
+			cachedFrames := h.CacheBuffer.GetAll()
+			packets = append(packets, cachedFrames...)
+		}
+
+	case FCC_STATE_MCAST_REQUESTED, FCC_STATE_MCAST_ACTIVE:
+		// 多播 FCC：完整 FCC 缓存
+		fccFramesAvailable := false
+		h.Mu.RLock()
+		for n := h.fccPendingListHead; n != nil; n = n.next {
+			packets = append(packets, n.data)
+			fccFramesAvailable = true
+		}
+		h.Mu.RUnlock()
+
+		// 补充普通缓存（如果没有FCC帧或者需要更多数据）
+		if !fccFramesAvailable || len(packets) < 10 {
+			cachedFrames := h.CacheBuffer.GetAll()
+			packets = append(packets, cachedFrames...)
+		}
+	default:
+		// 对于其他状态，使用普通缓存
+		h.Mu.RLock()
+		cachedFrames := h.CacheBuffer.GetAll()
+		h.Mu.RUnlock()
+		packets = append(packets, cachedFrames...)
+	}
+
+	h.Mu.Unlock()
+
+	// 如果启用了FCC，尝试从频道缓存获取数据
+	if client.fccSession != nil && len(addrList) > 0 {
+		// 从频道缓存获取数据
+		channelID := addrList[0] // 使用第一个地址作为频道ID
+		channel := GlobalChannelManager.GetOrCreate(channelID)
+		sessionPackets := channel.ReadForSession(client.fccSession)
+		if sessionPackets != nil && len(sessionPackets) > 0 {
+			// 将频道缓存的数据添加到发送队列开头，以确保快速切换
+			packets = append(sessionPackets, packets...)
+		}
+	}
+
+	// 异步非阻塞发送
+	go h.sendPacketsNonBlocking(client.ch, packets)
+}
+
+// GetInitialDataForFcc 获取用于FCC的初始数据
+func (h *StreamHub) GetInitialDataForFcc(connID, channelID string) [][]byte {
+	h.Mu.RLock()
+	defer h.Mu.RUnlock()
+
+	var packets [][]byte
+
+	// 如果指定connID，则获取特定客户端的初始数据
+	if connID != "" {
+		if client, exists := h.Clients[connID]; exists && client.initialData != nil {
+			packets = append(packets, client.initialData...)
+		}
+	} else {
+		// 否则获取频道的PAT/PMT等初始数据
+		if h.patBuffer != nil {
+			packets = append(packets, h.patBuffer)
+		}
+		if h.pmtBuffer != nil {
+			packets = append(packets, h.pmtBuffer)
+		}
+	}
+
+	return packets
 }
