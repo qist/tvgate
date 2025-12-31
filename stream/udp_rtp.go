@@ -640,7 +640,8 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		}
 		h.Mu.Unlock()
 		atomic.AddInt32(&h.fccPendingCount, 1)
-		h.checkAndSwitchToMulticast()
+		// 基于序列号的切换逻辑，不再调用checkAndSwitchToMulticast
+		// 因为切换现在由processFCCMediaBufRef中的序列号检查自动处理
 	}
 	return outRef
 }
