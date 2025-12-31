@@ -686,23 +686,30 @@ func (h *StreamHub) cleanupFCC() {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
-	// 停止同步计时器
+	// 停止各种定时器
 	if h.fccSyncTimer != nil {
 		h.fccSyncTimer.Stop()
 		h.fccSyncTimer = nil
 	}
 
+	if h.fccTimeoutTimer != nil {
+		h.fccTimeoutTimer.Stop()
+		h.fccTimeoutTimer = nil
+	}
+
+	if h.fccUnicastTimer != nil {
+		h.fccUnicastTimer.Stop()
+		h.fccUnicastTimer = nil
+	}
+
 	// 关闭FCC单播连接
 	if h.fccUnicastConn != nil {
-		// 异步关闭连接以避免阻塞
-		go func(conn *net.UDPConn) {
-			conn.Close()
-		}(h.fccUnicastConn)
+		h.fccUnicastConn.Close()
 		h.fccUnicastConn = nil
 	}
 
-	// 重置FCC状态
-	// 在锁外进行状态重置，避免持锁调用状态机
+	// 重置FCC状态和相关变量
+	h.fccState = FCC_STATE_INIT
 	h.fccUnicastPort = 0
 
 	// 清理缓冲区并将缓冲区返回到相应的池中
@@ -714,7 +721,7 @@ func (h *StreamHub) cleanupFCC() {
 		pmtBufferPool.Put(h.pmtBuffer)
 		h.pmtBuffer = nil
 	}
-	h.Mu.Unlock()
+
 	// 清理链表缓冲区
 	for h.fccPendingListHead != nil {
 		bufRef := h.fccPendingListHead
@@ -723,8 +730,12 @@ func (h *StreamHub) cleanupFCC() {
 	}
 	h.fccPendingListTail = nil
 	atomic.StoreInt32(&h.fccPendingCount, 0)
-	h.fccSetState(FCC_STATE_INIT, "cleanupFCC")
-	h.Mu.Lock()
+	
+	// 重置FCC序列号和其他状态
+	h.fccStartSeq = 0
+	h.fccTermSeq = 0
+	h.fccTermSent = false
+	h.fccUnicastStartTime = time.Time{}
 }
 
 // ClientFccState 存储每个客户端的FCC状态信息

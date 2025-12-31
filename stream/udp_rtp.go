@@ -753,7 +753,6 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 // ====================
 // 客户端管理循环
 // ====================
-// 运行hub主循环
 func (h *StreamHub) run() {
 	// 启动清理器（只在FCC启用时启动）
 	h.Mu.RLock()
@@ -825,9 +824,20 @@ func (h *StreamHub) run() {
 				delete(h.Clients, connID)
 				logger.LogPrintf("客户端移除: %s, 当前客户端数: %d", connID, len(h.Clients))
 				
-				// 检查是否还有客户端，如果没有则根据规范可能需要关闭hub
+				// 检查是否还有客户端，如果没有则关闭hub
 				if len(h.Clients) == 0 {
-					logger.LogPrintf("所有客户端已断开，频道: %s", h.AddrList[0])
+					logger.LogPrintf("所有客户端已断开，准备关闭频道: %s", h.AddrList[0])
+					h.Mu.Unlock() // 先解锁，避免死锁
+					
+					// 清理FCC相关资源
+					h.cleanupFCC()
+					
+					// 关闭hub
+					h.Close()
+					if h.OnEmpty != nil {
+						h.OnEmpty(h) // 自动删除 hub
+					}
+					return
 				}
 			}
 			h.Mu.Unlock()
