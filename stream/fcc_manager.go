@@ -23,7 +23,7 @@ type ChannelManager struct {
 
 var GlobalChannelManager = &ChannelManager{
 	channels:   make(map[string]*MulticastChannel),
-	cacheSize: 16384,
+	cacheSize:  16384,
 	sessionTTL: 10 * time.Second,
 }
 
@@ -42,7 +42,8 @@ func (cm *ChannelManager) GetOrCreate(channel string) *MulticastChannel {
 	if ch = cm.channels[channel]; ch == nil {
 		ch = NewMulticastChannel(channel, cm.cacheSize)
 		cm.channels[channel] = ch
-		logger.LogPrintf("[FCC] create channel=%s", channel)
+		logger.LogPrintf("[FCC] 创建频道 channel=%s", channel)
+
 	}
 	return ch
 }
@@ -69,14 +70,16 @@ func (cm *ChannelManager) cleanup() {
 		for id, sess := range ch.Sessions {
 			if now.Sub(sess.LastActive) > cm.sessionTTL {
 				delete(ch.Sessions, id)
-				logger.LogPrintf("[FCC] session timeout conn=%s channel=%s", id, chID)
+				logger.LogPrintf("[FCC] 会话超时 conn=%s channel=%s", id, chID)
+
 			}
 		}
 		ch.mu.Unlock()
 
 		if ch.RefCount() <= 0 {
 			delete(cm.channels, chID)
-			logger.LogPrintf("[FCC] remove channel=%s", chID)
+			logger.LogPrintf("[FCC] 移除频道 channel=%s", chID)
+
 		}
 	}
 }

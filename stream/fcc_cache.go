@@ -145,8 +145,9 @@ func (mc *MulticastChannel) AddSession(connID string) *FccSession {
 	mc.Sessions[connID] = s
 	atomic.AddInt32(&mc.refCount, 1)
 
-	logger.LogPrintf("[FCC] join channel=%s conn=%s seq=%d",
-		mc.ID, connID, startSeq)
+	logger.LogPrintf("[FCC] 加入频道 channel=%s, 连接 conn=%s, 起始序列 seq=%d",
+	mc.ID, connID, startSeq)
+
 	return s
 }
 
@@ -157,7 +158,8 @@ func (mc *MulticastChannel) RemoveSession(connID string) {
 	if _, ok := mc.Sessions[connID]; ok {
 		delete(mc.Sessions, connID)
 		atomic.AddInt32(&mc.refCount, -1)
-		logger.LogPrintf("[FCC] leave channel=%s conn=%s", mc.ID, connID)
+		logger.LogPrintf("[FCC] 离开频道 channel=%s, 连接 conn=%s", mc.ID, connID)
+
 	}
 }
 
