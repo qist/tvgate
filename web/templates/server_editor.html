@@ -507,10 +507,10 @@
                 <div class="form-group">
                     <label for="ts_cache_ttl">TS缓存TTL:</label>
                     <input type="text" id="ts_cache_ttl" class="form-control" 
-                           placeholder="2m" 
-                           value="{{ if and .config.ts .config.ts.cache_ttl }}{{ .config.ts.cache_ttl }}{{ else }}2m{{ end }}"
+                           placeholder="1m" 
+                           value="{{ if and .config.ts .config.ts.cache_ttl }}{{ .config.ts.cache_ttl }}{{ else }}1m{{ end }}"
                            onchange="updateTSConfig('cache_ttl', this.value)">
-                    <div class="help-text">TS缓存生存时间（默认2m，如：2m表示2分钟，1h表示1小时）</div>
+                    <div class="help-text">TS缓存生存时间（默认1m，如：1m表示1分钟，1h表示1小时）</div>
                 </div>
             </div>
         </form>

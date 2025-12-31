@@ -461,7 +461,7 @@ func (c *Config) SetDefaults() {
 		c.Server.TS.CacheSize = 128 // 默认128MB
 	}
 	if c.Server.TS.CacheTTL <= 0 {
-		c.Server.TS.CacheTTL = 2 * time.Minute // 默认2分钟
+		c.Server.TS.CacheTTL = 1 * time.Minute // 默认1分钟
 	}
 
 	// DNS 默认值
