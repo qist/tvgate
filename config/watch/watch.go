@@ -107,16 +107,7 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 		update.UpdateHubsOnConfigChange(config.Cfg.Server.MulticastIfaces)
 
 		// 更新TS缓存配置
-		if stream.GlobalTSCache != nil {
-			cacheSize := int64(config.Cfg.Server.TS.CacheSize) << 20 // 转换为字节
-			cacheTTL := config.Cfg.Server.TS.CacheTTL
-			stream.GlobalTSCache.UpdateConfig(cacheSize, cacheTTL)
-			logger.LogPrintf(
-				"TS缓存配置更新: size=%dMB ttl=%v",
-				cacheSize>>20,
-				cacheTTL,
-			)
-		}
+		stream.InitOrUpdateTSCacheFromConfig()
 
 		config.CfgMu.RUnlock()
 

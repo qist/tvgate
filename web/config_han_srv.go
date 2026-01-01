@@ -39,32 +39,33 @@ func (h *ConfigHandler) handleServerConfig(w http.ResponseWriter, r *http.Reques
 
 	// 转换为可JSON序列化的格式
 	serverConfig := map[string]interface{}{
-		"port":              server.Port,
-		"http_port":         server.HTTPPort,
-		"certfile":          server.CertFile,
-		"keyfile":           server.KeyFile,
-		"ssl_protocols":     server.SSLProtocols,
-		"ssl_ciphers":       server.SSLCiphers,
-		"ssl_ecdh_curve":    server.SSLECDHCurve,
-		"http_to_https":     server.HTTPToHTTPS,
-		"multicast_ifaces":  server.MulticastIfaces,
-		"mcast_rejoin_interval": server.McastRejoinInterval.String(),
-		"fcc_type":          server.FccType,
-		"fcc_cache_size":    server.FccCacheSize,
-		"fcc_listen_port_min": server.FccListenPortMin,
-		"fcc_listen_port_max": server.FccListenPortMax,
-		"upstream_interface": server.UpstreamInterface,
-		"upstream_interface_fcc":  server.UpstreamInterfaceFcc,
+		"port":                   server.Port,
+		"http_port":              server.HTTPPort,
+		"certfile":               server.CertFile,
+		"keyfile":                server.KeyFile,
+		"ssl_protocols":          server.SSLProtocols,
+		"ssl_ciphers":            server.SSLCiphers,
+		"ssl_ecdh_curve":         server.SSLECDHCurve,
+		"http_to_https":          server.HTTPToHTTPS,
+		"multicast_ifaces":       server.MulticastIfaces,
+		"mcast_rejoin_interval":  server.McastRejoinInterval.String(),
+		"fcc_type":               server.FccType,
+		"fcc_cache_size":         server.FccCacheSize,
+		"fcc_listen_port_min":    server.FccListenPortMin,
+		"fcc_listen_port_max":    server.FccListenPortMax,
+		"upstream_interface":     server.UpstreamInterface,
+		"upstream_interface_fcc": server.UpstreamInterfaceFcc,
 		"tls": map[string]interface{}{
-			"https_port":    server.TLS.HTTPSPort,
-			"certfile":      server.TLS.CertFile,
-			"keyfile":       server.TLS.KeyFile,
-			"ssl_protocols": server.TLS.Protocols,
-			"ssl_ciphers":   server.TLS.Ciphers,
+			"https_port":     server.TLS.HTTPSPort,
+			"certfile":       server.TLS.CertFile,
+			"keyfile":        server.TLS.KeyFile,
+			"ssl_protocols":  server.TLS.Protocols,
+			"ssl_ciphers":    server.TLS.Ciphers,
 			"ssl_ecdh_curve": server.TLS.ECDHCurve,
-			"enable_h3":     server.TLS.EnableH3,
+			"enable_h3":      server.TLS.EnableH3,
 		},
 		"ts": map[string]interface{}{
+			"enable":     server.TS.Enable,
 			"cache_size": server.TS.CacheSize,
 			"cache_ttl":  server.TS.CacheTTL.String(),
 		},
@@ -306,7 +307,7 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 								&yaml.Node{Kind: yaml.ScalarNode, Value: upstreamInterfaceStr})
 						}
 					}
-					
+
 					// 添加upstream_interface_fcc
 					if upstreamInterfaceFcc, ok := serverConfig["upstream_interface_fcc"]; ok {
 						upstreamInterfaceFccStr := fmt.Sprintf("%v", upstreamInterfaceFcc)
@@ -316,12 +317,12 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 								&yaml.Node{Kind: yaml.ScalarNode, Value: upstreamInterfaceFccStr})
 						}
 					}
-					
+
 					// 添加tls配置块
 					if tlsConfig, ok := serverConfig["tls"]; ok {
 						if tlsMap, ok := tlsConfig.(map[string]interface{}); ok {
 							tlsNode := &yaml.Node{Kind: yaml.MappingNode}
-							
+
 							// 添加https_port
 							if httpsPort, ok := tlsMap["https_port"]; ok {
 								httpsPortValue := fmt.Sprintf("%v", httpsPort)
@@ -331,7 +332,7 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 										&yaml.Node{Kind: yaml.ScalarNode, Value: httpsPortValue})
 								}
 							}
-							
+
 							// 添加certfile
 							if certfile, ok := tlsMap["certfile"]; ok {
 								certfileStr := fmt.Sprintf("%v", certfile)
@@ -341,7 +342,7 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 										&yaml.Node{Kind: yaml.ScalarNode, Value: certfileStr, Style: yaml.DoubleQuotedStyle})
 								}
 							}
-							
+
 							// 添加keyfile
 							if keyfile, ok := tlsMap["keyfile"]; ok {
 								keyfileStr := fmt.Sprintf("%v", keyfile)
@@ -351,7 +352,7 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 										&yaml.Node{Kind: yaml.ScalarNode, Value: keyfileStr, Style: yaml.DoubleQuotedStyle})
 								}
 							}
-							
+
 							// 添加ssl_protocols
 							if sslProtocols, ok := tlsMap["ssl_protocols"]; ok {
 								sslProtocolsStr := fmt.Sprintf("%v", sslProtocols)
@@ -361,7 +362,7 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 										&yaml.Node{Kind: yaml.ScalarNode, Value: sslProtocolsStr, Style: yaml.DoubleQuotedStyle})
 								}
 							}
-							
+
 							// 添加ssl_ciphers
 							if sslCiphers, ok := tlsMap["ssl_ciphers"]; ok {
 								sslCiphersStr := fmt.Sprintf("%v", sslCiphers)
@@ -371,7 +372,7 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 										&yaml.Node{Kind: yaml.ScalarNode, Value: sslCiphersStr, Style: yaml.DoubleQuotedStyle})
 								}
 							}
-							
+
 							// 添加ssl_ecdh_curve
 							if sslECDHCurve, ok := tlsMap["ssl_ecdh_curve"]; ok {
 								sslECDHCurveStr := fmt.Sprintf("%v", sslECDHCurve)
@@ -381,7 +382,7 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 										&yaml.Node{Kind: yaml.ScalarNode, Value: sslECDHCurveStr, Style: yaml.DoubleQuotedStyle})
 								}
 							}
-							
+
 							// 添加enable_h3
 							if enableH3, ok := tlsMap["enable_h3"]; ok {
 								enableH3Str := fmt.Sprintf("%v", enableH3)
@@ -391,7 +392,7 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 										&yaml.Node{Kind: yaml.ScalarNode, Value: "true"})
 								}
 							}
-							
+
 							if len(tlsNode.Content) > 0 {
 								newServerNode.Content = append(newServerNode.Content,
 									&yaml.Node{Kind: yaml.ScalarNode, Value: "tls"},
@@ -404,7 +405,38 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 					if tsConfig, ok := serverConfig["ts"]; ok {
 						if tsMap, ok := tsConfig.(map[string]interface{}); ok {
 							tsNode := &yaml.Node{Kind: yaml.MappingNode}
-							
+
+							// 缓存开关
+							// 处理 enable
+							enableStr := "false"
+							if val, ok := tsMap["enable"]; ok {
+								switch v := val.(type) {
+								case bool:
+									if v {
+										enableStr = "true"
+									}
+								case int:
+									if v != 0 {
+										enableStr = "true"
+									}
+								case string:
+									if v != "" && v != "0" && v != "false" {
+										enableStr = "true"
+									}
+								default:
+									// 兜底，任何非空非零都视为 true
+									if fmt.Sprintf("%v", v) != "" && fmt.Sprintf("%v", v) != "0" {
+										enableStr = "true"
+									}
+								}
+							}
+
+							// 写入 enable
+							tsNode.Content = append(tsNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "enable"},
+								&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: enableStr},
+							)
+
 							// 添加cache_size
 							if cacheSize, ok := tsMap["cache_size"]; ok {
 								cacheSizeValue := fmt.Sprintf("%v", cacheSize)
@@ -414,7 +446,7 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 										&yaml.Node{Kind: yaml.ScalarNode, Value: cacheSizeValue})
 								}
 							}
-							
+
 							// 添加cache_ttl
 							if cacheTTL, ok := tsMap["cache_ttl"]; ok {
 								cacheTTLValue := fmt.Sprintf("%v", cacheTTL)
@@ -424,7 +456,7 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 										&yaml.Node{Kind: yaml.ScalarNode, Value: cacheTTLValue})
 								}
 							}
-							
+
 							if len(tsNode.Content) > 0 {
 								newServerNode.Content = append(newServerNode.Content,
 									&yaml.Node{Kind: yaml.ScalarNode, Value: "ts"},

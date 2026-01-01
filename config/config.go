@@ -107,6 +107,7 @@ type Config struct {
 }
 
 type TSConfig struct {
+	Enable    *bool         `yaml:"enable"`     // 是否启用 TS 缓存
 	CacheSize int           `yaml:"cache_size"` // TS缓存大小，默认128MB
 	CacheTTL  time.Duration `yaml:"cache_ttl"`  // TS缓存TTL，默认2分钟
 }
@@ -458,6 +459,10 @@ func (c *Config) SetDefaults() {
 		c.Server.FccCacheSize = 16384
 	}
 
+	//TS 缓存开关
+    if c.Server.TS.Enable == nil {
+		c.Server.TS.Enable = ptr(false)
+	}
 	// TS缓存默认值
 	if c.Server.TS.CacheSize <= 0 {
 		c.Server.TS.CacheSize = 128 // 默认128MB

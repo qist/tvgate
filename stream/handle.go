@@ -700,27 +700,58 @@ func generateToken(tm *auth.TokenManager, path string) string {
 }
 
 // CopyResponse 根据内容类型选择适当的复制方法
-func CopyResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, resp *http.Response, targetURL string, buf []byte, bufSize int, updateActive func(), statusCode int) error {
-	// 解析URL以获取路径和内容类型
+func CopyResponse(
+	ctx context.Context,
+	w http.ResponseWriter,
+	r *http.Request,
+	resp *http.Response,
+	targetURL string,
+	buf []byte,
+	bufSize int,
+	updateActive func(),
+	statusCode int,
+) error {
 	u, err := url.Parse(targetURL)
 	if err != nil {
 		return err
 	}
 
 	contentType := resp.Header.Get("Content-Type")
+	isTS := strings.EqualFold(filepath.Ext(u.Path), ".ts")
 
-	// 检查是否为TS请求，如果是，需要提前清理可能的问题头部
-	if strings.EqualFold(filepath.Ext(u.Path), ".ts") {
-		// 删除可能引起问题的头部，特别是Content-Length
-		// 这必须在写入任何响应数据之前完成
+	// TS 请求提前清理头
+	if isTS {
 		w.Header().Del("Content-Length")
 	}
 
-	if isWebPageContent(contentType, u.Path) {
-		// 对于网页内容，直接复制
+	// 🔴 关闭状态：全部退化为 Copytext
+	if !isStreamFeatureEnabled() {
+		logger.LogPrintf(
+			"stream disabled, fallback to Copytext: %s",
+			u.Path,
+		)
 		return Copytext(ctx, w, resp.Body, buf, updateActive)
-	} else {
-		// 对于流媒体内容，使用Hub机制
-		return CopyWithContext(ctx, w, resp.Body, buf, bufSize, updateActive, resp.Request.URL.String(), statusCode)
 	}
+
+	// 🟢 正常逻辑
+	if isWebPageContent(contentType, u.Path) {
+		return Copytext(ctx, w, resp.Body, buf, updateActive)
+	}
+
+	return CopyWithContext(
+		ctx,
+		w,
+		resp.Body,
+		buf,
+		bufSize,
+		updateActive,
+		resp.Request.URL.String(),
+		statusCode,
+	)
+}
+
+
+func isStreamFeatureEnabled() bool {
+	// TSCache 是你流媒体 / FCC / Hub 的“总开关信号”
+	return GlobalTSCache != nil
 }

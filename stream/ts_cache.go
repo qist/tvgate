@@ -50,9 +50,18 @@ var tsCacheOnce sync.Once
 func InitTSCacheFromConfig() {
 	tsCacheOnce.Do(func() {
 		config.CfgMu.RLock()
-		cacheSize := int64(config.Cfg.Server.TS.CacheSize) << 20
-		cacheTTL := config.Cfg.Server.TS.CacheTTL
+		tsCfg := config.Cfg.Server.TS
 		config.CfgMu.RUnlock()
+
+		// 🔑 开关判断
+		if !*tsCfg.Enable {
+			logger.LogPrintf("TS缓存未启用（server.ts.enable = false）")
+			GlobalTSCache = nil
+			return
+		}
+
+		cacheSize := int64(tsCfg.CacheSize) << 20
+		cacheTTL := tsCfg.CacheTTL
 
 		logger.LogPrintf(
 			"TS缓存初始化: %dMB, TTL=%v",
@@ -63,6 +72,7 @@ func InitTSCacheFromConfig() {
 		GlobalTSCache = NewTSCache(cacheSize, cacheTTL)
 	})
 }
+
 
 func NewTSCache(maxBytes int64, ttl time.Duration) *TSCache {
 	cache := &TSCache{
@@ -399,6 +409,39 @@ func (c *TSCache) Remove(key string) {
 	}
 }
 
+func InitOrUpdateTSCacheFromConfig() {
+	config.CfgMu.RLock()
+	tsCfg := config.Cfg.Server.TS
+	config.CfgMu.RUnlock()
+
+	// 🔴 关闭语义
+	if !*tsCfg.Enable || tsCfg.CacheSize <= 0 {
+		if GlobalTSCache != nil {
+			GlobalTSCache.Close()
+			GlobalTSCache = nil
+			logger.LogPrintf("TS缓存已关闭")
+		}
+		return
+	}
+
+	newMaxBytes := int64(tsCfg.CacheSize) << 20
+	newTTL := tsCfg.CacheTTL
+
+	// 🟢 创建
+	if GlobalTSCache == nil {
+		GlobalTSCache = NewTSCache(newMaxBytes, newTTL)
+		logger.LogPrintf(
+			"TS缓存创建: %dMB TTL=%v",
+			tsCfg.CacheSize,
+			newTTL,
+		)
+		return
+	}
+
+	// 🟡 更新
+	GlobalTSCache.UpdateConfig(newMaxBytes, newTTL)
+}
+
 // UpdateConfig 更新缓存配置
 func (c *TSCache) UpdateConfig(newMaxBytes int64, newTTL time.Duration) {
 	c.mu.Lock()
@@ -422,4 +465,19 @@ func (c *TSCache) UpdateConfig(newMaxBytes int64, newTTL time.Duration) {
 			}
 		}
 	}
+}
+
+func (c *TSCache) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for e := c.ll.Front(); e != nil; {
+		next := e.Next()
+		item := e.Value.(*tsCacheItem)
+		c.removeItem(item)
+		e = next
+	}
+
+	c.curBytes = 0
+	logger.LogPrintf("TSCache closed and cleared")
 }

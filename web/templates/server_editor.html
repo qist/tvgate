@@ -514,6 +514,15 @@
                 <h2 class="section-title">TS缓存配置</h2>
                 
                 <div class="form-group">
+                    <label for="enable_ts_cache">
+                        <input type="checkbox" id="enable_ts_cache" 
+                               onchange="updateTSConfig('enable', this.checked)" />
+                        启用TS缓存功能
+                    </label>
+                    <div class="help-text">启用TS文件缓存功能，可提升重复访问性能</div>
+                </div>
+                
+                <div class="form-group">
                     <label for="ts_cache_size">TS缓存大小:</label>
                     <input type="number" id="ts_cache_size" class="form-control" 
                            placeholder="128" 
@@ -635,6 +644,7 @@
             
             // 填充TS配置
             if (serverConfig.ts) {
+                document.getElementById('enable_ts_cache').checked = !!serverConfig.ts.enable;
                 document.getElementById('ts_cache_size').value = serverConfig.ts.cache_size || '';
                 document.getElementById('ts_cache_ttl').value = serverConfig.ts.cache_ttl || '';
             }
@@ -670,6 +680,7 @@
             document.getElementById('upstream_interface_fcc').dispatchEvent(new Event('change'));
             
             // 触发TS配置更新事件
+            document.getElementById('enable_ts_cache').dispatchEvent(new Event('change'));
             document.getElementById('ts_cache_size').dispatchEvent(new Event('change'));
             document.getElementById('ts_cache_ttl').dispatchEvent(new Event('change'));
         }
