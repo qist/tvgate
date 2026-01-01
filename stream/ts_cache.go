@@ -55,7 +55,7 @@ func InitTSCacheFromConfig() {
 
 		// 🔑 开关判断
 		if !*tsCfg.Enable {
-			logger.LogPrintf("TS缓存未启用（server.ts.enable = false）")
+			logger.LogPrintf("TS缓存未启用")
 			GlobalTSCache = nil
 			return
 		}
@@ -348,7 +348,12 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 
 		// 等待新数据或完成信号
 		select {
-		case <-c.waitCh:
+		case _, ok := <-c.waitCh:
+			// 检查通道是否已关闭
+			if !ok {
+				// 通道已关闭，退出
+				return nil
+			}
 			// 有新数据，继续循环
 			continue
 		case <-done:
@@ -398,6 +403,9 @@ func (c *TSCache) removeItem(it *tsCacheItem) {
 	// 减少缓存中的字节数
 	itemBytes := it.calculateTotalBytes()
 	c.curBytes -= itemBytes
+	
+	// 正确关闭缓存项，释放资源
+	it.Close()
 }
 
 func (c *TSCache) Remove(key string) {
@@ -414,8 +422,13 @@ func InitOrUpdateTSCacheFromConfig() {
 	tsCfg := config.Cfg.Server.TS
 	config.CfgMu.RUnlock()
 
-	// 🔴 关闭语义
-	if !*tsCfg.Enable || tsCfg.CacheSize <= 0 {
+	// 🔴 关闭语义 - 检查 Enable 指针是否为 nil 或为 false
+	enable := true // 默认启用
+	if tsCfg.Enable != nil {
+		enable = *tsCfg.Enable
+	}
+	
+	if !enable || tsCfg.CacheSize <= 0 {
 		if GlobalTSCache != nil {
 			GlobalTSCache.Close()
 			GlobalTSCache = nil
@@ -474,7 +487,19 @@ func (c *TSCache) Close() {
 	for e := c.ll.Front(); e != nil; {
 		next := e.Next()
 		item := e.Value.(*tsCacheItem)
-		c.removeItem(item)
+		
+		// 直接关闭缓存项，而不是通过removeItem以避免潜在死锁
+		item.Close()
+		
+		// 从映射中删除
+		delete(c.items, item.key)
+		// 从链表中移除
+		c.ll.Remove(e)
+		
+		// 减少缓存中的字节数
+		itemBytes := item.calculateTotalBytes()
+		c.curBytes -= itemBytes
+		
 		e = next
 	}
 

@@ -370,82 +370,87 @@ func CopyWithContext(
 		key := normalizeCacheKey(backendKey)
 
 		// 尝试从流式缓存获取
-		if cacheItem, ok := GlobalTSCache.Get(key); ok {
-			done := make(chan struct{})
-			defer close(done)
-			
-			// 对于TS缓存读取，删除Content-Length头部以避免长度不匹配问题
-			if rw, ok := dst.(http.ResponseWriter); ok {
-				rw.Header().Del("Content-Length")
-			}
-			
-			// 从缓存流式读取并写入响应
-			if err := cacheItem.ReadAll(dst, done); err != nil {
-				// 客户端连接可能已断开，记录但不视为错误
-				if err != io.EOF {
-					logger.LogPrintf("从缓存读取TS数据时出错: %v", err)
+		if GlobalTSCache != nil {
+			if cacheItem, ok := GlobalTSCache.Get(key); ok {
+				done := make(chan struct{})
+				defer close(done)
+				
+				// 对于TS缓存读取，删除Content-Length头部以避免长度不匹配问题
+				if rw, ok := dst.(http.ResponseWriter); ok {
+					rw.Header().Del("Content-Length")
 				}
-				return nil // 客户端断开连接不是服务器错误
+				
+				// 从缓存流式读取并写入响应
+				if err := cacheItem.ReadAll(dst, done); err != nil {
+					// 客户端连接可能已断开，记录但不视为错误
+					if err != io.EOF {
+						logger.LogPrintf("从缓存读取TS数据时出错: %v", err)
+					}
+					return nil // 客户端断开连接不是服务器错误
+				}
+				
+				if f, ok := dst.(http.Flusher); ok {
+					f.Flush()
+				}
+				return nil
 			}
-			
-			if f, ok := dst.(http.Flusher); ok {
-				f.Flush()
-			}
-			return nil
 		}
 
 		// 使用singleflight确保相同URL只进行一次获取操作
-		_, err, _ := GlobalTSCache.sf.Do(key, func() (interface{}, error) {
-			// 创建新的流式缓存项
-			cacheItem, _ := GlobalTSCache.GetOrCreate(key)
-			
-			defer func() {
-				// 无论成功还是失败，都要关闭缓存项
-				cacheItem.Close()
-			}()
-			
-			// 对于TS缓存写入，删除Content-Length头部以避免长度不匹配问题
-			if rw, ok := dst.(http.ResponseWriter); ok {
-				rw.Header().Del("Content-Length")
-			}
-			
-			bufRead := make([]byte, 32*1024) // 32KB 分片
-			for {
-				n, err := src.Read(bufRead)
-				if n > 0 {
-					// 将数据写入缓存
-					chunk := make([]byte, n)
-					copy(chunk, bufRead[:n])
-					GlobalTSCache.WriteChunkWithByteTracking(cacheItem, chunk)
+		if GlobalTSCache != nil {
+			_, err, _ := GlobalTSCache.sf.Do(key, func() (interface{}, error) {
+				// 创建新的流式缓存项
+				cacheItem, _ := GlobalTSCache.GetOrCreate(key)
+				
+				// 从源读取并同时写入缓存和响应
+				bufRead := make([]byte, 32*1024) // 32KB 分片
+				for {
+					n, err := src.Read(bufRead)
+					if n > 0 {
+						// 将数据写入缓存
+						chunk := make([]byte, n)
+						copy(chunk, bufRead[:n])
+						if GlobalTSCache != nil {
+							GlobalTSCache.WriteChunkWithByteTracking(cacheItem, chunk)
+						}
 
-					// 同时写入响应
-					written, wErr := dst.Write(chunk)
-					if wErr != nil {
-						return nil, wErr
+						// 同时写入响应
+						written, wErr := dst.Write(chunk)
+						if wErr != nil {
+							return nil, wErr
+						}
+						if written != n {
+							return nil, io.ErrShortWrite
+						}
+						
+						if f, ok := dst.(http.Flusher); ok {
+							f.Flush()
+						}
 					}
-					if written != n {
-						return nil, io.ErrShortWrite
-					}
-					
-					if f, ok := dst.(http.Flusher); ok {
-						f.Flush()
+
+					if err != nil {
+						if err == io.EOF {
+							return nil, nil
+						}
+						return nil, err
 					}
 				}
+			})
 
-				if err != nil {
-					if err == io.EOF {
-						return nil, nil
-					}
-					return nil, err
-				}
+			if err != nil {
+				return err
 			}
-		})
-
-		if err != nil {
-			return err
+			
+			return nil
 		}
-		
-		return nil
+
+		client := h.AddClient(dst, bufSize)
+		defer h.RemoveClient(client)
+
+		// 传递backendKey以区分处理方式
+		h.EnsureProducer(ctx, src, buf)
+
+		return client.WriteLoop(ctx, updateActive)
 	}
 
 	client := h.AddClient(dst, bufSize)
@@ -726,10 +731,10 @@ func CopyResponse(
 
 	// 🔴 关闭状态：全部退化为 Copytext
 	if !isStreamFeatureEnabled() {
-		logger.LogPrintf(
-			"stream disabled, fallback to Copytext: %s",
-			u.Path,
-		)
+		// logger.LogPrintf(
+		// 	"stream disabled, fallback to Copytext: %s",
+		// 	u.Path,
+		// )
 		return Copytext(ctx, w, resp.Body, buf, updateActive)
 	}
 
