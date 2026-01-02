@@ -306,31 +306,9 @@ func CopyWithContext(
 	return client.WriteLoop(ctx, updateActive)
 }
 
-// CopyTSWithCache 从 TS 缓存或源读取数据并写入响应
+
 // CopyTSWithCache 处理 TS 流缓存读取或从源读取写入响应
 func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader, key string) error {
-	if GlobalTSCache == nil {
-		// 缓存未初始化，直接透传
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := src.Read(buf)
-			if n > 0 {
-				if _, wErr := dst.Write(buf[:n]); wErr != nil {
-					return wErr
-				}
-				if f, ok := dst.(http.Flusher); ok {
-					f.Flush()
-				}
-			}
-			if err != nil {
-				if err == io.EOF {
-					return nil
-				}
-				return err
-			}
-		}
-	}
-
 	// 尝试从缓存获取
 	if cacheItem, ok := GlobalTSCache.Get(key); ok {
 		done := make(chan struct{})
@@ -669,7 +647,7 @@ func CopyResponse(
 	// 	return Copytext(ctx, w, resp.Body, buf, updateActive)
 	// }
 	if IsTSRequest(u.Path) {
-		key := normalizeCacheKey(resp.Request.URL.String())
+		key := normalizeCacheKey(u.Path)
 		logger.LogPrintf("TS cache key: %s", key)
 		return CopyTSWithCache(ctx, w, resp.Body, key)
 	}

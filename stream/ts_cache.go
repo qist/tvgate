@@ -376,6 +376,9 @@ func (c *tsCacheItem) Close() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
+	if c.closed {
+		return
+	}
 	c.closed = true
 	close(c.waitCh)
 }
