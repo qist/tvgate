@@ -165,46 +165,30 @@ func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 	}
 	
 	// 如果在错误状态，返回错误
-	if hub.state == 2 {
+	if hub.state == StateError {
 		return false
 	}
 	
 	// 如果已经在播放，直接返回
-	if hub.state == 1 {
+	if hub.state == StatePlaying {
 		return true
 	}
 	
-	// 使用select来同时等待状态变化和context取消
-	for hub.state == 0 && !hub.isClosed {
-		// 创建一个channel用于等待状态变化
-		stateChanged := make(chan struct{}, 1)
-		
-		// 在goroutine中等待状态变化
-		go func() {
-			hub.mu.Lock()
-			defer hub.mu.Unlock()
-			// 等待状态变化
-			hub.stateCond.Wait()
-			stateChanged <- struct{}{}
-		}()
-		
-		select {
-		case <-stateChanged:
-			// 检查唤醒后的新状态
-			if hub.state == 2 { // error state
-				return false
-			}
-			if hub.state == 1 { // playing state
-				return true
-			}
-			// 如果状态还是0，继续循环
-		case <-ctx.Done():
-			// context 被取消，返回false
-			return false
-		}
+	// 等待状态变化或context取消
+	for hub.state == StateStopped && !hub.isClosed && ctx.Err() == nil {
+		hub.stateCond.Wait() // 这会自动释放锁并在唤醒时重新获取锁
 	}
 	
-	return !hub.isClosed && hub.state == 1
+	// 检查context是否已取消
+	if ctx.Err() != nil {
+		return false
+	}
+	
+	// 检查最终状态
+	if hub.state == StateError {
+		return false
+	}
+	return !hub.isClosed && hub.state == StatePlaying
 }
 
 // 新增方法：设置RTSP客户端

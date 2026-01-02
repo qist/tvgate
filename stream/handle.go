@@ -651,6 +651,7 @@ func CopyResponse(
 		logger.LogPrintf("TS cache key: %s", key)
 		return CopyTSWithCache(ctx, w, resp.Body, key)
 	}
+	
 	if isLiveStream(u.Path) {
 		return CopyWithContext(
 			ctx,
@@ -675,11 +676,11 @@ func isStreamFeatureEnabled() bool {
 func isLiveStream(path string) bool {
 	p := strings.ToLower(path)
 
-	// 去掉 query / fragment
-	if i := strings.IndexAny(p, "?#"); i != -1 {
-		p = p[i+1:]
-		p = p[:i]
+	// 解析URL以正确提取路径部分，去除查询参数和片段
+	if u, err := url.Parse(p); err == nil {
+		p = strings.ToLower(u.Path)
 	}
+
 	// ===== UDP / RTP 流 =====
 	if strings.Contains(p, "/udp/") || strings.Contains(p, "/rtp/") {
 		return true
