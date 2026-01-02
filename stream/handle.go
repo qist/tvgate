@@ -64,9 +64,9 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 
 	// if strings.EqualFold(filepath.Ext(u.Path), ".ts") {
-		// 删除可能引起问题的头部，特别是Content-Length
-		// 这必须在写入任何响应数据之前完成
-		resp.Header.Del("Content-Length")
+	// 删除可能引起问题的头部，特别是Content-Length
+	// 这必须在写入任何响应数据之前完成
+	resp.Header.Del("Content-Length")
 	// }
 
 	// 复制响应头
@@ -295,9 +295,8 @@ func CopyWithContext(
 	bufSize int,
 	updateActive func(),
 	backendKey string,
-	statusCode int,
 ) error {
-	h := GetOrCreateHTTPHub(backendKey, statusCode)
+	h := GetOrCreateHTTPHub(backendKey)
 
 	client := h.AddClient(dst, bufSize)
 	defer h.RemoveClient(client)
@@ -305,7 +304,6 @@ func CopyWithContext(
 	h.EnsureProducer(ctx, src, buf)
 	return client.WriteLoop(ctx, updateActive)
 }
-
 
 // CopyTSWithCache 处理 TS 流缓存读取或从源读取写入响应
 func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader, key string) error {
@@ -625,9 +623,6 @@ func CopyResponse(
 		return err
 	}
 
-	// contentType := resp.Header.Get("Content-Type")
-	// isTS := strings.EqualFold(filepath.Ext(u.Path), ".ts")
-
 	// TS 请求提前清理头
 	// if isTS {
 	w.Header().Del("Content-Length")
@@ -635,23 +630,15 @@ func CopyResponse(
 
 	// 🔴 关闭状态：全部退化为 Copytext
 	if !isStreamFeatureEnabled() {
-		// logger.LogPrintf(
-		// 	"stream disabled, fallback to Copytext: %s",
-		// 	u.Path,
-		// )
 		return Copytext(ctx, w, resp.Body, buf, updateActive)
 	}
 
-	// 🟢 正常逻辑
-	// if isWebPageContent(contentType, u.Path) {
-	// 	return Copytext(ctx, w, resp.Body, buf, updateActive)
-	// }
 	if IsTSRequest(u.Path) {
 		key := normalizeCacheKey(u.Path)
 		logger.LogPrintf("TS cache key: %s", key)
 		return CopyTSWithCache(ctx, w, resp.Body, key)
 	}
-	
+
 	if isLiveStream(u.Path) {
 		return CopyWithContext(
 			ctx,
@@ -661,7 +648,6 @@ func CopyResponse(
 			bufSize,
 			updateActive,
 			resp.Request.URL.String(),
-			statusCode,
 		)
 	}
 	return Copytext(ctx, w, resp.Body, buf, updateActive)
@@ -682,9 +668,9 @@ func isLiveStream(path string) bool {
 	}
 
 	// ===== UDP / RTP 流 =====
-	if strings.Contains(p, "/udp/") || strings.Contains(p, "/rtp/") {
-		return true
-	}
+	// if strings.Contains(p, "/udp/") || strings.Contains(p, "/rtp/") {
+	// 	return true
+	// }
 
 	// ===== FLV 直播流 =====
 	if strings.HasSuffix(p, ".flv") {
@@ -705,7 +691,6 @@ func IsTSRequest(rawURL string) bool {
 	// 只看 path，不看 query / fragment
 	return strings.EqualFold(filepath.Ext(u.Path), ".ts")
 }
-
 
 func normalizeCacheKey(rawURL string) string {
 	u, err := url.Parse(rawURL)

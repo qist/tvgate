@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	// "path/filepath"
-	"strconv"
+	// "strconv"
 	"strings"
 	"sync"
 	// "sync/atomic"
@@ -54,8 +54,8 @@ var (
 	httpHubs   = make(map[string]*HTTPHub)
 )
 
-func GetOrCreateHTTPHub(rawURL string, statusCode int) *HTTPHub {
-	normalizedKey := normalizeHubKey(rawURL, statusCode)
+func GetOrCreateHTTPHub(rawURL string) *HTTPHub {
+	normalizedKey := normalizeHubKey(rawURL)
 	
 	httpHubsMu.RLock()
 	// 先尝试读取已存在的hub
@@ -67,7 +67,7 @@ func GetOrCreateHTTPHub(rawURL string, statusCode int) *HTTPHub {
 		
 		if !isClosed {
 			httpHubsMu.RUnlock()
-			logger.LogPrintf("复用已存在的hub: %s (原始URL: %s, 状态码: %d)", normalizedKey, rawURL, statusCode)
+			logger.LogPrintf("复用已存在的hub: %s (原始URL: %s)", normalizedKey, rawURL)
 			return h
 		}
 		// 如果已关闭，释放读锁，获取写锁来移除旧的hub
@@ -95,7 +95,7 @@ func GetOrCreateHTTPHub(rawURL string, statusCode int) *HTTPHub {
 		h.mu.Unlock()
 		
 		if !isClosed {
-			logger.LogPrintf("复用已存在的hub: %s (原始URL: %s, 状态码: %d)", normalizedKey, rawURL, statusCode)
+			logger.LogPrintf("复用已存在的hub: %s (原始URL: %s)", normalizedKey, rawURL)
 			return h
 		}
 		// 如果已关闭，移除并创建新的
@@ -103,7 +103,7 @@ func GetOrCreateHTTPHub(rawURL string, statusCode int) *HTTPHub {
 		delete(httpHubs, normalizedKey)
 	}
 
-	logger.LogPrintf("创建新的hub: %s (原始URL: %s, 状态码: %d)", normalizedKey, rawURL, statusCode)
+	logger.LogPrintf("创建新的hub: %s (原始URL: %s)", normalizedKey, rawURL)
 	h := &HTTPHub{
 		clients:          make(map[*HTTPHubClient]struct{}),
 		key:              normalizedKey,
@@ -115,21 +115,14 @@ func GetOrCreateHTTPHub(rawURL string, statusCode int) *HTTPHub {
 	return h
 }
 
-func normalizeHubKey(rawURL string, statusCode int) string {
+func normalizeHubKey(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return rawURL + "#" + strconv.Itoa(statusCode)
+		return rawURL
 	}
 	u.RawQuery = ""
 	u.Fragment = ""
-	return u.String() + "#" + strconv.Itoa(statusCode)
-}
-
-// isStatusForFLVStream 检查状态码是否应该作为FLV流处理
-func isStatusForFLVStream(statusCode int) bool {
-	// 通常200表示成功，但其他状态码也可能返回FLV格式的数据
-	// 这里我们处理常见的成功状态码
-	return statusCode >= 200 && statusCode < 300
+	return u.String()
 }
 
 func RemoveHTTPHub(key string) {
@@ -241,17 +234,6 @@ func (h *HTTPHub) Broadcast(data []byte) {
 	}
 }
 
-// tryRemoveClient 尝试移除客户端，避免死锁
-func (h *HTTPHub) tryRemoveClient(c *HTTPHubClient) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	
-	// 再次确认客户端是否还在列表中
-	if _, exists := h.clients[c]; exists {
-		delete(h.clients, c)
-		c.safeClose()
-	}
-}
 
 // removeClientIfNotExist 从客户端列表中移除已不存在的客户端
 func (h *HTTPHub) removeClientIfNotExist(c *HTTPHubClient) {
@@ -331,14 +313,14 @@ func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte)
 				
 				// 尝试重连
 				if h.shouldRetry() {
-					logger.LogPrintf("Hub %s attempting to reconnect... (attempt %d/%d)", h.key, h.retryCount, h.maxRetryAttempts)
+					// logger.LogPrintf("Hub %s attempting to reconnect... (attempt %d/%d)", h.key, h.retryCount, h.maxRetryAttempts)
 					time.Sleep(5 * time.Second) // 等待5秒后重试
                     
 					h.SetStopped() // 重试前设置为停止状态
 					h.retryCount++
 					return // 退出当前goroutine，让新的EnsureProducer被调用
 				} else {
-					logger.LogPrintf("Hub %s reached max retry attempts, closing hub", h.key)
+					// logger.LogPrintf("Hub %s reached max retry attempts, closing hub", h.key)
 					// 不再使用scheduleIdleClose，直接关闭hub
 					h.Close()
 					return
