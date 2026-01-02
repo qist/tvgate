@@ -5,9 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
+	// "path/filepath"
 	"strconv"
-	"strings"
+	// "strings"
 	"sync"
 	// "sync/atomic"
 	"github.com/qist/tvgate/logger"
@@ -66,28 +66,6 @@ func normalizeHubKey(rawURL string, statusCode int) string {
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String() + "#" + strconv.Itoa(statusCode)
-}
-
-func (h *HTTPHub) IsTSRequest(rawURL string) bool {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		// 解析失败时兜底
-		return strings.EqualFold(filepath.Ext(rawURL), ".ts")
-	}
-
-	// 只看 path，不看 query / fragment
-	return strings.EqualFold(filepath.Ext(u.Path), ".ts")
-}
-
-
-func normalizeCacheKey(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return rawURL
-	}
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String()
 }
 
 func RemoveHTTPHub(key string) {
@@ -302,3 +280,4 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 		}
 	}
 }
+

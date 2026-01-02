@@ -13,10 +13,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
-	"path/filepath"
 
 	"github.com/qist/tvgate/utils/buffer"
 )
@@ -62,15 +62,16 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 		logger.LogPrintf("解析目标URL失败: %v", err)
 		return
 	}
-	
-	if strings.EqualFold(filepath.Ext(u.Path), ".ts") {
+
+	// if strings.EqualFold(filepath.Ext(u.Path), ".ts") {
 		// 删除可能引起问题的头部，特别是Content-Length
 		// 这必须在写入任何响应数据之前完成
 		resp.Header.Del("Content-Length")
-	}
+	// }
 
 	// 复制响应头
 	CopyHeader(w.Header(), resp.Header, r.ProtoMajor)
+	w.Header().Del("Content-Length")
 	w.WriteHeader(resp.StatusCode)
 
 	// 解析URL并获取最优缓冲区大小
@@ -199,72 +200,6 @@ func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, upd
 	}
 }
 
-func isWebPageContent(contentType, path string) bool {
-	ct := strings.ToLower(contentType)
-	p := strings.ToLower(path)
-
-	// 去掉参数（; charset=xxx）
-	if i := strings.Index(ct, ";"); i != -1 {
-		ct = ct[:i]
-	}
-
-	// ===== 明确排除流媒体 =====
-	if strings.HasPrefix(ct, "video/") ||
-		strings.HasPrefix(ct, "audio/") {
-		return false
-	}
-
-	// ===== image 特判：只允许 svg =====
-	if strings.HasPrefix(ct, "image/") {
-		return ct == "image/svg+xml"
-	}
-
-	// ===== 明确允许的 Web / 文本类型 =====
-	switch ct {
-	case
-		"text/html",
-		"text/plain",
-		"text/css",
-		"text/markdown",
-
-		"application/javascript",
-		"application/x-javascript",
-		"application/json",
-		"application/xml",
-		"application/xhtml+xml",
-		"application/rss+xml",
-		"application/atom+xml",
-
-		"image/svg+xml",
-		"application/wasm":
-		return true
-	}
-
-	// ===== 处理 path（去 query / fragment）=====
-	if i := strings.IndexAny(p, "?#"); i != -1 {
-		p = p[:i]
-	}
-
-	// ===== 扩展名兜底 =====
-	switch {
-	case strings.HasSuffix(p, ".html"),
-		strings.HasSuffix(p, ".htm"),
-		strings.HasSuffix(p, ".css"),
-		strings.HasSuffix(p, ".js"),
-		strings.HasSuffix(p, ".mjs"),
-		strings.HasSuffix(p, ".json"),
-		strings.HasSuffix(p, ".xml"),
-		strings.HasSuffix(p, ".txt"),
-		strings.HasSuffix(p, ".md"),
-		strings.HasSuffix(p, ".map"),
-		strings.HasSuffix(p, ".svg"),
-		strings.HasSuffix(p, ".wasm"):
-		return true
-	}
-
-	return false
-}
-
 // getRequestScheme 返回客户端真实使用的协议 (http/https)
 func getRequestScheme(r *http.Request) string {
 	// 1. 先看标准头
@@ -351,7 +286,6 @@ func GetTargetURL(r *http.Request, targetPath string) string {
 	return targetURL
 }
 
-
 // CopyWithContext 支持 HTTP hub 模式：按后端URL为键，单上游广播到所有前端
 func CopyWithContext(
 	ctx context.Context,
@@ -365,101 +299,93 @@ func CopyWithContext(
 ) error {
 	h := GetOrCreateHTTPHub(backendKey, statusCode)
 
-	// 检查是否为TS请求，以决定处理方式
-	if h.IsTSRequest(backendKey) {
-		key := normalizeCacheKey(backendKey)
-
-		// 尝试从流式缓存获取
-		if GlobalTSCache != nil {
-			if cacheItem, ok := GlobalTSCache.Get(key); ok {
-				done := make(chan struct{})
-				defer close(done)
-				
-				// 对于TS缓存读取，删除Content-Length头部以避免长度不匹配问题
-				if rw, ok := dst.(http.ResponseWriter); ok {
-					rw.Header().Del("Content-Length")
-				}
-				
-				// 从缓存流式读取并写入响应
-				if err := cacheItem.ReadAll(dst, done); err != nil {
-					// 客户端连接可能已断开，记录但不视为错误
-					if err != io.EOF {
-						logger.LogPrintf("从缓存读取TS数据时出错: %v", err)
-					}
-					return nil // 客户端断开连接不是服务器错误
-				}
-				
-				if f, ok := dst.(http.Flusher); ok {
-					f.Flush()
-				}
-				return nil
-			}
-		}
-
-		// 使用singleflight确保相同URL只进行一次获取操作
-		if GlobalTSCache != nil {
-			_, err, _ := GlobalTSCache.sf.Do(key, func() (interface{}, error) {
-				// 创建新的流式缓存项
-				cacheItem, _ := GlobalTSCache.GetOrCreate(key)
-				
-				// 从源读取并同时写入缓存和响应
-				bufRead := make([]byte, 32*1024) // 32KB 分片
-				for {
-					n, err := src.Read(bufRead)
-					if n > 0 {
-						// 将数据写入缓存
-						chunk := make([]byte, n)
-						copy(chunk, bufRead[:n])
-						if GlobalTSCache != nil {
-							GlobalTSCache.WriteChunkWithByteTracking(cacheItem, chunk)
-						}
-
-						// 同时写入响应
-						written, wErr := dst.Write(chunk)
-						if wErr != nil {
-							return nil, wErr
-						}
-						if written != n {
-							return nil, io.ErrShortWrite
-						}
-						
-						if f, ok := dst.(http.Flusher); ok {
-							f.Flush()
-						}
-					}
-
-					if err != nil {
-						if err == io.EOF {
-							return nil, nil
-						}
-						return nil, err
-					}
-				}
-			})
-
-			if err != nil {
-				return err
-			}
-			
-			return nil
-		}
-
-		client := h.AddClient(dst, bufSize)
-		defer h.RemoveClient(client)
-
-		// 传递backendKey以区分处理方式
-		h.EnsureProducer(ctx, src, buf)
-
-		return client.WriteLoop(ctx, updateActive)
-	}
-
 	client := h.AddClient(dst, bufSize)
 	defer h.RemoveClient(client)
 
-	// 传递backendKey以区分处理方式
 	h.EnsureProducer(ctx, src, buf)
-
 	return client.WriteLoop(ctx, updateActive)
+}
+
+// CopyTSWithCache 从 TS 缓存或源读取数据并写入响应
+// CopyTSWithCache 处理 TS 流缓存读取或从源读取写入响应
+func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader, key string) error {
+	if GlobalTSCache == nil {
+		// 缓存未初始化，直接透传
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := src.Read(buf)
+			if n > 0 {
+				if _, wErr := dst.Write(buf[:n]); wErr != nil {
+					return wErr
+				}
+				if f, ok := dst.(http.Flusher); ok {
+					f.Flush()
+				}
+			}
+			if err != nil {
+				if err == io.EOF {
+					return nil
+				}
+				return err
+			}
+		}
+	}
+
+	// 尝试从缓存获取
+	if cacheItem, ok := GlobalTSCache.Get(key); ok {
+		done := make(chan struct{})
+		defer close(done)
+
+		dst.Header().Del("Content-Length")
+		if err := cacheItem.ReadAll(dst, done); err != nil && err != io.EOF {
+			logger.LogPrintf("从缓存读取TS数据出错: %v", err)
+		}
+
+		if f, ok := dst.(http.Flusher); ok {
+			f.Flush()
+		}
+		return nil
+	}
+
+	// singleflight 确保同 key 只拉一次源
+	_, err, _ := GlobalTSCache.sf.Do(key, func() (interface{}, error) {
+		cacheItem, _ := GlobalTSCache.GetOrCreate(key)
+		defer cacheItem.Close()
+
+		dst.Header().Del("Content-Length")
+		buf := make([]byte, 32*1024)
+
+		for {
+			n, rErr := src.Read(buf)
+			if n > 0 {
+				chunk := make([]byte, n)
+				copy(chunk, buf[:n])
+
+				GlobalTSCache.WriteChunkWithByteTracking(cacheItem, chunk)
+
+				written, wErr := dst.Write(chunk)
+				if wErr != nil {
+					return nil, wErr
+				}
+				if written != n {
+					return nil, io.ErrShortWrite
+				}
+
+				if f, ok := dst.(http.Flusher); ok {
+					f.Flush()
+				}
+			}
+
+			if rErr != nil {
+				if rErr == io.EOF {
+					return nil, nil
+				}
+				return nil, rErr
+			}
+		}
+	})
+
+	return err
 }
 
 func HandleCopyError(r *http.Request, err error, proxyResp *http.Response) {
@@ -721,13 +647,13 @@ func CopyResponse(
 		return err
 	}
 
-	contentType := resp.Header.Get("Content-Type")
-	isTS := strings.EqualFold(filepath.Ext(u.Path), ".ts")
+	// contentType := resp.Header.Get("Content-Type")
+	// isTS := strings.EqualFold(filepath.Ext(u.Path), ".ts")
 
 	// TS 请求提前清理头
-	if isTS {
-		w.Header().Del("Content-Length")
-	}
+	// if isTS {
+	w.Header().Del("Content-Length")
+	// }
 
 	// 🔴 关闭状态：全部退化为 Copytext
 	if !isStreamFeatureEnabled() {
@@ -739,24 +665,75 @@ func CopyResponse(
 	}
 
 	// 🟢 正常逻辑
-	if isWebPageContent(contentType, u.Path) {
-		return Copytext(ctx, w, resp.Body, buf, updateActive)
+	// if isWebPageContent(contentType, u.Path) {
+	// 	return Copytext(ctx, w, resp.Body, buf, updateActive)
+	// }
+	if IsTSRequest(u.Path) {
+		key := normalizeCacheKey(resp.Request.URL.String())
+		logger.LogPrintf("TS cache key: %s", key)
+		return CopyTSWithCache(ctx, w, resp.Body, key)
 	}
-
-	return CopyWithContext(
-		ctx,
-		w,
-		resp.Body,
-		buf,
-		bufSize,
-		updateActive,
-		resp.Request.URL.String(),
-		statusCode,
-	)
+	if isLiveStream(u.Path) {
+		return CopyWithContext(
+			ctx,
+			w,
+			resp.Body,
+			buf,
+			bufSize,
+			updateActive,
+			resp.Request.URL.String(),
+			statusCode,
+		)
+	}
+	return Copytext(ctx, w, resp.Body, buf, updateActive)
 }
-
 
 func isStreamFeatureEnabled() bool {
 	// TSCache 是你流媒体 / FCC / Hub 的“总开关信号”
 	return GlobalTSCache != nil
+}
+
+// isLiveStream 判断是否是直播流
+func isLiveStream(path string) bool {
+	p := strings.ToLower(path)
+
+	// 去掉 query / fragment
+	if i := strings.IndexAny(p, "?#"); i != -1 {
+		p = p[i+1:]
+		p = p[:i]
+	}
+	// ===== UDP / RTP 流 =====
+	if strings.Contains(p, "/udp/") || strings.Contains(p, "/rtp/") {
+		return true
+	}
+
+	// ===== FLV 直播流 =====
+	if strings.HasSuffix(p, ".flv") {
+		// 如果 URL 带 live 或 hub 特征，判定为直播
+		return true
+	}
+	// 其他都不是流媒体
+	return false
+}
+
+func IsTSRequest(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		// 解析失败时兜底
+		return strings.EqualFold(filepath.Ext(rawURL), ".ts")
+	}
+
+	// 只看 path，不看 query / fragment
+	return strings.EqualFold(filepath.Ext(u.Path), ".ts")
+}
+
+
+func normalizeCacheKey(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
