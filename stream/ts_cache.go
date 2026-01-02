@@ -27,6 +27,7 @@ type tsCacheItem struct {
 	expireAt time.Time
 	element  *list.Element
 	closed   bool
+	accessAt time.Time // 添加最后访问时间，用于跟踪活跃度
 }
 
 type TSCache struct {
@@ -98,6 +99,9 @@ func (c *TSCache) Get(key string) (*tsCacheItem, bool) {
 			// 项目将在写入端被标记为过期，或通过后台清理
 			return nil, false
 		}
+		// 更新访问时间
+		it.accessAt = time.Now()
+		c.ll.MoveToFront(it.element)
 		return it, true
 	}
 	return nil, false
@@ -115,6 +119,8 @@ func (c *TSCache) GetOrCreate(key string) (*tsCacheItem, bool) {
 		}
 		// 更新过期时间
 		it.expireAt = time.Now().Add(c.ttl)
+		// 更新访问时间
+		it.accessAt = time.Now()
 		c.ll.MoveToFront(it.element)
 		return it, false
 	}
@@ -163,14 +169,14 @@ func (c *TSCache) WriteChunkToItem(item *tsCacheItem, data []byte) {
 
 	// 检查是否超过最大字节数，如果超过则触发清理
 	for c.curBytes > c.maxBytes && c.ll.Back() != nil {
-		// 获取最旧的缓存项并移除
-		oldestElement := c.ll.Back()
-		if oldestElement != nil {
-			oldestItem := oldestElement.Value.(*tsCacheItem)
+		// 查找最不活跃的缓存项并移除
+		leastActiveElement := c.findLeastActiveItem()
+		if leastActiveElement != nil {
+			leastActiveItem := leastActiveElement.Value.(*tsCacheItem)
 			// 计算并减去该缓存项的字节数
-			itemBytes := oldestItem.calculateTotalBytes()
+			itemBytes := leastActiveItem.calculateTotalBytes()
 			c.curBytes -= itemBytes
-			c.removeItem(oldestItem)
+			c.removeItem(leastActiveItem)
 		}
 	}
 	c.mu.Unlock()
@@ -181,6 +187,7 @@ func (c *TSCache) createItem(key string) *tsCacheItem {
 		key:      key,
 		waitCh:   make(chan struct{}, 1), // 非阻塞的单值通道
 		expireAt: time.Now().Add(c.ttl),
+		accessAt: time.Now(), // 设置初始访问时间
 	}
 	it.element = c.ll.PushFront(it)
 	c.items[key] = it
@@ -257,14 +264,14 @@ func (c *TSCache) WriteChunkWithByteTracking(item *tsCacheItem, data []byte) {
 
 	// 检查是否超过最大字节数，如果超过则触发清理
 	for c.curBytes > c.maxBytes && c.ll.Back() != nil {
-		// 获取最旧的缓存项并移除
-		oldestElement := c.ll.Back()
-		if oldestElement != nil {
-			oldestItem := oldestElement.Value.(*tsCacheItem)
+		// 查找最不活跃的缓存项并移除
+		leastActiveElement := c.findLeastActiveItem()
+		if leastActiveElement != nil {
+			leastActiveItem := leastActiveElement.Value.(*tsCacheItem)
 			// 计算并减去该缓存项的字节数
-			itemBytes := oldestItem.calculateTotalBytes()
+			itemBytes := leastActiveItem.calculateTotalBytes()
 			c.curBytes -= itemBytes
-			c.removeItem(oldestItem)
+			c.removeItem(leastActiveItem)
 		}
 	}
 	c.mu.Unlock()
@@ -396,6 +403,22 @@ func (c *TSCache) cleanupLoop() {
 	}
 }
 
+// findLeastActiveItem 查找最不活跃的缓存项（最长时间未访问的项）
+func (c *TSCache) findLeastActiveItem() *list.Element {
+	var leastActive *list.Element
+	earliestTime := time.Now()
+
+	for e := c.ll.Back(); e != nil; e = e.Prev() {
+		it := e.Value.(*tsCacheItem)
+		if it.accessAt.Before(earliestTime) {
+			earliestTime = it.accessAt
+			leastActive = e
+		}
+	}
+
+	return leastActive
+}
+
 func (c *TSCache) removeItem(it *tsCacheItem) {
 	delete(c.items, it.key)
 	c.ll.Remove(it.element)
@@ -469,12 +492,13 @@ func (c *TSCache) UpdateConfig(newMaxBytes int64, newTTL time.Duration) {
 	// 如果新限制更小，清理超出的部分
 	if c.curBytes > c.maxBytes {
 		for c.curBytes > c.maxBytes && c.ll.Back() != nil {
-			oldestElement := c.ll.Back()
-			if oldestElement != nil {
-				oldestItem := oldestElement.Value.(*tsCacheItem)
-				itemBytes := oldestItem.calculateTotalBytes()
+			// 查找最不活跃的缓存项并移除
+			leastActiveElement := c.findLeastActiveItem()
+			if leastActiveElement != nil {
+				leastActiveItem := leastActiveElement.Value.(*tsCacheItem)
+				itemBytes := leastActiveItem.calculateTotalBytes()
 				c.curBytes -= itemBytes
-				c.removeItem(oldestItem)
+				c.removeItem(leastActiveItem)
 			}
 		}
 	}
@@ -504,5 +528,5 @@ func (c *TSCache) Close() {
 	}
 
 	c.curBytes = 0
-	logger.LogPrintf("TSCache closed and cleared")
+	logger.LogPrintf("TS 缓存关闭并已清理完成")
 }
