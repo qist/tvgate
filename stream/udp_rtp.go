@@ -775,7 +775,7 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 
 	// 将TS包写入频道缓存
 	h.Mu.RLock()
-	if len(data) >= 188 && data[0] == 0x47 { // TS包标识
+	if len(data) >= 188 && data[0] == 0x47 && h.IsFccEnabled() { // TS包标识
 		for _, addr := range h.AddrList {
 			// 提取频道ID（使用地址作为频道标识）
 			channelID := addr
@@ -815,7 +815,7 @@ func (h *StreamHub) run() {
 			addrList := h.AddrList
 			h.Mu.RUnlock()
 
-			if client.fccSession != nil && len(addrList) > 0 {
+			if client.fccSession != nil && len(addrList) > 0 && fccEnabled {
 				// 从频道缓存获取数据
 				channelID := addrList[0] // 使用第一个地址作为频道ID
 				channel := GlobalChannelManager.GetOrCreate(channelID)
@@ -854,7 +854,7 @@ func (h *StreamHub) run() {
 				}
 
 				// 从FCC缓存管理器中移除会话
-				if client.fccSession != nil {
+				if client.fccSession != nil && fccEnabled {
 					channelID := h.AddrList[0] // 使用第一个地址作为频道ID
 					GlobalChannelManager.GetOrCreate(channelID).RemoveSession(connID)
 				}
@@ -896,7 +896,7 @@ func (h *StreamHub) run() {
 				}
 
 				// 从FCC缓存管理器中移除会话
-				if client.fccSession != nil {
+				if client.fccSession != nil && fccEnabled {
 					channelID := h.AddrList[0] // 使用第一个地址作为频道ID
 					GlobalChannelManager.GetOrCreate(channelID).RemoveSession(connID)
 				}
@@ -967,7 +967,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 
 	// 创建响应式通道，缓冲区大小适中
-	ch := make(chan []byte, 64)
+	ch := make(chan []byte, 256)
 
 	// 创建客户端结构体
 	client := hubClient{
@@ -1064,7 +1064,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 			// 写入数据到响应
 			if _, err := pw.Write(data); err != nil {
 				// 客户端可能已断开连接，记录日志但不panic
-				logger.LogPrintf("写入pipe失败: %v", err)
+				// logger.LogPrintf("写入pipe失败: %v", err)
 				return
 			}
 
@@ -1706,7 +1706,7 @@ func (h *StreamHub) sendInitialToClient(client hubClient) {
 	h.Mu.Unlock()
 
 	// 如果启用了FCC，尝试从频道缓存获取数据
-	if client.fccSession != nil && len(addrList) > 0 {
+	if client.fccSession != nil && len(addrList) > 0 && h.fccEnabled  {
 		// 从频道缓存获取数据
 		channelID := addrList[0] // 使用第一个地址作为频道ID
 		channel := GlobalChannelManager.GetOrCreate(channelID)

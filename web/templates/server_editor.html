@@ -519,7 +519,8 @@
                                onchange="updateTSConfig('enable', this.checked)" />
                         启用TS缓存功能
                     </label>
-                    <div class="help-text">启用TS文件缓存功能，可提升重复访问性能</div>
+                    <div class="help-text">启用TS文件缓存功能，可提升重复访问性能<br>
+                                          路由器小设备建议关闭缓存</div>
                 </div>
                 
                 <div class="form-group">
@@ -528,16 +529,19 @@
                            placeholder="128" 
                            value="{{ if and .config.ts .config.ts.cache_size }}{{ .config.ts.cache_size }}{{ else }}128{{ end }}"
                            onchange="updateTSConfig('cache_size', parseInt(this.value))">
-                    <div class="help-text">TS缓存大小，单位MB（默认128MB）</div>
+                    <div class="help-text">TS缓存大小，单位MB（默认128MB）<br>
+                                          缓存大小计算公式一个频道：TS 缓存大小 ≈ 码率(Mbps) × 缓存时间(秒) ÷ 8× 1.2 <br>
+                                          例如：8Mbps × 120秒 ÷ 8 × 1.2 ≈ 144MB<br>
+                                         多留 20% 冗余，避免： 多客户端同时读， TS 边界碎片浪费</div>
                 </div>
                 
                 <div class="form-group">
                     <label for="ts_cache_ttl">TS缓存TTL:</label>
                     <input type="text" id="ts_cache_ttl" class="form-control" 
-                           placeholder="1m" 
-                           value="{{ if and .config.ts .config.ts.cache_ttl }}{{ .config.ts.cache_ttl }}{{ else }}1m{{ end }}"
+                           placeholder="2m" 
+                           value="{{ if and .config.ts .config.ts.cache_ttl }}{{ .config.ts.cache_ttl }}{{ else }}2m{{ end }}"
                            onchange="updateTSConfig('cache_ttl', this.value)">
-                    <div class="help-text">TS缓存生存时间（默认1m，如：1m表示1分钟，1h表示1小时）</div>
+                    <div class="help-text">TS缓存生存时间（默认2m，如：2m表示2分钟，1h表示1小时）</div>
                 </div>
             </div>
         </form>
