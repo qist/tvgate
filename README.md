@@ -282,7 +282,7 @@ systemctl enable --now TVGate
 ---
 
 ### OpenWrt 安装
-下载 https://github.com/qist/luci-app-tvgate
+下载 `https://github.com/qist/luci-app-tvgate`
 
 1. Install the generated ipk package:
    ```bash
