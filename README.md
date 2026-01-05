@@ -314,8 +314,6 @@ apk del luci-i18n-tvgate-en
 apk del luci-i18n-tvgate-zh-cn
 ```
 ---
-
----
 ### 代理规则格式
 - 支持 IP（例如 `192.168.1.1`）
 - 支持子网（例如 `192.168.1.0/24`）
