@@ -281,27 +281,37 @@ systemctl enable --now TVGate
 
 ---
 
-### OpenWrt init 脚本（示例）
-保存为 `/etc/init.d/TVGate` 并赋予可执行权限：
+### OpenWrt 安装
+下载 https://github.com/qist/luci-app-tvgate
 
-```sh
-#!/bin/sh /etc/rc.common
+1. Install the generated ipk package:
+   ```bash
+   opkg update
+   opkg install curl ca-certificates unzip luci-compat luci luci-base
+   opkg install /tmp/luci-app-tvgate_1.0.0_all.ipk
+   opkg install /tmp/luci-i18n-tvgate-zh-cn_1.0.0-1_all.ipk
+   opkg install /tmp/luci-i18n-tvgate-en_1.0.0-1_all.ipk
+   ```
 
-START=99
-STOP=15
-USE_PROCD=1
-PROG=/apps/TVGate/TVGate-linux-arm64
-
-start_service() {
-    procd_open_instance
-    procd_set_param command $PROG -config=/apps/TVGate/config.yaml
-    procd_set_param respawn
-    procd_close_instance
-}
-
-stop_service() {
-    procd_kill $PROG || true
-}
+2. Uninstall package:
+   ```bash
+   opkg remove luci-app-tvgate
+   opkg remove luci-i18n-tvgate-en
+   opkg remove luci-i18n-tvgate-zh-cn
+   ```
+3. openwrt 25 Install the generated apk package:
+ ```bash
+apk update
+apk add curl ca-certificates unzip luci-compat luci luci-base
+apk add --allow-untrusted luci-app-tvgate-1.0.0-r1.apk
+apk add --allow-untrusted luci-i18n-tvgate-en-1.0.0-r1.apk
+apk add --allow-untrusted luci-i18n-tvgate-zh-cn-1.0.0-r1.apk
+```
+4. openwrt 25 Uninstall package:
+ ```bash
+apk del luci-app-tvgate
+apk del luci-i18n-tvgate-en
+apk del luci-i18n-tvgate-zh-cn
 ```
 ---
 
