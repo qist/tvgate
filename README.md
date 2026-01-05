@@ -20,7 +20,7 @@
     - [docker-compose 示例](#docker-compose-示例)
   - [服务管理 / 启动脚本](#服务管理--启动脚本)
     - [systemd (Linux)](#systemd-linux)
-    - [OpenWrt init 脚本（示例）](#openwrt-init-脚本示例)
+    - [OpenWrt 安装](#OpenWrt-安装)
     - [代理规则格式](#代理规则格式)
   - [使用示例（外网访问路径）](#使用示例外网访问路径)
   - [🔹 jx 视频解析接口](#-jx-视频解析接口)
