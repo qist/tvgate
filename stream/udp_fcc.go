@@ -252,7 +252,6 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 	if len(data) > 0 {
 		bufRef := NewBufferRef(data)
 		bufRef.Get() // 增加引用计数，防止数据被提前释放
-		h.Mu.Lock()
 		if h.fccPendingListHead == nil {
 			h.fccPendingListHead = bufRef
 			h.fccPendingListTail = bufRef
@@ -260,8 +259,47 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 			h.fccPendingListTail.next = bufRef
 			h.fccPendingListTail = bufRef
 		}
-		h.Mu.Unlock()
 	}
+}
+
+// fccHandleMcastActive 处理FCC多播活动状态的数据
+func (h *StreamHub) fccHandleMcastActive() {
+	h.Mu.Lock()
+	
+	// 检查是否有待处理的缓冲数据
+	if h.fccPendingListHead != nil {
+		logger.LogPrintf("[FCC] 开始处理待发送的缓冲数据")
+		
+		// 遍历并处理缓冲区中的数据
+		current := h.fccPendingListHead
+		for current != nil {
+			next := current.next
+			
+			// 将数据广播到所有客户端
+			data := current.data
+			h.Mu.Unlock() // 释放锁以避免在广播时阻塞其他操作
+			for _, c := range h.Clients {
+				select {
+				case c.ch <- data:
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
+			h.Mu.Lock() // 重新获取锁以继续处理链表
+			
+			// 释放引用
+			current.Put()
+			current = next
+		}
+		
+		// 清空缓冲区
+		h.fccPendingListHead = nil
+		h.fccPendingListTail = nil
+		atomic.StoreInt32(&h.fccPendingCount, 0)
+		
+		logger.LogPrintf("[FCC] 缓冲数据处理完成")
+	}
+	
+	h.Mu.Unlock()
 }
 
 // prepareSwitchToMulticast 准备切换到多播模式
@@ -1068,4 +1106,25 @@ func (h *StreamHub) getDefaultLocalIP() net.IP {
 	// 所有方法都失败，返回nil
 	logger.LogPrintf("FCC: 无法确定本地IP地址")
 	return nil
+}
+
+// startClientFCCTimeoutTimer 为客户端启动独立的FCC超时定时器
+func (c *hubClient) startClientFCCTimeoutTimer(fccConn *net.UDPConn, fccServerAddr *net.UDPAddr, multicastAddr *net.UDPAddr) {
+	// 如果已有定时器在运行，先停止
+	if c.fccTimeoutTimer != nil {
+		c.fccTimeoutTimer.Stop()
+		c.fccTimeoutTimer = nil
+	}
+
+	// 创建新的定时器 - 使用80ms超时时间
+	c.fccTimeoutTimer = time.AfterFunc(FCC_TIMEOUT_SIGNALING_MS*time.Millisecond, func() {
+		c.fccState = FCC_STATE_MCAST_ACTIVE
+		logger.LogPrintf("FCC客户端超时: 服务器无响应，降级到组播播放，客户端: %s", c.connID)
+
+		// 停止当前定时器
+		if c.fccTimeoutTimer != nil {
+			c.fccTimeoutTimer.Stop()
+			c.fccTimeoutTimer = nil
+		}
+	})
 }

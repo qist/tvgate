@@ -756,14 +756,21 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	// 检查是否是FCC多播过渡阶段
 	if h.IsFccEnabled() {
 		h.Mu.RLock()
-		inTransition := h.fccState == FCC_STATE_MCAST_REQUESTED
+		currentState := h.fccState
 		h.Mu.RUnlock()
-		if inTransition {
+		
+		switch currentState {
+		case FCC_STATE_MCAST_REQUESTED:
 			h.handleMcastDataDuringTransition(bufRef.data)
 			bufRef.Put()
 			return
+		case FCC_STATE_MCAST_ACTIVE:
+			// 在多播活动状态下，先处理可能的缓冲数据
+			h.fccHandleMcastActive()
+			// fallthrough to normal broadcast
 		}
 	}
+	
 	data := bufRef.data
 	for _, c := range h.Clients {
 		select {
@@ -1587,33 +1594,6 @@ func (h *StreamHub) smoothRejoinMulticast() {
 	logger.LogPrintf("✅ IGMP 成员关系已刷新（未中断 socket）")
 }
 
-// startClientFCCTimeoutTimer 为客户端启动独立的FCC超时定时器
-func (c *hubClient) startClientFCCTimeoutTimer(fccConn *net.UDPConn, fccServerAddr *net.UDPAddr, multicastAddr *net.UDPAddr) {
-	// 如果已有定时器在运行，先停止
-	if c.fccTimeoutTimer != nil {
-		c.fccTimeoutTimer.Stop()
-		c.fccTimeoutTimer = nil
-	}
-
-	// 创建新的定时器 - 使用80ms超时时间
-	c.fccTimeoutTimer = time.AfterFunc(FCC_TIMEOUT_SIGNALING_MS*time.Millisecond, func() {
-		c.fccState = FCC_STATE_MCAST_ACTIVE
-		logger.LogPrintf("FCC客户端超时: 服务器无响应，降级到组播播放，客户端: %s", c.connID)
-
-		// 停止当前定时器
-		if c.fccTimeoutTimer != nil {
-			c.fccTimeoutTimer.Stop()
-			c.fccTimeoutTimer = nil
-		}
-	})
-}
-
-// SetFccState 设置FCC状态并记录状态转换日志
-func (h *StreamHub) SetFccState(state int) {
-	h.Mu.Lock()
-	defer h.Mu.Unlock()
-	h.fccSetState(state, "SetFccState")
-}
 
 // sendInitialToClient 为特定客户端发送初始数据
 func (h *StreamHub) sendInitialToClient(client hubClient) {
@@ -1721,27 +1701,3 @@ func (h *StreamHub) sendInitialToClient(client hubClient) {
 	go h.sendPacketsNonBlocking(client.ch, packets)
 }
 
-// GetInitialDataForFcc 获取用于FCC的初始数据
-func (h *StreamHub) GetInitialDataForFcc(connID, channelID string) [][]byte {
-	h.Mu.RLock()
-	defer h.Mu.RUnlock()
-
-	var packets [][]byte
-
-	// 如果指定connID，则获取特定客户端的初始数据
-	if connID != "" {
-		if client, exists := h.Clients[connID]; exists && client.initialData != nil {
-			packets = append(packets, client.initialData...)
-		}
-	} else {
-		// 否则获取频道的PAT/PMT等初始数据
-		if h.patBuffer != nil {
-			packets = append(packets, h.patBuffer)
-		}
-		if h.pmtBuffer != nil {
-			packets = append(packets, h.pmtBuffer)
-		}
-	}
-
-	return packets
-}
