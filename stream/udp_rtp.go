@@ -480,6 +480,7 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 		h.broadcastRef(outRef)
 	}
 }
+
 // ====================
 // RTP处理相关函数
 // ====================
@@ -758,7 +759,7 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 		h.Mu.RLock()
 		currentState := h.fccState
 		h.Mu.RUnlock()
-		
+
 		switch currentState {
 		case FCC_STATE_MCAST_REQUESTED:
 			h.handleMcastDataDuringTransition(bufRef.data)
@@ -770,7 +771,7 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 			// fallthrough to normal broadcast
 		}
 	}
-	
+
 	data := bufRef.data
 	for _, c := range h.Clients {
 		select {
@@ -1191,8 +1192,10 @@ func (h *StreamHub) Close() {
 	}
 
 	// 清理FCC相关资源
-	h.cleanupFCC()
-
+	if fccEnabled {
+		h.cleanupFCC()
+	}
+	
 	// 最后发送FCC终止包，在锁外进行
 	if fccEnabled {
 		seqNum := uint16(0)
@@ -1578,7 +1581,6 @@ func (h *StreamHub) smoothRejoinMulticast() {
 	logger.LogPrintf("✅ IGMP 成员关系已刷新（未中断 socket）")
 }
 
-
 // sendInitialToClient 为特定客户端发送初始数据
 func (h *StreamHub) sendInitialToClient(client hubClient) {
 	h.Mu.Lock()
@@ -1670,7 +1672,7 @@ func (h *StreamHub) sendInitialToClient(client hubClient) {
 	h.Mu.Unlock()
 
 	// 如果启用了FCC，尝试从频道缓存获取数据
-	if client.fccSession != nil && len(addrList) > 0 && h.fccEnabled  {
+	if client.fccSession != nil && len(addrList) > 0 && h.fccEnabled {
 		// 从频道缓存获取数据
 		channelID := addrList[0] // 使用第一个地址作为频道ID
 		channel := GlobalChannelManager.GetOrCreate(channelID)
@@ -1684,4 +1686,3 @@ func (h *StreamHub) sendInitialToClient(client hubClient) {
 	// 异步非阻塞发送
 	go h.sendPacketsNonBlocking(client.ch, packets)
 }
-
