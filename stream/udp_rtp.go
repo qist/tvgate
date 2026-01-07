@@ -1170,25 +1170,6 @@ func (h *StreamHub) Close() {
 	h.LastFrame = nil
 	h.rtpBuffer = nil
 
-	// 清理FCC链表缓冲区
-	for h.fccPendingListHead != nil {
-		bufRef := h.fccPendingListHead
-		h.fccPendingListHead = bufRef.next
-		bufRef.Put() // 减少引用计数，允许内存回收
-	}
-	h.fccPendingListTail = nil
-	atomic.StoreInt32(&h.fccPendingCount, 0)
-
-	// 清理PAT/PMT缓冲区
-	if h.patBuffer != nil {
-		patBufferPool.Put(h.patBuffer)
-		h.patBuffer = nil
-	}
-	if h.pmtBuffer != nil {
-		pmtBufferPool.Put(h.pmtBuffer)
-		h.pmtBuffer = nil
-	}
-
 	// 状态更新
 	h.state = StateStoppeds
 	stateCond := h.stateCond
@@ -1208,6 +1189,9 @@ func (h *StreamHub) Close() {
 			close(client.ch)
 		}
 	}
+
+	// 清理FCC相关资源
+	h.cleanupFCC()
 
 	// 最后发送FCC终止包，在锁外进行
 	if fccEnabled {

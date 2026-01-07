@@ -681,32 +681,47 @@ func (h *StreamHub) cleanupFCC() {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
-	// 停止各种定时器
-	if h.fccSyncTimer != nil {
-		h.fccSyncTimer.Stop()
-		h.fccSyncTimer = nil
+	// 清理FCC链表缓冲区
+	for h.fccPendingListHead != nil {
+		bufRef := h.fccPendingListHead
+		h.fccPendingListHead = bufRef.next
+		bufRef.Put() // 减少引用计数，允许内存回收
+	}
+	h.fccPendingListTail = nil
+	atomic.StoreInt32(&h.fccPendingCount, 0)
+
+	// 清理PAT/PMT缓冲区
+	if h.patBuffer != nil {
+		patBufferPool.Put(h.patBuffer)
+		h.patBuffer = nil
+	}
+	if h.pmtBuffer != nil {
+		pmtBufferPool.Put(h.pmtBuffer)
+		h.pmtBuffer = nil
 	}
 
-	if h.fccTimeoutTimer != nil {
-		h.fccTimeoutTimer.Stop()
-		h.fccTimeoutTimer = nil
-	}
-
-	if h.fccUnicastTimer != nil {
-		h.fccUnicastTimer.Stop()
-		h.fccUnicastTimer = nil
-	}
-
-	// 关闭FCC连接
+	// 如果有独立的FCC连接，关闭它
 	if h.fccConn != nil {
 		h.fccConn.Close()
 		h.fccConn = nil
 	}
-
-	// 关闭FCC单播连接
 	if h.fccUnicastConn != nil {
 		h.fccUnicastConn.Close()
 		h.fccUnicastConn = nil
+	}
+
+	// 停止并清除所有FCC定时器
+	if h.fccSyncTimer != nil {
+		h.fccSyncTimer.Stop()
+		h.fccSyncTimer = nil
+	}
+	if h.fccTimeoutTimer != nil {
+		h.fccTimeoutTimer.Stop()
+		h.fccTimeoutTimer = nil
+	}
+	if h.fccUnicastTimer != nil {
+		h.fccUnicastTimer.Stop()
+		h.fccUnicastTimer = nil
 	}
 
 	// 取消FCC响应监听器
@@ -717,31 +732,10 @@ func (h *StreamHub) cleanupFCC() {
 
 	// 重置FCC状态和相关变量
 	h.fccState = FCC_STATE_INIT
-	h.fccUnicastPort = 0
-
-	// 清理缓冲区并将缓冲区返回到相应的池中
-	if h.patBuffer != nil {
-		patBufferPool.Put(h.patBuffer)
-		h.patBuffer = nil
-	}
-	if h.pmtBuffer != nil {
-		pmtBufferPool.Put(h.pmtBuffer)
-		h.pmtBuffer = nil
-	}
-
-	// 清理链表缓冲区
-	for h.fccPendingListHead != nil {
-		bufRef := h.fccPendingListHead
-		h.fccPendingListHead = bufRef.next
-		bufRef.Put()
-	}
-	h.fccPendingListTail = nil
-	atomic.StoreInt32(&h.fccPendingCount, 0)
-
-	// 重置FCC序列号和其他状态
 	h.fccStartSeq = 0
 	h.fccTermSeq = 0
 	h.fccTermSent = false
+	h.fccUnicastPort = 0
 	h.fccUnicastStartTime = time.Time{}
 }
 
@@ -1128,3 +1122,6 @@ func (c *hubClient) startClientFCCTimeoutTimer(fccConn *net.UDPConn, fccServerAd
 		}
 	})
 }
+
+
+
