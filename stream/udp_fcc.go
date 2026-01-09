@@ -2,6 +2,7 @@ package stream
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -197,7 +198,6 @@ func (h *StreamHub) processTelecomFCCPacket(fmtField byte, data []byte) bool {
 	}
 }
 
-
 // handleMcastDataDuringTransition 处理多播过渡期间的数据
 func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 	h.Mu.Lock()
@@ -265,16 +265,16 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 // fccHandleMcastActive 处理FCC多播活动状态的数据
 func (h *StreamHub) fccHandleMcastActive() {
 	h.Mu.Lock()
-	
+
 	// 检查是否有待处理的缓冲数据
 	if h.fccPendingListHead != nil {
 		logger.LogPrintf("[FCC] 开始处理待发送的缓冲数据")
-		
+
 		// 遍历并处理缓冲区中的数据
 		current := h.fccPendingListHead
 		for current != nil {
 			next := current.next
-			
+
 			// 将数据广播到所有客户端
 			data := current.data
 			h.Mu.Unlock() // 释放锁以避免在广播时阻塞其他操作
@@ -285,20 +285,20 @@ func (h *StreamHub) fccHandleMcastActive() {
 				}
 			}
 			h.Mu.Lock() // 重新获取锁以继续处理链表
-			
+
 			// 释放引用
 			current.Put()
 			current = next
 		}
-		
+
 		// 清空缓冲区
 		h.fccPendingListHead = nil
 		h.fccPendingListTail = nil
 		atomic.StoreInt32(&h.fccPendingCount, 0)
-		
+
 		logger.LogPrintf("[FCC] 缓冲数据处理完成")
 	}
-	
+
 	h.Mu.Unlock()
 }
 
@@ -586,7 +586,6 @@ func (h *StreamHub) GetFccServerAddr() *net.UDPAddr {
 	return h.fccServerAddr
 }
 
-
 // initFCCConnectionForClient 为客户端初始化FCC连接
 func (h *StreamHub) initFCCConnectionForClient() (*net.UDPConn, error) {
 	h.Mu.Lock()
@@ -660,10 +659,13 @@ func (h *StreamHub) sendFCCRequestWithConn(fccConn *net.UDPConn, multicastAddr *
 	// 使用buildFCCRequestPacket函数构建请求包
 	pkt := h.buildFCCRequestPacket(multicastAddr, clientPort)
 
-	_, err := fccConn.WriteToUDP(pkt, fccServerAddr)
-	if err != nil {
-		logger.LogPrintf("FCC请求发送失败到 %s: %v", fccServerAddr.String(), err)
-		return err
+	for i := 0; i < 3; i++ {
+		_, err := fccConn.WriteToUDP(pkt, fccServerAddr)
+		if err != nil {
+			logger.LogPrintf("FCC请求发送失败到 %s: %v", fccServerAddr.String(), err)
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	logger.LogPrintf("FCC请求已发送到 %s，端口 %d", fccServerAddr.String(), clientPort)
@@ -808,6 +810,14 @@ func (h *StreamHub) sendFCCTermination(fccServerAddr *net.UDPAddr, seqNum uint16
 	fccEnabled := h.fccEnabled
 	fccType := h.fccType
 	fccConn := h.fccConn
+	if fccConn == nil {
+		for _, c := range h.Clients {
+			if c != nil && c.fccConn != nil {
+				fccConn = c.fccConn
+				break
+			}
+		}
+	}
 	h.Mu.RUnlock()
 
 	if !fccEnabled {
@@ -979,9 +989,14 @@ func (h *StreamHub) buildHuaweiFCCTermPacket(multicastAddr *net.UDPAddr, seqNum 
 		binary.BigEndian.PutUint32(pk[8:12], binary.BigEndian.Uint32(ip))
 	}
 
-	// FCI - First multicast sequence number (4 bytes)
-	binary.BigEndian.PutUint16(pk[12:14], seqNum)
-	// pk[14-15]: reserved (already zeroed)
+	if seqNum > 0 {
+		pk[12] = 0x01
+		pk[13] = 0x00
+		binary.BigEndian.PutUint16(pk[14:16], seqNum)
+	} else {
+		pk[12] = 0x02
+		pk[13] = 0x00
+	}
 
 	return pk
 }
@@ -1002,12 +1017,333 @@ func (h *StreamHub) buildTelecomFCCTermPacket(multicastAddr *net.UDPAddr, seqNum
 		binary.BigEndian.PutUint32(pk[8:12], binary.BigEndian.Uint32(ip))
 	}
 
-	// FCI - First multicast packet sequence (4 bytes)
-	pk[12] = 0 // Stop bit: 0 = normal, 1 = force
+	pk[12] = 0
+	if seqNum == 0 {
+		pk[12] = 1
+	}
 	// pk[13]: Reserved (already zeroed)
 	binary.BigEndian.PutUint16(pk[14:16], seqNum) // First multicast packet sequence
 
 	return pk
+}
+
+func (h *StreamHub) buildHuaweiFCCNatPacket(sessionID uint32) []byte {
+	pk := make([]byte, 8)
+	pk[0] = 0x00
+	pk[1] = 0x03
+	pk[2] = 0x00
+	pk[3] = 0x00
+	binary.BigEndian.PutUint32(pk[4:8], sessionID)
+	return pk
+}
+
+func (h *StreamHub) startClientFCCListener(client *hubClient, multicastAddr *net.UDPAddr) {
+	if client == nil || client.fccConn == nil {
+		return
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.LogPrintf("FCC客户端监听 goroutine panic: %v", r)
+			}
+		}()
+
+		buf := make([]byte, 2048)
+		for {
+			select {
+			case <-h.Closed:
+				return
+			default:
+			}
+
+			_ = client.fccConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+			n, _, err := client.fccConn.ReadFromUDP(buf)
+			if err != nil {
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
+				var ne net.Error
+				if errors.As(err, &ne) && ne.Timeout() {
+					continue
+				}
+				return
+			}
+			if n <= 0 {
+				continue
+			}
+
+			data := make([]byte, n)
+			copy(data, buf[:n])
+
+			if !isRTCP205(data) {
+				continue
+			}
+
+			fmtField := data[0] & 0x1F
+			switch h.fccType {
+			case FCC_TYPE_HUAWEI:
+				h.handleClientHuaweiFCCPacket(client, multicastAddr, fmtField, data)
+			default:
+				h.handleClientTelecomFCCPacket(client, multicastAddr, fmtField, data)
+			}
+		}
+	}()
+}
+
+func (h *StreamHub) handleClientTelecomFCCPacket(client *hubClient, multicastAddr *net.UDPAddr, fmtField byte, data []byte) {
+	switch fmtField {
+	case FCC_FMT_TELECOM_RESP:
+		if len(data) < 20 {
+			return
+		}
+
+		resultCode := data[12]
+		respType := data[13]
+
+		var newSignalPort uint16
+		var newMediaPort uint16
+		if len(data) >= 18 {
+			newSignalPort = binary.BigEndian.Uint16(data[14:16])
+			newMediaPort = binary.BigEndian.Uint16(data[16:18])
+		}
+
+		var newServerIP net.IP
+		if len(data) >= 24 {
+			ipv4 := net.IPv4(data[20], data[21], data[22], data[23]).To4()
+			if ipv4 != nil && !ipv4.Equal(net.IPv4zero) {
+				newServerIP = ipv4
+			}
+		}
+
+		client.mu.Lock()
+		serverAddrBase := client.fccServerAddr
+		fccConn := client.fccConn
+		redirectCount := client.fccRedirectCount
+		client.mu.Unlock()
+
+		if serverAddrBase == nil || fccConn == nil {
+			return
+		}
+
+		serverAddr := &net.UDPAddr{IP: append(net.IP(nil), serverAddrBase.IP...), Port: serverAddrBase.Port}
+		if newSignalPort != 0 && int(newSignalPort) != serverAddr.Port {
+			serverAddr.Port = int(newSignalPort)
+		}
+		if newServerIP != nil {
+			serverAddr.IP = newServerIP
+		}
+		h.Mu.Lock()
+		h.fccServerAddr = serverAddr
+		h.Mu.Unlock()
+
+		if resultCode != 0 {
+			client.mu.Lock()
+			client.fccState = FCC_STATE_MCAST_ACTIVE
+			client.mu.Unlock()
+			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC服务器响应错误，降级到组播")
+			return
+		}
+
+		switch respType {
+		case 1:
+			client.mu.Lock()
+			client.fccState = FCC_STATE_MCAST_ACTIVE
+			client.mu.Unlock()
+			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC无需单播，直接组播")
+		case 2:
+			client.mu.Lock()
+			client.fccState = FCC_STATE_UNICAST_PENDING
+			client.fccMediaPort = int(newMediaPort)
+			client.fccServerAddr = serverAddr
+			mediaPort := client.fccMediaPort
+			client.mu.Unlock()
+			h.fccSetState(FCC_STATE_UNICAST_PENDING, "FCC服务器接受请求")
+
+			if mediaPort != 0 {
+				mediaAddr := &net.UDPAddr{IP: serverAddr.IP, Port: mediaPort}
+				for i := 0; i < 3; i++ {
+					_, _ = fccConn.WriteToUDP(nil, mediaAddr)
+				}
+			}
+			for i := 0; i < 3; i++ {
+				_, _ = fccConn.WriteToUDP(nil, serverAddr)
+			}
+		case 3:
+			redirectCount++
+			if redirectCount > 5 {
+				client.mu.Lock()
+				client.fccRedirectCount = redirectCount
+				client.fccState = FCC_STATE_MCAST_ACTIVE
+				client.mu.Unlock()
+				h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC重定向过多，降级到组播")
+				return
+			}
+			client.mu.Lock()
+			client.fccRedirectCount = redirectCount
+			client.fccServerAddr = serverAddr
+			client.fccState = FCC_STATE_REQUESTED
+			client.mu.Unlock()
+			h.fccSetState(FCC_STATE_REQUESTED, "FCC服务器重定向，重新请求")
+			if multicastAddr != nil {
+				_ = h.sendFCCRequestWithConn(fccConn, multicastAddr, fccConn.LocalAddr().(*net.UDPAddr).Port, serverAddr)
+				client.startClientFCCTimeoutTimer(fccConn, serverAddr, multicastAddr)
+			}
+		default:
+			client.mu.Lock()
+			client.fccState = FCC_STATE_MCAST_ACTIVE
+			client.mu.Unlock()
+			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC响应类型不支持，降级到组播")
+		}
+	case FCC_FMT_TELECOM_SYNC:
+		client.mu.Lock()
+		state := client.fccState
+		client.mu.Unlock()
+		if state == FCC_STATE_MCAST_REQUESTED || state == FCC_STATE_MCAST_ACTIVE {
+			return
+		}
+		client.mu.Lock()
+		client.fccState = FCC_STATE_MCAST_REQUESTED
+		client.mu.Unlock()
+		h.fccSetState(FCC_STATE_MCAST_REQUESTED, "收到同步通知，准备切换组播")
+		h.prepareSwitchToMulticast()
+	}
+}
+
+func (h *StreamHub) handleClientHuaweiFCCPacket(client *hubClient, multicastAddr *net.UDPAddr, fmtField byte, data []byte) {
+	switch fmtField {
+	case FCC_FMT_HUAWEI_RESP:
+		if len(data) < 16 {
+			return
+		}
+
+		resultCode := data[12]
+		respType := uint16(0)
+		if len(data) >= 16 {
+			respType = binary.BigEndian.Uint16(data[14:16])
+		}
+
+		client.mu.Lock()
+		serverAddr := client.fccServerAddr
+		fccConn := client.fccConn
+		redirectCount := client.fccRedirectCount
+		client.mu.Unlock()
+
+		if serverAddr == nil || fccConn == nil {
+			return
+		}
+
+		if resultCode != 1 {
+			client.mu.Lock()
+			client.fccState = FCC_STATE_MCAST_ACTIVE
+			client.mu.Unlock()
+			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC服务器响应错误，降级到组播")
+			return
+		}
+
+		switch respType {
+		case 1:
+			client.mu.Lock()
+			client.fccState = FCC_STATE_MCAST_ACTIVE
+			client.mu.Unlock()
+			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC无需单播，直接组播")
+		case 2:
+			client.mu.Lock()
+			client.fccState = FCC_STATE_UNICAST_PENDING
+			client.mu.Unlock()
+			h.fccSetState(FCC_STATE_UNICAST_PENDING, "FCC服务器接受请求")
+
+			if len(data) >= 36 {
+				natFlag := data[24]
+				needNat := ((natFlag << 2) >> 7) == 1
+				serverPort := binary.BigEndian.Uint16(data[26:28])
+				sessionID := binary.BigEndian.Uint32(data[28:32])
+				serverIP := net.IPv4(data[32], data[33], data[34], data[35]).To4()
+				if serverIP != nil && !serverIP.Equal(net.IPv4zero) {
+					client.mu.Lock()
+					client.fccServerAddr.IP = serverIP
+					serverAddr = client.fccServerAddr
+					client.mu.Unlock()
+					h.Mu.Lock()
+					h.fccServerAddr = client.fccServerAddr
+					h.Mu.Unlock()
+				}
+				if serverPort != 0 {
+					client.mu.Lock()
+					client.fccMediaPort = int(serverPort)
+					client.mu.Unlock()
+				}
+				client.mu.Lock()
+				mediaPort := client.fccMediaPort
+				client.mu.Unlock()
+				if needNat && sessionID != 0 && mediaPort != 0 {
+					client.mu.Lock()
+					client.fccHuaweiSessionID = sessionID
+					client.mu.Unlock()
+					natPkt := h.buildHuaweiFCCNatPacket(sessionID)
+					mediaAddr := &net.UDPAddr{IP: append(net.IP(nil), serverAddr.IP...), Port: mediaPort}
+					for i := 0; i < 3; i++ {
+						_, _ = fccConn.WriteToUDP(natPkt, mediaAddr)
+						time.Sleep(10 * time.Millisecond)
+					}
+				}
+			}
+		case 3:
+			redirectCount++
+			if redirectCount > 5 {
+				client.mu.Lock()
+				client.fccRedirectCount = redirectCount
+				client.fccState = FCC_STATE_MCAST_ACTIVE
+				client.mu.Unlock()
+				h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC重定向过多，降级到组播")
+				return
+			}
+			if len(data) >= 36 {
+				serverPort := binary.BigEndian.Uint16(data[26:28])
+				serverIP := net.IPv4(data[32], data[33], data[34], data[35]).To4()
+				if serverIP != nil && !serverIP.Equal(net.IPv4zero) {
+					client.mu.Lock()
+					client.fccServerAddr.IP = serverIP
+					client.mu.Unlock()
+				}
+				if serverPort != 0 {
+					client.mu.Lock()
+					client.fccServerAddr.Port = int(serverPort)
+					client.mu.Unlock()
+				}
+				h.Mu.Lock()
+				h.fccServerAddr = client.fccServerAddr
+				h.Mu.Unlock()
+			}
+			client.mu.Lock()
+			client.fccRedirectCount = redirectCount
+			client.fccState = FCC_STATE_REQUESTED
+			serverAddr = client.fccServerAddr
+			client.mu.Unlock()
+			h.fccSetState(FCC_STATE_REQUESTED, "FCC服务器重定向，重新请求")
+			if multicastAddr != nil {
+				_ = h.sendFCCRequestWithConn(fccConn, multicastAddr, fccConn.LocalAddr().(*net.UDPAddr).Port, serverAddr)
+				client.startClientFCCTimeoutTimer(fccConn, serverAddr, multicastAddr)
+			}
+		default:
+			client.mu.Lock()
+			client.fccState = FCC_STATE_MCAST_ACTIVE
+			client.mu.Unlock()
+			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC响应类型不支持，降级到组播")
+		}
+	case FCC_FMT_HUAWEI_SYNC:
+		client.mu.Lock()
+		state := client.fccState
+		client.mu.Unlock()
+		if state == FCC_STATE_MCAST_REQUESTED || state == FCC_STATE_MCAST_ACTIVE {
+			return
+		}
+		client.mu.Lock()
+		client.fccState = FCC_STATE_MCAST_REQUESTED
+		client.mu.Unlock()
+		h.fccSetState(FCC_STATE_MCAST_REQUESTED, "收到同步通知，准备切换组播")
+		h.prepareSwitchToMulticast()
+	}
 }
 
 // getLocalIPForFCC 获取用于FCC的本地IP地址，支持指定接口
@@ -1105,23 +1441,26 @@ func (h *StreamHub) getDefaultLocalIP() net.IP {
 // startClientFCCTimeoutTimer 为客户端启动独立的FCC超时定时器
 func (c *hubClient) startClientFCCTimeoutTimer(fccConn *net.UDPConn, fccServerAddr *net.UDPAddr, multicastAddr *net.UDPAddr) {
 	// 如果已有定时器在运行，先停止
+	c.mu.Lock()
 	if c.fccTimeoutTimer != nil {
 		c.fccTimeoutTimer.Stop()
 		c.fccTimeoutTimer = nil
 	}
+	c.mu.Unlock()
 
 	// 创建新的定时器 - 使用80ms超时时间
-	c.fccTimeoutTimer = time.AfterFunc(FCC_TIMEOUT_SIGNALING_MS*time.Millisecond, func() {
+	timer := time.AfterFunc(FCC_TIMEOUT_SIGNALING_MS*time.Millisecond, func() {
+		c.mu.Lock()
 		c.fccState = FCC_STATE_MCAST_ACTIVE
-		logger.LogPrintf("FCC客户端超时: 服务器无响应，降级到组播播放，客户端: %s", c.connID)
-
-		// 停止当前定时器
 		if c.fccTimeoutTimer != nil {
 			c.fccTimeoutTimer.Stop()
 			c.fccTimeoutTimer = nil
 		}
+		connID := c.connID
+		c.mu.Unlock()
+		logger.LogPrintf("FCC客户端超时: 服务器无响应，降级到组播播放，客户端: %s", connID)
 	})
+	c.mu.Lock()
+	c.fccTimeoutTimer = timer
+	c.mu.Unlock()
 }
-
-
-

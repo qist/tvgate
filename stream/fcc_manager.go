@@ -19,6 +19,8 @@ type ChannelManager struct {
 	cacheSize int
 
 	sessionTTL time.Duration
+
+	cleanerOnce sync.Once
 }
 
 var GlobalChannelManager = &ChannelManager{
@@ -49,14 +51,16 @@ func (cm *ChannelManager) GetOrCreate(channel string) *MulticastChannel {
 }
 
 func (cm *ChannelManager) StartCleaner() {
-	go func() {
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
+	cm.cleanerOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
 
-		for range ticker.C {
-			cm.cleanup()
-		}
-	}()
+			for range ticker.C {
+				cm.cleanup()
+			}
+		}()
+	})
 }
 
 func (cm *ChannelManager) cleanup() {
