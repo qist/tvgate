@@ -252,7 +252,7 @@ func (h *StreamHub) fccHandleMcastActive() {
 		h.fccPendingListHead = bufRef.next
 
 		// 检测IDR帧
-		if h.detectIDRFrame(bufRef.data) {
+		if h.detectStrictIDRFrame(bufRef.data) {
 			logger.LogPrintf("FCC: 检测到IDR帧，加速切换到多播模式")
 			// 如果检测到IDR帧，可以做一些优化处理
 		}
@@ -1493,13 +1493,12 @@ func (c *hubClient) startClientFCCTimeoutTimer(fccConn *net.UDPConn, fccServerAd
 }
 
 // detectIDRFrame 检测H.264码流中的IDR帧
-func (h *StreamHub) detectIDRFrame(data []byte) bool {
+func (h *StreamHub) detectStrictIDRFrame(data []byte) bool {
 	if len(data) < 188 || data[0] != 0x47 {
 		// 不是TS包，跳过
 		return false
 	}
 
-	// 遍历TS包，查找PAT、PMT和视频PID
 	var videoPID uint16 = 0
 	var pmtPID uint16 = 0
 
@@ -1510,23 +1509,21 @@ func (h *StreamHub) detectIDRFrame(data []byte) bool {
 
 		tsPacket := data[i : i+188]
 		if tsPacket[0] != 0x47 {
-			// 同步字节不正确，跳过
 			continue
 		}
 
-		// 提取PID (bits 8-19)
+		// 提取PID
 		pid := uint16((tsPacket[1]&0x1F)<<8) | uint16(tsPacket[2])
 
-		// 检查是否为PAT包 (PID = 0x0000)
+		// PAT包
 		if pid == 0x0000 {
 			tableID := tsPacket[5]
-			if tableID == 0x00 { // PAT表
+			if tableID == 0x00 {
 				sectionLength := int((uint16(tsPacket[6])&0x0F)<<8 | uint16(tsPacket[7]))
 				if sectionLength > 8 && sectionLength <= 184 {
-					// 遍历节目信息
 					for j := 8; j < sectionLength-4; j += 4 {
 						programNum := uint16(tsPacket[j])<<8 | uint16(tsPacket[j+1])
-						if programNum != 0 { // 忽略NIT
+						if programNum != 0 {
 							pmtPID = uint16((tsPacket[j+2]&0x1F)<<8) | uint16(tsPacket[j+3])
 							break
 						}
@@ -1534,57 +1531,42 @@ func (h *StreamHub) detectIDRFrame(data []byte) bool {
 				}
 			}
 		} else if pid == pmtPID {
-			// 检查是否为PMT包
+			// PMT包
 			tableID := tsPacket[5]
-			if tableID == 0x02 { // PMT表
+			if tableID == 0x02 {
 				sectionLength := int((uint16(tsPacket[6])&0x0F)<<8 | uint16(tsPacket[7]))
 				if sectionLength > 12 && sectionLength <= 184 {
-					// 遍历ES信息
 					infoStart := 12
-					infoEnd := sectionLength - 4 // 减去CRC
+					infoEnd := sectionLength - 4
 					for infoStart < infoEnd {
 						streamType := tsPacket[infoStart]
 						elementaryPID := uint16((tsPacket[infoStart+1]&0x1F)<<8) | uint16(tsPacket[infoStart+2])
-
 						if streamType == 0x01 || streamType == 0x1B || streamType == 0x24 {
-							// 0x01 = MPEG-1 视频, 0x1B = H.264, 0x24 = H.265/HEVC
 							videoPID = elementaryPID
 						}
-						// 计算下一项的偏移量
 						infoStart += 5 + int(tsPacket[infoStart+4]&0x0F)<<8 | int(tsPacket[infoStart+5])
 					}
 				}
 			}
 		}
 
-		// 检查是否有视频PID
-		if videoPID != 0 {
-			// 检查是否为视频PID的包
-			if pid == videoPID {
-				// 检查adaptation field control位
-				adaptationFieldControl := (tsPacket[3] & 0x30) >> 4
-				
-				payloadStart := 4 // 默认负载从第4字节开始
-				if adaptationFieldControl&0x02 != 0 {
-					// 有adaptation field
-					adaptationFieldLength := int(tsPacket[4])
-					payloadStart = 5 + adaptationFieldLength
-				}
-				
-				// 检查是否在有效范围内
-				if payloadStart < len(tsPacket) {
-					// 检查是否是H.264 NAL单元
-					for j := payloadStart; j < len(tsPacket)-4; j++ {
-						if tsPacket[j] == 0x00 && tsPacket[j+1] == 0x00 && 
-						   tsPacket[j+2] == 0x00 && tsPacket[j+3] == 0x01 {
-							// 找到起始码，检查下一个字节是NAL头
-							if j+4 < len(tsPacket) {
-								nalType := tsPacket[j+4] & 0x1F
-								// NAL单元类型7是SPS，类型8是PPS，类型5是IDR帧
-								if nalType == 5 || nalType == 7 || nalType == 8 {
-									logger.LogPrintf("FCC: 检测到视频NAL单元 type=%d", nalType)
-									return true
-								}
+		// 检查视频PID
+		if videoPID != 0 && pid == videoPID {
+			adaptationFieldControl := (tsPacket[3] & 0x30) >> 4
+			payloadStart := 4
+			if adaptationFieldControl&0x02 != 0 {
+				payloadStart = 5 + int(tsPacket[4])
+			}
+			if payloadStart < len(tsPacket) {
+				for j := payloadStart; j < len(tsPacket)-4; j++ {
+					if tsPacket[j] == 0x00 && tsPacket[j+1] == 0x00 &&
+						tsPacket[j+2] == 0x00 && tsPacket[j+3] == 0x01 {
+						if j+4 < len(tsPacket) {
+							nalType := tsPacket[j+4] & 0x1F
+							// 仅检测IDR帧
+							if nalType == 5 {
+								logger.LogPrintf("FCC: 检测到严格IDR帧")
+								return true
 							}
 						}
 					}
@@ -1595,6 +1577,7 @@ func (h *StreamHub) detectIDRFrame(data []byte) bool {
 
 	return false
 }
+
 
 // checkFCCStatus 定期检查FCC状态，实现主动超时释放
 func (h *StreamHub) checkFCCStatus() {
