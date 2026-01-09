@@ -250,30 +250,54 @@ func (h *StreamHub) fccHandleMcastActive() {
 	for h.fccPendingListHead != nil {
 		bufRef := h.fccPendingListHead
 		h.fccPendingListHead = bufRef.next
+		h.Mu.Unlock() // 临时解锁，避免长时间持有锁
 
 		// 检测IDR帧
 		if h.detectStrictIDRFrame(bufRef.data) {
 			logger.LogPrintf("FCC: 检测到IDR帧，加速切换到多播模式")
-			
+
+			// 释放当前bufRef
+			bufRef.Put()
+
 			// 立即关闭FCC listener
+			h.Mu.Lock()
+			var fccConn *net.UDPConn
 			if h.fccConn != nil {
-				h.fccConn.Close()
+				fccConn = h.fccConn
 				h.fccConn = nil
 			}
-			
+
 			// 立即清空队列
-			h.Mu.Lock()
-			h.fccPendingListHead = nil
+			for h.fccPendingListHead != nil {
+				buf := h.fccPendingListHead
+				h.fccPendingListHead = buf.next
+				buf.Put()
+			}
 			h.fccPendingListTail = nil
-			h.fccPendingCount = 0
+			atomic.StoreInt32(&h.fccPendingCount, 0)
 			h.Mu.Unlock()
-			
+
+			if fccConn != nil {
+				fccConn.Close()
+			}
+
 			// 设置组播状态
-			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "检测到IDR帧，强制切换到多播")
+			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "检测到IDR帧，强制切换到多播模式")
+
+			// 退出循环，不再处理其他缓冲数据
+			return
 		}
 
 		// 将数据广播给所有客户端
+		clients := make([]*hubClient, len(h.Clients))
+		i := 0
 		for _, c := range h.Clients {
+			clients[i] = c
+			i++
+		}
+		h.Mu.Unlock() // 临时解锁，让其他goroutine可以访问hub状态
+
+		for _, c := range clients {
 			select {
 			case c.ch <- bufRef.data:
 			case <-time.After(100 * time.Millisecond):
@@ -282,12 +306,20 @@ func (h *StreamHub) fccHandleMcastActive() {
 
 		// 减少引用计数
 		bufRef.Put()
+
+		// 重新获取锁以继续循环
+		h.Mu.Lock()
+		// 检查循环是否应该继续（状态是否仍然允许）
+		if h.fccState != FCC_STATE_MCAST_ACTIVE {
+			h.Mu.Unlock()
+			return
+		}
 	}
 
 	// 重置等待计数
 	atomic.StoreInt32(&h.fccPendingCount, 0)
 	h.fccPendingListTail = nil
-	
+
 	// 更新FCC活动时间
 	now := time.Now().UnixNano() / 1e6
 	h.fccLastActivityTime = now
@@ -443,7 +475,7 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 		}
 	} else {
 		// 禁用FCC时清理相关资源
-		
+
 		// 停止并清理所有客户端的FCC定时器
 		for _, client := range h.Clients {
 			client.mu.Lock()
@@ -708,29 +740,26 @@ func (h *StreamHub) cleanupFCC() {
 		h.pmtBuffer = nil
 	}
 
-	// 如果有独立的FCC连接，关闭它
-	if h.fccConn != nil {
-		h.fccConn.Close()
-		h.fccConn = nil
+	// 关闭所有UDP连接
+	closeConn := func(conn **net.UDPConn) {
+		if *conn != nil {
+			(*conn).Close()
+			*conn = nil
+		}
 	}
-	if h.fccUnicastConn != nil {
-		h.fccUnicastConn.Close()
-		h.fccUnicastConn = nil
-	}
+	closeConn(&h.fccConn)
+	closeConn(&h.fccUnicastConn)
 
-	// 停止并清除所有FCC定时器
-	if h.fccSyncTimer != nil {
-		h.fccSyncTimer.Stop()
-		h.fccSyncTimer = nil
+	// 停止并清除所有定时器
+	stopTimer := func(timer **time.Timer) {
+		if *timer != nil {
+			(*timer).Stop()
+			*timer = nil
+		}
 	}
-	if h.fccTimeoutTimer != nil {
-		h.fccTimeoutTimer.Stop()
-		h.fccTimeoutTimer = nil
-	}
-	if h.fccUnicastTimer != nil {
-		h.fccUnicastTimer.Stop()
-		h.fccUnicastTimer = nil
-	}
+	stopTimer(&h.fccSyncTimer)
+	stopTimer(&h.fccTimeoutTimer)
+	stopTimer(&h.fccUnicastTimer)
 
 	// 取消FCC响应监听器
 	if h.fccResponseCancel != nil {
@@ -1593,7 +1622,6 @@ func (h *StreamHub) detectStrictIDRFrame(data []byte) bool {
 	return false
 }
 
-
 // checkFCCStatus 定期检查FCC状态，实现主动超时释放
 func (h *StreamHub) checkFCCStatus() {
 	ticker := time.NewTicker(100 * time.Millisecond) // 每100毫秒检查一次
@@ -1623,7 +1651,7 @@ func (h *StreamHub) checkFCCStatus() {
 			// 检查FCC超时情况
 			switch currentState {
 			case FCC_STATE_REQUESTED, FCC_STATE_UNICAST_PENDING:
-				// 信令阶段超时检查 
+				// 信令阶段超时检查
 				h.Mu.RLock()
 				elapsed := now - h.fccLastActivityTime
 				h.Mu.RUnlock()
