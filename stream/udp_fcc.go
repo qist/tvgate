@@ -254,7 +254,22 @@ func (h *StreamHub) fccHandleMcastActive() {
 		// 检测IDR帧
 		if h.detectStrictIDRFrame(bufRef.data) {
 			logger.LogPrintf("FCC: 检测到IDR帧，加速切换到多播模式")
-			// 如果检测到IDR帧，可以做一些优化处理
+			
+			// 立即关闭FCC listener
+			if h.fccConn != nil {
+				h.fccConn.Close()
+				h.fccConn = nil
+			}
+			
+			// 立即清空队列
+			h.Mu.Lock()
+			h.fccPendingListHead = nil
+			h.fccPendingListTail = nil
+			h.fccPendingCount = 0
+			h.Mu.Unlock()
+			
+			// 设置组播状态
+			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "检测到IDR帧，强制切换到多播")
 		}
 
 		// 将数据广播给所有客户端
