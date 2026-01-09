@@ -760,7 +760,6 @@ func makeNullTS() []byte {
 // 广播到所有客户端
 // ====================
 
-// 零拷贝引用广播，发送完成后归还池
 func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	// 检查是否是FCC多播过渡阶段
 	if h.IsFccEnabled() {
