@@ -98,6 +98,9 @@ func (h *StreamHub) processFCCPacket(data []byte) bool {
 		return false
 	}
 
+	// 更新FCC活动时间
+	h.updateFCCActivity()
+
 	// 获取FMT字段 (第一个字节的低5位)
 	fmtField := data[0] & 0x1F
 
@@ -198,108 +201,81 @@ func (h *StreamHub) processTelecomFCCPacket(fmtField byte, data []byte) bool {
 	}
 }
 
-// handleMcastDataDuringTransition 处理多播过渡期间的数据
+// handleMcastDataDuringTransition 处理过渡期间的多播数据
 func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
-	// 如果已经处于多播活动状态，则直接处理
-	if h.fccState == FCC_STATE_MCAST_ACTIVE {
+	// 检查当前状态是否为MCAST_REQUESTED
+	if h.fccState != FCC_STATE_MCAST_REQUESTED {
 		return
 	}
 
-	// 解析RTP包中的序列号
-	if len(data) < 12 {
-		return
+	// 创建新的BufferRef并增加引用计数
+	bufRef := NewBufferRef(data)
+	bufRef.Get() // 增加引用计数，防止数据被提前释放
+
+	// 将数据添加到等待列表
+	if h.fccPendingListHead == nil {
+		h.fccPendingListHead = bufRef
+		h.fccPendingListTail = bufRef
+	} else {
+		h.fccPendingListTail.next = bufRef
+		h.fccPendingListTail = bufRef
 	}
 
-	// 获取当前序列号
-	sequence := binary.BigEndian.Uint16(data[2:4])
+	// 增加等待计数
+	atomic.AddInt32(&h.fccPendingCount, 1)
 
-	// 如果还没有发送终止消息，则发送
-	if !h.fccTermSent {
-		// 发送FCC终止包
-		if h.fccServerAddr != nil {
-			go func() {
-				err := h.sendFCCTermination(h.fccServerAddr, sequence)
-				if err != nil {
-					logger.LogPrintf("FCC: 发送终止包失败: %v", err)
-				} else {
-					h.Mu.Lock()
-					h.fccTermSent = true
-					h.fccTermSeq = sequence // 记录终止序列号
-					h.Mu.Unlock()
-					logger.LogPrintf("FCC: 终止包已发送，序列号 %d", sequence)
-				}
-			}()
-		}
-	}
-
-	// 检查是否达到了终止序列号
-	if h.fccTermSent && sequence >= h.fccTermSeq && h.fccState == FCC_STATE_MCAST_REQUESTED {
-		// 切换到多播活动状态
-		h.fccSetState(FCC_STATE_MCAST_ACTIVE, fmt.Sprintf("达到终止序列号 %d", sequence))
-		logger.LogPrintf("FCC: 达到终止序列号 %d，切换到多播活动状态", sequence)
-
-		// 停止定时器
-		if h.fccSyncTimer != nil {
-			h.fccSyncTimer.Stop()
-			h.fccSyncTimer = nil
-		}
-	}
-
-	// 将数据添加到FCC缓冲区（使用零拷贝链表）
-	if len(data) > 0 {
-		bufRef := NewBufferRef(data)
-		bufRef.Get() // 增加引用计数，防止数据被提前释放
-		if h.fccPendingListHead == nil {
-			h.fccPendingListHead = bufRef
-			h.fccPendingListTail = bufRef
-		} else {
-			h.fccPendingListTail.next = bufRef
-			h.fccPendingListTail = bufRef
-		}
-	}
+	// 更新FCC活动时间
+	now := time.Now().UnixNano() / 1e6
+	h.fccLastActivityTime = now
 }
 
-// fccHandleMcastActive 处理FCC多播活动状态的数据
+// fccHandleMcastActive 处理多播激活状态的数据
 func (h *StreamHub) fccHandleMcastActive() {
 	h.Mu.Lock()
+	defer h.Mu.Unlock()
 
-	// 检查是否有待处理的缓冲数据
-	if h.fccPendingListHead != nil {
-		logger.LogPrintf("[FCC] 开始处理待发送的缓冲数据")
-
-		// 遍历并处理缓冲区中的数据
-		current := h.fccPendingListHead
-		for current != nil {
-			next := current.next
-
-			// 将数据广播到所有客户端
-			data := current.data
-			h.Mu.Unlock() // 释放锁以避免在广播时阻塞其他操作
-			for _, c := range h.Clients {
-				select {
-				case c.ch <- data:
-				case <-time.After(100 * time.Millisecond):
-				}
-			}
-			h.Mu.Lock() // 重新获取锁以继续处理链表
-
-			// 释放引用
-			current.Put()
-			current = next
-		}
-
-		// 清空缓冲区
-		h.fccPendingListHead = nil
-		h.fccPendingListTail = nil
-		atomic.StoreInt32(&h.fccPendingCount, 0)
-
-		logger.LogPrintf("[FCC] 缓冲数据处理完成")
+	// 检查当前状态是否为MCAST_ACTIVE
+	if h.fccState != FCC_STATE_MCAST_ACTIVE {
+		return
 	}
 
-	h.Mu.Unlock()
+	// 处理等待队列中的数据
+	for h.fccPendingListHead != nil {
+		bufRef := h.fccPendingListHead
+		h.fccPendingListHead = bufRef.next
+
+		// 检测IDR帧
+		if h.detectIDRFrame(bufRef.data) {
+			logger.LogPrintf("FCC: 检测到IDR帧，加速切换到多播模式")
+			// 如果检测到IDR帧，可以做一些优化处理
+		}
+
+		// 将数据广播给所有客户端
+		for _, c := range h.Clients {
+			select {
+			case c.ch <- bufRef.data:
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+
+		// 减少引用计数
+		bufRef.Put()
+	}
+
+	// 重置等待计数
+	atomic.StoreInt32(&h.fccPendingCount, 0)
+	h.fccPendingListTail = nil
+	
+	// 更新FCC活动时间
+	now := time.Now().UnixNano() / 1e6
+	h.fccLastActivityTime = now
 }
 
 // prepareSwitchToMulticast 准备切换到多播模式
@@ -398,9 +374,13 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 	}
 
 	h.fccEnabled = enabled
+
 	if enabled {
-		// 初始化状态和参数，但不直接设置为REQUESTED状态
-		// 状态转换将在ServeHTTP中根据是否有服务器地址来决定
+		// 初始化FCC相关参数
+		h.fccState = FCC_STATE_INIT
+		h.fccStartSeq = 0
+		h.fccTermSeq = 0
+		h.fccTermSent = false
 
 		// 如果fccCacheSize等参数没有初始化，则从配置加载
 		if h.fccCacheSize == 0 {
@@ -437,13 +417,8 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 		h.fccPendingListTail = nil
 		atomic.StoreInt32(&h.fccPendingCount, 0)
 
-		// 初始化客户端状态更新通道
-		if h.clientStateChan == nil {
-			h.clientStateChan = make(chan int, 10) // 缓冲10个状态更新
-		}
-
 		// 更新最后FCC数据时间
-		h.lastFccDataTime = time.Now().UnixNano() / 1e6
+		h.fccLastActivityTime = time.Now().UnixNano() / 1e6
 
 		// 只有在有服务器地址时才设置为REQUESTED状态，否则保持INIT状态
 		if h.fccServerAddr != nil {
@@ -453,12 +428,26 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 		}
 	} else {
 		// 禁用FCC时清理相关资源
+		
+		// 停止并清理所有客户端的FCC定时器
+		for _, client := range h.Clients {
+			client.mu.Lock()
+			if client.fccTimeoutTimer != nil {
+				client.fccTimeoutTimer.Stop()
+				client.fccTimeoutTimer = nil
+			}
+			if client.fccSyncTimer != nil {
+				client.fccSyncTimer.Stop()
+				client.fccSyncTimer = nil
+			}
+			client.mu.Unlock()
+		}
 
-		// 清理链表缓冲区（保留用于向后兼容）
+		// 清理链表缓冲区
 		for h.fccPendingListHead != nil {
 			bufRef := h.fccPendingListHead
 			h.fccPendingListHead = bufRef.next
-			bufRef.Put() // 减少引用计数
+			bufRef.Put()
 		}
 		h.fccPendingListTail = nil
 		atomic.StoreInt32(&h.fccPendingCount, 0)
@@ -480,11 +469,13 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 			h.fccSyncTimer.Stop()
 			h.fccSyncTimer = nil
 		}
-
-		// 关闭客户端状态更新通道
-		if h.clientStateChan != nil {
-			close(h.clientStateChan)
-			h.clientStateChan = nil
+		if h.fccTimeoutTimer != nil {
+			h.fccTimeoutTimer.Stop()
+			h.fccTimeoutTimer = nil
+		}
+		if h.fccUnicastTimer != nil {
+			h.fccUnicastTimer.Stop()
+			h.fccUnicastTimer = nil
 		}
 	}
 }
@@ -659,17 +650,17 @@ func (h *StreamHub) sendFCCRequestWithConn(fccConn *net.UDPConn, multicastAddr *
 	// 使用buildFCCRequestPacket函数构建请求包
 	pkt := h.buildFCCRequestPacket(multicastAddr, clientPort)
 
-	for i := 0; i < 3; i++ {
-		_, err := fccConn.WriteToUDP(pkt, fccServerAddr)
-		if err != nil {
-			logger.LogPrintf("FCC请求发送失败到 %s: %v", fccServerAddr.String(), err)
-			return err
-		}
-		time.Sleep(10 * time.Millisecond)
+	_, err := fccConn.WriteToUDP(pkt, fccServerAddr)
+	if err != nil {
+		logger.LogPrintf("FCC请求发送失败到 %s: %v", fccServerAddr.String(), err)
+		return err
 	}
 
 	logger.LogPrintf("FCC请求已发送到 %s，端口 %d", fccServerAddr.String(), clientPort)
 	logger.LogPrintf("FCC请求已发送到 %s 用于客户端 %s", multicastAddr.String(), multicastAddr.IP.String())
+
+	// 更新FCC活动时间
+	h.updateFCCActivity()
 
 	// 启动超时定时器，处理FCC请求的响应超时
 	h.startFCCTimeoutTimer()
@@ -739,6 +730,7 @@ func (h *StreamHub) cleanupFCC() {
 	h.fccTermSent = false
 	h.fccUnicastPort = 0
 	h.fccUnicastStartTime = time.Time{}
+	h.fccLastActivityTime = 0
 }
 
 // ClientFccState 存储每个客户端的FCC状态信息
@@ -774,6 +766,10 @@ func (h *StreamHub) fccSetState(state int, reason string) {
 	prevState := h.fccState
 	h.fccState = state
 
+	// 更新最后活动时间
+	now := time.Now().UnixNano() / 1e6
+	h.fccLastActivityTime = now
+
 	// 如果状态变为非请求状态，停止超时定时器
 	if state != FCC_STATE_REQUESTED && h.fccTimeoutTimer != nil {
 		h.fccTimeoutTimer.Stop()
@@ -802,6 +798,13 @@ func (h *StreamHub) fccSetState(state int, reason string) {
 	}
 
 	logger.LogPrintf("FCC State: %s -> %s (%s)", prevName, currentName, reason)
+}
+
+// updateFCCActivity 更新FCC最后活动时间
+func (h *StreamHub) updateFCCActivity() {
+	h.Mu.Lock()
+	h.fccLastActivityTime = time.Now().UnixNano() / 1e6
+	h.Mu.Unlock()
 }
 
 // sendFCCTermination 发送FCC终止包
@@ -869,7 +872,7 @@ func (h *StreamHub) sendFCCTermination(fccServerAddr *net.UDPAddr, seqNum uint16
 		if err != nil {
 			return err
 		}
-		time.Sleep(10 * time.Millisecond) // 短暂延迟以提高可靠性
+		time.Sleep(10 * time.Millisecond) // 矾暂延迟以提高可靠性
 	}
 
 	logger.LogPrintf("FCC: 终止包发送成功, 类型: %s, 序号: %d",
@@ -1438,6 +1441,35 @@ func (h *StreamHub) getDefaultLocalIP() net.IP {
 	return nil
 }
 
+// cleanupFCCResources 清理客户端的FCC相关资源
+func (c *hubClient) cleanupFCCResources() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// 关闭FCC连接
+	if c.fccConn != nil {
+		c.fccConn.Close()
+		c.fccConn = nil
+	}
+
+	// 停止并清理所有定时器
+	if c.fccTimeoutTimer != nil {
+		c.fccTimeoutTimer.Stop()
+		c.fccTimeoutTimer = nil
+	}
+	if c.fccSyncTimer != nil {
+		c.fccSyncTimer.Stop()
+		c.fccSyncTimer = nil
+	}
+
+	// 重置FCC状态信息
+	c.fccState = FCC_STATE_INIT
+	c.fccMediaPort = 0
+	c.fccRedirectCount = 0
+	c.fccHuaweiSessionID = 0
+	c.fccServerAddr = nil
+}
+
 // startClientFCCTimeoutTimer 为客户端启动独立的FCC超时定时器
 func (c *hubClient) startClientFCCTimeoutTimer(fccConn *net.UDPConn, fccServerAddr *net.UDPAddr, multicastAddr *net.UDPAddr) {
 	// 如果已有定时器在运行，先停止
@@ -1446,21 +1478,178 @@ func (c *hubClient) startClientFCCTimeoutTimer(fccConn *net.UDPConn, fccServerAd
 		c.fccTimeoutTimer.Stop()
 		c.fccTimeoutTimer = nil
 	}
-	c.mu.Unlock()
 
 	// 创建新的定时器 - 使用80ms超时时间
-	timer := time.AfterFunc(FCC_TIMEOUT_SIGNALING_MS*time.Millisecond, func() {
+	c.fccTimeoutTimer = time.AfterFunc(FCC_TIMEOUT_SIGNALING_MS*time.Millisecond, func() {
 		c.mu.Lock()
 		c.fccState = FCC_STATE_MCAST_ACTIVE
-		if c.fccTimeoutTimer != nil {
-			c.fccTimeoutTimer.Stop()
-			c.fccTimeoutTimer = nil
-		}
-		connID := c.connID
+		logger.LogPrintf("FCC客户端超时: 服务器无响应，降级到组播播放，客户端: %s", c.connID)
 		c.mu.Unlock()
-		logger.LogPrintf("FCC客户端超时: 服务器无响应，降级到组播播放，客户端: %s", connID)
+
+		// 清理客户端FCC资源
+		c.cleanupFCCResources()
 	})
-	c.mu.Lock()
-	c.fccTimeoutTimer = timer
 	c.mu.Unlock()
+}
+
+// detectIDRFrame 检测H.264码流中的IDR帧
+func (h *StreamHub) detectIDRFrame(data []byte) bool {
+	if len(data) < 188 || data[0] != 0x47 {
+		// 不是TS包，跳过
+		return false
+	}
+
+	// 遍历TS包，查找PAT、PMT和视频PID
+	var videoPID uint16 = 0
+	var pmtPID uint16 = 0
+
+	for i := 0; i < len(data); i += 188 {
+		if i+188 > len(data) {
+			break
+		}
+
+		tsPacket := data[i : i+188]
+		if tsPacket[0] != 0x47 {
+			// 同步字节不正确，跳过
+			continue
+		}
+
+		// 提取PID (bits 8-19)
+		pid := uint16((tsPacket[1]&0x1F)<<8) | uint16(tsPacket[2])
+
+		// 检查是否为PAT包 (PID = 0x0000)
+		if pid == 0x0000 {
+			tableID := tsPacket[5]
+			if tableID == 0x00 { // PAT表
+				sectionLength := int((uint16(tsPacket[6])&0x0F)<<8 | uint16(tsPacket[7]))
+				if sectionLength > 8 && sectionLength <= 184 {
+					// 遍历节目信息
+					for j := 8; j < sectionLength-4; j += 4 {
+						programNum := uint16(tsPacket[j])<<8 | uint16(tsPacket[j+1])
+						if programNum != 0 { // 忽略NIT
+							pmtPID = uint16((tsPacket[j+2]&0x1F)<<8) | uint16(tsPacket[j+3])
+							break
+						}
+					}
+				}
+			}
+		} else if pid == pmtPID {
+			// 检查是否为PMT包
+			tableID := tsPacket[5]
+			if tableID == 0x02 { // PMT表
+				sectionLength := int((uint16(tsPacket[6])&0x0F)<<8 | uint16(tsPacket[7]))
+				if sectionLength > 12 && sectionLength <= 184 {
+					// 遍历ES信息
+					infoStart := 12
+					infoEnd := sectionLength - 4 // 减去CRC
+					for infoStart < infoEnd {
+						streamType := tsPacket[infoStart]
+						elementaryPID := uint16((tsPacket[infoStart+1]&0x1F)<<8) | uint16(tsPacket[infoStart+2])
+
+						if streamType == 0x01 || streamType == 0x1B || streamType == 0x24 {
+							// 0x01 = MPEG-1 视频, 0x1B = H.264, 0x24 = H.265/HEVC
+							videoPID = elementaryPID
+						}
+						// 计算下一项的偏移量
+						infoStart += 5 + int(tsPacket[infoStart+4]&0x0F)<<8 | int(tsPacket[infoStart+5])
+					}
+				}
+			}
+		}
+
+		// 检查是否有视频PID
+		if videoPID != 0 {
+			// 检查是否为视频PID的包
+			if pid == videoPID {
+				// 检查adaptation field control位
+				adaptationFieldControl := (tsPacket[3] & 0x30) >> 4
+				
+				payloadStart := 4 // 默认负载从第4字节开始
+				if adaptationFieldControl&0x02 != 0 {
+					// 有adaptation field
+					adaptationFieldLength := int(tsPacket[4])
+					payloadStart = 5 + adaptationFieldLength
+				}
+				
+				// 检查是否在有效范围内
+				if payloadStart < len(tsPacket) {
+					// 检查是否是H.264 NAL单元
+					for j := payloadStart; j < len(tsPacket)-4; j++ {
+						if tsPacket[j] == 0x00 && tsPacket[j+1] == 0x00 && 
+						   tsPacket[j+2] == 0x00 && tsPacket[j+3] == 0x01 {
+							// 找到起始码，检查下一个字节是NAL头
+							if j+4 < len(tsPacket) {
+								nalType := tsPacket[j+4] & 0x1F
+								// NAL单元类型7是SPS，类型8是PPS，类型5是IDR帧
+								if nalType == 5 || nalType == 7 || nalType == 8 {
+									logger.LogPrintf("FCC: 检测到视频NAL单元 type=%d", nalType)
+									return true
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// checkFCCStatus 定期检查FCC状态，实现主动超时释放
+func (h *StreamHub) checkFCCStatus() {
+	ticker := time.NewTicker(100 * time.Millisecond) // 每100毫秒检查一次
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			// 检查Hub是否已关闭
+			select {
+			case <-h.Closed:
+				return
+			default:
+			}
+
+			h.Mu.RLock()
+			fccEnabled := h.fccEnabled
+			currentState := h.fccState
+			h.Mu.RUnlock()
+
+			if !fccEnabled {
+				continue
+			}
+
+			now := time.Now().UnixNano() / 1e6 // 当前时间（毫秒）
+
+			// 检查FCC超时情况
+			switch currentState {
+			case FCC_STATE_REQUESTED, FCC_STATE_UNICAST_PENDING:
+				// 信令阶段超时检查 
+				h.Mu.RLock()
+				elapsed := now - h.fccLastActivityTime
+				h.Mu.RUnlock()
+
+				if elapsed > FCC_TIMEOUT_SIGNALING_MS {
+					logger.LogPrintf("FCC: 信令阶段超时 (%d ms)，降级到组播播放", elapsed)
+					h.fccSetState(FCC_STATE_MCAST_ACTIVE, "信令阶段超时")
+				}
+
+			case FCC_STATE_UNICAST_ACTIVE, FCC_STATE_MCAST_REQUESTED:
+				// 单播阶段超时检查 - 检查是否在单播阶段停留太久
+				h.Mu.RLock()
+				elapsedSinceUnicast := now - h.fccUnicastStartTime.UnixNano()/1e6
+				h.Mu.RUnlock()
+
+				// 如果在单播阶段停留超过预设时间（比如5秒），则主动切换到多播
+				const FCC_UNICAST_MAX_DURATION = 5000 // 5秒
+				if elapsedSinceUnicast > FCC_UNICAST_MAX_DURATION {
+					logger.LogPrintf("FCC: 单播阶段停留太久 (%d ms)，主动切换到多播", elapsedSinceUnicast)
+					h.fccSetState(FCC_STATE_MCAST_ACTIVE, "单播阶段超时")
+				}
+			}
+		case <-h.Closed:
+			return
+		}
+	}
 }

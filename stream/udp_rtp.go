@@ -153,6 +153,7 @@ type hubClient struct {
 	fccState            int          // 客户端特定的FCC状态
 	fccSession          *FccSession  // FCC会话，用于缓存管理
 	fccTimeoutTimer     *time.Timer  // 客户端独立的FCC超时定时器
+	fccSyncTimer        *time.Timer  // 客户端独立的FCC同步定时器
 	fccUnicastStartTime time.Time    // 单播开始时间，用于超时检测
 	fccStartSeq         uint16       // FCC起始序列号
 	fccTermSeq          uint16       // FCC终止序列号
@@ -160,6 +161,7 @@ type hubClient struct {
 	fccRedirectCount    int
 	fccHuaweiSessionID  uint32
 	fccMediaPort        int
+	fccMcastPending     []*BufferRef // 多播过渡期间的待处理数据
 }
 
 // StreamHub represents a multicast/unicast streaming hub
@@ -197,15 +199,16 @@ type StreamHub struct {
 	fccStartSeq            uint16
 	fccTermSeq             uint16
 	fccTermSent            bool
+	fccUnicastPort         int          // FCC单播端口
 	fccPendingListHead     *BufferRef
 	fccPendingListTail     *BufferRef
 	fccPendingCount        int32
 	fccUnicastBufPool      *sync.Pool
 	fccSyncTimer           *time.Timer
 	fccTimeoutTimer        *time.Timer
-	fccUnicastTimer        *time.Timer
-	fccUnicastPort         int
-	clientStateChan        chan int
+	fccUnicastTimer        *time.Timer      // FCC单播阶段超时定时器
+	fccUnicastDuration     time.Duration    // FCC单播阶段最大持续时间
+	fccLastActivityTime    int64            // 最后FCC活动时间，用于超时检测
 	patBuffer              []byte
 	pmtBuffer              []byte
 	lastFccDataTime        int64
@@ -807,6 +810,9 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 func (h *StreamHub) run() {
 	GlobalChannelManager.StartCleaner()
 
+	// 启动定期检查FCC状态的goroutine
+	go h.checkFCCStatus()
+
 	for {
 		select {
 		case client := <-h.AddCh:
@@ -819,9 +825,10 @@ func (h *StreamHub) run() {
 			// 如果启用了FCC，发送缓存数据给新客户端
 			h.Mu.RLock()
 			addrList := h.AddrList
+			fccEnabled := h.fccEnabled
 			h.Mu.RUnlock()
 
-			if client.fccSession != nil && len(addrList) > 0 {
+			if client.fccSession != nil && len(addrList) > 0 && fccEnabled {
 				// 从频道缓存获取数据
 				channelID := addrList[0] // 使用第一个地址作为频道ID
 				channel := GlobalChannelManager.GetOrCreate(channelID)
@@ -855,11 +862,24 @@ func (h *StreamHub) run() {
 
 				// 停止客户端的FCC超时定时器
 				client.mu.Lock()
+				if client.fccSyncTimer != nil {
+					client.fccSyncTimer.Stop()
+					client.fccSyncTimer = nil
+				}
 				if client.fccTimeoutTimer != nil {
 					client.fccTimeoutTimer.Stop()
 					client.fccTimeoutTimer = nil
 				}
+				for _, ref := range client.fccMcastPending {
+					if ref != nil {
+						ref.Put()
+					}
+				}
+				client.fccMcastPending = nil
 				client.mu.Unlock()
+
+				// 清理客户端FCC资源
+				client.cleanupFCCResources()
 
 				// 从FCC缓存管理器中移除会话
 				if client.fccSession != nil {
@@ -896,10 +916,20 @@ func (h *StreamHub) run() {
 
 				// 停止客户端的FCC超时定时器
 				client.mu.Lock()
+				if client.fccSyncTimer != nil {
+					client.fccSyncTimer.Stop()
+					client.fccSyncTimer = nil
+				}
 				if client.fccTimeoutTimer != nil {
 					client.fccTimeoutTimer.Stop()
 					client.fccTimeoutTimer = nil
 				}
+				for _, ref := range client.fccMcastPending {
+					if ref != nil {
+						ref.Put()
+					}
+				}
+				client.fccMcastPending = nil
 				client.mu.Unlock()
 
 				// 从FCC缓存管理器中移除会话
@@ -1343,7 +1373,7 @@ func (m *MultiChannelHub) RemoveHubEx(udpAddr string, ifaces []string) {
 	delete(m.Hubs, key)
 	m.Mu.Unlock()
 
-	// 安全关闭 hub
+	// 安急关闭 hub
 	hub.Close()
 }
 
@@ -1570,6 +1600,7 @@ func (h *StreamHub) smoothRejoinMulticast() {
 	logger.LogPrintf("✅ IGMP 成员关系已刷新（未中断 socket）")
 }
 
+
 // sendInitialToClient 为特定客户端发送初始数据
 func (h *StreamHub) sendInitialToClient(client *hubClient) {
 	if client == nil {
@@ -1680,3 +1711,4 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 	// 异步非阻塞发送
 	go h.sendPacketsNonBlocking(client.ch, packets)
 }
+
