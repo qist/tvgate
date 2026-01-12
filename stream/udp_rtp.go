@@ -1750,7 +1750,7 @@ func (m *MultiChannelHub) isHubHealthy(hub *StreamHub) bool {
 
 	// 如果没有活跃客户端，Hub可能是健康的（暂时没有客户端连接）
 	if !hasActiveClients {
-		return true
+		return false
 	}
 
 	// 检查是否存在堵塞情况
