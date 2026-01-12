@@ -817,7 +817,6 @@ func (h *StreamHub) run() {
 			h.Mu.Lock()
 			h.Clients[client.connID] = client
 			h.Mu.Unlock()
-            h.sendInitialToClient(client)
 			logger.LogPrintf("客户端加入: %s, 当前客户端数: %d", client.connID, len(h.Clients))
 
 			// 如果启用了FCC，发送缓存数据给新客户端
@@ -1130,6 +1129,9 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 		h.RemoveCh <- connID
 		return
 	}
+
+	// 发送初始数据
+	h.sendInitialToClient(client)
 
 	// 检查客户端是否已经断开连接
 	clientDisconnected := make(chan struct{})
