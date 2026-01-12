@@ -105,7 +105,8 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 		dns.HandleConfigUpdate(&config.Config{}, &config.Cfg)
 		config.CfgMu.RLock()
 		update.UpdateHubsOnConfigChange(config.Cfg.Server.MulticastIfaces)
-
+        // 设置默认值 & token 管理器
+		config.Cfg.SetDefaults()
 		// 更新TS缓存配置
 		stream.InitOrUpdateTSCacheFromConfig()
 
