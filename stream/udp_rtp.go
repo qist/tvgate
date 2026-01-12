@@ -779,12 +779,36 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	}
 
 	data := bufRef.data
-	for _, c := range h.Clients {
+	// 创建副本以避免并发访问问题
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
+
+	// 遍历客户端并尝试发送数据，带超时和错误处理
+	clientsToRemove := make([]*hubClient, 0)
+	
+	h.Mu.RLock()
+	clients := make([]*hubClient, 0, len(h.Clients))
+	for _, client := range h.Clients {
+		clients = append(clients, client)
+	}
+	h.Mu.RUnlock()
+	
+	for _, c := range clients {
 		select {
-		case c.ch <- data:
-		case <-time.After(100 * time.Millisecond):
+		case c.ch <- dataCopy:
+			// 数据成功发送
+		case <-time.After(50 * time.Millisecond): // 减少超时时间，快速检测卡住的客户端
+			// 发送超时，记录问题并标记客户端以移除
+			logger.LogPrintf("⚠️ 客户端数据发送超时，可能已断开连接: %s", c.connID)
+			clientsToRemove = append(clientsToRemove, c)
 		}
 	}
+
+	// 移除有问题的客户端
+	for _, client := range clientsToRemove {
+		h.RemoveCh <- client.connID
+	}
+
 	bufRef.Put()
 
 	// 将TS包写入频道缓存
@@ -898,12 +922,9 @@ func (h *StreamHub) run() {
 						h.OnEmpty(h) // 自动删除 hub
 					}
 					return
-				} else {
-					h.Mu.Unlock()
 				}
-			} else {
-				h.Mu.Unlock()
 			}
+			h.Mu.Unlock()
 
 		case <-h.Closed:
 			// 清理所有客户端
@@ -954,8 +975,22 @@ func safeCloseBytesChan(ch chan []byte) {
 		return
 	}
 	defer func() {
-		_ = recover()
+		_ = recover() // 防止关闭已关闭的通道引发panic
 	}()
+	
+	// 尝试接收通道中的剩余数据，避免在关闭时仍有数据在通道中
+	done := false
+	for !done {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				done = true
+			}
+		default:
+			done = true
+		}
+	}
+	
 	close(ch)
 }
 
@@ -1099,14 +1134,15 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 		w.Header().Set("Transfer-Encoding", "chunked")
 		w.Header().Set("Accept-Ranges", "none")
 	}
+
 	// 等待Hub进入播放状态，使用请求上下文，这样当客户端断开时可以及时返回
-	// if !h.WaitForPlaying(r.Context()) {
-	// 	logger.LogPrintf("等待Hub播放状态超时或失败: %s", connID)
-	// 	http.Error(w, "Service timeout", http.StatusServiceUnavailable)
-	// 	// 从hub中移除客户端
-	// 	h.RemoveCh <- connID
-	// 	return
-	// }
+	if !h.WaitForPlaying(r.Context()) {
+		logger.LogPrintf("等待Hub播放状态超时或失败: %s", connID)
+		http.Error(w, "Service timeout", http.StatusServiceUnavailable)
+		// 从hub中移除客户端
+		h.RemoveCh <- connID
+		return
+	}
 
 	// HTTP流处理 - 检查是否支持flush
 	flusher, ok := w.(http.Flusher)
@@ -1127,12 +1163,6 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	activeTicker := time.NewTicker(5 * time.Second)
 	defer activeTicker.Stop()
 
-	if !h.WaitForPlaying(ctx) {
-		// 从hub中移除客户端
-		h.RemoveCh <- connID
-		return
-	}
-
 	// 发送初始数据
 	h.sendInitialToClient(client)
 
@@ -1143,19 +1173,21 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 		close(clientDisconnected)
 	}()
 
+	// 使用 defer 确保客户端始终被移除
+	defer func() {
+		h.RemoveCh <- connID
+	}()
+
 	for {
 		select {
 		case data, ok := <-ch:
 			if !ok {
-				// 从hub中移除客户端
-				h.RemoveCh <- connID
 				return
 			}
 
 			n, err := w.Write(data)
 			if err != nil {
-				// 从hub中移除客户端
-				h.RemoveCh <- connID
+				logger.LogPrintf("写入响应失败: %v", err)
 				return
 			}
 
@@ -1165,7 +1197,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 				bufferedBytes = 0
 			}
 		case <-flushTicker.C:
-			if bufferedBytes > 0 {
+			if flusher != nil && bufferedBytes > 0 {
 				flusher.Flush()
 				bufferedBytes = 0
 			}
@@ -1175,12 +1207,8 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 			}
 		case <-clientDisconnected:
 			// 客户端断开连接，退出循环
-			// 从hub中移除客户端
-			h.RemoveCh <- connID
 			return
 		case <-h.Closed:
-			// 从hub中移除客户端
-			h.RemoveCh <- connID
 			return
 		}
 	}
@@ -1361,11 +1389,12 @@ func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*Stre
 		return hub, nil
 	}
 	
-	// 如果存在但已关闭，则先移除它
+	// 如果存在但已关闭，则等待完全关闭后从管理器中移除
 	if exists {
-		// 等待 hub 完全关闭
+		logger.LogPrintf("发现已关闭的 Hub，等待完全关闭: %s", key)
 		hub.WaitClosed()
 		delete(m.Hubs, key)
+		logger.LogPrintf("已关闭的 Hub 已从管理器中移除: %s", key)
 	}
 	
 	newHub, err := NewStreamHub([]string{udpAddr}, ifaces)
@@ -1395,6 +1424,7 @@ func (m *MultiChannelHub) RemoveHubEx(udpAddr string, ifaces []string) {
 	hub, ok := m.Hubs[key]
 	if !ok {
 		m.Mu.Unlock()
+		logger.LogPrintf("尝试删除不存在的 Hub: %s", key)
 		return
 	}
 
@@ -1402,8 +1432,13 @@ func (m *MultiChannelHub) RemoveHubEx(udpAddr string, ifaces []string) {
 	delete(m.Hubs, key)
 	m.Mu.Unlock()
 
-	// 安急关闭 hub
-	hub.Close()
+	// 等待 Hub 完全关闭
+	if !hub.IsClosed() {
+		hub.Close()
+		logger.LogPrintf("Hub 已关闭并从管理器中移除: %s", key)
+	} else {
+		logger.LogPrintf("Hub 已经关闭: %s", key)
+	}
 }
 
 // ====================
