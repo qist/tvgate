@@ -198,16 +198,16 @@ type StreamHub struct {
 	fccStartSeq            uint16
 	fccTermSeq             uint16
 	fccTermSent            bool
-	fccUnicastPort         int          // FCC单播端口
+	fccUnicastPort         int // FCC单播端口
 	fccPendingListHead     *BufferRef
 	fccPendingListTail     *BufferRef
 	fccPendingCount        int32
 	fccUnicastBufPool      *sync.Pool
 	fccSyncTimer           *time.Timer
 	fccTimeoutTimer        *time.Timer
-	fccUnicastTimer        *time.Timer      // FCC单播阶段超时定时器
-	fccUnicastDuration     time.Duration    // FCC单播阶段最大持续时间
-	fccLastActivityTime    int64            // 最后FCC活动时间，用于超时检测
+	fccUnicastTimer        *time.Timer   // FCC单播阶段超时定时器
+	fccUnicastDuration     time.Duration // FCC单播阶段最大持续时间
+	fccLastActivityTime    int64         // 最后FCC活动时间，用于超时检测
 	patBuffer              []byte
 	pmtBuffer              []byte
 	lastFccDataTime        int64
@@ -785,14 +785,14 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 
 	// 遍历客户端并尝试发送数据，带超时和错误处理
 	clientsToRemove := make([]*hubClient, 0)
-	
+
 	h.Mu.RLock()
 	clients := make([]*hubClient, 0, len(h.Clients))
 	for _, client := range h.Clients {
 		clients = append(clients, client)
 	}
 	h.Mu.RUnlock()
-	
+
 	for _, c := range clients {
 		select {
 		case c.ch <- dataCopy:
@@ -977,7 +977,7 @@ func safeCloseBytesChan(ch chan []byte) {
 	defer func() {
 		_ = recover() // 防止关闭已关闭的通道引发panic
 	}()
-	
+
 	// 尝试接收通道中的剩余数据，避免在关闭时仍有数据在通道中
 	done := false
 	for !done {
@@ -990,7 +990,7 @@ func safeCloseBytesChan(ch chan []byte) {
 			done = true
 		}
 	}
-	
+
 	close(ch)
 }
 
@@ -1351,9 +1351,14 @@ type MultiChannelHub struct {
 var GlobalMultiChannelHub = NewMultiChannelHub()
 
 func NewMultiChannelHub() *MultiChannelHub {
-	return &MultiChannelHub{
+	m := &MultiChannelHub{
 		Hubs: make(map[string]*StreamHub),
 	}
+
+	// 启动 Hub 监控器，定期检查 Hub 健康状态
+	m.StartHubMonitor()
+
+	return m
 }
 
 // MD5(IP:Port@ifaces) 作为 Hub key
@@ -1381,14 +1386,14 @@ func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*Stre
 
 	// 获取写锁来创建新的 hub
 	m.Mu.Lock()
-	
+
 	// 再次检查，以防在获取写锁期间另一个 goroutine 已经创建了 hub
 	hub, exists = m.Hubs[key]
 	if exists && !hub.IsClosed() {
 		m.Mu.Unlock() // 释放写锁
 		return hub, nil
 	}
-	
+
 	// 如果存在但已关闭，则等待完全关闭后从管理器中移除
 	if exists {
 		logger.LogPrintf("发现已关闭的 Hub，等待完全关闭: %s", key)
@@ -1396,7 +1401,7 @@ func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*Stre
 		delete(m.Hubs, key)
 		logger.LogPrintf("已关闭的 Hub 已从管理器中移除: %s", key)
 	}
-	
+
 	newHub, err := NewStreamHub([]string{udpAddr}, ifaces)
 	if err != nil {
 		m.Mu.Unlock() // 释放写锁
@@ -1664,6 +1669,115 @@ func (h *StreamHub) smoothRejoinMulticast() {
 	logger.LogPrintf("✅ IGMP 成员关系已刷新（未中断 socket）")
 }
 
+// StartHubMonitor 启动Hub监控器，定期检查Hub健康状态并清理异常的Hub
+func (m *MultiChannelHub) StartHubMonitor() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second) // 每30秒检查一次
+		defer ticker.Stop()
+
+		for range ticker.C {
+			// logger.LogPrintf("🔍 开始检查所有Hub的健康状态...")
+			m.Mu.Lock()
+			hubsToClean := make(map[string]*StreamHub)
+
+			// 遍历所有 Hub，检查它们的健康状态
+			for key, hub := range m.Hubs {
+				if !m.isHubHealthy(hub) {
+					// logger.LogPrintf("检测到不健康的 Hub，准备清理: %s", key)
+					hubsToClean[key] = hub
+				}
+			}
+
+			// 从管理器中移除不健康的 Hub
+			for key, hub := range hubsToClean {
+				// 确认 Hub 仍然在管理器中且状态未变
+				if existingHub, exists := m.Hubs[key]; exists && existingHub == hub {
+					delete(m.Hubs, key)
+					// logger.LogPrintf("不健康的 Hub 已从管理器中移除: %s", key)
+				}
+			}
+			m.Mu.Unlock()
+
+			// 关闭所有需要清理的 Hub
+			for _, hub := range hubsToClean {
+				if !hub.IsClosed() {
+					// logger.LogPrintf("正在关闭异常的Hub: %s", hub.AddrList[0])
+					hub.Close()
+				}
+			}
+
+			// if len(hubsToClean) > 0 {
+			// 	logger.LogPrintf("✅ 完成异常Hub清理，共清理 %d 个Hub", len(hubsToClean))
+			// } else {
+			// 	logger.LogPrintf("✅ 所有Hub均健康，无需清理")
+			// }
+		}
+	}()
+}
+
+// isHubHealthy 检查 Hub 是否处于健康状态
+func (m *MultiChannelHub) isHubHealthy(hub *StreamHub) bool {
+	// 检查 Hub 是否已关闭
+	if hub.IsClosed() {
+		return false
+	}
+
+	// 检查 Hub 的状态
+	hub.Mu.RLock()
+	state := hub.state
+	addrList := hub.AddrList
+	clients := hub.Clients
+	clientCount := len(clients)
+	cacheSize := 0
+	if hub.CacheBuffer != nil {
+		cacheSize = hub.CacheBuffer.GetCount()
+	}
+
+	// 检查是否有客户端在消费数据
+	hasActiveClients := clientCount > 0
+
+	hub.Mu.RUnlock()
+
+	// 检查状态是否为错误状态
+	if state == StateErrors {
+		return false
+	}
+
+	// 额外检查：确保地址列表不为空
+	if len(addrList) == 0 {
+		return false
+	}
+
+	// 如果没有活跃客户端，Hub可能是健康的（暂时没有客户端连接）
+	if !hasActiveClients {
+		return true
+	}
+
+	// 检查是否存在堵塞情况
+	// 如果有客户端但缓存数据过多，可能表示客户端消费缓慢导致堵塞
+	maxCacheThreshold := 0
+	if hub.CacheBuffer != nil {
+		// 如果缓存达到容量的95%以上，认为可能存在堵塞
+		maxCacheThreshold = hub.CacheBuffer.size * 95 / 100
+		if cacheSize >= maxCacheThreshold {
+			logger.LogPrintf("⚠️ 检测到Hub缓存数据过多，可能存在堵塞: %d/%d", cacheSize, hub.CacheBuffer.size)
+			return false
+		}
+	}
+
+	// 检查FCC相关状态，看是否有待处理的数据堆积
+	hub.Mu.RLock()
+	fccPendingCount := atomic.LoadInt32(&hub.fccPendingCount)
+	hub.Mu.RUnlock()
+
+	// 如果FCC启用且有大量待处理数据，可能表示FCC处理缓慢导致堵塞
+	if fccPendingCount > int32(maxCacheThreshold) {
+		logger.LogPrintf("⚠️ 检测到FCC待处理数据过多，可能存在堵塞: %d", fccPendingCount)
+		return false
+	}
+
+	return true
+}
 
 // sendInitialToClient 为特定客户端发送初始数据
 func (h *StreamHub) sendInitialToClient(client *hubClient) {
@@ -1775,4 +1889,3 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 	// 异步非阻塞发送
 	go h.sendPacketsNonBlocking(client.ch, packets)
 }
-
