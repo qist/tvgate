@@ -346,7 +346,7 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 	// 如果配置了重新加入间隔并且大于0，则启动定时器
 	if hub.rejoinInterval > 0 {
 		hub.rejoinTimer = time.AfterFunc(hub.rejoinInterval, func() {
-			hub.rejoinMulticastGroups(addrs)
+			hub.rejoinMulticastGroups()
 		})
 	}
 
@@ -1279,7 +1279,7 @@ func (h *StreamHub) Close() {
 }
 
 // rejoinMulticastGroups 重新加入多播组
-func (h *StreamHub) rejoinMulticastGroups(addrs []string) {
+func (h *StreamHub) rejoinMulticastGroups() {
 
 	// 直接调用 smoothRejoinMulticast 方法来平滑刷新组播成员关系
 	h.smoothRejoinMulticast()
@@ -1593,7 +1593,7 @@ func (h *StreamHub) UpdateRejoinTimer() {
 	// 如果间隔大于0，则重新启动定时器
 	if h.rejoinInterval > 0 {
 		h.rejoinTimer = time.AfterFunc(h.rejoinInterval, func() {
-			h.rejoinMulticastGroups(h.AddrList)
+			h.rejoinMulticastGroups()
 		})
 	} else {
 		h.rejoinTimer = nil
