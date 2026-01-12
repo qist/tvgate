@@ -111,7 +111,7 @@ func (h *StreamHub) processFCCPacket(data []byte) bool {
 	case FCC_TYPE_TELECOM:
 		fallthrough
 	default:
-		return h.processTelecomFCCPacket(fmtField, data)
+		return h.processTelecomFCCPacket(fmtField)
 	}
 }
 
@@ -169,7 +169,7 @@ func (h *StreamHub) processHuaweiFCCPacket(fmtField byte, data []byte) bool {
 	}
 }
 
-func (h *StreamHub) processTelecomFCCPacket(fmtField byte, data []byte) bool {
+func (h *StreamHub) processTelecomFCCPacket(fmtField byte) bool {
 	switch fmtField {
 	case FCC_FMT_TELECOM_RESP: // FMT 3 - 服务器响应
 		h.Mu.Lock()
