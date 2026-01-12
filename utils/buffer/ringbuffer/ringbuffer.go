@@ -131,26 +131,32 @@ func (r *RingBuffer) Pull() (interface{}, bool) {
 }
 
 // PullWithContext blocks until data is available, buffer is closed, or ctx is done.
-// PullWithContext blocks until data is available, buffer is closed, or ctx is done.
 func (r *RingBuffer) PullWithContext(ctx context.Context) (interface{}, bool) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
+    r.mutex.Lock()
+    defer r.mutex.Unlock()
 
-	for r.buffer[r.readIndex] == nil && !r.closed {
-		select {
-		case <-ctx.Done():
-			return nil, false
-		default:
-		}
-		r.cond.Wait()
-	}
+    // 检查初始 Context 状态
+    if err := ctx.Err(); err != nil {
+        return nil, false
+    }
 
-	if r.closed {
-		return nil, false
-	}
+    for r.buffer[r.readIndex] == nil && !r.closed {
+        // 注意：这里无法在 Wait 过程中响应 Context 取消
+        r.cond.Wait() 
 
-	data := r.buffer[r.readIndex]
-	r.buffer[r.readIndex] = nil
-	r.readIndex = (r.readIndex + 1) % r.size
-	return data, true
+        // 唤醒后立即检查 Context 和 Closed 状态
+        if ctx.Err() != nil || r.closed {
+            return nil, false
+        }
+    }
+
+    // 再次确认缓冲区是否有数据（防止因 Closed 被唤醒但实际无数据）
+    if r.buffer[r.readIndex] == nil {
+        return nil, false
+    }
+
+    data := r.buffer[r.readIndex]
+    r.buffer[r.readIndex] = nil
+    r.readIndex = (r.readIndex + 1) % r.size
+    return data, true
 }
