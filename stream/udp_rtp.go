@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -818,7 +817,7 @@ func (h *StreamHub) run() {
 			h.Mu.Lock()
 			h.Clients[client.connID] = client
 			h.Mu.Unlock()
-
+            h.sendInitialToClient(client)
 			logger.LogPrintf("客户端加入: %s, 当前客户端数: %d", client.connID, len(h.Clients))
 
 			// 如果启用了FCC，发送缓存数据给新客户端
@@ -1084,99 +1083,102 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	h.AddCh <- client
 
 	// 设置响应头
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("ContentFeatures.DLNA.ORG", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
+	w.Header().Set("TransferMode.DLNA.ORG", "Streaming")
 	w.Header().Set("Content-Type", contentType)
 
-	// 等待Hub进入播放状态，使用请求上下文，这样当客户端断开时可以及时返回
-	if !h.WaitForPlaying(r.Context()) {
-		logger.LogPrintf("等待Hub播放状态超时或失败: %s", connID)
-		http.Error(w, "Service timeout", http.StatusServiceUnavailable)
-		// 从hub中移除客户端
-		h.RemoveCh <- connID
-		return
+	userAgent := r.Header.Get("User-Agent")
+	switch {
+	case strings.Contains(userAgent, "VLC"):
+		w.Header().Del("Transfer-Encoding")
+		w.Header().Set("Accept-Ranges", "none")
+	default:
+		w.Header().Set("Transfer-Encoding", "chunked")
+		w.Header().Set("Accept-Ranges", "none")
 	}
+	// 等待Hub进入播放状态，使用请求上下文，这样当客户端断开时可以及时返回
+	// if !h.WaitForPlaying(r.Context()) {
+	// 	logger.LogPrintf("等待Hub播放状态超时或失败: %s", connID)
+	// 	http.Error(w, "Service timeout", http.StatusServiceUnavailable)
+	// 	// 从hub中移除客户端
+	// 	h.RemoveCh <- connID
+	// 	return
+	// }
 
 	// HTTP流处理 - 检查是否支持flush
-	if _, ok := w.(http.Flusher); !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
 		// 从hub中移除客户端
 		h.RemoveCh <- connID
 		return
 	}
 
-	// 创建响应写入器
-	pr, pw := io.Pipe()
+	ctx := r.Context()
+	bufferedBytes := 0
+	const maxBufferSize = 128 * 1024 // 128KB缓冲区
 
-	// 启动goroutine将通道数据写入响应
+	flushTicker := time.NewTicker(50 * time.Millisecond)
+	defer flushTicker.Stop()
+
+	activeTicker := time.NewTicker(5 * time.Second)
+	defer activeTicker.Stop()
+
+	if !h.WaitForPlaying(ctx) {
+		// 从hub中移除客户端
+		h.RemoveCh <- connID
+		return
+	}
+
+	// 检查客户端是否已经断开连接
+	clientDisconnected := make(chan struct{})
 	go func() {
-		defer pw.Close()
+		<-ctx.Done()
+		close(clientDisconnected)
+	}()
 
-		// 发送初始数据
-		h.sendInitialToClient(client)
-
-		// 使用for range遍历通道，更简洁高效
-		for data := range ch {
-			// 写入数据到响应
-			if _, err := pw.Write(data); err != nil {
-				// 客户端可能已断开连接，记录日志但不panic
-				// logger.LogPrintf("写入pipe失败: %v", err)
+	for {
+		select {
+		case data, ok := <-ch:
+			if !ok {
+				// 从hub中移除客户端
+				h.RemoveCh <- connID
 				return
 			}
 
-			// 更新活跃状态
+			n, err := w.Write(data)
+			if err != nil {
+				// 从hub中移除客户端
+				h.RemoveCh <- connID
+				return
+			}
+
+			bufferedBytes += n
+			if bufferedBytes >= maxBufferSize {
+				flusher.Flush()
+				bufferedBytes = 0
+			}
+		case <-flushTicker.C:
+			if bufferedBytes > 0 {
+				flusher.Flush()
+				bufferedBytes = 0
+			}
+		case <-activeTicker.C:
 			if updateActive != nil {
 				updateActive()
 			}
+		case <-clientDisconnected:
+			// 客户端断开连接，退出循环
+			// 从hub中移除客户端
+			h.RemoveCh <- connID
+			return
+		case <-h.Closed:
+			// 从hub中移除客户端
+			h.RemoveCh <- connID
+			return
 		}
-	}()
-
-	// 将pipe的内容复制到响应，并实时刷新
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-
-		// 使用io.Copy将数据从pipe复制到响应writer
-		_, err := io.Copy(w, pr)
-		if err != nil {
-			// 客户端可能已断开连接，记录日志但不panic
-			logger.LogPrintf("响应写入错误: %v", err)
-		}
-	}()
-
-	// 定期更新活跃状态
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-done:
-				// 复制完成，退出
-				return
-			case <-ticker.C:
-				// 定期更新活跃状态
-				if updateActive != nil {
-					updateActive()
-				}
-			case <-r.Context().Done():
-				// 请求结束，退出
-				return
-			}
-		}
-	}()
-
-	// 等待响应完成或请求结束
-	select {
-	case <-done:
-		// 复制完成
-	case <-r.Context().Done():
-		// 请求结束，关闭pipe writer以停止数据写入
-		pw.Close()
 	}
-
-	// 从hub中移除客户端
-	h.RemoveCh <- connID
 }
 
 // ====================
