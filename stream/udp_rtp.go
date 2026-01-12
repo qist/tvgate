@@ -898,9 +898,12 @@ func (h *StreamHub) run() {
 						h.OnEmpty(h) // 自动删除 hub
 					}
 					return
+				} else {
+					h.Mu.Unlock()
 				}
+			} else {
+				h.Mu.Unlock()
 			}
-			h.Mu.Unlock()
 
 		case <-h.Closed:
 			// 清理所有客户端
@@ -1269,6 +1272,11 @@ func (h *StreamHub) IsClosed() bool {
 	}
 }
 
+// WaitClosed 等待 StreamHub 完全关闭
+func (h *StreamHub) WaitClosed() {
+	<-h.Closed
+}
+
 // ====================
 // 等待播放状态
 // ====================
@@ -1334,6 +1342,7 @@ func (m *MultiChannelHub) HubKey(udpAddr string, ifaces []string) string {
 func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*StreamHub, error) {
 	key := m.HubKey(udpAddr, ifaces)
 
+	// 先尝试获取已存在的 hub
 	m.Mu.RLock()
 	hub, exists := m.Hubs[key]
 	m.Mu.RUnlock()
@@ -1342,8 +1351,26 @@ func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*Stre
 		return hub, nil
 	}
 
+	// 获取写锁来创建新的 hub
+	m.Mu.Lock()
+	
+	// 再次检查，以防在获取写锁期间另一个 goroutine 已经创建了 hub
+	hub, exists = m.Hubs[key]
+	if exists && !hub.IsClosed() {
+		m.Mu.Unlock() // 释放写锁
+		return hub, nil
+	}
+	
+	// 如果存在但已关闭，则先移除它
+	if exists {
+		// 等待 hub 完全关闭
+		hub.WaitClosed()
+		delete(m.Hubs, key)
+	}
+	
 	newHub, err := NewStreamHub([]string{udpAddr}, ifaces)
 	if err != nil {
+		m.Mu.Unlock() // 释放写锁
 		return nil, err
 	}
 
@@ -1352,7 +1379,6 @@ func (m *MultiChannelHub) GetOrCreateHub(udpAddr string, ifaces []string) (*Stre
 		GlobalMultiChannelHub.RemoveHubEx(h.AddrList[0], ifaces)
 	}
 
-	m.Mu.Lock()
 	m.Hubs[key] = newHub
 	m.Mu.Unlock()
 	return newHub, nil
