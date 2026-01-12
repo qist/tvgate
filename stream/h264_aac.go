@@ -382,7 +382,7 @@ func HandleH264AacStream(
 	logger.LogRequestAndResponse(r, rtspURL, &http.Response{StatusCode: http.StatusOK})
 	w.Header().Set("Content-Type", "video/mp2t")
 	flusher, _ := w.(http.Flusher)
-	
+
 	flushTicker := time.NewTicker(200 * time.Millisecond)
 	defer flushTicker.Stop()
 
@@ -390,7 +390,7 @@ func HandleH264AacStream(
 	defer activeTicker.Stop()
 
 	bufferedBytes := 0
-
+	const maxBufferSize = 128 * 1024 // 128KB缓冲区
 	for {
 		select {
 		case <-ctx.Done():
@@ -424,6 +424,12 @@ func HandleH264AacStream(
 			}
 
 			bufferedBytes += n
+			if bufferedBytes >= maxBufferSize {
+				if flusher != nil {
+					flusher.Flush()
+					bufferedBytes = 0
+				}
+			}
 		}
 	}
 }

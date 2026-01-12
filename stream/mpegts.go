@@ -145,7 +145,7 @@ func HandleMpegtsStream(
 	defer activeTicker.Stop()
 
 	bufferedBytes := 0
-
+	const maxBufferSize = 128 * 1024 // 128KB缓冲区
 	for {
 		select {
 		case <-ctx.Done():
@@ -176,6 +176,12 @@ func HandleMpegtsStream(
 				return err
 			}
 			bufferedBytes += n
+			if bufferedBytes >= maxBufferSize {
+				if flusher != nil {
+					flusher.Flush()
+					bufferedBytes = 0
+				}
+			}
 		}
 	}
 }
