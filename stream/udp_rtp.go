@@ -1109,7 +1109,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 				}
 
 				// 启动客户端独立的FCC超时定时器
-				client.startClientFCCTimeoutTimer(fccConn, fccServerAddr, multicastAddr)
+				client.startClientFCCTimeoutTimer()
 
 				h.startClientFCCListener(client, multicastAddr)
 			}()
@@ -1880,7 +1880,7 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 		channelID := addrList[0] // 使用第一个地址作为频道ID
 		channel := GlobalChannelManager.GetOrCreate(channelID)
 		sessionPackets := channel.ReadForSession(client.fccSession)
-		if sessionPackets != nil && len(sessionPackets) > 0 {
+		if len(sessionPackets) > 0 {
 			// 将频道缓存的数据添加到发送队列开头，以确保快速切换
 			packets = append(sessionPackets, packets...)
 		}

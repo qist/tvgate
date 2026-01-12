@@ -74,7 +74,6 @@ func InitTSCacheFromConfig() {
 	})
 }
 
-
 func NewTSCache(maxBytes int64, ttl time.Duration) *TSCache {
 	cache := &TSCache{
 		maxBytes: maxBytes,
@@ -302,74 +301,50 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 	var current *tsCacheChunk
 
 	for {
-		// 先尝试读取已有的数据
 		c.mutex.RLock()
 
-		// 从头开始读取，确保新客户端能获取到已有的数据
 		if current == nil {
 			current = c.head
 		}
 
-		// 读取所有已有的数据
 		for current != nil {
-			// 检查current是否为nil，防止并发访问问题
-			if current == nil {
-				c.mutex.RUnlock()
-				break
-			}
-
 			data := current.data
-			next := current.next // 保存next指针，避免在持有读锁时访问可能被修改的节点
+			next := current.next
 			c.mutex.RUnlock()
 
 			if len(data) > 0 {
 				n, err := dst.Write(data)
 				if err != nil {
-					// 客户端连接可能已断开，返回错误
 					return err
 				}
-				// 检查是否只写入了部分数据
 				if n < len(data) {
 					return io.ErrShortWrite
 				}
-
 				if f, ok := dst.(http.Flusher); ok {
 					f.Flush()
 				}
 			}
 
-			// 移动到下一个块
 			current = next
-
-			// 重新获取读锁以检查状态
 			c.mutex.RLock()
 		}
 
-		// 检查是否已关闭
 		if c.closed {
 			c.mutex.RUnlock()
-			break // 退出循环，不再等待新数据
+			return nil
 		}
 
 		c.mutex.RUnlock()
 
-		// 等待新数据或完成信号
 		select {
 		case _, ok := <-c.waitCh:
-			// 检查通道是否已关闭
 			if !ok {
-				// 通道已关闭，退出
 				return nil
 			}
-			// 有新数据，继续循环
-			continue
 		case <-done:
-			// 收到完成信号，退出
 			return nil
 		}
 	}
-
-	return nil
 }
 
 func (c *tsCacheItem) Close() {
@@ -429,7 +404,7 @@ func (c *TSCache) removeItem(it *tsCacheItem) {
 	// 减少缓存中的字节数
 	itemBytes := it.calculateTotalBytes()
 	c.curBytes -= itemBytes
-	
+
 	// 正确关闭缓存项，释放资源
 	it.Close()
 }
@@ -453,7 +428,7 @@ func InitOrUpdateTSCacheFromConfig() {
 	if tsCfg.Enable != nil {
 		enable = *tsCfg.Enable
 	}
-	
+
 	if !enable || tsCfg.CacheSize <= 0 {
 		if GlobalTSCache != nil {
 			GlobalTSCache.Close()
@@ -514,19 +489,19 @@ func (c *TSCache) Close() {
 	for e := c.ll.Front(); e != nil; {
 		next := e.Next()
 		item := e.Value.(*tsCacheItem)
-		
+
 		// 直接关闭缓存项，而不是通过removeItem以避免潜在死锁
 		item.Close()
-		
+
 		// 从映射中删除
 		delete(c.items, item.key)
 		// 从链表中移除
 		c.ll.Remove(e)
-		
+
 		// 减少缓存中的字节数
 		itemBytes := item.calculateTotalBytes()
 		c.curBytes -= itemBytes
-		
+
 		e = next
 	}
 

@@ -1234,7 +1234,7 @@ func (h *StreamHub) handleClientTelecomFCCPacket(client *hubClient, multicastAdd
 			h.fccSetState(FCC_STATE_REQUESTED, "FCC服务器重定向，重新请求")
 			if multicastAddr != nil {
 				_ = h.sendFCCRequestWithConn(fccConn, multicastAddr, fccConn.LocalAddr().(*net.UDPAddr).Port, serverAddr)
-				client.startClientFCCTimeoutTimer(fccConn, serverAddr, multicastAddr)
+				client.startClientFCCTimeoutTimer()
 			}
 		default:
 			client.mu.Lock()
@@ -1370,7 +1370,7 @@ func (h *StreamHub) handleClientHuaweiFCCPacket(client *hubClient, multicastAddr
 			h.fccSetState(FCC_STATE_REQUESTED, "FCC服务器重定向，重新请求")
 			if multicastAddr != nil {
 				_ = h.sendFCCRequestWithConn(fccConn, multicastAddr, fccConn.LocalAddr().(*net.UDPAddr).Port, serverAddr)
-				client.startClientFCCTimeoutTimer(fccConn, serverAddr, multicastAddr)
+				client.startClientFCCTimeoutTimer()
 			}
 		default:
 			client.mu.Lock()
@@ -1515,7 +1515,7 @@ func (c *hubClient) cleanupFCCResources() {
 }
 
 // startClientFCCTimeoutTimer 为客户端启动独立的FCC超时定时器
-func (c *hubClient) startClientFCCTimeoutTimer(fccConn *net.UDPConn, fccServerAddr *net.UDPAddr, multicastAddr *net.UDPAddr) {
+func (c *hubClient) startClientFCCTimeoutTimer() {
 	// 如果已有定时器在运行，先停止
 	c.mu.Lock()
 	if c.fccTimeoutTimer != nil {
@@ -1557,7 +1557,7 @@ func (h *StreamHub) detectStrictIDRFrame(data []byte) bool {
 		}
 
 		// 提取PID
-		pid := uint16((tsPacket[1]&0x1F)<<8) | uint16(tsPacket[2])
+		pid := uint16(tsPacket[1]&0x1F)<<8 | uint16(tsPacket[2])
 
 		// PAT包
 		if pid == 0x0000 {
@@ -1568,7 +1568,8 @@ func (h *StreamHub) detectStrictIDRFrame(data []byte) bool {
 					for j := 8; j < sectionLength-4; j += 4 {
 						programNum := uint16(tsPacket[j])<<8 | uint16(tsPacket[j+1])
 						if programNum != 0 {
-							pmtPID = uint16((tsPacket[j+2]&0x1F)<<8) | uint16(tsPacket[j+3])
+							pmtPID = (uint16(tsPacket[j+2]&0x1F) << 8) |
+								uint16(tsPacket[j+3])
 							break
 						}
 					}
@@ -1584,7 +1585,8 @@ func (h *StreamHub) detectStrictIDRFrame(data []byte) bool {
 					infoEnd := sectionLength - 4
 					for infoStart < infoEnd {
 						streamType := tsPacket[infoStart]
-						elementaryPID := uint16((tsPacket[infoStart+1]&0x1F)<<8) | uint16(tsPacket[infoStart+2])
+						elementaryPID := (uint16(tsPacket[infoStart+1]&0x1F) << 8) |
+							uint16(tsPacket[infoStart+2])
 						if streamType == 0x01 || streamType == 0x1B || streamType == 0x24 {
 							videoPID = elementaryPID
 						}

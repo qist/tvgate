@@ -131,16 +131,16 @@ func HandleH264AacStream(
 	}
 
 	// 判断是否需要启动播放
-	if hub.state == 0 { // stopped state
+	switch hub.state {
+	case 0: // stopped
 		shouldPlay = true
-		hub.state = 1 // mark as playing to prevent duplicate starts
-		// 设置RTSP客户端
+		hub.state = 1
 		hub.rtspClient = client
-	} else if hub.state == 2 { // error state
+
+	case 2: // error
 		shouldPlay = true
-		hub.state = 1       // mark as playing to prevent duplicate starts
-		hub.lastError = nil // clear last error
-		// 设置新的RTSP客户端
+		hub.state = 1
+		hub.lastError = nil
 		hub.rtspClient = client
 	}
 	hub.mu.Unlock()
