@@ -41,23 +41,37 @@ func handleGithubUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Version string `json:"version"`
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Version == "" {
 		http.Error(w, "请求参数错误", http.StatusBadRequest)
 		return
 	}
 
-	go func() {
-		err := updater.UpdateFromGithub(config.Cfg.Github, req.Version)
+	// 先标记状态，避免并发多次升级
+	updater.SetStatus("running", fmt.Sprintf("正在升级到版本 %s", req.Version))
+
+	go func(version string) {
+		// ⛑ 防止升级 panic 杀死整个进程
+		defer func() {
+			if rec := recover(); rec != nil {
+				updater.SetStatus("panic", fmt.Sprintf("升级过程中发生 panic: %v", rec))
+			}
+		}()
+
+		err := updater.UpdateFromGithub(config.Cfg.Github, version)
 		if err != nil {
 			updater.SetStatus("error", err.Error())
-		} else {
-			updater.SetStatus("success", fmt.Sprintf("已升级到版本 %s", req.Version))
+			return
 		}
-	}()
 
-	updater.SetStatus("running", fmt.Sprintf("正在升级到版本 %s", req.Version))
+		updater.SetStatus("success", fmt.Sprintf("已升级到版本 %s", version))
+	}(req.Version)
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "开始升级"})
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"message": "开始升级",
+	})
 }
 
 // 获取升级状态

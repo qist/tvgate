@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -226,7 +227,7 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	// 在退出前更新状态为成功
 	SetStatus("success", "升级成功，正在重启")
 	// 注意：这里我们不创建新的upgrader，而是使用已有的全局upgrader
-	
+
 	upgrade.UpgradeProcess(newExecPath, *config.ConfigFilePath, tmpDestDir)
 
 	return nil
@@ -254,11 +255,19 @@ func downloadFile(url, dst string) error {
 }
 
 func copyFile(src, dst string) error {
-	in, _ := os.Open(src)
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
 	defer in.Close()
-	out, _ := os.Create(dst)
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
 	defer out.Close()
-	_, err := io.Copy(out, in)
+
+	_, err = io.Copy(out, in)
 	return err
 }
 
@@ -270,17 +279,51 @@ func unzip(src, dest string) error {
 	defer r.Close()
 
 	for _, f := range r.File {
-		path := filepath.Join(dest, f.Name)
+		// 防 Zip Slip
+		targetPath := filepath.Join(dest, f.Name)
+		if !strings.HasPrefix(
+			filepath.Clean(targetPath),
+			filepath.Clean(dest)+string(os.PathSeparator),
+		) {
+			return fmt.Errorf("illegal file path in zip: %s", f.Name)
+		}
+
 		if f.FileInfo().IsDir() {
-			_ = os.MkdirAll(path, f.Mode())
+			if err := os.MkdirAll(targetPath, f.Mode()); err != nil {
+				return err
+			}
 			continue
 		}
-		_ = os.MkdirAll(filepath.Dir(path), 0755)
-		rc, _ := f.Open()
-		out, _ := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode())
-		_, _ = io.Copy(out, rc)
+
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+
+		out, err := os.OpenFile(
+			targetPath,
+			os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
+			f.Mode(),
+		)
+		if err != nil {
+			rc.Close()
+			return err
+		}
+
+		_, err = io.Copy(out, rc)
+
+		// ✔️ 明确关闭（不 defer）
 		rc.Close()
 		out.Close()
+
+		if err != nil {
+			return err
+		}
 	}
+
 	return nil
 }
