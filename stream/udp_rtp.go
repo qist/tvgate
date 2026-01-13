@@ -779,37 +779,54 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	}
 
 	data := bufRef.data
-	// 创建副本以避免并发访问问题
-	dataCopy := make([]byte, len(data))
-	copy(dataCopy, data)
 
-	// 遍历客户端并尝试发送数据，带超时和错误处理
-	clientsToRemove := make([]*hubClient, 0)
-
-	h.Mu.RLock()
-	clients := make([]*hubClient, 0, len(h.Clients))
-	for _, client := range h.Clients {
-		clients = append(clients, client)
+	h.Mu.Lock()
+	if h.Closed == nil || h.CacheBuffer == nil || h.Clients == nil {
+		h.Mu.Unlock()
+		bufRef.Put()
+		return
 	}
-	h.Mu.RUnlock()
 
-	for _, c := range clients {
+	// 更新状态 - 注意StreamHub没有PacketCount字段，这里不需要更新
+
+	// 播放状态更新
+	if h.state != StatePlayings {
+		h.state = StatePlayings
+		h.stateCond.Broadcast()
+	}
+
+	// 将数据添加到缓存
+	h.CacheBuffer.Push(data)
+
+	// 拷贝客户端 map，解锁后发送
+	clients := make(map[string]*hubClient, len(h.Clients))
+	for k, v := range h.Clients {
+		clients[k] = v
+	}
+	h.Mu.Unlock()
+
+	// 非阻塞广播
+	for _, client := range clients {
 		select {
-		case c.ch <- dataCopy:
-			// 数据成功发送
-		case <-time.After(50 * time.Millisecond): // 减少超时时间，快速检测卡住的客户端
-			// 发送超时，记录问题并标记客户端以移除
-			logger.LogPrintf("⚠️ 客户端数据发送超时，可能已断开连接: %s", c.connID)
-			clientsToRemove = append(clientsToRemove, c)
+		case client.ch <- data:
+		default:
+			client.mu.Lock()
+			client.dropCount++
+			if client.dropCount%100 == 0 {
+				select {
+				case <-client.ch:
+				default:
+				}
+				if h.LastFrame != nil {
+					select {
+					case client.ch <- h.LastFrame:
+					default:
+					}
+				}
+			}
+			client.mu.Unlock()
 		}
 	}
-
-	// 移除有问题的客户端
-	for _, client := range clientsToRemove {
-		h.RemoveCh <- client.connID
-	}
-
-	bufRef.Put()
 
 	// 将TS包写入频道缓存
 	h.Mu.RLock()
@@ -824,6 +841,8 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 		}
 	}
 	h.Mu.RUnlock()
+
+	bufRef.Put()
 }
 
 // ====================
@@ -1356,7 +1375,7 @@ func NewMultiChannelHub() *MultiChannelHub {
 	}
 
 	// 启动 Hub 监控器，定期检查 Hub 健康状态
-	m.StartHubMonitor()
+	// m.StartHubMonitor()
 
 	return m
 }
