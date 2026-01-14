@@ -275,6 +275,28 @@ func (h *StreamHub) fccHandleMcastActive() {
 		// 检测IDR帧（在锁外进行，避免阻塞）
 		if h.detectStrictIDRFrame(current.data) {
 			logger.LogPrintf("FCC: 检测到IDR帧，加速切换到多播模式")
+			
+			// 立即关闭FCC listener
+			h.Mu.Lock()
+			if h.fccConn != nil {
+				fccConn := h.fccConn
+				h.fccConn = nil
+				h.Mu.Unlock()
+				
+				fccConn.Close()
+				
+				// 清理剩余的缓冲数据
+				for next != nil {
+					nextToRelease := next
+					next = next.next
+					nextToRelease.Put()
+				}
+				
+				logger.LogPrintf("[FCC] 已关闭FCC连接并清理剩余缓冲数据")
+				return
+			} else {
+				h.Mu.Unlock()
+			}
 		}
 
 		// 获取客户端列表（避免在锁内获取）
