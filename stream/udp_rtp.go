@@ -50,12 +50,14 @@ var (
 )
 
 type rtpSeqEntry struct {
-	sequences  []uint16
+	seq        [rtpSequenceWindow]uint16
+	seqCount   int
+	seqPos     int
 	lastActive time.Time
 }
 
 const (
-	rtpSequenceWindow = 200
+	rtpSequenceWindow = 64
 	rtpSSRCExpire     = 30 * time.Second // 超过30秒未收到包就清理
 )
 
@@ -177,6 +179,7 @@ type StreamHub struct {
 	stateCond      *sync.Cond
 	lastCCMap      map[int]byte
 	rtpSequenceMap map[uint32]*rtpSeqEntry
+	rtpLastCleanup time.Time
 	ifaces         []string
 
 	// 多播重新加入相关
@@ -520,8 +523,8 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		h.rtpSequenceMap[ssrc] = entry
 	}
 	duplicate := false
-	for _, seq := range entry.sequences {
-		if seq == sequence {
+	for i := 0; i < entry.seqCount; i++ {
+		if entry.seq[i] == sequence {
 			duplicate = true
 			break
 		}
@@ -530,12 +533,17 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		h.Mu.Unlock()
 		return nil
 	}
-	entry.sequences = append(entry.sequences, sequence)
-	if len(entry.sequences) > rtpSequenceWindow {
-		entry.sequences = entry.sequences[len(entry.sequences)-rtpSequenceWindow:]
+	entry.seq[entry.seqPos] = sequence
+	entry.seqPos = (entry.seqPos + 1) % rtpSequenceWindow
+	if entry.seqCount < rtpSequenceWindow {
+		entry.seqCount++
 	}
-	entry.lastActive = time.Now()
-	h.cleanupOldSSRCs()
+	now := time.Now()
+	entry.lastActive = now
+	if h.rtpLastCleanup.IsZero() || now.Sub(h.rtpLastCleanup) >= 5*time.Second {
+		h.rtpLastCleanup = now
+		h.cleanupOldSSRCsLocked(now)
+	}
 	h.Mu.Unlock()
 	startOff, endOff, err := rtpPayloadGet(data)
 	if err != nil || startOff >= len(data)-endOff {
@@ -669,8 +677,7 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 // 	return hex.EncodeToString(buf)
 // }
 
-func (h *StreamHub) cleanupOldSSRCs() {
-	now := time.Now()
+func (h *StreamHub) cleanupOldSSRCsLocked(now time.Time) {
 	for ssrc, entry := range h.rtpSequenceMap {
 		if now.Sub(entry.lastActive) > rtpSSRCExpire {
 			delete(h.rtpSequenceMap, ssrc)
@@ -779,12 +786,13 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	if bufRef == nil {
 		return
 	}
-	// 检查是否是FCC多播过渡阶段
-	if h.IsFccEnabled() {
-		h.Mu.RLock()
-		currentState := h.fccState
-		h.Mu.RUnlock()
+	h.Mu.RLock()
+	fccEnabled := h.fccEnabled
+	currentState := h.fccState
+	h.Mu.RUnlock()
 
+	// 检查是否是FCC多播过渡阶段
+	if fccEnabled {
 		switch currentState {
 		case FCC_STATE_MCAST_REQUESTED:
 			h.handleMcastDataDuringTransition(bufRef)
@@ -826,11 +834,6 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	bufRef.Get()
 	h.LastFrame = bufRef
 
-	// 拷贝客户端 map，解锁后发送
-	clients := make(map[string]*hubClient, len(h.Clients))
-	for k, v := range h.Clients {
-		clients[k] = v
-	}
 	h.Mu.Unlock()
 
 	h.Mu.RLock()
@@ -838,10 +841,7 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	if lastFrame != nil {
 		lastFrame.Get()
 	}
-	h.Mu.RUnlock()
-
-	// 非阻塞广播
-	for _, client := range clients {
+	for _, client := range h.Clients {
 		bufRef.Get()
 		select {
 		case client.ch <- bufRef:
@@ -869,24 +869,31 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 			client.mu.Unlock()
 		}
 	}
+	h.Mu.RUnlock()
 
 	if lastFrame != nil {
 		lastFrame.Put()
 	}
 
 	// 将TS包写入频道缓存
-	h.Mu.RLock()
-	if len(data) >= 188 && data[0] == 0x47 && h.IsFccEnabled() { // TS包标识
-		for _, addr := range h.AddrList {
-			// 提取频道ID（使用地址作为频道标识）
-			channelID := addr
-			channel := GlobalChannelManager.GetOrCreate(channelID)
-			if channel != nil {
-				channel.AddTsPacket(data)
+	if len(data) >= 188 && data[0] == 0x47 {
+		var addrList []string
+		h.Mu.RLock()
+		fccEnabledNow := h.fccEnabled
+		if fccEnabledNow {
+			addrList = append([]string(nil), h.AddrList...)
+		}
+		h.Mu.RUnlock()
+		if fccEnabledNow {
+			for _, addr := range addrList {
+				channelID := addr
+				channel := GlobalChannelManager.GetOrCreate(channelID)
+				if channel != nil {
+					channel.AddTsPacket(data)
+				}
 			}
 		}
 	}
-	h.Mu.RUnlock()
 
 	bufRef.Put()
 }
