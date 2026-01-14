@@ -895,15 +895,6 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 // 客户端管理循环
 // ====================
 func (h *StreamHub) run() {
-	// 启动清理器（只在FCC启用时启动）
-	h.Mu.RLock()
-	fccEnabled := h.fccEnabled
-	h.Mu.RUnlock()
-
-	if fccEnabled {
-		GlobalChannelManager.StartCleaner()
-	}
-
 	// 启动定期检查FCC状态的goroutine
 	go h.checkFCCStatus()
 
@@ -921,7 +912,7 @@ func (h *StreamHub) run() {
 			addrList := h.AddrList
 			h.Mu.RUnlock()
 
-			if client.fccSession != nil && len(addrList) > 0 && fccEnabled {
+			if client.fccSession != nil && len(addrList) > 0 {
 				// 从频道缓存获取数据
 				channelID := addrList[0] // 使用第一个地址作为频道ID
 				channel := GlobalChannelManager.GetOrCreate(channelID)
@@ -1180,6 +1171,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 			h.fccEnabled = true
 			h.fccServerAddr = fccServerAddr
 			h.Mu.Unlock()
+			GlobalChannelManager.StartCleaner()
 
 			// 添加到FCC缓存管理器
 			channelID := h.AddrList[0] // 使用第一个地址作为频道ID
