@@ -49,6 +49,7 @@ func handleGithubUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// 先标记状态，避免并发多次升级
 	updater.SetStatus("running", fmt.Sprintf("正在升级到版本 %s", req.Version))
+	updater.SetTargetVersion(req.Version)
 
 	go func(version string) {
 		// ⛑ 防止升级 panic 杀死整个进程
@@ -63,8 +64,6 @@ func handleGithubUpdate(w http.ResponseWriter, r *http.Request) {
 			updater.SetStatus("error", err.Error())
 			return
 		}
-
-		updater.SetStatus("success", fmt.Sprintf("已升级到版本 %s", version))
 	}(req.Version)
 
 	w.Header().Set("Content-Type", "application/json")

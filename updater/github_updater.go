@@ -30,6 +30,12 @@ func SetStatus(state, message string) {
 	statusMap["message"] = message
 }
 
+func SetTargetVersion(version string) {
+	statusMutex.Lock()
+	defer statusMutex.Unlock()
+	statusMap["target_version"] = version
+}
+
 func GetStatus() map[string]string {
 	statusMutex.RLock()
 	defer statusMutex.RUnlock()
@@ -37,6 +43,7 @@ func GetStatus() map[string]string {
 	for k, v := range statusMap {
 		cpy[k] = v
 	}
+	cpy["version"] = config.Version
 	return cpy
 }
 
@@ -223,10 +230,7 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	}
 
 	SetStatus("restarting", "重启新版本")
-	// ⚡ 使用 tableflip 启动新进程，旧进程由 tableflip 接管
-	// 在退出前更新状态为成功
-	SetStatus("success", "升级成功，正在重启")
-	// 注意：这里我们不创建新的upgrader，而是使用已有的全局upgrader
+	SetStatus("restarting", fmt.Sprintf("升级完成，正在重启到版本 %s", version))
 
 	upgrade.UpgradeProcess(newExecPath, *config.ConfigFilePath, tmpDestDir)
 

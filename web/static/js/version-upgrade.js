@@ -6,6 +6,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const closeModalBtn = document.getElementById("closeUpdateModal");
 
     let statusInterval = null;
+    let restartRetryCount = 0;
+    const restartMaxRetries = 120;
+    const storedTargetVersionKey = "tvgate_upgrade_target_version";
+    try {
+        const target = localStorage.getItem(storedTargetVersionKey);
+        if (target && target === currentVersion) {
+            localStorage.removeItem(storedTargetVersionKey);
+        }
+    } catch (e) {}
 
     function openModal(html) {
         updateContent.innerHTML = html;
@@ -20,9 +29,15 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    async function startStatusPolling() {
+    async function startStatusPolling(targetVersion) {
         const statusDiv = document.getElementById("updateStatusLog");
         if (statusInterval) clearInterval(statusInterval);
+        restartRetryCount = 0;
+        if (targetVersion) {
+            try {
+                localStorage.setItem(storedTargetVersionKey, targetVersion);
+            } catch (e) {}
+        }
         
         // 添加进度条元素
         let progressBar = document.getElementById("updateProgressBar");
@@ -55,7 +70,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 const data = await res.json();
                 
                 // 更新状态文本
-                statusDiv.textContent = `状态: ${data.state}, 消息: ${data.message}`;
+                const target = data.target_version || (() => {
+                    try { return localStorage.getItem(storedTargetVersionKey) || ""; } catch (e) { return ""; }
+                })();
+                const versionText = data.version ? `, 当前版本: ${data.version}` : "";
+                const targetText = target ? `, 目标版本: ${target}` : "";
+                statusDiv.textContent = `状态: ${data.state}, 消息: ${data.message}${versionText}${targetText}`;
                 
                 // 根据状态更新进度条
                 let progress = 0;
@@ -89,34 +109,60 @@ document.addEventListener("DOMContentLoaded", () => {
                 progressFill.style.width = progress + "%";
                 progressFill.textContent = progress + "%";
                 
-                if (data.state === "success" || data.state === "error") {
+                if (data.state === "error") {
                     clearInterval(statusInterval);
                     statusInterval = null;
                     
                     // 成功或失败后显示提示
-                    if (data.state === "success") {
-                        setTimeout(() => {
-                            alert("升级成功！页面将重新加载。");
-                            location.reload();
-                        }, 2000);
-                    } else if (data.state === "error") {
-                        // 错误情况下3秒后自动关闭弹窗
-                        setTimeout(() => {
-                            closeModal();
-                        }, 3000);
+                    setTimeout(() => {
+                        closeModal();
+                    }, 3000);
+                    return;
+                }
+
+                if (data.state === "restarting" || data.state === "success") {
+                    const targetNow = data.target_version || (() => {
+                        try { return localStorage.getItem(storedTargetVersionKey) || ""; } catch (e) { return ""; }
+                    })();
+
+                    if (targetNow && data.version && data.version === targetNow) {
+                        try { localStorage.removeItem(storedTargetVersionKey); } catch (e) {}
+                        clearInterval(statusInterval);
+                        statusInterval = null;
+                        setTimeout(() => location.reload(), 800);
+                        return;
                     }
+
+                    statusDiv.textContent = `状态: restarting, 消息: 正在重启中，等待新版本启动...${versionText}${targetText}`;
                 }
             } catch (err) {
                 console.error("获取状态失败:", err);
-                statusDiv.textContent = `获取状态失败: ${err.message}`;
-                progressFill.style.width = "0%";
-                progressFill.textContent = "0%";
-                progressFill.style.backgroundColor = "#F44336";
-                
-                // 错误情况下3秒后自动关闭弹窗
-                setTimeout(() => {
-                    closeModal();
-                }, 3000);
+                const target = (() => {
+                    try { return localStorage.getItem(storedTargetVersionKey) || ""; } catch (e) { return ""; }
+                })();
+                const isWaitingRestart = !!target;
+                if (!isWaitingRestart) {
+                    statusDiv.textContent = `获取状态失败: ${err.message}`;
+                    progressFill.style.width = "0%";
+                    progressFill.textContent = "0%";
+                    progressFill.style.backgroundColor = "#F44336";
+                    setTimeout(() => {
+                        closeModal();
+                    }, 3000);
+                    return;
+                }
+
+                restartRetryCount++;
+                progressFill.style.width = "90%";
+                progressFill.textContent = "90%";
+                statusDiv.textContent = `状态: restarting, 消息: 服务重启中，正在等待连接恢复... (${restartRetryCount}/${restartMaxRetries})`;
+
+                if (restartRetryCount >= restartMaxRetries) {
+                    clearInterval(statusInterval);
+                    statusInterval = null;
+                    try { localStorage.removeItem(storedTargetVersionKey); } catch (e) {}
+                    statusDiv.textContent = "等待重启超时，请手动刷新页面。";
+                }
             }
         }, 1000);
     }
@@ -167,7 +213,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                         const data = await resp.json();
                         openModal(`<p>${data.message}</p><div id="updateStatusLog">状态: running, 正在启动升级...</div>`);
-                        startStatusPolling();
+                        startStatusPolling(version);
                     });
                 });
             } catch (err) {
@@ -226,7 +272,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                         const data = await resp.json();
                         openModal(`<p>${data.message}</p><div id="updateStatusLog">状态: running, 正在启动升级...</div>`);
-                        startStatusPolling();
+                        startStatusPolling(version);
                     });
                 });
             } catch (err) {
