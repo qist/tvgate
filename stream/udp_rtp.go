@@ -63,7 +63,7 @@ const (
 // RingBuffer 环形缓冲区
 // ====================
 type RingBuffer struct {
-	buf   [][]byte
+	buf   []*BufferRef
 	size  int
 	start int
 	count int
@@ -72,24 +72,26 @@ type RingBuffer struct {
 
 func NewRingBuffer(size int) *RingBuffer {
 	return &RingBuffer{
-		buf:  make([][]byte, size),
+		buf:  make([]*BufferRef, size),
 		size: size,
 	}
 }
 
-func (r *RingBuffer) Push(item []byte) {
+func (r *RingBuffer) Push(item *BufferRef) (evicted *BufferRef) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	if r.count < r.size {
 		r.buf[(r.start+r.count)%r.size] = item
 		r.count++
 	} else {
+		evicted = r.buf[r.start]
 		r.buf[r.start] = item
 		r.start = (r.start + 1) % r.size
 	}
+	return evicted
 }
 
-func (r *RingBuffer) GetAll() [][]byte {
+func (r *RingBuffer) GetAllRefs() []*BufferRef {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
@@ -97,9 +99,13 @@ func (r *RingBuffer) GetAll() [][]byte {
 		return nil
 	}
 
-	result := make([][]byte, r.count)
+	result := make([]*BufferRef, r.count)
 	for i := 0; i < r.count; i++ {
-		result[i] = r.buf[(r.start+i)%r.size]
+		ref := r.buf[(r.start+i)%r.size]
+		if ref != nil {
+			ref.Get()
+		}
+		result[i] = ref
 	}
 	return result
 }
@@ -112,6 +118,9 @@ func (r *RingBuffer) Reset() {
 	r.count = 0
 	// 不重新分配内存，而是重置现有缓冲区
 	for i := range r.buf {
+		if r.buf[i] != nil {
+			r.buf[i].Put()
+		}
 		r.buf[i] = nil
 	}
 }
@@ -124,18 +133,8 @@ func (r *RingBuffer) GetCount() int {
 }
 
 // 优化版Push，支持预分配和重用
-func (r *RingBuffer) PushWithReuse(item []byte) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-
-	if r.count < r.size {
-		r.buf[(r.start+r.count)%r.size] = item
-		r.count++
-	} else {
-		// 重用已有位置的缓冲区
-		r.buf[r.start] = item
-		r.start = (r.start + 1) % r.size
-	}
+func (r *RingBuffer) PushWithReuse(item *BufferRef) (evicted *BufferRef) {
+	return r.Push(item)
 }
 
 // ====================
@@ -143,7 +142,7 @@ func (r *RingBuffer) PushWithReuse(item []byte) {
 // ====================
 type hubClient struct {
 	mu                  sync.Mutex
-	ch                  chan []byte
+	ch                  chan *BufferRef
 	connID              string
 	dropCount           uint64       // 客户端丢包计数
 	initialData         [][]byte     // 客户端初始数据缓存，用于FCC快速启动
@@ -212,7 +211,7 @@ type StreamHub struct {
 	pmtBuffer              []byte
 	lastFccDataTime        int64
 	rtpBuffer              []byte
-	LastFrame              []byte
+	LastFrame              *BufferRef
 	OnEmpty                func(*StreamHub)
 	multicastAddr          *net.UDPAddr       // 多播地址
 	fccResponseCancel      context.CancelFunc // 用于取消FCC响应监听器
@@ -273,7 +272,7 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		UdpConns:       make([]*net.UDPConn, 0, len(addrs)),
 		CacheBuffer:    NewRingBuffer(8192), // 默认缓存8192帧
 		Closed:         make(chan struct{}),
-		BufPool:        &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
+		BufPool:        &sync.Pool{New: func() any { return make([]byte, 2048) }},
 		AddrList:       addrs,
 		state:          StatePlayings,
 		lastCCMap:      make(map[int]byte),
@@ -287,7 +286,7 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		fccPortMin:        fccPortMin,
 		fccPortMax:        fccPortMax,
 		fccState:          FCC_STATE_INIT,
-		fccUnicastBufPool: &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
+		fccUnicastBufPool: &sync.Pool{New: func() any { return make([]byte, 2048) }},
 		lastFccDataTime:   time.Now().UnixNano() / 1e6, // 初始化为当前时间
 		ctx:               context.Background(),        // 初始化上下文
 	}
@@ -471,6 +470,7 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 		closed := h.state == StateStoppeds || h.CacheBuffer == nil
 		h.Mu.RUnlock()
 		if closed {
+			inRef.Put()
 			return
 		}
 
@@ -581,7 +581,38 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	}
 	h.Mu.Unlock()
 	poolBuf := h.BufPool.Get().([]byte)
-	out := poolBuf[:0]
+	backing := poolBuf
+	pool := h.BufPool
+	out := backing[:0]
+	ensure := func(add int) {
+		if len(out)+add <= cap(out) {
+			return
+		}
+		newCap := cap(out) * 2
+		if newCap < len(out)+add {
+			newCap = len(out) + add
+		}
+		newBacking := make([]byte, newCap)
+		copy(newBacking, out)
+		if pool != nil && backing != nil {
+			pool.Put(backing)
+		}
+		backing = newBacking
+		pool = nil
+		out = backing[:len(out)]
+	}
+	appendNullTS := func() {
+		ensure(188)
+		start := len(out)
+		out = out[:start+188]
+		out[start] = 0x47
+		out[start+1] = 0x1F
+		out[start+2] = 0xFF
+		out[start+3] = 0x10
+		for i := start + 4; i < start+188; i++ {
+			out[i] = 0xFF
+		}
+	}
 	h.Mu.RLock()
 	fccEnabled := h.fccEnabled
 	currentFccState := h.fccState
@@ -617,16 +648,17 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 				diff := (int(tsCC) - int(last) + 16) & 0x0F
 				if diff > 1 {
 					for j := 1; j < diff; j++ {
-						out = append(out, makeNullTS()...)
+						appendNullTS()
 					}
 				}
 			}
 			h.lastCCMap[pid] = tsCC
 			h.Mu.Unlock()
 		}
+		ensure(len(ts))
 		out = append(out, ts...)
 	}
-	outRef := NewPooledBufferRef(poolBuf, out, h.BufPool)
+	outRef := NewPooledBufferRef(backing, out, pool)
 	if fccEnabled && currentFccState != FCC_STATE_MCAST_ACTIVE && len(out) > 0 {
 		outRef.Get()
 		h.Mu.Lock()
@@ -760,6 +792,9 @@ func makeNullTS() []byte {
 // ====================
 
 func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
+	if bufRef == nil {
+		return
+	}
 	// 检查是否是FCC多播过渡阶段
 	if h.IsFccEnabled() {
 		h.Mu.RLock()
@@ -768,7 +803,7 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 
 		switch currentState {
 		case FCC_STATE_MCAST_REQUESTED:
-			h.handleMcastDataDuringTransition(bufRef.data)
+			h.handleMcastDataDuringTransition(bufRef)
 			bufRef.Put()
 			return
 		case FCC_STATE_MCAST_ACTIVE:
@@ -796,7 +831,16 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	}
 
 	// 将数据添加到缓存
-	h.CacheBuffer.Push(data)
+	bufRef.Get()
+	if evicted := h.CacheBuffer.PushWithReuse(bufRef); evicted != nil {
+		evicted.Put()
+	}
+
+	if h.LastFrame != nil {
+		h.LastFrame.Put()
+	}
+	bufRef.Get()
+	h.LastFrame = bufRef
 
 	// 拷贝客户端 map，解锁后发送
 	clients := make(map[string]*hubClient, len(h.Clients))
@@ -805,27 +849,45 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	}
 	h.Mu.Unlock()
 
+	h.Mu.RLock()
+	lastFrame := h.LastFrame
+	if lastFrame != nil {
+		lastFrame.Get()
+	}
+	h.Mu.RUnlock()
+
 	// 非阻塞广播
 	for _, client := range clients {
+		bufRef.Get()
 		select {
-		case client.ch <- data:
+		case client.ch <- bufRef:
 		default:
+			bufRef.Put()
 			client.mu.Lock()
 			client.dropCount++
 			if client.dropCount%100 == 0 {
 				select {
-				case <-client.ch:
+				case dropped := <-client.ch:
+					if dropped != nil {
+						dropped.Put()
+					}
 				default:
 				}
-				if h.LastFrame != nil {
+				if lastFrame != nil {
+					lastFrame.Get()
 					select {
-					case client.ch <- h.LastFrame:
+					case client.ch <- lastFrame:
 					default:
+						lastFrame.Put()
 					}
 				}
 			}
 			client.mu.Unlock()
 		}
+	}
+
+	if lastFrame != nil {
+		lastFrame.Put()
 	}
 
 	// 将TS包写入频道缓存
@@ -883,11 +945,22 @@ func (h *StreamHub) run() {
 
 				// 发送缓存数据给客户端
 				if len(packets) > 0 {
-					go func(ch chan []byte, pkts [][]byte) {
+					go func(ch chan *BufferRef, pkts [][]byte) {
+						timer := time.NewTimer(5 * time.Second)
+						defer timer.Stop()
 						for _, pkt := range pkts {
+							ref := NewBufferRef(pkt)
+							if !timer.Stop() {
+								select {
+								case <-timer.C:
+								default:
+								}
+							}
+							timer.Reset(5 * time.Second)
 							select {
-							case ch <- pkt:
-							case <-time.After(5 * time.Second): // 5秒超时
+							case ch <- ref:
+							case <-timer.C: // 5秒超时
+								ref.Put()
 								logger.LogPrintf("发送缓存数据超时，客户端可能已断开: %s", client.connID)
 								return
 							}
@@ -900,7 +973,7 @@ func (h *StreamHub) run() {
 			h.Mu.Lock()
 			if client, exists := h.Clients[connID]; exists {
 				// 关闭客户端通道
-				safeCloseBytesChan(client.ch)
+				safeCloseRefChan(client.ch)
 
 				// 如果有FCC连接，清理它
 				if client.fccConn != nil {
@@ -956,7 +1029,7 @@ func (h *StreamHub) run() {
 			// 清理所有客户端
 			h.Mu.Lock()
 			for connID, client := range h.Clients {
-				safeCloseBytesChan(client.ch)
+				safeCloseRefChan(client.ch)
 				if client.fccConn != nil {
 					client.fccConn.Close()
 				}
@@ -996,7 +1069,7 @@ func (h *StreamHub) run() {
 	}
 }
 
-func safeCloseBytesChan(ch chan []byte) {
+func safeCloseRefChan(ch chan *BufferRef) {
 	if ch == nil {
 		return
 	}
@@ -1008,9 +1081,13 @@ func safeCloseBytesChan(ch chan []byte) {
 	done := false
 	for !done {
 		select {
-		case _, ok := <-ch:
+		case ref, ok := <-ch:
 			if !ok {
 				done = true
+				break
+			}
+			if ref != nil {
+				ref.Put()
 			}
 		default:
 			done = true
@@ -1022,20 +1099,33 @@ func safeCloseBytesChan(ch chan []byte) {
 
 // 非阻塞发送初始化帧
 // 任意一次发送失败，直接放弃
-func (h *StreamHub) sendPacketsNonBlocking(ch chan []byte, packets [][]byte) {
-	for _, p := range packets {
+func (h *StreamHub) sendPacketsNonBlocking(ch chan *BufferRef, packets []*BufferRef) {
+	for i, ref := range packets {
+		if ref == nil {
+			continue
+		}
 
 		// hub 已关闭，立即退出
 		select {
 		case <-h.Closed:
+			for ; i < len(packets); i++ {
+				if packets[i] != nil {
+					packets[i].Put()
+				}
+			}
 			return
 		default:
 		}
 
 		// 非阻塞发送
 		select {
-		case ch <- p:
+		case ch <- ref:
 		default:
+			for ; i < len(packets); i++ {
+				if packets[i] != nil {
+					packets[i].Put()
+				}
+			}
 			// 客户端太慢，直接放弃初始化
 			return
 		}
@@ -1075,7 +1165,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 
 	// 创建响应式通道，缓冲区大小适中
-	ch := make(chan []byte, 256)
+	ch := make(chan *BufferRef, 256)
 
 	// 创建客户端结构体
 	client := &hubClient{
@@ -1206,12 +1296,16 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 
 	for {
 		select {
-		case data, ok := <-ch:
+		case ref, ok := <-ch:
 			if !ok {
 				return
 			}
+			if ref == nil {
+				continue
+			}
 
-			n, err := w.Write(data)
+			n, err := w.Write(ref.data)
+			ref.Put()
 			if err != nil {
 				logger.LogPrintf("写入响应失败: %v", err)
 				return
@@ -1273,7 +1367,10 @@ func (h *StreamHub) Close() {
 		h.CacheBuffer.Reset()
 		h.CacheBuffer = nil
 	}
-	h.LastFrame = nil
+	if h.LastFrame != nil {
+		h.LastFrame.Put()
+		h.LastFrame = nil
+	}
 	h.rtpBuffer = nil
 
 	// 状态更新
@@ -1551,8 +1648,23 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 	}
 
 	// 迁移缓存数据
-	for _, f := range h.CacheBuffer.GetAll() {
-		newHub.CacheBuffer.Push(f)
+	frames := h.CacheBuffer.GetAllRefs()
+	for _, f := range frames {
+		if f == nil {
+			continue
+		}
+		f.Get()
+		if evicted := newHub.CacheBuffer.PushWithReuse(f); evicted != nil {
+			evicted.Put()
+		}
+	}
+
+	if h.LastFrame != nil {
+		if newHub.LastFrame != nil {
+			newHub.LastFrame.Put()
+		}
+		h.LastFrame.Get()
+		newHub.LastFrame = h.LastFrame
 	}
 
 	// 迁移客户端
@@ -1560,19 +1672,32 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 		newHub.Clients[connID] = client
 
 		// 发送最后关键帧序列
-		for _, frame := range h.CacheBuffer.GetAll() {
+		for _, frame := range frames {
+			if frame == nil {
+				continue
+			}
+			frame.Get()
 			select {
 			case client.ch <- frame:
 			default:
+				frame.Put()
 			}
 		}
 
 		// 再发送最后一帧数据，保证客户端能立即播放
-		if len(h.LastFrame) > 0 {
+		if h.LastFrame != nil {
+			h.LastFrame.Get()
 			select {
 			case client.ch <- h.LastFrame:
 			default:
+				h.LastFrame.Put()
 			}
+		}
+	}
+
+	for _, frame := range frames {
+		if frame != nil {
+			frame.Put()
 		}
 	}
 
@@ -1810,11 +1935,11 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 	if client == nil {
 		return
 	}
-	h.Mu.Lock()
+	h.Mu.RLock()
 	fccEnabled := h.fccEnabled
 	currentState := h.fccState
-	addrList := h.AddrList // 保存地址列表用于频道查找
-	h.Mu.Unlock()
+	addrList := append([]string(nil), h.AddrList...)
+	h.Mu.RUnlock()
 
 	// ---------- 非 FCC 或 FCC 未激活 ----------
 	if !fccEnabled ||
@@ -1823,9 +1948,9 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 			currentState != FCC_STATE_MCAST_ACTIVE) {
 
 		// 获取缓存快照
-		h.Mu.Lock()
-		cachedFrames := h.CacheBuffer.GetAll()
-		h.Mu.Unlock()
+		h.Mu.RLock()
+		cachedFrames := h.CacheBuffer.GetAllRefs()
+		h.Mu.RUnlock()
 
 		// 异步非阻塞发送
 		go h.sendPacketsNonBlocking(client.ch, cachedFrames)
@@ -1833,19 +1958,16 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 	}
 
 	// ---------- FCC 模式 ----------
-	h.Mu.Lock()
-
-	var packets [][]byte
+	var packets []*BufferRef
 
 	// PAT / PMT 优先
 	h.Mu.RLock()
 	if h.patBuffer != nil {
-		packets = append(packets, h.patBuffer)
+		packets = append(packets, NewBufferRef(h.patBuffer))
 	}
 	if h.pmtBuffer != nil {
-		packets = append(packets, h.pmtBuffer)
+		packets = append(packets, NewBufferRef(h.pmtBuffer))
 	}
-	h.Mu.RUnlock()
 
 	// 检查客户端特定的FCC状态
 	client.mu.Lock()
@@ -1856,59 +1978,62 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 	case FCC_STATE_UNICAST_ACTIVE:
 		// 单播 FCC：发送最近 FCC 缓存帧
 		// 从链表中获取最近 50 帧
-		var frames [][]byte
-		h.Mu.RLock()
-		count := 0
+		var frames []*BufferRef
 		for n := h.fccPendingListHead; n != nil; n = n.next {
-			count++
-			frames = append(frames, n.data)
-		}
-		h.Mu.RUnlock()
-		if len(frames) > 0 {
-			start := 0
-			if len(frames) > 50 {
-				start = len(frames) - 50
+			n.Get()
+			if len(frames) == 50 {
+				frames[0].Put()
+				copy(frames, frames[1:])
+				frames[49] = n
+				continue
 			}
-			packets = append(packets, frames[start:]...)
+			frames = append(frames, n)
+		}
+		if len(frames) > 0 {
+			packets = append(packets, frames...)
 		} else {
-			cachedFrames := h.CacheBuffer.GetAll()
+			cachedFrames := h.CacheBuffer.GetAllRefs()
 			packets = append(packets, cachedFrames...)
 		}
 
 	case FCC_STATE_MCAST_REQUESTED, FCC_STATE_MCAST_ACTIVE:
 		// 多播 FCC：完整 FCC 缓存
 		fccFramesAvailable := false
-		h.Mu.RLock()
 		for n := h.fccPendingListHead; n != nil; n = n.next {
-			packets = append(packets, n.data)
+			n.Get()
+			packets = append(packets, n)
 			fccFramesAvailable = true
 		}
-		h.Mu.RUnlock()
 
 		// 补充普通缓存（如果没有FCC帧或者需要更多数据）
 		if !fccFramesAvailable || len(packets) < 10 {
-			cachedFrames := h.CacheBuffer.GetAll()
+			cachedFrames := h.CacheBuffer.GetAllRefs()
 			packets = append(packets, cachedFrames...)
 		}
 	default:
 		// 对于其他状态，使用普通缓存
-		h.Mu.RLock()
-		cachedFrames := h.CacheBuffer.GetAll()
-		h.Mu.RUnlock()
+		cachedFrames := h.CacheBuffer.GetAllRefs()
 		packets = append(packets, cachedFrames...)
 	}
 
-	h.Mu.Unlock()
+	h.Mu.RUnlock()
 
 	// 如果启用了FCC，尝试从频道缓存获取数据
-	if client.fccSession != nil && len(addrList) > 0 && h.fccEnabled {
+	if client.fccSession != nil && len(addrList) > 0 && fccEnabled {
 		// 从频道缓存获取数据
 		channelID := addrList[0] // 使用第一个地址作为频道ID
 		channel := GlobalChannelManager.GetOrCreate(channelID)
 		sessionPackets := channel.ReadForSession(client.fccSession)
 		if len(sessionPackets) > 0 {
+			sessionRefs := make([]*BufferRef, 0, len(sessionPackets))
+			for _, p := range sessionPackets {
+				if p == nil {
+					continue
+				}
+				sessionRefs = append(sessionRefs, NewBufferRef(p))
+			}
 			// 将频道缓存的数据添加到发送队列开头，以确保快速切换
-			packets = append(sessionPackets, packets...)
+			packets = append(sessionRefs, packets...)
 		}
 	}
 

@@ -73,7 +73,7 @@ func NewBufferRef(data []byte) *BufferRef {
 	return &BufferRef{
 		data:     data,
 		next:     nil,
-		refCount: 0,
+		refCount: 1,
 	}
 }
 
@@ -84,7 +84,7 @@ func NewPooledBufferRef(backing []byte, view []byte, pool *sync.Pool) *BufferRef
 		backing:  backing,
 		pool:     pool,
 		next:     nil,
-		refCount: 0,
+		refCount: 1,
 	}
 }
 
@@ -202,8 +202,8 @@ func (h *StreamHub) processTelecomFCCPacket(fmtField byte) bool {
 }
 
 // handleMcastDataDuringTransition 处理过渡期间的多播数据
-func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
-	if len(data) == 0 {
+func (h *StreamHub) handleMcastDataDuringTransition(bufRef *BufferRef) {
+	if bufRef == nil || len(bufRef.data) == 0 {
 		return
 	}
 
@@ -221,9 +221,7 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 		return
 	}
 
-	// 创建新的BufferRef并增加引用计数
-	bufRef := NewBufferRef(data)
-	bufRef.Get() // 增加引用计数，防止数据被提前释放
+	bufRef.Get()
 
 	// 将数据添加到等待列表
 	if h.fccPendingListHead == nil {
@@ -245,7 +243,7 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 // fccHandleMcastActive 处理多播激活状态的数据
 func (h *StreamHub) fccHandleMcastActive() {
 	h.Mu.Lock()
-	
+
 	// 检查当前状态是否为MCAST_ACTIVE
 	if h.fccState != FCC_STATE_MCAST_ACTIVE {
 		h.Mu.Unlock()
@@ -271,27 +269,29 @@ func (h *StreamHub) fccHandleMcastActive() {
 	processedCount := 0
 	for current != nil {
 		next := current.next
-		
+
 		// 检测IDR帧（在锁外进行，避免阻塞）
 		if h.detectStrictIDRFrame(current.data) {
 			logger.LogPrintf("FCC: 检测到IDR帧，加速切换到多播模式")
-			
+
 			// 立即关闭FCC listener
 			h.Mu.Lock()
 			if h.fccConn != nil {
 				fccConn := h.fccConn
 				h.fccConn = nil
 				h.Mu.Unlock()
-				
+
 				fccConn.Close()
-				
+
+				current.Put()
+
 				// 清理剩余的缓冲数据
 				for next != nil {
 					nextToRelease := next
 					next = next.next
 					nextToRelease.Put()
 				}
-				
+
 				logger.LogPrintf("[FCC] 已关闭FCC连接并清理剩余缓冲数据")
 				return
 			} else {
@@ -309,11 +309,12 @@ func (h *StreamHub) fccHandleMcastActive() {
 
 		// 将数据广播到所有客户端
 		for _, c := range clients {
+			current.Get()
 			select {
-			case c.ch <- current.data:
-			case <-time.After(100 * time.Millisecond):
-				// 如果发送超时，记录警告但继续处理
-				logger.LogPrintf("[FCC] 向客户端发送数据超时: %s", c.connID)
+			case c.ch <- current:
+			default:
+				current.Put()
+				logger.LogPrintf("[FCC] 向客户端发送数据阻塞，已丢弃: %s", c.connID)
 			}
 		}
 
@@ -321,7 +322,7 @@ func (h *StreamHub) fccHandleMcastActive() {
 		current.Put()
 		current = next
 		processedCount++
-		
+
 		// 添加少量延迟以避免过度占用CPU
 		if processedCount%50 == 0 {
 			time.Sleep(1 * time.Millisecond)
@@ -329,7 +330,7 @@ func (h *StreamHub) fccHandleMcastActive() {
 	}
 
 	logger.LogPrintf("[FCC] 缓冲数据处理完成，共处理 %d 个数据包", processedCount)
-	
+
 	// 更新FCC活动时间
 	now := time.Now().UnixNano() / 1e6
 	h.Mu.Lock()
@@ -353,18 +354,18 @@ func (h *StreamHub) prepareSwitchToMulticast() {
 
 	// 设置终止序列号（起始序列号+缓冲区大小）
 	h.Mu.Lock()
-	
+
 	// 确保使用最新的配置值
 	config.CfgMu.RLock()
 	latestFccCacheSize := config.Cfg.Server.FccCacheSize
 	config.CfgMu.RUnlock()
-	
+
 	// 如果配置的缓存大小有效，则使用它，否则使用当前保存的值
 	useCacheSize := h.fccCacheSize
 	if latestFccCacheSize > 0 {
 		useCacheSize = latestFccCacheSize
 	}
-	
+
 	h.fccTermSeq = h.fccStartSeq + uint16(useCacheSize)
 	logger.LogPrintf("FCC: 终止序列号设置为 %d (起始序列号 %d + 缓冲区大小 %d)",
 		h.fccTermSeq, h.fccStartSeq, useCacheSize)
@@ -844,6 +845,10 @@ func (h *StreamHub) fccSetState(state int, reason string) {
 		h.fccTimeoutTimer = nil
 	}
 	h.Mu.Unlock()
+
+	if state == FCC_STATE_MCAST_ACTIVE && prevState != FCC_STATE_MCAST_ACTIVE {
+		go h.fccHandleMcastActive()
+	}
 
 	// 记录状态转换日志
 	stateNames := map[int]string{
