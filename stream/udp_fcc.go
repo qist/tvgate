@@ -215,6 +215,12 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 		return
 	}
 
+	// 检查是否有太多待处理数据，防止内存爆炸
+	if atomic.LoadInt32(&h.fccPendingCount) > int32(h.fccCacheSize) {
+		logger.LogPrintf("FCC: 待处理数据过多，丢弃新数据以防止内存溢出")
+		return
+	}
+
 	// 创建新的BufferRef并增加引用计数
 	bufRef := NewBufferRef(data)
 	bufRef.Get() // 增加引用计数，防止数据被提前释放
@@ -239,90 +245,74 @@ func (h *StreamHub) handleMcastDataDuringTransition(data []byte) {
 // fccHandleMcastActive 处理多播激活状态的数据
 func (h *StreamHub) fccHandleMcastActive() {
 	h.Mu.Lock()
-	defer h.Mu.Unlock()
-
+	
 	// 检查当前状态是否为MCAST_ACTIVE
 	if h.fccState != FCC_STATE_MCAST_ACTIVE {
+		h.Mu.Unlock()
 		return
 	}
 
-	// 处理等待队列中的数据
-	for h.fccPendingListHead != nil {
-		bufRef := h.fccPendingListHead
-		h.fccPendingListHead = bufRef.next
-		h.Mu.Unlock() // 临时解锁，避免长时间持有锁
+	// 获取并清空缓冲区列表
+	current := h.fccPendingListHead
+	h.fccPendingListHead = nil
+	h.fccPendingListTail = nil
+	count := atomic.LoadInt32(&h.fccPendingCount)
+	atomic.StoreInt32(&h.fccPendingCount, 0)
+	h.Mu.Unlock()
 
-		// 检测IDR帧
-		if h.detectStrictIDRFrame(bufRef.data) {
+	// 如果没有待处理数据，直接返回
+	if current == nil {
+		return
+	}
+
+	logger.LogPrintf("[FCC] 开始处理 %d 个待发送的缓冲数据", count)
+
+	// 遍历并处理缓冲区中的数据
+	processedCount := 0
+	for current != nil {
+		next := current.next
+		
+		// 检测IDR帧（在锁外进行，避免阻塞）
+		if h.detectStrictIDRFrame(current.data) {
 			logger.LogPrintf("FCC: 检测到IDR帧，加速切换到多播模式")
-
-			// 释放当前bufRef
-			bufRef.Put()
-
-			// 立即关闭FCC listener
-			h.Mu.Lock()
-			var fccConn *net.UDPConn
-			if h.fccConn != nil {
-				fccConn = h.fccConn
-				h.fccConn = nil
-			}
-
-			// 立即清空队列
-			for h.fccPendingListHead != nil {
-				buf := h.fccPendingListHead
-				h.fccPendingListHead = buf.next
-				buf.Put()
-			}
-			h.fccPendingListTail = nil
-			atomic.StoreInt32(&h.fccPendingCount, 0)
-			h.Mu.Unlock()
-
-			if fccConn != nil {
-				fccConn.Close()
-			}
-
-			// 设置组播状态
-			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "检测到IDR帧，强制切换到多播模式")
-
-			// 退出循环，不再处理其他缓冲数据
-			return
 		}
 
-		// 将数据广播给所有客户端
-		clients := make([]*hubClient, len(h.Clients))
-		i := 0
+		// 获取客户端列表（避免在锁内获取）
+		h.Mu.RLock()
+		clients := make([]*hubClient, 0, len(h.Clients))
 		for _, c := range h.Clients {
-			clients[i] = c
-			i++
+			clients = append(clients, c)
 		}
-		h.Mu.Unlock() // 临时解锁，让其他goroutine可以访问hub状态
+		h.Mu.RUnlock()
 
+		// 将数据广播到所有客户端
 		for _, c := range clients {
 			select {
-			case c.ch <- bufRef.data:
+			case c.ch <- current.data:
 			case <-time.After(100 * time.Millisecond):
+				// 如果发送超时，记录警告但继续处理
+				logger.LogPrintf("[FCC] 向客户端发送数据超时: %s", c.connID)
 			}
 		}
 
 		// 减少引用计数
-		bufRef.Put()
-
-		// 重新获取锁以继续循环
-		h.Mu.Lock()
-		// 检查循环是否应该继续（状态是否仍然允许）
-		if h.fccState != FCC_STATE_MCAST_ACTIVE {
-			h.Mu.Unlock()
-			return
+		current.Put()
+		current = next
+		processedCount++
+		
+		// 添加少量延迟以避免过度占用CPU
+		if processedCount%50 == 0 {
+			time.Sleep(1 * time.Millisecond)
 		}
 	}
 
-	// 重置等待计数
-	atomic.StoreInt32(&h.fccPendingCount, 0)
-	h.fccPendingListTail = nil
-
+	logger.LogPrintf("[FCC] 缓冲数据处理完成，共处理 %d 个数据包", processedCount)
+	
 	// 更新FCC活动时间
 	now := time.Now().UnixNano() / 1e6
+	h.Mu.Lock()
 	h.fccLastActivityTime = now
+	h.Mu.Unlock()
 }
 
 // prepareSwitchToMulticast 准备切换到多播模式
@@ -341,9 +331,21 @@ func (h *StreamHub) prepareSwitchToMulticast() {
 
 	// 设置终止序列号（起始序列号+缓冲区大小）
 	h.Mu.Lock()
-	h.fccTermSeq = h.fccStartSeq + uint16(h.fccCacheSize)
+	
+	// 确保使用最新的配置值
+	config.CfgMu.RLock()
+	latestFccCacheSize := config.Cfg.Server.FccCacheSize
+	config.CfgMu.RUnlock()
+	
+	// 如果配置的缓存大小有效，则使用它，否则使用当前保存的值
+	useCacheSize := h.fccCacheSize
+	if latestFccCacheSize > 0 {
+		useCacheSize = latestFccCacheSize
+	}
+	
+	h.fccTermSeq = h.fccStartSeq + uint16(useCacheSize)
 	logger.LogPrintf("FCC: 终止序列号设置为 %d (起始序列号 %d + 缓冲区大小 %d)",
-		h.fccTermSeq, h.fccStartSeq, h.fccCacheSize)
+		h.fccTermSeq, h.fccStartSeq, useCacheSize)
 	h.Mu.Unlock()
 
 	// 发送FCC终止包

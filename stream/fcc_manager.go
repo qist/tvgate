@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
 )
 
@@ -23,11 +24,26 @@ type ChannelManager struct {
 	cleanerOnce sync.Once
 }
 
-var GlobalChannelManager = &ChannelManager{
-	channels:   make(map[string]*MulticastChannel),
-	cacheSize:  16384,
-	sessionTTL: 10 * time.Second,
+// NewChannelManager 创建新的频道管理器
+func NewChannelManager() *ChannelManager {
+	// 从配置中获取FCC缓存大小
+	config.CfgMu.RLock()
+	fccCacheSize := config.Cfg.Server.FccCacheSize
+	config.CfgMu.RUnlock()
+
+	// 如果配置中没有设置或设置为0，默认使用16384
+	if fccCacheSize <= 0 {
+		fccCacheSize = 16384
+	}
+
+	return &ChannelManager{
+		channels:   make(map[string]*MulticastChannel),
+		cacheSize:  fccCacheSize,
+		sessionTTL: 10 * time.Second,
+	}
 }
+
+var GlobalChannelManager = NewChannelManager()
 
 func (cm *ChannelManager) GetOrCreate(channel string) *MulticastChannel {
 	cm.mu.RLock()

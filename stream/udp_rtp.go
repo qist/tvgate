@@ -849,7 +849,14 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 // 客户端管理循环
 // ====================
 func (h *StreamHub) run() {
-	GlobalChannelManager.StartCleaner()
+	// 启动清理器（只在FCC启用时启动）
+	h.Mu.RLock()
+	fccEnabled := h.fccEnabled
+	h.Mu.RUnlock()
+
+	if fccEnabled {
+		GlobalChannelManager.StartCleaner()
+	}
 
 	// 启动定期检查FCC状态的goroutine
 	go h.checkFCCStatus()
@@ -860,12 +867,12 @@ func (h *StreamHub) run() {
 			h.Mu.Lock()
 			h.Clients[client.connID] = client
 			h.Mu.Unlock()
+
 			logger.LogPrintf("客户端加入: %s, 当前客户端数: %d", client.connID, len(h.Clients))
 
 			// 如果启用了FCC，发送缓存数据给新客户端
 			h.Mu.RLock()
 			addrList := h.AddrList
-			fccEnabled := h.fccEnabled
 			h.Mu.RUnlock()
 
 			if client.fccSession != nil && len(addrList) > 0 && fccEnabled {
