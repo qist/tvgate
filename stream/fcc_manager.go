@@ -2,6 +2,7 @@ package stream
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/qist/tvgate/config"
@@ -97,6 +98,7 @@ func (cm *ChannelManager) cleanup() {
 		for id, sess := range ch.Sessions {
 			if now.Sub(sess.LastActive) > cm.sessionTTL {
 				delete(ch.Sessions, id)
+				atomic.AddInt32(&ch.refCount, -1)
 				logger.LogPrintf("[FCC] 会话超时 conn=%s channel=%s", id, chID)
 
 			}
@@ -104,6 +106,9 @@ func (cm *ChannelManager) cleanup() {
 		ch.mu.Unlock()
 
 		if ch.RefCount() <= 0 {
+			if ch.Cache != nil {
+				ch.Cache.Reset()
+			}
 			delete(cm.channels, chID)
 			logger.LogPrintf("[FCC] 移除频道 channel=%s", chID)
 

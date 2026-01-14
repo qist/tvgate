@@ -33,6 +33,17 @@ func NewTsRingBuffer(size int) *TsRingBuffer {
 	}
 }
 
+func (rb *TsRingBuffer) Reset() {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+	for i := range rb.buffer {
+		rb.buffer[i] = nil
+	}
+	rb.head = 0
+	rb.count = 0
+	rb.baseSeq = 0
+}
+
 func (rb *TsRingBuffer) Write(pkt []byte) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()

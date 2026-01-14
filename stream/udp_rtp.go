@@ -1163,7 +1163,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 
 	// 创建响应式通道，缓冲区大小适中
-	ch := make(chan *BufferRef, 256)
+	ch := make(chan *BufferRef, 4096)
 
 	// 创建客户端结构体
 	client := &hubClient{
