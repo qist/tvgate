@@ -700,7 +700,7 @@ func (h *StreamHub) startFCCTimeoutTimer() {
 		h.fccTimeoutTimer = nil
 	}
 
-	// 创建新的定时器 - 使用C代码中的80ms超时时间
+	// 创建新的定时器 80ms超时时间
 	h.fccTimeoutTimer = time.AfterFunc(80*time.Millisecond, func() {
 		h.Mu.Lock()
 		currentState := h.fccState
