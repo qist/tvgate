@@ -887,8 +887,8 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 		if fccEnabledNow {
 			for _, addr := range addrList {
 				channelID := addr
-				channel := GlobalChannelManager.GetOrCreate(channelID)
-				if channel != nil {
+				channel := GlobalChannelManager.Get(channelID)
+				if channel != nil && channel.RefCount() > 0 {
 					channel.AddTsPacket(data)
 				}
 			}
