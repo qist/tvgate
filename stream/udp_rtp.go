@@ -615,7 +615,6 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	}
 	h.Mu.RLock()
 	fccEnabled := h.fccEnabled
-	currentFccState := h.fccState
 	h.Mu.RUnlock()
 	for i := 0; i < len(chunk); i += 188 {
 		ts := chunk[i : i+188]
@@ -659,21 +658,6 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		out = append(out, ts...)
 	}
 	outRef := NewPooledBufferRef(backing, out, pool)
-	if fccEnabled && currentFccState != FCC_STATE_MCAST_ACTIVE && len(out) > 0 {
-		outRef.Get()
-		h.Mu.Lock()
-		if h.fccPendingListHead == nil {
-			h.fccPendingListHead = outRef
-			h.fccPendingListTail = outRef
-		} else {
-			h.fccPendingListTail.next = outRef
-			h.fccPendingListTail = outRef
-		}
-		h.Mu.Unlock()
-		atomic.AddInt32(&h.fccPendingCount, 1)
-		// 基于序列号的切换逻辑，不再调用checkAndSwitchToMulticast
-		// 因为切换现在由processFCCMediaBufRef中的序列号检查自动处理
-	}
 	return outRef
 }
 

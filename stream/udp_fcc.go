@@ -215,10 +215,18 @@ func (h *StreamHub) handleMcastDataDuringTransition(bufRef *BufferRef) {
 		return
 	}
 
-	// 检查是否有太多待处理数据，防止内存爆炸
-	if atomic.LoadInt32(&h.fccPendingCount) > int32(h.fccCacheSize) {
-		logger.LogPrintf("FCC: 待处理数据过多，丢弃新数据以防止内存溢出")
-		return
+	limit := h.fccCacheSize
+	if limit > 0 {
+		for atomic.LoadInt32(&h.fccPendingCount) >= int32(limit) && h.fccPendingListHead != nil {
+			evicted := h.fccPendingListHead
+			h.fccPendingListHead = evicted.next
+			if h.fccPendingListHead == nil {
+				h.fccPendingListTail = nil
+			}
+			evicted.next = nil
+			atomic.AddInt32(&h.fccPendingCount, -1)
+			evicted.Put()
+		}
 	}
 
 	bufRef.Get()
