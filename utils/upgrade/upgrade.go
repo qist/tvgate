@@ -5,21 +5,26 @@ import (
 	"runtime"
 
 	// "log"
-	"github.com/cloudflare/tableflip"
-	"github.com/qist/tvgate/logger"
-	"github.com/qist/tvgate/stream"
 	"os"
 	"os/exec"
 	"os/signal"
 	"strings"
 	"sync"
 	"syscall"
+
+	"github.com/cloudflare/tableflip"
+	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/stream"
 )
 
 var (
 	upgrader  *tableflip.Upgrader
 	once      sync.Once
 	isWindows = runtime.GOOS == "windows"
+	sigMu     sync.Mutex
+	sigChan   chan os.Signal
+	closeMu   sync.Mutex
+	closeFn   func()
 )
 
 // var (
@@ -59,8 +64,14 @@ func StartListener(onUpgrade func()) {
 		// logger.LogPrintf("Windows 平台不支持 SIGHUP 热升级监听，跳过 tableflip")
 		return
 	}
-	sigChan := make(chan os.Signal, 1)
+	sigMu.Lock()
+	if sigChan != nil {
+		sigMu.Unlock()
+		return
+	}
+	sigChan = make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGHUP)
+	sigMu.Unlock()
 
 	go func() {
 		for range sigChan {
@@ -87,7 +98,21 @@ func StartListener(onUpgrade func()) {
 
 // StopUpgradeListener 停止升级监听
 func StopUpgradeListener() {
-	signal.Stop(make(chan os.Signal, 1))
+	sigMu.Lock()
+	ch := sigChan
+	sigChan = nil
+	sigMu.Unlock()
+	if ch == nil {
+		return
+	}
+	signal.Stop(ch)
+	close(ch)
+}
+
+func SetCloseServers(fn func()) {
+	closeMu.Lock()
+	closeFn = fn
+	closeMu.Unlock()
 }
 
 // Ready 标记子进程已准备好接管
@@ -120,6 +145,20 @@ func UpgradeProcess(newExecPath, configPath, tmpDir string) {
 
 	// 关闭升级监听，释放 socket
 	StopUpgradeListener()
+
+	closeMu.Lock()
+	fn := closeFn
+	closeMu.Unlock()
+	if fn != nil {
+		fn()
+	}
+
+	stream.GlobalMultiChannelHub.Mu.Lock()
+	for key, hub := range stream.GlobalMultiChannelHub.Hubs {
+		hub.Close()
+		delete(stream.GlobalMultiChannelHub.Hubs, key)
+	}
+	stream.GlobalMultiChannelHub.Mu.Unlock()
 
 	// 删除旧程序
 	_ = os.Remove(execPath)

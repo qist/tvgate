@@ -25,6 +25,7 @@ import (
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/publisher"
 	"github.com/qist/tvgate/server"
+	"github.com/qist/tvgate/utils/upgrade"
 	"github.com/qist/tvgate/web"
 )
 
@@ -66,6 +67,7 @@ func main() {
 	} else {
 		upg = nil
 	}
+	upgrade.SetCloseServers(server.CloseAllServers)
 
 	// -------------------------
 	// 配置文件加载
