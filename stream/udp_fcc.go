@@ -382,7 +382,7 @@ func (h *StreamHub) prepareSwitchToMulticast() {
 	// 发送FCC终止包
 	if h.fccServerAddr != nil {
 		go func() {
-			// 使用当前序列号发送终止包，更接近C语言的实现
+			// 使用当前序列号发送终止包
 			h.Mu.Lock()
 			currentSeq := h.fccTermSeq
 			h.Mu.Unlock()
@@ -940,7 +940,7 @@ func (h *StreamHub) sendFCCTermination(fccServerAddr *net.UDPAddr, seqNum uint16
 		return fmt.Errorf("不支持的FCC类型: %d", fccType)
 	}
 
-	// 发送三次以确保送达 - 与C语言版本一致
+	// 发送三次以确保送达 
 	for i := 0; i < 3; i++ {
 		// 检查hub是否已关闭
 		select {
