@@ -752,24 +752,24 @@ func (bp *BufferPool) Put(buf []byte) {
 }
 
 // 全局内存池实例
-var tsBufferPool = &sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 188)
-	},
-}
+// var tsBufferPool = &sync.Pool{
+// 	New: func() interface{} {
+// 		return make([]byte, 188)
+// 	},
+// }
 
 // 修改makeNullTS函数以使用内存池
-func makeNullTS() []byte {
-	ts := tsBufferPool.Get().([]byte)
-	ts[0] = 0x47
-	ts[1] = 0x1F
-	ts[2] = 0xFF
-	ts[3] = 0x10
-	for i := 4; i < 188; i++ {
-		ts[i] = 0xFF
-	}
-	return ts
-}
+// func makeNullTS() []byte {
+// 	ts := tsBufferPool.Get().([]byte)
+// 	ts[0] = 0x47
+// 	ts[1] = 0x1F
+// 	ts[2] = 0xFF
+// 	ts[3] = 0x10
+// 	for i := 4; i < 188; i++ {
+// 		ts[i] = 0xFF
+// 	}
+// 	return ts
+// }
 
 // ====================
 // 广播到所有客户端
@@ -945,6 +945,7 @@ func (h *StreamHub) run() {
 			}
 
 		case connID := <-h.RemoveCh:
+			shouldDisableFCC := false
 			h.Mu.Lock()
 			if client, exists := h.Clients[connID]; exists {
 				// 关闭客户端通道
@@ -979,11 +980,28 @@ func (h *StreamHub) run() {
 				// 从FCC缓存管理器中移除会话
 				if client.fccSession != nil {
 					channelID := h.AddrList[0] // 使用第一个地址作为频道ID
-					GlobalChannelManager.GetOrCreate(channelID).RemoveSession(connID)
+					if ch := GlobalChannelManager.Get(channelID); ch != nil {
+						ch.RemoveSession(connID)
+					}
 				}
 
 				delete(h.Clients, connID)
 				logger.LogPrintf("客户端移除: %s, 当前客户端数: %d", connID, len(h.Clients))
+
+				if h.fccEnabled {
+					hasFccSession := false
+					for _, c := range h.Clients {
+						if c != nil && c.fccSession != nil {
+							hasFccSession = true
+							break
+						}
+					}
+					if !hasFccSession {
+						h.fccEnabled = false
+						h.fccServerAddr = nil
+						shouldDisableFCC = true
+					}
+				}
 
 				// 检查是否还有客户端，如果没有则关闭hub
 				if len(h.Clients) == 0 {
@@ -999,6 +1017,9 @@ func (h *StreamHub) run() {
 				}
 			}
 			h.Mu.Unlock()
+			if shouldDisableFCC {
+				h.cleanupFCC()
+			}
 
 		case <-h.Closed:
 			// 清理所有客户端
@@ -1030,7 +1051,9 @@ func (h *StreamHub) run() {
 				// 从FCC缓存管理器中移除会话
 				if client.fccSession != nil {
 					channelID := h.AddrList[0] // 使用第一个地址作为频道ID
-					GlobalChannelManager.GetOrCreate(channelID).RemoveSession(connID)
+					if ch := GlobalChannelManager.Get(channelID); ch != nil {
+						ch.RemoveSession(connID)
+					}
 				}
 			}
 			h.Clients = make(map[string]*hubClient)

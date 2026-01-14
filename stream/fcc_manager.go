@@ -45,6 +45,13 @@ func NewChannelManager() *ChannelManager {
 
 var GlobalChannelManager = NewChannelManager()
 
+func (cm *ChannelManager) Get(channel string) *MulticastChannel {
+	cm.mu.RLock()
+	ch := cm.channels[channel]
+	cm.mu.RUnlock()
+	return ch
+}
+
 func (cm *ChannelManager) GetOrCreate(channel string) *MulticastChannel {
 	cm.mu.RLock()
 	ch := cm.channels[channel]
