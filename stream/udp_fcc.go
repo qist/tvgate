@@ -264,6 +264,12 @@ func (h *StreamHub) fccHandleMcastActive() {
 	h.fccPendingListTail = nil
 	count := atomic.LoadInt32(&h.fccPendingCount)
 	atomic.StoreInt32(&h.fccPendingCount, 0)
+
+	// 预获取客户端列表，避免在循环中重复获取
+	clientList := make([]*hubClient, 0, len(h.Clients))
+	for _, c := range h.Clients {
+		clientList = append(clientList, c)
+	}
 	h.Mu.Unlock()
 
 	// 如果没有待处理数据，直接返回
@@ -271,58 +277,32 @@ func (h *StreamHub) fccHandleMcastActive() {
 		return
 	}
 
-	logger.LogPrintf("[FCC] 开始处理 %d 个待发送的缓冲数据", count)
+	// 减少日志输出
+	if count > 100 {
+		logger.LogPrintf("[FCC] 开始处理 %d 个待发送的缓冲数据", count)
+	}
 
 	// 遍历并处理缓冲区中的数据
 	processedCount := 0
+	idrFrameFound := false
+
 	for current != nil {
 		next := current.next
 
-		// 检测IDR帧（在锁外进行，避免阻塞）
-		if h.detectStrictIDRFrame(current.data) {
-			logger.LogPrintf("FCC: 检测到IDR帧，加速切换到多播模式")
-
-			// 立即关闭FCC listener
-			h.Mu.Lock()
-			if h.fccConn != nil {
-				fccConn := h.fccConn
-				h.fccConn = nil
-				h.Mu.Unlock()
-
-				fccConn.Close()
-
-				current.Put()
-
-				// 清理剩余的缓冲数据
-				for next != nil {
-					nextToRelease := next
-					next = next.next
-					nextToRelease.Put()
-				}
-
-				logger.LogPrintf("[FCC] 已关闭FCC连接并清理剩余缓冲数据")
-				return
-			} else {
-				h.Mu.Unlock()
-			}
+		// 检测IDR帧，但减少调用频率（每10个包检测一次）
+		if processedCount%10 == 0 && h.detectStrictIDRFrame(current.data) {
+			idrFrameFound = true
+			break
 		}
-
-		// 获取客户端列表（避免在锁内获取）
-		h.Mu.RLock()
-		clients := make([]*hubClient, 0, len(h.Clients))
-		for _, c := range h.Clients {
-			clients = append(clients, c)
-		}
-		h.Mu.RUnlock()
 
 		// 将数据广播到所有客户端
-		for _, c := range clients {
+		for _, c := range clientList {
 			current.Get()
 			select {
 			case c.ch <- current:
 			default:
 				current.Put()
-				logger.LogPrintf("[FCC] 向客户端发送数据阻塞，已丢弃: %s", c.connID)
+				// 减少日志输出，避免日志风暴
 			}
 		}
 
@@ -330,14 +310,39 @@ func (h *StreamHub) fccHandleMcastActive() {
 		current.Put()
 		current = next
 		processedCount++
+	}
 
-		// 添加少量延迟以避免过度占用CPU
-		if processedCount%50 == 0 {
-			time.Sleep(1 * time.Millisecond)
+	// 如果找到IDR帧，清理剩余数据并关闭FCC
+	if idrFrameFound {
+		logger.LogPrintf("FCC: 检测到IDR帧，加速切换到多播模式")
+
+		// 立即关闭FCC listener
+		h.Mu.Lock()
+		if h.fccConn != nil {
+			fccConn := h.fccConn
+			h.fccConn = nil
+			h.Mu.Unlock()
+
+			fccConn.Close()
+
+			// 清理剩余的缓冲数据
+			for current != nil {
+				nextToRelease := current
+				current = current.next
+				nextToRelease.Put()
+			}
+
+			logger.LogPrintf("[FCC] 已关闭FCC连接并清理剩余缓冲数据")
+			return
+		} else {
+			h.Mu.Unlock()
 		}
 	}
 
-	logger.LogPrintf("[FCC] 缓冲数据处理完成，共处理 %d 个数据包", processedCount)
+	// 减少日志输出
+	if count > 100 {
+		logger.LogPrintf("[FCC] 缓冲数据处理完成，共处理 %d 个数据包", processedCount)
+	}
 
 	// 更新FCC活动时间
 	now := time.Now().UnixNano() / 1e6
@@ -940,7 +945,7 @@ func (h *StreamHub) sendFCCTermination(fccServerAddr *net.UDPAddr, seqNum uint16
 		return fmt.Errorf("不支持的FCC类型: %d", fccType)
 	}
 
-	// 发送三次以确保送达 
+	// 发送三次以确保送达
 	for i := 0; i < 3; i++ {
 		// 检查hub是否已关闭
 		select {
@@ -1580,8 +1585,14 @@ func (h *StreamHub) detectStrictIDRFrame(data []byte) bool {
 		return false
 	}
 
-	var videoPID uint16 = 0
-	var pmtPID uint16 = 0
+	h.Mu.Lock()
+	cachedVideoPID := h.videoPID
+	cachedPmtPID := h.pmtPID
+	h.Mu.Unlock()
+
+	var videoPID uint16 = cachedVideoPID
+	var pmtPID uint16 = cachedPmtPID
+	foundVideoPID := (videoPID != 0)
 
 	for i := 0; i < len(data); i += 188 {
 		if i+188 > len(data) {
@@ -1596,66 +1607,87 @@ func (h *StreamHub) detectStrictIDRFrame(data []byte) bool {
 		// 提取PID
 		pid := uint16(tsPacket[1]&0x1F)<<8 | uint16(tsPacket[2])
 
-		// PAT包
-		if pid == 0x0000 {
-			tableID := tsPacket[5]
-			if tableID == 0x00 {
-				sectionLength := int((uint16(tsPacket[6])&0x0F)<<8 | uint16(tsPacket[7]))
-				if sectionLength > 8 && sectionLength <= 184 {
-					for j := 8; j < sectionLength-4; j += 4 {
-						programNum := uint16(tsPacket[j])<<8 | uint16(tsPacket[j+1])
-						if programNum != 0 {
-							pmtPID = (uint16(tsPacket[j+2]&0x1F) << 8) |
-								uint16(tsPacket[j+3])
-							break
+		// 只在没有找到视频PID时才解析PAT/PMT
+		if !foundVideoPID {
+			// PAT包
+			if pid == 0x0000 {
+				tableID := tsPacket[5]
+				if tableID == 0x00 {
+					sectionLength := int((uint16(tsPacket[6])&0x0F)<<8 | uint16(tsPacket[7]))
+					if sectionLength > 8 && sectionLength <= 184 {
+						for j := 8; j < sectionLength-4; j += 4 {
+							programNum := uint16(tsPacket[j])<<8 | uint16(tsPacket[j+1])
+							if programNum != 0 {
+								pmtPID = (uint16(tsPacket[j+2]&0x1F) << 8) | uint16(tsPacket[j+3])
+								break
+							}
 						}
 					}
 				}
-			}
-		} else if pid == pmtPID {
-			// PMT包
-			tableID := tsPacket[5]
-			if tableID == 0x02 {
-				sectionLength := int((uint16(tsPacket[6])&0x0F)<<8 | uint16(tsPacket[7]))
-				if sectionLength > 12 && sectionLength <= 184 {
-					infoStart := 12
-					infoEnd := sectionLength - 4
-					for infoStart < infoEnd {
-						streamType := tsPacket[infoStart]
-						elementaryPID := (uint16(tsPacket[infoStart+1]&0x1F) << 8) |
-							uint16(tsPacket[infoStart+2])
-						if streamType == 0x01 || streamType == 0x1B || streamType == 0x24 {
-							videoPID = elementaryPID
+			} else if pid == pmtPID {
+				// PMT包
+				tableID := tsPacket[5]
+				if tableID == 0x02 {
+					sectionLength := int((uint16(tsPacket[6])&0x0F)<<8 | uint16(tsPacket[7]))
+					if sectionLength > 12 && sectionLength <= 184 {
+						infoStart := 12
+						infoEnd := sectionLength - 4
+						for infoStart < infoEnd {
+							streamType := tsPacket[infoStart]
+							elementaryPID := (uint16(tsPacket[infoStart+1]&0x1F) << 8) | uint16(tsPacket[infoStart+2])
+							if streamType == 0x01 || streamType == 0x1B || streamType == 0x24 {
+								videoPID = elementaryPID
+								foundVideoPID = true
+								break
+							}
+							// 简化计算，避免复杂的位运算
+							infoStart += 5 + int(tsPacket[infoStart+4])*256 + int(tsPacket[infoStart+5])
 						}
-						infoStart += 5 + int(tsPacket[infoStart+4]&0x0F)<<8 | int(tsPacket[infoStart+5])
 					}
 				}
 			}
 		}
 
 		// 检查视频PID
-		if videoPID != 0 && pid == videoPID {
+		if foundVideoPID && pid == videoPID {
 			adaptationFieldControl := (tsPacket[3] & 0x30) >> 4
 			payloadStart := 4
 			if adaptationFieldControl&0x02 != 0 {
 				payloadStart = 5 + int(tsPacket[4])
 			}
 			if payloadStart < len(tsPacket) {
-				for j := payloadStart; j < len(tsPacket)-4; j++ {
-					if tsPacket[j] == 0x00 && tsPacket[j+1] == 0x00 &&
-						tsPacket[j+2] == 0x00 && tsPacket[j+3] == 0x01 {
-						if j+4 < len(tsPacket) {
-							nalType := tsPacket[j+4] & 0x1F
-							// 仅检测IDR帧
-							if nalType == 5 {
-								logger.LogPrintf("FCC: 检测到严格IDR帧")
-								return true
+				// 简化IDR帧检测，只检查关键位置
+				payload := tsPacket[payloadStart:]
+				if len(payload) >= 5 {
+					// 快速检查是否有NALU起始符
+					for j := 0; j < len(payload)-4; j++ {
+						if payload[j] == 0x00 && payload[j+1] == 0x00 && payload[j+2] == 0x00 && payload[j+3] == 0x01 {
+							if j+4 < len(payload) {
+								nalType := payload[j+4] & 0x1F
+								// 仅检测IDR帧
+								if nalType == 5 {
+									// 缓存找到的视频PID
+									h.Mu.Lock()
+									h.videoPID = videoPID
+									h.pmtPID = pmtPID
+									h.Mu.Unlock()
+									logger.LogPrintf("FCC: 检测到严格IDR帧")
+									return true
+								}
 							}
 						}
 					}
 				}
 			}
 		}
+	}
+
+	// 如果找到了视频PID，缓存它
+	if foundVideoPID && videoPID != cachedVideoPID {
+		h.Mu.Lock()
+		h.videoPID = videoPID
+		h.pmtPID = pmtPID
+		h.Mu.Unlock()
 	}
 
 	return false

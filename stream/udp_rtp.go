@@ -216,9 +216,13 @@ type StreamHub struct {
 	rtpBuffer              []byte
 	LastFrame              *BufferRef
 	OnEmpty                func(*StreamHub)
-	multicastAddr          *net.UDPAddr       // 多播地址
-	fccResponseCancel      context.CancelFunc // 用于取消FCC响应监听器
-	ctx                    context.Context    // StreamHub的上下文
+
+	// 缓存视频PID，避免重复解析PAT/PMT
+	videoPID          uint16
+	pmtPID            uint16
+	multicastAddr     *net.UDPAddr       // 多播地址
+	fccResponseCancel context.CancelFunc // 用于取消FCC响应监听器
+	ctx               context.Context    // StreamHub的上下文
 }
 
 // 定义客户端状态常量
@@ -786,13 +790,16 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	if bufRef == nil {
 		return
 	}
+
+	// 检查FCC状态
 	h.Mu.RLock()
 	fccEnabled := h.fccEnabled
 	currentState := h.fccState
 	h.Mu.RUnlock()
 
-	// 检查是否是FCC多播过渡阶段
+	// 如果启用了FCC，使用完整的FCC处理逻辑
 	if fccEnabled {
+		// 检查是否是FCC多播过渡阶段
 		switch currentState {
 		case FCC_STATE_MCAST_REQUESTED:
 			h.handleMcastDataDuringTransition(bufRef)
@@ -807,14 +814,95 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 
 	data := bufRef.data
 
-	h.Mu.Lock()
-	if h.Closed == nil || h.CacheBuffer == nil || h.Clients == nil {
+	// 如果未启用FCC，使用类似v2.1.4版本的高效实现
+	if !fccEnabled {
+		var clients map[string]*hubClient
+
+		h.Mu.Lock()
+		if h.Closed == nil || h.CacheBuffer == nil || h.Clients == nil {
+			h.Mu.Unlock()
+			bufRef.Put()
+			return
+		}
+
+		// 更新状态
+		h.LastFrame = bufRef
+		bufRef.Get()
+		if evicted := h.CacheBuffer.PushWithReuse(bufRef); evicted != nil {
+			evicted.Put()
+		}
+
+		// 播放状态更新
+		if h.state != StatePlayings {
+			h.state = StatePlayings
+			h.stateCond.Broadcast()
+		}
+
+		// 拷贝客户端 map，解锁后发送
+		clients = make(map[string]*hubClient, len(h.Clients))
+		for k, v := range h.Clients {
+			clients[k] = v
+		}
 		h.Mu.Unlock()
+
+		// 非阻塞广播 - v2.1.4版本的高效实现
+		for _, client := range clients {
+			bufRef.Get()
+			select {
+			case client.ch <- bufRef:
+			default:
+				bufRef.Put()
+				client.mu.Lock()
+				client.dropCount++
+				// 使用v2.1.4版本的恢复机制（每100个包）
+				if client.dropCount%100 == 0 {
+					// 清理通道
+					select {
+					case dropped := <-client.ch:
+						if dropped != nil {
+							dropped.Put()
+						}
+					default:
+					}
+					// 发送最后一帧
+					h.Mu.RLock()
+					lastFrame := h.LastFrame
+					h.Mu.RUnlock()
+					if lastFrame != nil {
+						lastFrame.Get()
+						select {
+						case client.ch <- lastFrame:
+						default:
+							lastFrame.Put()
+						}
+					}
+				}
+				client.mu.Unlock()
+			}
+		}
+
+		// 释放原始引用
 		bufRef.Put()
 		return
 	}
 
-	// 更新状态 - 注意StreamHub没有PacketCount字段，这里不需要更新
+	// 以下是启用FCC时的完整处理逻辑（保持不变）
+	// 预获取客户端列表，减少锁的持有时间
+	h.Mu.RLock()
+	closed := h.Closed == nil || h.CacheBuffer == nil || h.Clients == nil
+	clientList := make([]*hubClient, 0, len(h.Clients))
+	for _, client := range h.Clients {
+		clientList = append(clientList, client)
+	}
+	h.Mu.RUnlock()
+
+	if closed {
+		bufRef.Put()
+		return
+	}
+
+	// 更新状态和缓存
+	h.Mu.Lock()
 
 	// 播放状态更新
 	if h.state != StatePlayings {
@@ -828,6 +916,7 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 		evicted.Put()
 	}
 
+	// 更新LastFrame
 	if h.LastFrame != nil {
 		h.LastFrame.Put()
 	}
@@ -836,20 +925,19 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 
 	h.Mu.Unlock()
 
-	h.Mu.RLock()
-	lastFrame := h.LastFrame
-	if lastFrame != nil {
-		lastFrame.Get()
-	}
-	for _, client := range h.Clients {
+	// 广播数据到客户端
+	for _, client := range clientList {
 		bufRef.Get()
 		select {
 		case client.ch <- bufRef:
 		default:
 			bufRef.Put()
+			// 简化丢包处理，减少锁的使用
 			client.mu.Lock()
 			client.dropCount++
+			// 只在严重丢包时（100个包）才尝试恢复
 			if client.dropCount%100 == 0 {
+				// 清理通道
 				select {
 				case dropped := <-client.ch:
 					if dropped != nil {
@@ -857,6 +945,10 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 					}
 				default:
 				}
+				// 发送最后一帧
+				h.Mu.RLock()
+				lastFrame := h.LastFrame
+				h.Mu.RUnlock()
 				if lastFrame != nil {
 					lastFrame.Get()
 					select {
@@ -869,22 +961,14 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 			client.mu.Unlock()
 		}
 	}
-	h.Mu.RUnlock()
 
-	if lastFrame != nil {
-		lastFrame.Put()
-	}
-
-	// 将TS包写入频道缓存
+	// 异步写入频道缓存，避免阻塞主线程
 	if len(data) >= 188 && data[0] == 0x47 {
-		var addrList []string
-		h.Mu.RLock()
-		fccEnabledNow := h.fccEnabled
-		if fccEnabledNow {
-			addrList = append([]string(nil), h.AddrList...)
-		}
-		h.Mu.RUnlock()
-		if fccEnabledNow {
+		go func() {
+			h.Mu.RLock()
+			addrList := append([]string(nil), h.AddrList...)
+			h.Mu.RUnlock()
+
 			for _, addr := range addrList {
 				channelID := addr
 				channel := GlobalChannelManager.Get(channelID)
@@ -892,7 +976,7 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 					channel.AddTsPacket(data)
 				}
 			}
-		}
+		}()
 	}
 
 	bufRef.Put()
