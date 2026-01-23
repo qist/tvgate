@@ -11,7 +11,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/jedisct1/go-dnsstamps v0.0.0-20240423203910-07a0735c7774
 	github.com/libp2p/go-reuseport v0.4.0
-	github.com/miekg/dns v1.1.70
+	github.com/miekg/dns v1.1.72
 	github.com/pion/rtp v1.10.0
 	github.com/quic-go/quic-go v0.59.0
 	github.com/shirou/gopsutil/v3 v3.24.5
