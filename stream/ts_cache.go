@@ -42,6 +42,9 @@ type TSCache struct {
 	items map[string]*tsCacheItem
 
 	sf singleflight.Group
+
+	// 控制清理 goroutine 的通道
+	cleanupDone chan struct{}
 }
 
 var GlobalTSCache *TSCache
@@ -76,10 +79,11 @@ func InitTSCacheFromConfig() {
 
 func NewTSCache(maxBytes int64, ttl time.Duration) *TSCache {
 	cache := &TSCache{
-		maxBytes: maxBytes,
-		ttl:      ttl,
-		ll:       list.New(),
-		items:    make(map[string]*tsCacheItem),
+		maxBytes:    maxBytes,
+		ttl:         ttl,
+		ll:          list.New(),
+		items:       make(map[string]*tsCacheItem),
+		cleanupDone: make(chan struct{}),
 	}
 
 	// 启动清理过期项目的goroutine
@@ -356,28 +360,44 @@ func (c *tsCacheItem) Close() {
 	}
 	c.closed = true
 	close(c.waitCh)
+
+	// 清理数据块链表，防止内存泄露
+	current := c.head
+	for current != nil {
+		next := current.next
+		current.data = nil
+		current.next = nil
+		current = next
+	}
+	c.head = nil
+	c.tail = nil
 }
 
 func (c *TSCache) cleanupLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		c.mu.Lock()
-		now := time.Now()
+	for {
+		select {
+		case <-ticker.C:
+			c.mu.Lock()
+			now := time.Now()
 
-		for e := c.ll.Back(); e != nil; {
-			it := e.Value.(*tsCacheItem)
-			next := e.Prev()
+			for e := c.ll.Back(); e != nil; {
+				it := e.Value.(*tsCacheItem)
+				next := e.Prev()
 
-			if now.After(it.expireAt) {
-				c.removeItem(it)
+				if now.After(it.expireAt) {
+					c.removeItem(it)
+				}
+
+				e = next
 			}
 
-			e = next
+			c.mu.Unlock()
+		case <-c.cleanupDone:
+			return
 		}
-
-		c.mu.Unlock()
 	}
 }
 
@@ -424,7 +444,7 @@ func InitOrUpdateTSCacheFromConfig() {
 	config.CfgMu.RUnlock()
 
 	// 🔴 关闭语义 - 检查 Enable 指针是否为 nil 或为 false
-	enable := true // 默认启用
+	enable := false // 默认关闭
 	if tsCfg.Enable != nil {
 		enable = *tsCfg.Enable
 	}
@@ -485,6 +505,12 @@ func (c *TSCache) UpdateConfig(newMaxBytes int64, newTTL time.Duration) {
 func (c *TSCache) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// 关闭清理 goroutine
+	if c.cleanupDone != nil {
+		close(c.cleanupDone)
+		c.cleanupDone = nil
+	}
 
 	for e := c.ll.Front(); e != nil; {
 		next := e.Next()
