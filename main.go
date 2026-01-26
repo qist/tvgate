@@ -21,10 +21,10 @@ import (
 	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/groupstats"
 	"github.com/qist/tvgate/logger"
-	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/publisher"
 	"github.com/qist/tvgate/server"
+	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/utils/upgrade"
 	"github.com/qist/tvgate/web"
 )
@@ -45,6 +45,19 @@ var shutdownMux sync.Mutex
 var shutdownOnce sync.Once
 
 func main() {
+	// 添加全局 panic 捕获
+	defer func() {
+		if r := recover(); r != nil {
+			stack := make([]byte, 4096)
+			n := runtime.Stack(stack, true)
+			logger.LogPrintf("❌ 全局 panic 捕获: %v\n堆栈信息:\n%s", r, stack[:n])
+			fmt.Printf("❌ 全局 panic 捕获: %v\n堆栈信息:\n%s", r, stack[:n])
+			// 确保日志被写入
+			time.Sleep(100 * time.Millisecond)
+			os.Exit(1)
+		}
+	}()
+
 	flag.Parse()
 
 	if *config.VersionFlag {
@@ -89,12 +102,12 @@ func main() {
 	// 初始化 DNS 解析器
 	// -------------------------
 	dns.Init()
-	
+
 	// 添加调试信息，确认DNS初始化是否正常工作
 	// resolver := dns.GetInstance()
 	// resolvers := resolver.GetResolvers()
 	// fmt.Printf("DNS Resolvers: %v\n", resolvers)
-	
+
 	// -------------------------
 	// 初始化代理组统计
 	// -------------------------
@@ -158,6 +171,12 @@ func main() {
 		task.f = f
 		go func() {
 			defer func() {
+				if r := recover(); r != nil {
+					stack := make([]byte, 4096)
+					n := runtime.Stack(stack, true)
+					logger.LogPrintf("❌ 任务 panic 捕获: %v\n堆栈信息:\n%s", r, stack[:n])
+					fmt.Printf("❌ 任务 panic 捕获: %v\n堆栈信息:\n%s", r, stack[:n])
+				}
 				task.f = nil
 				taskPool.Put(task)
 			}()
@@ -184,8 +203,7 @@ func main() {
 	})
 
 	stream.InitTSCacheFromConfig()
-	
-	
+
 	// -------------------------
 	// 启动配置文件监控
 	// -------------------------
