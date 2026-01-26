@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/qist/tvgate/config"
@@ -72,10 +73,25 @@ func (h *ConfigBackupHandler) handleDeleteBackup(w http.ResponseWriter, r *http.
 
 	configPath := *config.ConfigFilePath
 	dir := filepath.Dir(configPath)
-	absFile, _ := filepath.Abs(file)
+	
+	// 确保传入的文件名是相对于配置目录的，或者在配置目录下
+	var absFile string
+	if filepath.IsAbs(file) {
+		absFile = file
+	} else {
+		// 如果是相对路径，将其视为配置目录下的文件
+		absFile = filepath.Join(dir, file)
+	}
 
-	// 确保文件在配置目录下
-	if !filepath.HasPrefix(absFile, dir) {
+	// 再次转换为绝对路径，确保安全检查的准确性
+	absFile, _ = filepath.Abs(absFile)
+	
+	// 确保规范化路径在配置目录下，使用更安全的路径检查方法
+	normalizedDir, _ := filepath.Abs(dir)
+	
+	// 使用 strings.HasPrefix 并确保路径边界安全
+	relPath, err := filepath.Rel(normalizedDir, absFile)
+	if err != nil || strings.HasPrefix(relPath, "..") {
 		http.Error(w, "不允许删除目录外的文件", http.StatusForbidden)
 		return
 	}
@@ -99,9 +115,25 @@ func (h *ConfigBackupHandler) handleRestoreBackup(w http.ResponseWriter, r *http
 
 	configPath := *config.ConfigFilePath
 	dir := filepath.Dir(configPath)
-	absFile, _ := filepath.Abs(file)
+	
+	// 确保传入的文件名是相对于配置目录的，或者在配置目录下
+	var absFile string
+	if filepath.IsAbs(file) {
+		absFile = file
+	} else {
+		// 如果是相对路径，将其视为配置目录下的文件
+		absFile = filepath.Join(dir, file)
+	}
 
-	if !filepath.HasPrefix(absFile, dir) {
+	// 再次转换为绝对路径，确保安全检查的准确性
+	absFile, _ = filepath.Abs(absFile)
+	
+	// 确保规范化路径在配置目录下，使用更安全的路径检查方法
+	normalizedDir, _ := filepath.Abs(dir)
+	
+	// 使用 strings.HasPrefix 并确保路径边界安全
+	relPath, err := filepath.Rel(normalizedDir, absFile)
+	if err != nil || strings.HasPrefix(relPath, "..") {
 		http.Error(w, "不允许还原目录外的文件", http.StatusForbidden)
 		return
 	}
@@ -137,10 +169,25 @@ func (h *ConfigBackupHandler) handleDownloadBackup(w http.ResponseWriter, r *htt
 
 	configPath := *config.ConfigFilePath
 	dir := filepath.Dir(configPath)
-	absFile, _ := filepath.Abs(file)
+	
+	// 确保传入的文件名是相对于配置目录的，或者在配置目录下
+	var absFile string
+	if filepath.IsAbs(file) {
+		absFile = file
+	} else {
+		// 如果是相对路径，将其视为配置目录下的文件
+		absFile = filepath.Join(dir, file)
+	}
 
-	// 确保文件在配置目录下
-	if !filepath.HasPrefix(absFile, dir) {
+	// 再次转换为绝对路径，确保安全检查的准确性
+	absFile, _ = filepath.Abs(absFile)
+	
+	// 确保规范化路径在配置目录下，使用更安全的路径检查方法
+	normalizedDir, _ := filepath.Abs(dir)
+	
+	// 使用 strings.HasPrefix 并确保路径边界安全
+	relPath, err := filepath.Rel(normalizedDir, absFile)
+	if err != nil || strings.HasPrefix(relPath, "..") {
 		http.Error(w, "不允许下载目录外的文件", http.StatusForbidden)
 		return
 	}
@@ -186,10 +233,24 @@ func (h *ConfigBackupHandler) handleBatchDeleteBackups(w http.ResponseWriter, r 
 	errorCount := 0
 
 	for _, file := range files {
-		absFile, _ := filepath.Abs(file)
+		// 确保传入的文件名是相对于配置目录的，或者在配置目录下
+		var absFile string
+		if filepath.IsAbs(file) {
+			absFile = file
+		} else {
+			// 如果是相对路径，将其视为配置目录下的文件
+			absFile = filepath.Join(dir, file)
+		}
 
-		// 确保文件在配置目录下
-		if !filepath.HasPrefix(absFile, dir) {
+		// 再次转换为绝对路径，确保安全检查的准确性
+		absFile, _ = filepath.Abs(absFile)
+		
+		// 确保规范化路径在配置目录下，使用更安全的路径检查方法
+		normalizedDir, _ := filepath.Abs(dir)
+		
+		// 使用 strings.HasPrefix 并确保路径边界安全
+		relPath, err := filepath.Rel(normalizedDir, absFile)
+		if err != nil || strings.HasPrefix(relPath, "..") {
 			errorCount++
 			continue
 		}
@@ -201,11 +262,15 @@ func (h *ConfigBackupHandler) handleBatchDeleteBackups(w http.ResponseWriter, r 
 		}
 	}
 
-	if errorCount > 0 {
-		http.Error(w, fmt.Sprintf("成功删除 %d 个备份，失败 %d 个", successCount, errorCount), http.StatusInternalServerError)
-		return
+	respMessage := fmt.Sprintf("成功删除 %d 个备份，失败 %d 个", successCount, errorCount)
+	if errorCount == 0 {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(fmt.Sprintf("成功删除 %d 个备份", successCount)))
+	} else if successCount == 0 {
+		http.Error(w, respMessage, http.StatusInternalServerError)
+	} else {
+		// 部分成功删除
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(respMessage))
 	}
-
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fmt.Sprintf("成功删除 %d 个备份", successCount)))
 }
