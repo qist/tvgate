@@ -2,12 +2,13 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"time"
-	"net/url"
 	"sort"
+	"time"
 
 	"github.com/qist/tvgate/config"
 )
@@ -40,7 +41,7 @@ func (h *ConfigBackupHandler) handleListBackups(w http.ResponseWriter, r *http.R
 	sort.Slice(files, func(i, j int) bool {
 		fileInfoI, errI := os.Stat(files[i])
 		fileInfoJ, errJ := os.Stat(files[j])
-		
+
 		// 如果获取文件信息失败，则将该文件排在后面
 		if errI != nil {
 			return false
@@ -48,7 +49,7 @@ func (h *ConfigBackupHandler) handleListBackups(w http.ResponseWriter, r *http.R
 		if errJ != nil {
 			return true
 		}
-		
+
 		// 按修改时间从新到旧排序
 		return fileInfoI.ModTime().After(fileInfoJ.ModTime())
 	})
@@ -159,4 +160,52 @@ func (h *ConfigBackupHandler) handleDownloadBackup(w http.ResponseWriter, r *htt
 
 	// 读取文件并写入响应
 	http.ServeFile(w, r, absFile)
+}
+
+// handleBatchDeleteBackups 批量删除备份
+func (h *ConfigBackupHandler) handleBatchDeleteBackups(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "只支持 POST 请求", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 解析表单数据
+	r.ParseMultipartForm(10 << 20) // 10MB 限制
+	files := r.Form["files"]
+
+	if len(files) == 0 {
+		http.Error(w, "未提供要删除的文件", http.StatusBadRequest)
+		return
+	}
+
+	configPath := *config.ConfigFilePath
+	dir := filepath.Dir(configPath)
+
+	// 批量删除文件
+	successCount := 0
+	errorCount := 0
+
+	for _, file := range files {
+		absFile, _ := filepath.Abs(file)
+
+		// 确保文件在配置目录下
+		if !filepath.HasPrefix(absFile, dir) {
+			errorCount++
+			continue
+		}
+
+		if err := os.Remove(absFile); err != nil {
+			errorCount++
+		} else {
+			successCount++
+		}
+	}
+
+	if errorCount > 0 {
+		http.Error(w, fmt.Sprintf("成功删除 %d 个备份，失败 %d 个", successCount, errorCount), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(fmt.Sprintf("成功删除 %d 个备份", successCount)))
 }

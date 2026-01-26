@@ -511,6 +511,153 @@ h1 {
   display: block;
 }
 
+/* 弹窗样式 */
+#updateModal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgba(0, 0, 0, 0.5);
+  transition: background-color 0.3s;
+}
+
+.modal-content {
+  background-color: var(--win11-surface);
+  margin: 15% auto;
+  padding: 20px;
+  border: 1px solid var(--win11-border);
+  border-radius: 8px;
+  width: 80%;
+  max-width: 600px;
+  box-shadow: 0 4px 12px var(--win11-shadow);
+  transition: background-color 0.3s, border-color 0.3s, box-shadow 0.3s;
+}
+
+.modal-content h3 {
+  color: var(--win11-text-primary);
+  margin-top: 0;
+  transition: color 0.3s;
+}
+
+.modal-content p {
+  color: var(--win11-text-primary);
+  transition: color 0.3s;
+}
+
+.modal-content b {
+  color: var(--win11-text-primary);
+  transition: color 0.3s;
+}
+
+.modal-content button {
+  color: var(--win11-text-primary);
+  background-color: var(--win11-accent);
+  border: 1px solid var(--win11-border);
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.3s, border-color 0.3s, color 0.3s;
+}
+
+.modal-content button:hover {
+  background-color: var(--win11-accent-hover);
+}
+
+.close-btn {
+  background-color: var(--win11-accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  margin-top: 20px;
+  transition: background-color 0.3s;
+}
+
+.close-btn:hover {
+  background-color: var(--win11-accent-hover);
+}
+
+.status-log {
+  color: var(--win11-text-primary);
+  background-color: var(--win11-card);
+  border: 1px solid var(--win11-border);
+  border-radius: 4px;
+  padding: 10px;
+  margin: 10px 0;
+  min-height: 40px;
+  transition: background-color 0.3s, border-color 0.3s, color 0.3s;
+}
+
+/* 确保弹窗中的所有元素都使用主题变量 */
+.modal-content * {
+  color: var(--win11-text-primary) !important;
+}
+
+.modal-content button {
+  color: white !important;
+}
+
+/* 版本项样式 */
+.version-item {
+  padding: 15px 5px;
+  border-radius: 5px;
+  text-align: center;
+  color: white;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+.version-item-even {
+  background-color: var(--win11-success);
+}
+
+.version-item-even:hover {
+  background-color: #57a357;
+}
+
+.version-item-odd {
+  background-color: var(--win11-accent);
+}
+
+.version-item-odd:hover {
+  background-color: var(--win11-accent-hover);
+}
+
+/* 进度条样式 */
+#updateProgressBar {
+  margin: 10px 0;
+}
+
+.progress-container {
+  margin: 10px 0;
+}
+
+.progress-background {
+  background-color: var(--win11-border);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: background-color 0.3s;
+}
+
+.progress-fill {
+  width: 0%;
+  height: 20px;
+  background-color: var(--win11-success);
+  text-align: center;
+  line-height: 20px;
+  color: white;
+  font-size: 12px;
+  transition: width 0.3s, background-color 0.3s;
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
   .container {
@@ -557,5 +704,11 @@ h1 {
   /* 在小屏幕上进一步限制挂载点列宽度 */
   .mount-point {
     max-width: 120px;
+  }
+  
+  /* 弹窗在小屏幕上的样式 */
+  .modal-content {
+    width: 90%;
+    margin: 20% auto;
   }
 }

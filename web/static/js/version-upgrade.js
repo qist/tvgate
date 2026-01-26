@@ -45,10 +45,9 @@ document.addEventListener("DOMContentLoaded", () => {
             progressBar = document.createElement("div");
             progressBar.id = "updateProgressBar";
             progressBar.innerHTML = `
-                <div style="margin: 10px 0;">
-                    <div style="background-color: #f0f0f0; border-radius: 10px; overflow: hidden;">
-                        <div id="progressFill" style="width: 0%; height: 20px; background-color: #4CAF50; 
-                             text-align: center; line-height: 20px; color: white; font-size: 12px; transition: width 0.3s;">
+                <div class="progress-container">
+                    <div class="progress-background">
+                        <div id="progressFill" class="progress-fill">
                             0%
                         </div>
                     </div>
@@ -79,6 +78,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 
                 // 根据状态更新进度条
                 let progress = 0;
+                let progressColor = "var(--win11-success)";
                 switch(data.state) {
                     case "starting":
                         progress = 10;
@@ -100,13 +100,14 @@ document.addEventListener("DOMContentLoaded", () => {
                         break;
                     case "error":
                         progress = 0;
-                        progressFill.style.backgroundColor = "#F44336"; // 错误时变红色
+                        progressColor = "var(--win11-danger)"; // 错误时变红色
                         break;
                     default:
                         progress = 0;
                 }
                 
                 progressFill.style.width = progress + "%";
+                progressFill.style.backgroundColor = progressColor;
                 progressFill.textContent = progress + "%";
                 
                 if (data.state === "error") {
@@ -126,7 +127,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     })();
 
                     if (targetNow && data.version && data.version === targetNow) {
-                        try { localStorage.removeItem(storedTargetVersionKey); } catch (e) {}
+                        try { localStorage.removeItem(storedTargetVersionKey); } catch (e) {} 
                         clearInterval(statusInterval);
                         statusInterval = null;
                         setTimeout(() => location.reload(), 800);
@@ -145,7 +146,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     statusDiv.textContent = `获取状态失败: ${err.message}`;
                     progressFill.style.width = "0%";
                     progressFill.textContent = "0%";
-                    progressFill.style.backgroundColor = "#F44336";
+                    progressFill.style.backgroundColor = "var(--win11-danger)";
                     setTimeout(() => {
                         closeModal();
                     }, 3000);
@@ -155,12 +156,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 restartRetryCount++;
                 progressFill.style.width = "90%";
                 progressFill.textContent = "90%";
+                progressFill.style.backgroundColor = "var(--win11-success)";
                 statusDiv.textContent = `状态: restarting, 消息: 服务重启中，正在等待连接恢复... (${restartRetryCount}/${restartMaxRetries})`;
 
                 if (restartRetryCount >= restartMaxRetries) {
                     clearInterval(statusInterval);
                     statusInterval = null;
-                    try { localStorage.removeItem(storedTargetVersionKey); } catch (e) {}
+                    try { localStorage.removeItem(storedTargetVersionKey); } catch (e) {} 
                     statusDiv.textContent = "等待重启超时，请手动刷新页面。";
                 }
             }
@@ -188,8 +190,8 @@ document.addEventListener("DOMContentLoaded", () => {
                            <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-top: 15px;">`;
                 releases.forEach((r, index) => {
                     const tag = r.tag_name;
-                    const bgColor = (index + 1) % 2 === 0 ? '#4CAF50' : '#2196F3'; // 双数绿色，单数蓝色
-                    html += `<div class="version-item" data-version="${tag}" style="background-color: ${bgColor}; padding: 15px 5px; border-radius: 5px; text-align: center; color: white; cursor: pointer; font-weight: bold;">
+                    const versionClass = (index + 1) % 2 === 0 ? 'version-item-even' : 'version-item-odd'; // 双数和单数类
+                    html += `<div class="version-item ${versionClass}" data-version="${tag}">
                                 ${tag}
                              </div>`;
                 });
@@ -247,8 +249,8 @@ document.addEventListener("DOMContentLoaded", () => {
                            <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-top: 15px;">`;
                 releases.forEach((r, index) => {
                     const tag = r.tag_name;
-                    const bgColor = (index + 1) % 2 === 0 ? '#4CAF50' : '#2196F3'; // 双数绿色，单数蓝色
-                    html += `<div class="version-item" data-version="${tag}" style="background-color: ${bgColor}; padding: 15px 5px; border-radius: 5px; text-align: center; color: white; cursor: pointer; font-weight: bold;">
+                    const versionClass = (index + 1) % 2 === 0 ? 'version-item-even' : 'version-item-odd'; // 双数和单数类
+                    html += `<div class="version-item ${versionClass}" data-version="${tag}">
                                 ${tag}
                              </div>`;
                 });

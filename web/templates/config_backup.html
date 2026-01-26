@@ -199,11 +199,13 @@ tr:hover {
             
             <div class="text-center" style="margin: 20px 0;">
                 <button class="btn" onclick="loadBackups()">刷新列表</button>
+                <button class="btn btn-danger" onclick="batchDeleteBackups()" id="batchDeleteBtn" disabled>批量删除</button>
             </div>
             
             <table id="backupTable">
                 <thead>
                     <tr>
+                        <th><input type="checkbox" id="selectAll"></th>
                         <th>#</th>
                         <th>文件路径</th>
                         <th>操作</th>
@@ -211,7 +213,7 @@ tr:hover {
                 </thead>
                 <tbody>
                     <tr>
-                        <td colspan="3" class="no-backups">加载中...</td>
+                        <td colspan="4" class="no-backups">加载中...</td>
                     </tr>
                 </tbody>
             </table>
@@ -243,7 +245,8 @@ async function loadBackups() {
         const tbody = document.querySelector("#backupTable tbody");
         
         if (!data.backups || data.backups.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" class="no-backups">暂无备份文件</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" class="no-backups">暂无备份文件</td></tr>';
+            updateBatchDeleteBtn();
             return;
         }
         
@@ -251,6 +254,7 @@ async function loadBackups() {
         data.backups.forEach((file, index) => {
             const tr = document.createElement("tr");
             tr.innerHTML = `
+                <td><input type="checkbox" class="backup-checkbox" value="${encodeURIComponent(file)}"></td>
                 <td>${index + 1}</td>
                 <td>${file}</td>
                 <td>
@@ -260,9 +264,72 @@ async function loadBackups() {
                 </td>`;
             tbody.appendChild(tr);
         });
+        
+        // 绑定复选框事件
+        bindCheckboxEvents();
+        updateBatchDeleteBtn();
     } catch (error) {
         showAlert('加载备份列表失败: ' + error.message, 'error');
-        document.querySelector("#backupTable tbody").innerHTML = '<tr><td colspan="3" class="no-backups">加载失败</td></tr>';
+        document.querySelector("#backupTable tbody").innerHTML = '<tr><td colspan="4" class="no-backups">加载失败</td></tr>';
+        updateBatchDeleteBtn();
+    }
+}
+
+function bindCheckboxEvents() {
+    // 全选复选框事件
+    document.getElementById('selectAll').addEventListener('change', function() {
+        const checkboxes = document.querySelectorAll('.backup-checkbox');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = this.checked;
+        });
+        updateBatchDeleteBtn();
+    });
+    
+    // 单个复选框事件
+    const checkboxes = document.querySelectorAll('.backup-checkbox');
+    checkboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            updateBatchDeleteBtn();
+            // 更新全选状态
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            document.getElementById('selectAll').checked = allChecked;
+        });
+    });
+}
+
+function updateBatchDeleteBtn() {
+    const checkboxes = document.querySelectorAll('.backup-checkbox:checked');
+    const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+    batchDeleteBtn.disabled = checkboxes.length === 0;
+}
+
+async function batchDeleteBackups() {
+    const checkboxes = document.querySelectorAll('.backup-checkbox:checked');
+    if (checkboxes.length === 0) return;
+    
+    if (!confirm(`确认删除选中的 ${checkboxes.length} 个备份吗？此操作不可恢复！`)) return;
+    
+    try {
+        const files = Array.from(checkboxes).map(cb => cb.value);
+        const formData = new FormData();
+        files.forEach(file => {
+            formData.append('files', file);
+        });
+        
+        const res = await fetch(webPath + "config/backup/batch-delete", {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (res.ok) {
+            showAlert(`成功删除 ${checkboxes.length} 个备份`, "success");
+            loadBackups();
+        } else {
+            const text = await res.text();
+            showAlert("批量删除失败: " + text, "error");
+        }
+    } catch (error) {
+        showAlert("批量删除失败: " + error.message, "error");
     }
 }
 

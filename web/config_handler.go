@@ -212,9 +212,12 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 
 	// 备份相关路由
 	mux.HandleFunc(webPath+"config/backup", h.cookieAuth(h.handleConfigBackupPage))
+
+	// 配置备份管理路由
 	backupHandler := &ConfigBackupHandler{}
 	mux.HandleFunc(webPath+"config/backup/list", h.cookieAuth(backupHandler.handleListBackups))
 	mux.HandleFunc(webPath+"config/backup/delete", h.cookieAuth(backupHandler.handleDeleteBackup))
+	mux.HandleFunc(webPath+"config/backup/batch-delete", h.cookieAuth(backupHandler.handleBatchDeleteBackups))
 	mux.HandleFunc(webPath+"config/backup/restore", h.cookieAuth(backupHandler.handleRestoreBackup))
 	mux.HandleFunc(webPath+"config/backup/download", h.cookieAuth(backupHandler.handleDownloadBackup))
 

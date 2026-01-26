@@ -25,6 +25,13 @@ function initThemeToggle() {
         html.setAttribute('data-theme', newTheme);
         localStorage.setItem('theme', newTheme);
         
+        // 强制重新计算所有元素的样式，确保弹窗样式也能同步更新
+        const allElements = document.querySelectorAll('*');
+        allElements.forEach(element => {
+            // 触发重排和重绘
+            element.style.display = element.style.display;
+        });
+        
         // 同步主题到服务器
         fetch(`${window.webPath || ''}sync-theme`, {
             method: 'POST',
