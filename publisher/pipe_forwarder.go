@@ -312,9 +312,9 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 	// 获取 HLS 配置
 	var hlsFFmpegOptions *FFmpegOptions
 	var hlsRetentionDays time.Duration
-	hlsSegmentDuration := 5 // 默认值
-	hlsSegmentCount := 5    // 默认值
-	hlsPath := ""           // 默认空，使用默认路径
+	hlsSegmentDuration := 5               // 默认值
+	hlsSegmentCount := 5                  // 默认值
+	hlsPath := ""                         // 默认空，使用默认路径
 	hlsRetentionDays = 7 * 24 * time.Hour // 默认7天
 	tsFilenameTemplate := "name_index"
 	hlsEnablePlayback := false // 默认不启用回放模式
@@ -370,8 +370,8 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 
 	// 创建 HLS 管理器，传递正确的参数包括段时长、段数量和TS文件名模板
 	hlsManager := NewHLSSegmentManager(ctx, baseStreamName, segmentPath, hlsSegmentDuration, hlsFFmpegOptions)
-	hlsManager.segmentCount = hlsSegmentCount     // 设置段数量
-	hlsManager.retentionDays = hlsRetentionDays // 设置保留天数
+	hlsManager.segmentCount = hlsSegmentCount          // 设置段数量
+	hlsManager.retentionDays = hlsRetentionDays        // 设置保留天数
 	hlsManager.tsFilenameTemplate = tsFilenameTemplate // 设置TS文件名模板
 	hlsManager.enablePlayback = hlsEnablePlayback      // 设置回放模式
 	// 先不要直接绑定到本地 h；优先使用全局 StreamHub 的 hub（避免不同 hub 导致数据不通）
@@ -973,7 +973,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					}
 					return
 				default:
-					data, ok := pf.clientBuffer.PullWithContext(pf.ctx)
+					data, ok := pf.clientBuffer.Pull()
 					if !ok {
 						pf.ffInLock.Lock()
 						if ffIn != nil {
@@ -1501,7 +1501,7 @@ func (sh *StreamHub) ServeFLV(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		default:
-			data, ok := clientBuffer.PullWithContext(r.Context())
+			data, ok := clientBuffer.Pull()
 			if !ok {
 				// logger.LogPrintf("[%s] Client buffer closed, sent %d chunks", sh.streamName, chunkCount)
 				return

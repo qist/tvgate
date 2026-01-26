@@ -311,7 +311,7 @@ func (h *HLSSegmentManager) Start() error {
 				case <-h.ctx.Done():
 					return
 				default:
-					item, ok := h.clientBuffer.PullWithContext(h.ctx)
+					item, ok := h.clientBuffer.Pull()
 					if !ok {
 						return
 					}

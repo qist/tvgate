@@ -159,7 +159,7 @@ func HandleMpegtsStream(
 				updateActive()
 			}
 		default:
-			data, ok := clientChan.PullWithContext(ctx)
+			data, ok := clientChan.Pull()
 			if !ok {
 				return nil
 			}
