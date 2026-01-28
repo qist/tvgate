@@ -123,6 +123,32 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 	return client, nil
 }
 
+// CreateUniqueProxyClient 创建具有唯一性的代理客户端，避免连接复用问题
+func CreateUniqueProxyClient(ctx context.Context, cfg *config.Config, proxyConfig config.ProxyConfig, enableIPv6 bool) (*http.Client, error) {
+	// 使用CreateProxyClient创建基础客户端
+	baseClient, err := CreateProxyClient(ctx, cfg, proxyConfig, enableIPv6)
+	if err != nil {
+		return nil, err
+	}
+
+	// 创建一个新的transport实例，以确保连接隔离
+	transport := baseClient.Transport.(*http.Transport).Clone()
+	
+	// 设置更严格的连接管理参数，减少连接复用的可能性
+	transport.MaxIdleConns = 1  // 减少空闲连接数量
+	transport.MaxIdleConnsPerHost = 1  // 每主机只保留一个空闲连接
+	transport.IdleConnTimeout = 10 * time.Second  // 更短的空闲连接超时时间
+	transport.DisableKeepAlives = false  // 保持连接开启，但在必要时快速断开
+
+	// 创建新的客户端，使用定制的传输层
+	uniqueClient := &http.Client{
+		Transport: transport,
+		Timeout:   baseClient.Timeout,
+	}
+
+	return uniqueClient, nil
+}
+
 // 判断错误是否属于解析失败
 func isResolveError(err error) bool {
 	if err == nil {

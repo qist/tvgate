@@ -127,7 +127,7 @@ func Handler(client *http.Client) http.HandlerFunc {
 		// }
 		// if r.URL.Path == "/favicon.ico" {
 		// 	w.Header().Set("Content-Type", "image/x-icon")
-		//  w.Header().Set("server", "TVGate")
+		// 	w.Header().Set("server", "TVGate")
 		// 	w.Write(config.FaviconFile)
 		// 	return
 		// }
@@ -316,7 +316,8 @@ func Handler(client *http.Client) http.HandlerFunc {
 					continue
 				}
 
-				proxyClient, err := proxy.CreateProxyClient(ctx, &config.Cfg, *selectedProxy, pg.IPv6)
+				// 为每个请求创建唯一的传输层配置，避免连接复用问题
+				proxyClient, err := proxy.CreateUniqueProxyClient(ctx, &config.Cfg, *selectedProxy, pg.IPv6)
 				if err != nil {
 					markProxyResult(pg, selectedProxy, false)
 					continue
@@ -332,8 +333,12 @@ func Handler(client *http.Client) http.HandlerFunc {
 					markProxyResult(pg, selectedProxy, false)
 					continue
 				}
+				
+				// 添加特殊头部标识，帮助识别请求来源
 				reqCopy = reqCopy.WithContext(ctx)
 				stream.CopyHeadersExceptSensitive(reqCopy.Header, r.Header, r.ProtoMajor)
+				reqCopy.Header.Set("X-Proxy-Node", selectedProxy.Name)
+				reqCopy.Header.Set("X-Request-ID", connID)
 
 				// 发起代理请求
 				proxyResp, err := proxyClient.Do(reqCopy)
@@ -468,6 +473,7 @@ func Handler(client *http.Client) http.HandlerFunc {
 		stream.HandleProxyResponse(ctx, w, r, targetURL, clientResp, updateActive)
 	}
 }
+
 
 func markProxyResult(group *config.ProxyGroupConfig, proxy *config.ProxyConfig, alive bool) {
 	group.Stats.Lock()
