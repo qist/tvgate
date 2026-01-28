@@ -218,10 +218,26 @@ func (h *ConfigBackupHandler) handleBatchDeleteBackups(w http.ResponseWriter, r 
 
 	// 解析表单数据
 	r.ParseMultipartForm(10 << 20) // 10MB 限制
-	files := r.Form["files"]
+	encodedFiles := r.Form["files"]
+
+	if len(encodedFiles) == 0 {
+		http.Error(w, "未提供要删除的文件", http.StatusBadRequest)
+		return
+	}
+
+	// 解码文件路径
+	files := make([]string, 0, len(encodedFiles))
+	for _, encodedFile := range encodedFiles {
+		decodedFile, err := url.QueryUnescape(encodedFile)
+		if err != nil {
+			// 如果解码失败，记录错误但继续处理其他文件
+			continue
+		}
+		files = append(files, decodedFile)
+	}
 
 	if len(files) == 0 {
-		http.Error(w, "未提供要删除的文件", http.StatusBadRequest)
+		http.Error(w, "所有文件路径解码失败", http.StatusBadRequest)
 		return
 	}
 
@@ -233,13 +249,20 @@ func (h *ConfigBackupHandler) handleBatchDeleteBackups(w http.ResponseWriter, r 
 	errorCount := 0
 
 	for _, file := range files {
-		// 确保传入的文件名是相对于配置目录的，或者在配置目录下
 		var absFile string
+		
+		// 如果是相对路径（不含分隔符），则认为是在配置目录下
 		if filepath.IsAbs(file) {
 			absFile = file
 		} else {
-			// 如果是相对路径，将其视为配置目录下的文件
-			absFile = filepath.Join(dir, file)
+			// 检查是否包含路径分隔符，如果没有，说明是单纯的文件名
+			if !strings.Contains(file, string(os.PathSeparator)) {
+				// 单纯的文件名，拼接配置目录路径
+				absFile = filepath.Join(dir, file)
+			} else {
+				// 包含路径分隔符，认为是相对配置目录的路径
+				absFile = filepath.Join(dir, file)
+			}
 		}
 
 		// 再次转换为绝对路径，确保安全检查的准确性
