@@ -311,12 +311,13 @@ func CopyWithContext(
 func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader, key string) error {
 	cacheItem, ok := GlobalTSCache.Get(key)
 	if ok {
+		logger.LogPrintf("[TS缓存] 命中，key: %s", key)
 		done := make(chan struct{})
 		defer close(done)
 
 		dst.Header().Del("Content-Length")
 		if err := cacheItem.ReadAll(dst, done); err != nil && err != io.EOF && err != io.ErrNoProgress {
-			logger.LogPrintf("从缓存读取TS数据出错: %v", err)
+			logger.LogPrintf("[TS缓存] 读取出错: %v, key: %s", err, key)
 		}
 
 		if f, ok := dst.(http.Flusher); ok {
@@ -325,8 +326,9 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 		return nil
 	}
 
+	logger.LogPrintf("[TS缓存] 未命中，开始下载并缓存，key: %s", key)
 	// 创建带超时的上下文
-	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 
 	resultChan := make(chan struct {
@@ -665,7 +667,7 @@ func CopyResponse(
 
 	if IsTSRequest(u.Path) {
 		key := normalizeCacheKey(u.Path)
-		logger.LogPrintf("TS cache key: %s", key)
+		logger.LogPrintf("[TS缓存] 生成缓存键，key: %s", key)
 		return CopyTSWithCache(ctx, w, resp.Body, key)
 	}
 
@@ -722,12 +724,33 @@ func IsTSRequest(rawURL string) bool {
 	return strings.EqualFold(filepath.Ext(u.Path), ".ts")
 }
 
+// normalizeCacheKey 生成直观的缓存键
 func normalizeCacheKey(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return rawURL
 	}
+
+	// 1️⃣ 去 query 和 fragment
 	u.RawQuery = ""
 	u.Fragment = ""
-	return u.String()
+
+	path := u.Path
+
+	// 2️⃣ 识别路径中嵌套的真实域名（CDN 回源格式）
+	// 典型格式：/token/real.domain.com/xxxx/xxxx.ts
+	parts := strings.Split(path, "/")
+
+	for i, p := range parts {
+		// 找到像域名的那一段
+		if strings.Contains(p, ".") && !strings.Contains(p, ":") {
+			// 从这里开始才是真路径
+			realHost := p
+			realPath := "/" + strings.Join(parts[i+1:], "/")
+			return realHost + realPath
+		}
+	}
+
+	// 普通 URL（没有嵌套域名）
+	return u.Host + u.Path
 }
