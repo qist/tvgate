@@ -338,8 +338,8 @@ func Handler(client *http.Client) http.HandlerFunc {
 				// 添加特殊头部标识，帮助识别请求来源
 				reqCopy = reqCopy.WithContext(ctx)
 				stream.CopyHeadersExceptSensitive(reqCopy.Header, r.Header, r.ProtoMajor)
-				reqCopy.Header.Set("X-Proxy-Node", selectedProxy.Name)
-				reqCopy.Header.Set("X-Request-ID", connID)
+				// reqCopy.Header.Set("X-Proxy-Node", selectedProxy.Name)
+				// reqCopy.Header.Set("X-Request-ID", connID)
 
 				// 发起代理请求
 				proxyResp, err := proxyClient.Do(reqCopy)
