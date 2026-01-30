@@ -666,7 +666,7 @@ func CopyResponse(
 	}
 
 	if IsTSRequest(u.Path) {
-		key := normalizeCacheKey(u.Path)
+		key := normalizeCacheKey(u.String())
 		logger.LogPrintf("[TS缓存] 生成缓存键，key: %s", key)
 		return CopyTSWithCache(ctx, w, resp.Body, key)
 	}
@@ -730,27 +730,45 @@ func normalizeCacheKey(rawURL string) string {
 	if err != nil {
 		return rawURL
 	}
-
-	// 1️⃣ 去 query 和 fragment
 	u.RawQuery = ""
 	u.Fragment = ""
-
-	path := u.Path
-
-	// 2️⃣ 识别路径中嵌套的真实域名（CDN 回源格式）
-	// 典型格式：/token/real.domain.com/xxxx/xxxx.ts
-	parts := strings.Split(path, "/")
+	parts := strings.Split(u.Path, "/")
 
 	for i, p := range parts {
-		// 找到像域名的那一段
-		if strings.Contains(p, ".") && !strings.Contains(p, ":") {
-			// 从这里开始才是真路径
+		if looksLikeDomain(p) {
 			realHost := p
 			realPath := "/" + strings.Join(parts[i+1:], "/")
 			return realHost + realPath
 		}
 	}
 
-	// 普通 URL（没有嵌套域名）
-	return u.String()
+	// 正常 URL（没有嵌套域名）
+	return u.Host + u.Path
+}
+
+func looksLikeDomain(s string) bool {
+	// 必须有点
+	if !strings.Contains(s, ".") {
+		return false
+	}
+
+	// 不能是文件
+	if strings.HasSuffix(s, ".ts") ||
+		strings.HasSuffix(s, ".m3u8") ||
+		strings.HasSuffix(s, ".key") {
+		return false
+	}
+
+	// 不能带逗号（流名特征）
+	if strings.Contains(s, ",") {
+		return false
+	}
+
+	// 至少两段
+	parts := strings.Split(s, ".")
+	if len(parts) < 2 {
+		return false
+	}
+
+	return true
 }
