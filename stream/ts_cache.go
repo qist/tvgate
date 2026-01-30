@@ -117,12 +117,9 @@ func (c *TSCache) GetOrCreate(key string) (*tsCacheItem, bool) {
 	if it, ok := c.items[key]; ok {
 		if time.Now().After(it.expireAt) {
 			c.removeItem(it)
-			// 创建新的项目
 			return c.createItem(key), true
 		}
-		// 更新过期时间
 		it.expireAt = time.Now().Add(c.ttl)
-		// 更新访问时间
 		it.accessAt = time.Now()
 		c.ll.MoveToFront(it.element)
 		return it, false
@@ -138,10 +135,11 @@ func (c *TSCache) WriteChunkToItem(item *tsCacheItem, data []byte) {
 		return
 	}
 
-	item.mutex.Lock()
-	defer item.mutex.Unlock()
+	var dataLen int64
 
+	item.mutex.Lock()
 	if item.closed {
+		item.mutex.Unlock()
 		return
 	}
 
@@ -158,6 +156,8 @@ func (c *TSCache) WriteChunkToItem(item *tsCacheItem, data []byte) {
 		item.tail.next = newChunk
 		item.tail = newChunk
 	}
+	dataLen = int64(len(data))
+	item.mutex.Unlock()
 
 	// 通知等待的读取者有新数据
 	select {
@@ -166,20 +166,28 @@ func (c *TSCache) WriteChunkToItem(item *tsCacheItem, data []byte) {
 		// 如果通道已满，说明已经有通知在队列中，无需重复发送
 	}
 
-	// 更新缓存的字节计数
+	// 更新缓存的字节计数并清理旧数据
 	c.mu.Lock()
-	c.curBytes += int64(len(data))
+	c.curBytes += dataLen
 
 	// 检查是否超过最大字节数，如果超过则触发清理
-	for c.curBytes > c.maxBytes && c.ll.Back() != nil {
+	cleanupCount := 0
+	maxCleanup := 10 // 限制最大清理次数，避免长时间阻塞
+	for c.curBytes > c.maxBytes && c.ll.Back() != nil && cleanupCount < maxCleanup {
 		// 查找最不活跃的缓存项并移除
 		leastActiveElement := c.findLeastActiveItem()
 		if leastActiveElement != nil {
 			leastActiveItem := leastActiveElement.Value.(*tsCacheItem)
-			// 计算并减去该缓存项的字节数
+			// 先计算字节数，再移除项
 			itemBytes := leastActiveItem.calculateTotalBytes()
+			// 从映射和链表中移除
+			delete(c.items, leastActiveItem.key)
+			c.ll.Remove(leastActiveElement)
+			// 更新字节计数
 			c.curBytes -= itemBytes
-			c.removeItem(leastActiveItem)
+			// 异步关闭缓存项，释放资源
+			go leastActiveItem.Close()
+			cleanupCount++
 		}
 	}
 	c.mu.Unlock()
@@ -240,10 +248,11 @@ func (c *TSCache) WriteChunkWithByteTracking(item *tsCacheItem, data []byte) {
 		return
 	}
 
-	item.mutex.Lock()
-	defer item.mutex.Unlock()
+	var dataLen int64
 
+	item.mutex.Lock()
 	if item.closed {
+		item.mutex.Unlock()
 		return
 	}
 
@@ -260,24 +269,8 @@ func (c *TSCache) WriteChunkWithByteTracking(item *tsCacheItem, data []byte) {
 		item.tail.next = newChunk
 		item.tail = newChunk
 	}
-
-	// 更新缓存的字节计数
-	c.mu.Lock()
-	c.curBytes += int64(len(data))
-
-	// 检查是否超过最大字节数，如果超过则触发清理
-	for c.curBytes > c.maxBytes && c.ll.Back() != nil {
-		// 查找最不活跃的缓存项并移除
-		leastActiveElement := c.findLeastActiveItem()
-		if leastActiveElement != nil {
-			leastActiveItem := leastActiveElement.Value.(*tsCacheItem)
-			// 计算并减去该缓存项的字节数
-			itemBytes := leastActiveItem.calculateTotalBytes()
-			c.curBytes -= itemBytes
-			c.removeItem(leastActiveItem)
-		}
-	}
-	c.mu.Unlock()
+	dataLen = int64(len(data))
+	item.mutex.Unlock()
 
 	// 通知等待的读取者有新数据
 	select {
@@ -285,6 +278,32 @@ func (c *TSCache) WriteChunkWithByteTracking(item *tsCacheItem, data []byte) {
 	default:
 		// 如果通道已满，说明已经有通知在队列中，无需重复发送
 	}
+
+	// 更新缓存的字节计数并清理旧数据
+	c.mu.Lock()
+	c.curBytes += dataLen
+
+	// 检查是否超过最大字节数，如果超过则触发清理
+	cleanupCount := 0
+	maxCleanup := 10 // 限制最大清理次数，避免长时间阻塞
+	for c.curBytes > c.maxBytes && c.ll.Back() != nil && cleanupCount < maxCleanup {
+		// 查找最不活跃的缓存项并移除
+		leastActiveElement := c.findLeastActiveItem()
+		if leastActiveElement != nil {
+			leastActiveItem := leastActiveElement.Value.(*tsCacheItem)
+			// 先计算字节数，再移除项
+			itemBytes := leastActiveItem.calculateTotalBytes()
+			// 从映射和链表中移除
+			delete(c.items, leastActiveItem.key)
+			c.ll.Remove(leastActiveElement)
+			// 更新字节计数
+			c.curBytes -= itemBytes
+			// 异步关闭缓存项，释放资源
+			go leastActiveItem.Close()
+			cleanupCount++
+		}
+	}
+	c.mu.Unlock()
 }
 
 // 计算缓存项的总字节数
@@ -347,6 +366,11 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 			}
 		case <-done:
 			return nil
+		case <-time.After(5 * time.Second):
+			if c.closed {
+				return nil
+			}
+			return io.ErrNoProgress
 		}
 	}
 }

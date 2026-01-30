@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/qist/tvgate/auth"
-	"github.com/qist/tvgate/logger"
 	"net"
 	"time"
+
+	"github.com/qist/tvgate/auth"
+	"github.com/qist/tvgate/logger"
+
 	// "github.com/qist/tvgate/monitor"
 	"io"
 	"net/http"
@@ -307,13 +309,13 @@ func CopyWithContext(
 
 // CopyTSWithCache 处理 TS 流缓存读取或从源读取写入响应
 func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader, key string) error {
-	// 尝试从缓存获取
-	if cacheItem, ok := GlobalTSCache.Get(key); ok {
+	cacheItem, ok := GlobalTSCache.Get(key)
+	if ok {
 		done := make(chan struct{})
 		defer close(done)
 
 		dst.Header().Del("Content-Length")
-		if err := cacheItem.ReadAll(dst, done); err != nil && err != io.EOF {
+		if err := cacheItem.ReadAll(dst, done); err != nil && err != io.EOF && err != io.ErrNoProgress {
 			logger.LogPrintf("从缓存读取TS数据出错: %v", err)
 		}
 
@@ -323,45 +325,73 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 		return nil
 	}
 
-	// singleflight 确保同 key 只拉一次源
-	_, err, _ := GlobalTSCache.sf.Do(key, func() (interface{}, error) {
-		cacheItem, _ := GlobalTSCache.GetOrCreate(key)
-		defer cacheItem.Close()
+	// 创建带超时的上下文
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
-		dst.Header().Del("Content-Length")
-		buf := make([]byte, 32*1024)
+	resultChan := make(chan struct {
+		err error
+	}, 1)
 
-		for {
-			n, rErr := src.Read(buf)
-			if n > 0 {
-				chunk := make([]byte, n)
-				copy(chunk, buf[:n])
-
-				GlobalTSCache.WriteChunkWithByteTracking(cacheItem, chunk)
-
-				written, wErr := dst.Write(chunk)
-				if wErr != nil {
-					return nil, wErr
-				}
-				if written != n {
-					return nil, io.ErrShortWrite
-				}
-
-				if f, ok := dst.(http.Flusher); ok {
-					f.Flush()
-				}
+	// singleflight 确保同 key 只拉一次源，但使用 goroutine 避免阻塞
+	go func() {
+		_, err, shared := GlobalTSCache.sf.Do(key, func() (interface{}, error) {
+			cacheItem, created := GlobalTSCache.GetOrCreate(key)
+			if !created {
+				return nil, nil
 			}
 
-			if rErr != nil {
-				if rErr == io.EOF {
-					return nil, nil
+			dst.Header().Del("Content-Length")
+			buf := make([]byte, 32*1024)
+
+			for {
+				n, rErr := src.Read(buf)
+				if n > 0 {
+					chunk := make([]byte, n)
+					copy(chunk, buf[:n])
+
+					GlobalTSCache.WriteChunkWithByteTracking(cacheItem, chunk)
+
+					written, wErr := dst.Write(chunk)
+					if wErr != nil {
+						cacheItem.Close()
+						return nil, wErr
+					}
+					if written != n {
+						cacheItem.Close()
+						return nil, io.ErrShortWrite
+					}
+
+					if f, ok := dst.(http.Flusher); ok {
+						f.Flush()
+					}
 				}
-				return nil, rErr
+
+				if rErr != nil {
+					if rErr == io.EOF {
+						return nil, nil
+					}
+					cacheItem.Close()
+					return nil, rErr
+				}
 			}
+		})
+
+		if shared {
+			resultChan <- struct{ err error }{err: nil}
+		} else {
+			resultChan <- struct{ err error }{err: err}
 		}
-	})
+	}()
 
-	return err
+	select {
+	case <-timeoutCtx.Done():
+		logger.LogPrintf("TS下载超时，key: %s", key)
+		GlobalTSCache.Remove(key)
+		return timeoutCtx.Err()
+	case result := <-resultChan:
+		return result.err
+	}
 }
 
 func HandleCopyError(r *http.Request, err error, proxyResp *http.Response) {
