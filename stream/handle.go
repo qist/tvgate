@@ -326,7 +326,7 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 	}
 
 	// 创建带超时的上下文
-	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	resultChan := make(chan struct {
