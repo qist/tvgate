@@ -317,7 +317,8 @@ func Handler(client *http.Client) http.HandlerFunc {
 				}
 
 				// 为每个请求创建唯一的传输层配置，避免连接复用问题
-				proxyClient, err := proxy.CreateUniqueProxyClient(ctx, &config.Cfg, *selectedProxy, pg.IPv6)
+				// proxyClient, err := proxy.CreateUniqueProxyClient(ctx, &config.Cfg, *selectedProxy, pg.IPv6)
+				proxyClient, err := proxy.CreateProxyClient(ctx, &config.Cfg, *selectedProxy, pg.IPv6)
 				if err != nil {
 					markProxyResult(pg, selectedProxy, false)
 					continue
