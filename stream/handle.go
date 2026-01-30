@@ -752,5 +752,5 @@ func normalizeCacheKey(rawURL string) string {
 	}
 
 	// 普通 URL（没有嵌套域名）
-	return u.Host + u.Path
+	return u.String()
 }
