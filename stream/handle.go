@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"time"
+	"strconv"
 
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/logger"
@@ -746,20 +747,25 @@ func normalizeCacheKey(rawURL string) string {
 	return u.Host + u.Path
 }
 
+var fakeExt = []string{
+	".ts", ".m3u8", ".key", ".smil",
+	".php", ".asp", ".do", ".cgi",
+}
+
 func looksLikeDomain(s string) bool {
 	// 必须有点
 	if !strings.Contains(s, ".") {
 		return false
 	}
 
-	// 不能是文件
-	if strings.HasSuffix(s, ".ts") ||
-		strings.HasSuffix(s, ".m3u8") ||
-		strings.HasSuffix(s, ".key") {
-		return false
+	// 排除文件/脚本/SMIL目录
+	for _, ext := range fakeExt {
+		if strings.HasSuffix(strings.ToLower(s), ext) {
+			return false
+		}
 	}
 
-	// 不能带逗号（流名特征）
+	// 不能带逗号
 	if strings.Contains(s, ",") {
 		return false
 	}
@@ -767,6 +773,12 @@ func looksLikeDomain(s string) bool {
 	// 至少两段
 	parts := strings.Split(s, ".")
 	if len(parts) < 2 {
+		return false
+	}
+
+	// 顶级域不能是纯数字
+	tld := parts[len(parts)-1]
+	if _, err := strconv.Atoi(tld); err == nil {
 		return false
 	}
 
