@@ -1,7 +1,7 @@
 # ========================================================
 # Stage: build
 # ========================================================
-FROM golang:alpine AS build
+FROM --platform=$BUILDPLATFORM golang:alpine AS build
 WORKDIR /app
 
 # 复制源码
