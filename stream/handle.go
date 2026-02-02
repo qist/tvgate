@@ -345,7 +345,17 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 			}
 
 			dst.Header().Del("Content-Length")
-			buf := make([]byte, 32*1024)
+			buf := make([]byte, 16*1024) // 16KB 小缓冲区，实现真正的流式写入
+
+			// 是否支持 http flush
+			flusher, canFlush := dst.(http.Flusher)
+
+			// flush 定时器（降低延迟）
+			flushTicker := time.NewTicker(200 * time.Millisecond)
+			defer flushTicker.Stop()
+
+			const flushThreshold = 32 * 1024 // 32KB，达到阈值时 Flush
+			var bytesWritten int64
 
 			for {
 				n, rErr := src.Read(buf)
@@ -353,46 +363,54 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 					chunk := make([]byte, n)
 					copy(chunk, buf[:n])
 
+					// 写入缓存
 					GlobalTSCache.WriteChunkWithByteTracking(cacheItem, chunk)
 
-					written, wErr := dst.Write(chunk)
-					if wErr != nil {
-						cacheItem.Close()
-						return nil, wErr
-					}
-					if written != n {
-						cacheItem.Close()
-						return nil, io.ErrShortWrite
+					// 流式写入客户端
+					written := 0
+					for written < n {
+						wn, wErr := dst.Write(chunk[written:])
+						if wErr != nil {
+							// 客户端写入错误，不要关闭整个缓存
+							return nil, wErr
+						}
+						written += wn
+						bytesWritten += int64(wn)
 					}
 
-					if f, ok := dst.(http.Flusher); ok {
-						f.Flush()
+					// 大数据量触发 flush
+					if canFlush && bytesWritten >= flushThreshold {
+						flusher.Flush()
+						bytesWritten = 0
+					}
+
+					// 非阻塞检查 flush 定时器
+					select {
+					case <-flushTicker.C:
+						if canFlush && bytesWritten > 0 {
+							flusher.Flush()
+							bytesWritten = 0
+						}
+					default:
 					}
 				}
 
 				if rErr != nil {
+					// 最后一次 Flush
+					if canFlush && bytesWritten > 0 {
+						flusher.Flush()
+					}
+
 					if rErr == io.EOF {
 						return nil, nil
 					}
-					cacheItem.Close()
+					// 读取错误，不要关闭整个缓存
 					return nil, rErr
 				}
 			}
 		})
 
 		if shared {
-			// 当共享结果时，从缓存中读取数据并写入响应
-			if cacheItem, ok := GlobalTSCache.Get(key); ok {
-				dst.Header().Del("Content-Length")
-				done := make(chan struct{})
-				defer close(done)
-				if err := cacheItem.ReadAll(dst, done); err != nil && err != io.EOF && err != io.ErrNoProgress {
-					logger.LogPrintf("[TS缓存] 读取出错: %v, key: %s", err, key)
-				}
-				if f, ok := dst.(http.Flusher); ok {
-					f.Flush()
-				}
-			}
 			resultChan <- struct{ err error }{err: nil}
 		} else {
 			resultChan <- struct{ err error }{err: err}
