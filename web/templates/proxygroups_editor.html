@@ -495,9 +495,9 @@
         <!-- 列表视图 -->
         <div id="list-view">
             <div class="form-buttons">
-                <button class="btn btn-success" onclick="showAddProxyGroupModal()">添加代理组</button>
-                <button class="btn" onclick="loadConfig()">重新加载</button>
-                <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
+                <button type="button" class="btn btn-success" onclick="showAddProxyGroupModal()">添加代理组</button>
+                <button type="button" class="btn" onclick="loadConfig()">重新加载</button>
+                <button type="button" class="btn btn-primary" onclick="saveConfig()">保存配置</button>
             </div>
 
             <div class="grid" id="proxygroups-list">
@@ -547,7 +547,7 @@
 
                 <div class="subsection">
                     <h3 class="subsection-title">代理服务器
-                        <button class="btn btn-sm btn-success" style="float: right;"
+                        <button type="button" class="btn btn-sm btn-success" style="float: right;"
                             onclick="showAddProxyModal()">添加代理</button>
                     </h3>
                     <div id="proxy-list" class="proxy-list">
@@ -556,8 +556,8 @@
                 </div>
 
                 <div class="btn-group">
-                    <button class="btn cancel" onclick="closeProxyGroupModal()">取消</button>
-                    <button class="btn save" id="saveProxyGroupBtn">添加</button>
+                    <button type="button" class="btn cancel" onclick="closeProxyGroupModal()">取消</button>
+                    <button type="button" class="btn save" id="saveProxyGroupBtn">添加</button>
                 </div>
 
                 <div class="subsection">
@@ -573,7 +573,7 @@
                     <div id="domains-container">
                         <div class="empty-message">暂无域名规则</div>
                     </div>
-                    <button class="add-domain-btn" onclick="addDomainField()">添加域名规则</button>
+                    <button type="button" class="add-domain-btn" onclick="addDomainField()">添加域名规则</button>
                 </div>
             </div>
         </div>
@@ -626,8 +626,8 @@
                     <button type="button" class="add-domain-btn" onclick="addHeaderField()">添加Header</button>
                 </div>
                 <div class="btn-group">
-                    <button class="btn cancel" onclick="closeProxyModal()">取消</button>
-                    <button class="btn save" id="saveProxyBtn" onclick="saveProxy()">添加</button>
+                    <button type="button" class="btn cancel" onclick="closeProxyModal()">取消</button>
+                    <button type="button" class="btn save" id="saveProxyBtn" onclick="saveProxy()">添加</button>
                 </div>
             </div>
         </div>
@@ -703,7 +703,7 @@
             cardDiv.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <h3 style="margin: 0;">${name || '未命名'}</h3>
-                    <button class="btn btn-sm btn-danger" style="margin-left: auto;" onclick="deleteProxyGroup('${name}')">删除</button>
+                    <button type="button" class="btn btn-sm btn-danger" style="margin-left: auto;" onclick="deleteProxyGroup('${name}')">删除</button>
                 </div>
                 <p><strong>负载均衡:</strong> ${proxyGroup.loadbalance || '未设置'}</p>
                 <p><strong>检查间隔:</strong> ${proxyGroup.interval || '未设置'}</p>
@@ -860,7 +860,7 @@
                 domainDiv.className = 'domain-input-container';
                 domainDiv.innerHTML = `
                     <input type="text" class="form-control domain-input" value="${domain}">
-                    <button class="domain-remove-btn" onclick="removeDomainField(this)">删除</button>
+                    <button type="button" class="domain-remove-btn" onclick="removeDomainField(this)">删除</button>
                 `;
                 container.appendChild(domainDiv);
             });
@@ -878,7 +878,7 @@
             domainDiv.className = 'domain-input-container';
             domainDiv.innerHTML = `
                 <input type="text" class="form-control domain-input" placeholder="例如: *.example.com 或 192.168.1.0/24">
-                <button class="domain-remove-btn" onclick="removeDomainField(this)">删除</button>
+                <button type="button" class="domain-remove-btn" onclick="removeDomainField(this)">删除</button>
             `;
             container.appendChild(domainDiv);
         }
@@ -914,8 +914,8 @@
                     <div class="proxy-item-header">
                         <span class="proxy-item-title">${proxy.name || '未命名'}</span>
                         <div class="btn-group-sm">
-                            <button class="btn btn-sm btn-warning" onclick="showEditProxyModal(${index})">编辑</button>
-                            <button class="btn btn-sm btn-danger" onclick="removeProxyServer(${index})">删除</button>
+                            <button type="button" class="btn btn-sm btn-warning" onclick="showEditProxyModal(${index})">编辑</button>
+                            <button type="button" class="btn btn-sm btn-danger" onclick="removeProxyServer(${index})">删除</button>
                         </div>
                     </div>
                     <p><strong>类型:</strong> ${proxy.type || ''}</p>
