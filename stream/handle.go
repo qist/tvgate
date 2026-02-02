@@ -313,11 +313,10 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 	cacheItem, ok := GlobalTSCache.Get(key)
 	if ok {
 		logger.LogPrintf("[TS缓存] 命中，key: %s", key)
-		done := make(chan struct{})
-		defer close(done)
 
 		dst.Header().Del("Content-Length")
-		if err := cacheItem.ReadAll(dst, done); err != nil && err != io.EOF && err != io.ErrNoProgress {
+		buf := make([]byte, 16*1024) // 16KB 缓冲区
+		if err := cacheItem.CopyTS(ctx, dst, buf, nil); err != nil && err != io.EOF && err != io.ErrNoProgress {
 			logger.LogPrintf("[TS缓存] 读取出错: %v, key: %s", err, key)
 		}
 
