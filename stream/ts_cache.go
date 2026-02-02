@@ -2,8 +2,6 @@ package stream
 
 import (
 	"container/list"
-	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -95,18 +93,17 @@ func NewTSCache(maxBytes int64, ttl time.Duration) *TSCache {
 }
 
 func (c *TSCache) Get(key string) (*tsCacheItem, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	if it, ok := c.items[key]; ok {
-		if time.Now().After(it.expireAt) || it.closed || it.element == nil {
+		if time.Now().After(it.expireAt) {
 			// 注意：这里不删除项目，因为可能有客户端正在读取
 			// 项目将在写入端被标记为过期，或通过后台清理
 			return nil, false
 		}
-		// 更新访问时间和过期时间
+		// 更新访问时间
 		it.accessAt = time.Now()
-		it.expireAt = time.Now().Add(c.ttl)
 		c.ll.MoveToFront(it.element)
 		return it, true
 	}
@@ -118,7 +115,7 @@ func (c *TSCache) GetOrCreate(key string) (*tsCacheItem, bool) {
 	defer c.mu.Unlock()
 
 	if it, ok := c.items[key]; ok {
-		if time.Now().After(it.expireAt) || it.closed || it.element == nil {
+		if time.Now().After(it.expireAt) {
 			c.removeItem(it)
 			return c.createItem(key), true
 		}
@@ -181,8 +178,15 @@ func (c *TSCache) WriteChunkToItem(item *tsCacheItem, data []byte) {
 		leastActiveElement := c.findLeastActiveItem()
 		if leastActiveElement != nil {
 			leastActiveItem := leastActiveElement.Value.(*tsCacheItem)
-			// 调用 removeItem 方法来清理缓存项，确保资源正确释放
-			c.removeItem(leastActiveItem)
+			// 先计算字节数，再移除项
+			itemBytes := leastActiveItem.calculateTotalBytes()
+			// 从映射和链表中移除
+			delete(c.items, leastActiveItem.key)
+			c.ll.Remove(leastActiveElement)
+			// 更新字节计数
+			c.curBytes -= itemBytes
+			// 异步关闭缓存项，释放资源
+			go leastActiveItem.Close()
 			cleanupCount++
 		}
 	}
@@ -238,10 +242,68 @@ func (c *tsCacheItem) WriteChunk(data []byte) {
 }
 
 // WriteChunkWithByteTracking 向缓存项写入数据块，并跟踪字节计数到父缓存
-// 注意：此方法已废弃，建议使用 WriteChunkToItem 方法
 func (c *TSCache) WriteChunkWithByteTracking(item *tsCacheItem, data []byte) {
-	// 直接调用 WriteChunkToItem 方法，避免重复代码
-	c.WriteChunkToItem(item, data)
+	// 检查数据是否为nil
+	if data == nil || item == nil {
+		return
+	}
+
+	var dataLen int64
+
+	item.mutex.Lock()
+	if item.closed {
+		item.mutex.Unlock()
+		return
+	}
+
+	// 创建新的块
+	newChunk := &tsCacheChunk{
+		data: make([]byte, len(data)),
+	}
+	copy(newChunk.data, data)
+
+	if item.tail == nil {
+		item.head = newChunk
+		item.tail = newChunk
+	} else {
+		item.tail.next = newChunk
+		item.tail = newChunk
+	}
+	dataLen = int64(len(data))
+	item.mutex.Unlock()
+
+	// 通知等待的读取者有新数据
+	select {
+	case item.waitCh <- struct{}{}:
+	default:
+		// 如果通道已满，说明已经有通知在队列中，无需重复发送
+	}
+
+	// 更新缓存的字节计数并清理旧数据
+	c.mu.Lock()
+	c.curBytes += dataLen
+
+	// 检查是否超过最大字节数，如果超过则触发清理
+	cleanupCount := 0
+	maxCleanup := 10 // 限制最大清理次数，避免长时间阻塞
+	for c.curBytes > c.maxBytes && c.ll.Back() != nil && cleanupCount < maxCleanup {
+		// 查找最不活跃的缓存项并移除
+		leastActiveElement := c.findLeastActiveItem()
+		if leastActiveElement != nil {
+			leastActiveItem := leastActiveElement.Value.(*tsCacheItem)
+			// 先计算字节数，再移除项
+			itemBytes := leastActiveItem.calculateTotalBytes()
+			// 从映射和链表中移除
+			delete(c.items, leastActiveItem.key)
+			c.ll.Remove(leastActiveElement)
+			// 更新字节计数
+			c.curBytes -= itemBytes
+			// 异步关闭缓存项，释放资源
+			go leastActiveItem.Close()
+			cleanupCount++
+		}
+	}
+	c.mu.Unlock()
 }
 
 // 计算缓存项的总字节数
@@ -313,129 +375,6 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 	}
 }
 
-// CopyTS 从缓存中读取 TS 数据并发送给客户端，参考 Copytext 函数实现
-// 每个客户端独立读取和发送数据，相互不影响
-func (c *tsCacheItem) CopyTS(ctx context.Context, dst io.Writer, buf []byte, updateActive func()) error {
-	// 活跃时间心跳
-	var activeTicker *time.Ticker
-	if updateActive != nil {
-		activeTicker = time.NewTicker(5 * time.Second)
-		defer activeTicker.Stop()
-		defer updateActive() // 退出前更新一次
-	}
-
-	// flush 定时器（降低延迟）
-	flushTicker := time.NewTicker(200 * time.Millisecond)
-	defer flushTicker.Stop()
-
-	// 是否支持 http flush
-	flusher, canFlush := dst.(http.Flusher)
-
-	// 统计写入字节数
-	bytesWritten := 0
-
-	// 当前读取的块
-	var current *tsCacheChunk
-
-	for {
-		// 读取数据
-		c.mutex.RLock()
-		if current == nil {
-			current = c.head
-		}
-
-		// 读取当前块的数据
-		var data []byte
-		var next *tsCacheChunk
-		if current != nil {
-			data = current.data
-			next = current.next
-		}
-		c.mutex.RUnlock()
-
-		// 写入数据
-		if len(data) > 0 {
-			n, err := dst.Write(data)
-			if err != nil {
-				return fmt.Errorf("写入错误: %w", err)
-			}
-			if n < len(data) {
-				return io.ErrShortWrite
-			}
-			bytesWritten += n
-
-			// 大数据量触发 flush
-			if canFlush && bytesWritten >= 32*1024 {
-				flusher.Flush()
-				bytesWritten = 0
-			}
-
-			// 移动到下一个块
-			current = next
-		} else {
-			// 没有数据，检查是否关闭
-			c.mutex.RLock()
-			closed := c.closed
-			c.mutex.RUnlock()
-
-			if closed {
-				// 关闭时，如果还有数据未 flush，执行 flush
-				if canFlush && bytesWritten > 0 {
-					flusher.Flush()
-				}
-				return nil
-			}
-
-			// 等待新数据
-			select {
-			case _, ok := <-c.waitCh:
-				if !ok {
-					// 通道关闭，检查是否还有数据
-					c.mutex.RLock()
-					closed := c.closed
-					c.mutex.RUnlock()
-					if closed {
-						if canFlush && bytesWritten > 0 {
-							flusher.Flush()
-						}
-						return nil
-					}
-				}
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(5 * time.Second):
-				// 超时检查
-				c.mutex.RLock()
-				closed := c.closed
-				c.mutex.RUnlock()
-				if closed {
-					if canFlush && bytesWritten > 0 {
-						flusher.Flush()
-					}
-					return nil
-				}
-				return io.ErrNoProgress
-			}
-		}
-
-		// 非阻塞检查 ctx / ticker
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-flushTicker.C:
-			if canFlush && bytesWritten > 0 {
-				flusher.Flush()
-				bytesWritten = 0
-			}
-		case <-activeTicker.C:
-			if updateActive != nil {
-				updateActive()
-			}
-		default:
-		}
-	}
-}
-
 func (c *tsCacheItem) Close() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -456,10 +395,6 @@ func (c *tsCacheItem) Close() {
 	}
 	c.head = nil
 	c.tail = nil
-
-	// 注意：不再设置 c.element = nil，因为这可能导致服务器崩溃
-	// 当缓存项被从 TSCache.items 映射中删除，并且从链表中移除后，
-	// 它就不再被引用了，垃圾回收器会自动回收它，即使它内部存在循环引用
 }
 
 func (c *TSCache) cleanupLoop() {
