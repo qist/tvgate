@@ -345,7 +345,9 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 			}
 
 			dst.Header().Del("Content-Length")
-			buf := make([]byte, 16*1024) // 16KB 小缓冲区，实现真正的流式写入
+			const flushThreshold = 32 * 1024    // 32KB，达到阈值时 Flush
+
+			buf := make([]byte, flushThreshold) // 32KB 小缓冲区，实现真正的流式写入
 
 			// 是否支持 http flush
 			flusher, canFlush := dst.(http.Flusher)
@@ -354,7 +356,6 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 			flushTicker := time.NewTicker(200 * time.Millisecond)
 			defer flushTicker.Stop()
 
-			const flushThreshold = 32 * 1024 // 32KB，达到阈值时 Flush
 			var bytesWritten int64
 
 			for {
