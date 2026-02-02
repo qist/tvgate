@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"time"
 	"strconv"
+	"time"
 
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/logger"
@@ -381,6 +381,18 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 		})
 
 		if shared {
+			// 当共享结果时，从缓存中读取数据并写入响应
+			if cacheItem, ok := GlobalTSCache.Get(key); ok {
+				dst.Header().Del("Content-Length")
+				done := make(chan struct{})
+				defer close(done)
+				if err := cacheItem.ReadAll(dst, done); err != nil && err != io.EOF && err != io.ErrNoProgress {
+					logger.LogPrintf("[TS缓存] 读取出错: %v, key: %s", err, key)
+				}
+				if f, ok := dst.(http.Flusher); ok {
+					f.Flush()
+				}
+			}
 			resultChan <- struct{ err error }{err: nil}
 		} else {
 			resultChan <- struct{ err error }{err: err}
