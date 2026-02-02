@@ -310,10 +310,12 @@ func CopyWithContext(
 
 // CopyTSWithCache 处理 TS 流缓存读取或从源读取写入响应
 func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader, key string) error {
+	cache := GlobalTSCache
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 
-	cacheItem, created := GlobalTSCache.GetOrCreate(key)
+	cacheItem, created := cache.GetOrCreate(key)
 	if !created {
 		logger.LogPrintf("[TS缓存] 命中，key: %s", key)
 		dst.Header().Del("Content-Length")
@@ -334,20 +336,22 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 		readErrCh <- cacheItem.ReadAll(dst, timeoutCtx.Done())
 	}()
 
-	buf := make([]byte, 32*1024)
+	buf := buffer.GetBuffer(32 * 1024)
+	defer buffer.PutBuffer(32*1024, buf)
+
 	for {
 		if timeoutCtx.Err() != nil {
 			if rc, ok := src.(io.ReadCloser); ok {
 				_ = rc.Close()
 			}
 			cacheItem.Seal(timeoutCtx.Err())
-			GlobalTSCache.Remove(key)
+			cache.Remove(key)
 			break
 		}
 
 		n, rErr := src.Read(buf)
 		if n > 0 {
-			GlobalTSCache.WriteChunkWithByteTracking(cacheItem, buf[:n])
+			cache.WriteChunkWithByteTracking(cacheItem, buf[:n])
 		}
 		if rErr != nil {
 			if rErr == io.EOF {

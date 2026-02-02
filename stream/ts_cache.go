@@ -2,6 +2,7 @@ package stream
 
 import (
 	"container/list"
+	"errors"
 	"io"
 	"net/http"
 	"sync"
@@ -44,6 +45,8 @@ type TSCache struct {
 	// 控制清理 goroutine 的通道
 	cleanupDone chan struct{}
 }
+
+var ErrCacheClosed = errors.New("cache item closed")
 
 var GlobalTSCache *TSCache
 
@@ -172,11 +175,16 @@ func (c *TSCache) WriteChunkWithByteTracking(item *tsCacheItem, data []byte) {
 	item.mutex.Unlock()
 
 	// 通知等待的读取者有新数据
-	select {
-	case item.waitCh <- struct{}{}:
-	default:
-		// 如果通道已满，说明已经有通知在队列中，无需重复发送
-	}
+	func() {
+		defer func() {
+			_ = recover()
+		}()
+		select {
+		case item.waitCh <- struct{}{}:
+		default:
+			// 如果通道已满，说明已经有通知在队列中，无需重复发送
+		}
+	}()
 
 	// 更新缓存的字节计数并清理旧数据
 	c.mu.Lock()
@@ -266,12 +274,16 @@ func (c *tsCacheItem) Close() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	ch := c.waitCh
-	c.closed = true
-	c.err = nil
+	if !c.closed {
+		c.closed = true
+		if c.err == nil {
+			c.err = ErrCacheClosed
+		}
+		safeCloseSignal(c.waitCh)
+	}
+
 	c.chunks = nil
 	c.bytes = 0
-	safeCloseSignal(ch)
 }
 
 func (c *TSCache) cleanupLoop() {
@@ -304,18 +316,8 @@ func (c *TSCache) cleanupLoop() {
 
 // findLeastActiveItem 查找最不活跃的缓存项（最长时间未访问的项）
 func (c *TSCache) findLeastActiveItem() *list.Element {
-	var leastActive *list.Element
-	earliestTime := time.Now()
-
-	for e := c.ll.Back(); e != nil; e = e.Prev() {
-		it := e.Value.(*tsCacheItem)
-		if it.accessAt.Before(earliestTime) {
-			earliestTime = it.accessAt
-			leastActive = e
-		}
-	}
-
-	return leastActive
+	// 由于我们使用 MoveToFront，列表尾部就是最久未使用的项
+	return c.ll.Back()
 }
 
 func (c *TSCache) removeItem(it *tsCacheItem) {
