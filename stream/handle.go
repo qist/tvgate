@@ -310,17 +310,16 @@ func CopyWithContext(
 
 // CopyTSWithCache 处理 TS 流缓存读取或从源读取写入响应
 func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader, key string) error {
-	cacheItem, ok := GlobalTSCache.Get(key)
-	if ok {
-		logger.LogPrintf("[TS缓存] 命中，key: %s", key)
-		done := make(chan struct{})
-		defer close(done)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
 
+	cacheItem, created := GlobalTSCache.GetOrCreate(key)
+	if !created {
+		logger.LogPrintf("[TS缓存] 命中，key: %s", key)
 		dst.Header().Del("Content-Length")
-		if err := cacheItem.ReadAll(dst, done); err != nil && err != io.EOF && err != io.ErrNoProgress {
+		if err := cacheItem.ReadAll(dst, timeoutCtx.Done()); err != nil && err != io.EOF {
 			logger.LogPrintf("[TS缓存] 读取出错: %v, key: %s", err, key)
 		}
-
 		if f, ok := dst.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -328,104 +327,45 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 	}
 
 	logger.LogPrintf("[TS缓存] 未命中，开始下载并缓存，key: %s", key)
-	// 创建带超时的上下文
-	timeoutCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
+	dst.Header().Del("Content-Length")
 
-	resultChan := make(chan struct {
-		err error
-	}, 1)
-
-	// singleflight 确保同 key 只拉一次源，但使用 goroutine 避免阻塞
+	readErrCh := make(chan error, 1)
 	go func() {
-		_, err, shared := GlobalTSCache.sf.Do(key, func() (interface{}, error) {
-			cacheItem, created := GlobalTSCache.GetOrCreate(key)
-			if !created {
-				return nil, nil
-			}
-
-			dst.Header().Del("Content-Length")
-			const flushThreshold = 32 * 1024    // 32KB，达到阈值时 Flush
-
-			buf := make([]byte, flushThreshold) // 32KB 小缓冲区，实现真正的流式写入
-
-			// 是否支持 http flush
-			flusher, canFlush := dst.(http.Flusher)
-
-			// flush 定时器（降低延迟）
-			flushTicker := time.NewTicker(200 * time.Millisecond)
-			defer flushTicker.Stop()
-
-			var bytesWritten int64
-
-			for {
-				n, rErr := src.Read(buf)
-				if n > 0 {
-					chunk := make([]byte, n)
-					copy(chunk, buf[:n])
-
-					// 写入缓存
-					GlobalTSCache.WriteChunkWithByteTracking(cacheItem, chunk)
-
-					// 流式写入客户端
-					written := 0
-					for written < n {
-						wn, wErr := dst.Write(chunk[written:])
-						if wErr != nil {
-							// 客户端写入错误，不要关闭整个缓存
-							return nil, wErr
-						}
-						written += wn
-						bytesWritten += int64(wn)
-					}
-
-					// 大数据量触发 flush
-					if canFlush && bytesWritten >= flushThreshold {
-						flusher.Flush()
-						bytesWritten = 0
-					}
-
-					// 非阻塞检查 flush 定时器
-					select {
-					case <-flushTicker.C:
-						if canFlush && bytesWritten > 0 {
-							flusher.Flush()
-							bytesWritten = 0
-						}
-					default:
-					}
-				}
-
-				if rErr != nil {
-					// 最后一次 Flush
-					if canFlush && bytesWritten > 0 {
-						flusher.Flush()
-					}
-
-					if rErr == io.EOF {
-						return nil, nil
-					}
-					// 读取错误，不要关闭整个缓存
-					return nil, rErr
-				}
-			}
-		})
-
-		if shared {
-			resultChan <- struct{ err error }{err: nil}
-		} else {
-			resultChan <- struct{ err error }{err: err}
-		}
+		readErrCh <- cacheItem.ReadAll(dst, timeoutCtx.Done())
 	}()
 
-	select {
-	case <-timeoutCtx.Done():
-		logger.LogPrintf("TS下载超时，key: %s", key)
-		GlobalTSCache.Remove(key)
-		return timeoutCtx.Err()
-	case result := <-resultChan:
-		return result.err
+	buf := make([]byte, 32*1024)
+	for {
+		if timeoutCtx.Err() != nil {
+			if rc, ok := src.(io.ReadCloser); ok {
+				_ = rc.Close()
+			}
+			cacheItem.Seal(timeoutCtx.Err())
+			GlobalTSCache.Remove(key)
+			break
+		}
+
+		n, rErr := src.Read(buf)
+		if n > 0 {
+			GlobalTSCache.WriteChunkWithByteTracking(cacheItem, buf[:n])
+		}
+		if rErr != nil {
+			if rErr == io.EOF {
+				cacheItem.Seal(nil)
+			} else {
+				cacheItem.Seal(rErr)
+			}
+			break
+		}
 	}
+
+	if err := <-readErrCh; err != nil && err != io.EOF {
+		return err
+	}
+	if f, ok := dst.(http.Flusher); ok {
+		f.Flush()
+	}
+	return nil
 }
 
 func HandleCopyError(r *http.Request, err error, proxyResp *http.Response) {

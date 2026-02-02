@@ -13,17 +13,15 @@ import (
 	"github.com/qist/tvgate/logger"
 )
 
-type tsCacheChunk struct {
-	data []byte
-	next *tsCacheChunk
-}
-
 type tsCacheItem struct {
-	key      string
-	head     *tsCacheChunk
-	tail     *tsCacheChunk
-	mutex    sync.RWMutex
-	waitCh   chan struct{} // 用于通知有新数据到达
+	key    string
+	mutex  sync.RWMutex
+	waitCh chan struct{} // 用于通知有新数据到达
+
+	chunks [][]byte
+	bytes  int64
+	err    error
+
 	expireAt time.Time
 	element  *list.Element
 	closed   bool
@@ -93,8 +91,8 @@ func NewTSCache(maxBytes int64, ttl time.Duration) *TSCache {
 }
 
 func (c *TSCache) Get(key string) (*tsCacheItem, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if it, ok := c.items[key]; ok {
 		if time.Now().After(it.expireAt) {
@@ -128,69 +126,14 @@ func (c *TSCache) GetOrCreate(key string) (*tsCacheItem, bool) {
 	return c.createItem(key), true
 }
 
-// WriteChunkToItem 将数据块写入指定的缓存项，并管理缓存大小
-func (c *TSCache) WriteChunkToItem(item *tsCacheItem, data []byte) {
-	// 检查数据是否为nil
-	if data == nil || item == nil {
+func safeCloseSignal(ch chan struct{}) {
+	if ch == nil {
 		return
 	}
-
-	var dataLen int64
-
-	item.mutex.Lock()
-	if item.closed {
-		item.mutex.Unlock()
-		return
-	}
-
-	// 创建新的块
-	newChunk := &tsCacheChunk{
-		data: make([]byte, len(data)),
-	}
-	copy(newChunk.data, data)
-
-	if item.tail == nil {
-		item.head = newChunk
-		item.tail = newChunk
-	} else {
-		item.tail.next = newChunk
-		item.tail = newChunk
-	}
-	dataLen = int64(len(data))
-	item.mutex.Unlock()
-
-	// 通知等待的读取者有新数据
-	select {
-	case item.waitCh <- struct{}{}:
-	default:
-		// 如果通道已满，说明已经有通知在队列中，无需重复发送
-	}
-
-	// 更新缓存的字节计数并清理旧数据
-	c.mu.Lock()
-	c.curBytes += dataLen
-
-	// 检查是否超过最大字节数，如果超过则触发清理
-	cleanupCount := 0
-	maxCleanup := 10 // 限制最大清理次数，避免长时间阻塞
-	for c.curBytes > c.maxBytes && c.ll.Back() != nil && cleanupCount < maxCleanup {
-		// 查找最不活跃的缓存项并移除
-		leastActiveElement := c.findLeastActiveItem()
-		if leastActiveElement != nil {
-			leastActiveItem := leastActiveElement.Value.(*tsCacheItem)
-			// 先计算字节数，再移除项
-			itemBytes := leastActiveItem.calculateTotalBytes()
-			// 从映射和链表中移除
-			delete(c.items, leastActiveItem.key)
-			c.ll.Remove(leastActiveElement)
-			// 更新字节计数
-			c.curBytes -= itemBytes
-			// 异步关闭缓存项，释放资源
-			go leastActiveItem.Close()
-			cleanupCount++
-		}
-	}
-	c.mu.Unlock()
+	defer func() {
+		_ = recover()
+	}()
+	close(ch)
 }
 
 func (c *TSCache) createItem(key string) *tsCacheItem {
@@ -204,41 +147,6 @@ func (c *TSCache) createItem(key string) *tsCacheItem {
 	c.items[key] = it
 
 	return it
-}
-
-func (c *tsCacheItem) WriteChunk(data []byte) {
-	// 检查数据是否为nil
-	if data == nil {
-		return
-	}
-
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	if c.closed {
-		return
-	}
-
-	// 创建新的块
-	newChunk := &tsCacheChunk{
-		data: make([]byte, len(data)),
-	}
-	copy(newChunk.data, data)
-
-	if c.tail == nil {
-		c.head = newChunk
-		c.tail = newChunk
-	} else {
-		c.tail.next = newChunk
-		c.tail = newChunk
-	}
-
-	// 通知等待的读取者有新数据
-	select {
-	case c.waitCh <- struct{}{}:
-	default:
-		// 如果通道已满，说明已经有通知在队列中，无需重复发送
-	}
 }
 
 // WriteChunkWithByteTracking 向缓存项写入数据块，并跟踪字节计数到父缓存
@@ -256,20 +164,11 @@ func (c *TSCache) WriteChunkWithByteTracking(item *tsCacheItem, data []byte) {
 		return
 	}
 
-	// 创建新的块
-	newChunk := &tsCacheChunk{
-		data: make([]byte, len(data)),
-	}
-	copy(newChunk.data, data)
-
-	if item.tail == nil {
-		item.head = newChunk
-		item.tail = newChunk
-	} else {
-		item.tail.next = newChunk
-		item.tail = newChunk
-	}
-	dataLen = int64(len(data))
+	cp := make([]byte, len(data))
+	copy(cp, data)
+	item.chunks = append(item.chunks, cp)
+	item.bytes += int64(len(cp))
+	dataLen = int64(len(cp))
 	item.mutex.Unlock()
 
 	// 通知等待的读取者有新数据
@@ -289,19 +188,12 @@ func (c *TSCache) WriteChunkWithByteTracking(item *tsCacheItem, data []byte) {
 	for c.curBytes > c.maxBytes && c.ll.Back() != nil && cleanupCount < maxCleanup {
 		// 查找最不活跃的缓存项并移除
 		leastActiveElement := c.findLeastActiveItem()
-		if leastActiveElement != nil {
-			leastActiveItem := leastActiveElement.Value.(*tsCacheItem)
-			// 先计算字节数，再移除项
-			itemBytes := leastActiveItem.calculateTotalBytes()
-			// 从映射和链表中移除
-			delete(c.items, leastActiveItem.key)
-			c.ll.Remove(leastActiveElement)
-			// 更新字节计数
-			c.curBytes -= itemBytes
-			// 异步关闭缓存项，释放资源
-			go leastActiveItem.Close()
-			cleanupCount++
+		if leastActiveElement == nil {
+			break
 		}
+		leastActiveItem := leastActiveElement.Value.(*tsCacheItem)
+		c.removeItem(leastActiveItem)
+		cleanupCount++
 	}
 	c.mu.Unlock()
 }
@@ -310,31 +202,16 @@ func (c *TSCache) WriteChunkWithByteTracking(item *tsCacheItem, data []byte) {
 func (c *tsCacheItem) calculateTotalBytes() int64 {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-
-	var total int64
-	current := c.head
-	for current != nil {
-		total += int64(len(current.data))
-		current = current.next
-	}
-	return total
+	return c.bytes
 }
 
 func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
-	var current *tsCacheChunk
-
+	seq := 1
 	for {
 		c.mutex.RLock()
-
-		if current == nil {
-			current = c.head
-		}
-
-		for current != nil {
-			data := current.data
-			next := current.next
+		if seq <= len(c.chunks) {
+			data := c.chunks[seq-1]
 			c.mutex.RUnlock()
-
 			if len(data) > 0 {
 				n, err := dst.Write(data)
 				if err != nil {
@@ -347,54 +224,54 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 					f.Flush()
 				}
 			}
-
-			current = next
-			c.mutex.RLock()
+			seq++
+			continue
 		}
 
-		if c.closed {
-			c.mutex.RUnlock()
-			return nil
-		}
-
+		closed := c.closed
+		retErr := c.err
 		c.mutex.RUnlock()
+
+		if closed {
+			return retErr
+		}
 
 		select {
 		case _, ok := <-c.waitCh:
 			if !ok {
-				return nil
+				continue
 			}
 		case <-done:
 			return nil
 		case <-time.After(5 * time.Second):
-			if c.closed {
-				return nil
-			}
-			return io.ErrNoProgress
+			continue
 		}
 	}
+}
+
+func (c *tsCacheItem) Seal(err error) {
+	c.mutex.Lock()
+	if c.closed {
+		c.mutex.Unlock()
+		return
+	}
+	c.closed = true
+	c.err = err
+	ch := c.waitCh
+	c.mutex.Unlock()
+	safeCloseSignal(ch)
 }
 
 func (c *tsCacheItem) Close() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	if c.closed {
-		return
-	}
+	ch := c.waitCh
 	c.closed = true
-	close(c.waitCh)
-
-	// 清理数据块链表，防止内存泄露
-	current := c.head
-	for current != nil {
-		next := current.next
-		current.data = nil
-		current.next = nil
-		current = next
-	}
-	c.head = nil
-	c.tail = nil
+	c.err = nil
+	c.chunks = nil
+	c.bytes = 0
+	safeCloseSignal(ch)
 }
 
 func (c *TSCache) cleanupLoop() {
@@ -518,8 +395,6 @@ func (c *TSCache) UpdateConfig(newMaxBytes int64, newTTL time.Duration) {
 			leastActiveElement := c.findLeastActiveItem()
 			if leastActiveElement != nil {
 				leastActiveItem := leastActiveElement.Value.(*tsCacheItem)
-				itemBytes := leastActiveItem.calculateTotalBytes()
-				c.curBytes -= itemBytes
 				c.removeItem(leastActiveItem)
 			}
 		}
@@ -540,16 +415,10 @@ func (c *TSCache) Close() {
 		next := e.Next()
 		item := e.Value.(*tsCacheItem)
 
-		// 直接关闭缓存项，而不是通过removeItem以避免潜在死锁
-		item.Close()
-
-		// 从映射中删除
-		delete(c.items, item.key)
-		// 从链表中移除
-		c.ll.Remove(e)
-
-		// 减少缓存中的字节数
 		itemBytes := item.calculateTotalBytes()
+		item.Close()
+		delete(c.items, item.key)
+		c.ll.Remove(e)
 		c.curBytes -= itemBytes
 
 		e = next
