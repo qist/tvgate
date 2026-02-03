@@ -8,8 +8,6 @@ github.com/asticode/go-astikit v0.30.0 h1:DkBkRQRIxYcknlaU7W7ksNfn4gMFsB0tqMJflx
 github.com/asticode/go-astikit v0.30.0/go.mod h1:h4ly7idim1tNhaVkdVBeXQZEE3L0xblP7fCWbgwipF0=
 github.com/asticode/go-astits v1.15.0 h1:yRyCiUc8Jj4F7clt2GDxHghMpWuFL5rkaLuGUd2/0J4=
 github.com/asticode/go-astits v1.15.0/go.mod h1:QSHmknZ51pf6KJdHKZHJTLlMegIrhega3LPWz3ND/iI=
-github.com/bluenviron/gortsplib/v5 v5.3.0 h1:uVuCjYTiSnru9ZNF9+DdNjtQgL1Mv6TKlXjdcz/U5ic=
-github.com/bluenviron/gortsplib/v5 v5.3.0/go.mod h1:0005vOF5SUy6uKqOD+vp11nDYi1y3AzM+ood9DBzCbM=
 github.com/bluenviron/mediacommon/v2 v2.7.0 h1:XPj8UQu8iZuytwaeiQvqyDrBmo7VdV2+/ND5zPdgbCY=
 github.com/bluenviron/mediacommon/v2 v2.7.0/go.mod h1:5V15TiOfeaNVmZPVuOqAwqQSWyvMV86/dijDKu5q9Zs=
 github.com/cloudflare/tableflip v1.2.3 h1:8I+B99QnnEWPHOY3fWipwVKxS70LGgUsslG7CSfmHMw=
@@ -64,8 +62,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c h1:ncq/mPwQF4JjgDlrVEn3C11VoGHZN7m8qihwgMEtzYw=
 github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c/go.mod h1:OmDBASR4679mdNQnz2pUhc2G8CO2JrUAVFDRBDP/hJE=
-github.com/qist/gortsplib/v5 v5.3.0 h1:bugi2cOA5OSr6noiHcOLRAMoLM4w4yrHyaHEEc90pT8=
-github.com/qist/gortsplib/v5 v5.3.0/go.mod h1:0005vOF5SUy6uKqOD+vp11nDYi1y3AzM+ood9DBzCbM=
+github.com/qist/gortsplib/v5 v5.3.1-0.20260203051651-e28c8bf4fb8a h1:fPw0g8T8vk1mQOp3BMp81KcCkm8wJMvpcg21mjjiyzk=
+github.com/qist/gortsplib/v5 v5.3.1-0.20260203051651-e28c8bf4fb8a/go.mod h1:0005vOF5SUy6uKqOD+vp11nDYi1y3AzM+ood9DBzCbM=
 github.com/quic-go/qpack v0.6.0 h1:g7W+BMYynC1LbYLSqRt8PBg5Tgwxn214ZZR34VIOjz8=
 github.com/quic-go/qpack v0.6.0/go.mod h1:lUpLKChi8njB4ty2bFLX2x4gzDqXwUpaO1DP9qMDZII=
 github.com/quic-go/quic-go v0.59.0 h1:OLJkp1Mlm/aS7dpKgTc6cnpynnD2Xg7C1pwL6vy/SAw=
