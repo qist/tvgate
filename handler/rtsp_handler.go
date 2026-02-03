@@ -100,12 +100,15 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	defer monitor.ActiveClients.Unregister(connID, "RTSP")
 
 	client := &gortsplib.Client{
-		Scheme: parsedURL.Scheme,
-		Host:   parsedURL.Host,
+		Scheme:        parsedURL.Scheme,
+		Host:          parsedURL.Host,
+		AnyPortEnable: true,
 		Protocol: func() *gortsplib.Protocol {
 			t := gortsplib.ProtocolTCP
 			return &t
 		}(),
+		DisableRTCPSenderReports:   true,
+		DisableRTCPReceiverReports: true,
 	}
 
 	// 代理组选择

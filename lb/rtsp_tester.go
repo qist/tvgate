@@ -37,9 +37,12 @@ func TestRTSPProxy(proxy config.ProxyConfig, rtspURL string) (time.Duration, err
 	// 创建 RTSP 客户端
 	protocol := gortsplib.ProtocolTCP
 	client := &gortsplib.Client{
-		Scheme:   parsedURL.Scheme,
-		Host:     parsedURL.Host,
-		Protocol: &protocol,
+		Scheme:                     parsedURL.Scheme,
+		Host:                       parsedURL.Host,
+		Protocol:                   &protocol,
+		AnyPortEnable:              true,
+		DisableRTCPSenderReports:   true,
+		DisableRTCPReceiverReports: true,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			// fmt.Printf("DEBUG DialContext: network=%s, addr=%s\n", network, addr)
 			return proxyDialer.DialContext(ctx, network, addr)

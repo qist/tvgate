@@ -17,19 +17,19 @@ const (
 )
 
 type StreamHubs struct {
-	mu       sync.RWMutex  // 使用读写锁提高并发性能
+	mu       sync.RWMutex // 使用读写锁提高并发性能
 	clients  map[*ringbuffer.RingBuffer]struct{}
 	isClosed bool
 	// 添加流状态管理
-	state       int // 0: stopped, 1: playing, 2: error
-	stateCond   *sync.Cond
-	lastError   error
+	state     int // 0: stopped, 1: playing, 2: error
+	stateCond *sync.Cond
+	lastError error
 	// 添加RTSP客户端引用
-	rtspClient   *gortsplib.Client
-	videoMedia   *description.Media
-	videoFormat  interface{}
-	audioMedia   *description.Media
-	audioFormat  *format.MPEG4Audio
+	rtspClient  *gortsplib.Client
+	videoMedia  *description.Media
+	videoFormat interface{}
+	audioMedia  *description.Media
+	audioFormat *format.MPEG4Audio
 }
 
 func NewStreamHubs() *StreamHubs {
@@ -54,7 +54,7 @@ func (hub *StreamHubs) AddClient(ch *ringbuffer.RingBuffer) {
 func (hub *StreamHubs) RemoveClient(ch *ringbuffer.RingBuffer) {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
-	
+
 	// 检查channel是否还在clients映射中
 	if _, exists := hub.clients[ch]; exists {
 		delete(hub.clients, ch)
@@ -64,7 +64,7 @@ func (hub *StreamHubs) RemoveClient(ch *ringbuffer.RingBuffer) {
 }
 
 func (hub *StreamHubs) Broadcast(data []byte) {
-	hub.mu.RLock()  // 使用读锁，提高并发性能
+	hub.mu.RLock() // 使用读锁，提高并发性能
 	clients := make([]*ringbuffer.RingBuffer, 0, len(hub.clients))
 	for ch := range hub.clients {
 		clients = append(clients, ch)
@@ -85,7 +85,7 @@ func (hub *StreamHubs) Broadcast(data []byte) {
 func (hub *StreamHubs) removeClientIfNotExist(ch *ringbuffer.RingBuffer) {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
-	
+
 	// 再次确认客户端是否还在列表中
 	if _, exists := hub.clients[ch]; exists {
 		delete(hub.clients, ch)
@@ -108,13 +108,13 @@ func (hub *StreamHubs) Close() {
 	hub.isClosed = true
 	hub.state = 0
 	hub.stateCond.Broadcast()
-	
+
 	// 关闭RTSP客户端
 	if hub.rtspClient != nil {
 		hub.rtspClient.Close()
 		hub.rtspClient = nil
 	}
-	
+
 	for ch := range hub.clients {
 		ch.Close()
 	}
@@ -158,32 +158,32 @@ func (hub *StreamHubs) GetLastError() error {
 func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
-	
+
 	// 如果已经关闭，直接返回
 	if hub.isClosed {
 		return false
 	}
-	
+
 	// 如果在错误状态，返回错误
 	if hub.state == StateError {
 		return false
 	}
-	
+
 	// 如果已经在播放，直接返回
 	if hub.state == StatePlaying {
 		return true
 	}
-	
+
 	// 等待状态变化或context取消
 	for hub.state == StateStopped && !hub.isClosed && ctx.Err() == nil {
 		hub.stateCond.Wait() // 这会自动释放锁并在唤醒时重新获取锁
 	}
-	
+
 	// 检查context是否已取消
 	if ctx.Err() != nil {
 		return false
 	}
-	
+
 	// 检查最终状态
 	if hub.state == StateError {
 		return false
@@ -216,7 +216,7 @@ func (hub *StreamHubs) HasRtspClient() bool {
 func (h *StreamHubs) SetMediaInfo(media *description.Media, format interface{}) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	
+
 	// 直接保存媒体信息，不进行类型转换
 	h.videoMedia = media
 	// 保存原始格式接口，后续通过类型断言使用

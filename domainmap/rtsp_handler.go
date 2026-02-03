@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+
 	// "strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
+
 	// "github.com/pion/rtp"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/lb"
@@ -68,12 +70,15 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request, connID string) {
 	defer monitor.ActiveClients.Unregister(connID, "RTSP")
 
 	client := &gortsplib.Client{
-		Scheme: parsedURL.Scheme,
-		Host:   parsedURL.Host,
+		Scheme:        parsedURL.Scheme,
+		Host:          parsedURL.Host,
+		AnyPortEnable: true,
 		Protocol: func() *gortsplib.Protocol {
 			t := gortsplib.ProtocolTCP
 			return &t
 		}(),
+		DisableRTCPSenderReports:   true,
+		DisableRTCPReceiverReports: true,
 	}
 
 	// 代理组选择
