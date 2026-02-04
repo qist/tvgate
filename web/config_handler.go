@@ -176,6 +176,7 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"reload-editor", h.cookieAuth(h.handleReloadEditor))
 	mux.HandleFunc(webPath+"http-editor", h.cookieAuth(h.handleHTTPEditor))
 	mux.HandleFunc(webPath+"log-editor", h.cookieAuth(http.HandlerFunc(h.handleLogEditor)))
+	mux.HandleFunc(webPath+"logs", h.cookieAuth(h.handleLogViewer))
 	mux.HandleFunc(webPath+"github-editor", h.cookieAuth(h.handleGithubEditor))
 
 	// 配置查看与保存路由
@@ -209,6 +210,7 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/save-http", h.cookieAuth(h.handleHTTPConfigSave))
 	mux.HandleFunc(webPath+"config/log", h.cookieAuth(http.HandlerFunc(h.handleGetLogConfig)))
 	mux.HandleFunc(webPath+"config/save-log", h.cookieAuth(http.HandlerFunc(h.handleSaveLogConfig)))
+	mux.HandleFunc(webPath+"api/logs/stream", h.cookieAuth(http.HandlerFunc(h.handleLogStream)))
 
 	// 备份相关路由
 	mux.HandleFunc(webPath+"config/backup", h.cookieAuth(h.handleConfigBackupPage))
@@ -564,7 +566,7 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			"memoryTotal":            trafficStats.MemoryTotal,
 			"swapUsage":              swapUsage,
 			"swapTotal":              swapTotal,
-			"cpuTemp":                trafficStats.CPUTemperature, 
+			"cpuTemp":                trafficStats.CPUTemperature,
 			"swapUsagePercent":       swapUsagePercent,
 			"diskUsage":              diskUsage,
 			"diskTotal":              diskTotal,

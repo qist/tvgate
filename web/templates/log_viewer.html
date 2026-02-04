@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <link rel="stylesheet" href="{{.webPath}}static/common.css">
+    <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+    <style>
+        .log-container {
+            max-width: 1300px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: var(--win11-surface);
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .log-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .log-status {
+            font-size: 0.9em;
+            color: var(--win11-text-secondary);
+        }
+
+        .log-output {
+            height: 65vh;
+            padding: 12px;
+            background: #0f111a;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            overflow: auto;
+            color: #c7d0ff;
+            font-family: "Courier New", monospace;
+            font-size: 12px;
+            white-space: pre;
+        }
+
+        .log-actions {
+            margin-top: 12px;
+            display: flex;
+            gap: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="log-container">
+        <div class="log-header">
+            <h2>实时日志</h2>
+            <span class="log-status" id="logStatus">连接中...</span>
+        </div>
+        <pre id="logOutput" class="log-output"></pre>
+        <div class="log-actions">
+            <a href="{{.webPath}}" class="btn">返回首页</a>
+        </div>
+    </div>
+
+    <script>
+        const webPath = "{{.webPath}}";
+        const logOutput = document.getElementById('logOutput');
+        const logStatus = document.getElementById('logStatus');
+
+        function appendLine(line) {
+            if (!line) {
+                return;
+            }
+            logOutput.textContent += line + "\n";
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+
+        function connectStream() {
+            const source = new EventSource(webPath + "api/logs/stream");
+
+            source.onopen = function () {
+                logStatus.textContent = "已连接";
+            };
+
+            source.onmessage = function (event) {
+                appendLine(event.data);
+            };
+
+            source.addEventListener("status", function (event) {
+                logStatus.textContent = event.data;
+                source.close();
+            });
+
+            source.onerror = function () {
+                logStatus.textContent = "连接中断，正在重试...";
+            };
+        }
+
+        connectStream();
+    </script>
+</body>
+
+</html>
