@@ -16,6 +16,7 @@ type RingBuffer struct {
 	writeIndex uint64
 	closed     bool
 	dataChan   chan interface{}
+	chanClosed bool
 	mask       uint64
 }
 
@@ -64,13 +65,20 @@ func New(size uint64) (*RingBuffer, error) {
 // Close makes Pull() return false.
 func (r *RingBuffer) Close() {
 	r.mutex.Lock()
+	if r.closed {
+		r.mutex.Unlock()
+		return
+	}
 	r.closed = true
 	for i := uint64(0); i < r.size; i++ {
 		r.buffer[i] = nil
 	}
+	if !r.chanClosed {
+		close(r.dataChan)
+		r.chanClosed = true
+	}
 	r.mutex.Unlock()
 	r.cond.Broadcast()
-	close(r.dataChan)
 }
 
 // Reset restores Pull() behavior after a Close().
@@ -81,6 +89,14 @@ func (r *RingBuffer) Reset() {
 	}
 	r.writeIndex = 0
 	r.readIndex = 0
+	if r.chanClosed {
+		chanCap := cap(r.dataChan)
+		if chanCap == 0 {
+			chanCap = 8192
+		}
+		r.dataChan = make(chan interface{}, chanCap)
+		r.chanClosed = false
+	}
 	r.closed = false
 	r.mutex.Unlock()
 	r.cond.Broadcast()
@@ -91,6 +107,10 @@ func (r *RingBuffer) Push(data interface{}) bool {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
+	if r.closed {
+		return false
+	}
+
 	if r.buffer[r.writeIndex] != nil {
 		// overwrite oldest
 		r.readIndex = (r.readIndex + 1) % r.size
@@ -100,11 +120,21 @@ func (r *RingBuffer) Push(data interface{}) bool {
 	r.writeIndex = (r.writeIndex + 1) % r.size
 
 	// 发送到内部channel，使用非阻塞方式，但增加缓冲区大小来减少丢包
-	select {
-	case r.dataChan <- data:
-	default:
-		// 如果channel满了，跳过，但ring buffer本身仍保存数据
-		// 这种情况应该很少发生，因为缓冲区已经增大
+	if !r.chanClosed {
+		func() {
+			defer func() {
+				if recover() != nil {
+					// channel 已关闭，避免后续重复 panic
+					r.chanClosed = true
+				}
+			}()
+			select {
+			case r.dataChan <- data:
+			default:
+				// 如果channel满了，跳过，但ring buffer本身仍保存数据
+				// 这种情况应该很少发生，因为缓冲区已经增大
+			}
+		}()
 	}
 
 	r.cond.Signal()

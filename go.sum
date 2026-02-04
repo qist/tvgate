@@ -62,8 +62,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c h1:ncq/mPwQF4JjgDlrVEn3C11VoGHZN7m8qihwgMEtzYw=
 github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c/go.mod h1:OmDBASR4679mdNQnz2pUhc2G8CO2JrUAVFDRBDP/hJE=
-github.com/qist/gortsplib/v5 v5.3.1-0.20260203051651-e28c8bf4fb8a h1:fPw0g8T8vk1mQOp3BMp81KcCkm8wJMvpcg21mjjiyzk=
-github.com/qist/gortsplib/v5 v5.3.1-0.20260203051651-e28c8bf4fb8a/go.mod h1:0005vOF5SUy6uKqOD+vp11nDYi1y3AzM+ood9DBzCbM=
+github.com/qist/gortsplib/v5 v5.0.0-20260204014359-c56faa234c61 h1:RmtCyOJSptJU5i3uMNZqEzscdUrLNJ0DjXB/NWScKC4=
+github.com/qist/gortsplib/v5 v5.0.0-20260204014359-c56faa234c61/go.mod h1:0005vOF5SUy6uKqOD+vp11nDYi1y3AzM+ood9DBzCbM=
 github.com/quic-go/qpack v0.6.0 h1:g7W+BMYynC1LbYLSqRt8PBg5Tgwxn214ZZR34VIOjz8=
 github.com/quic-go/qpack v0.6.0/go.mod h1:lUpLKChi8njB4ty2bFLX2x4gzDqXwUpaO1DP9qMDZII=
 github.com/quic-go/quic-go v0.59.0 h1:OLJkp1Mlm/aS7dpKgTc6cnpynnD2Xg7C1pwL6vy/SAw=

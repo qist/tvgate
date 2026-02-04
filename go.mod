@@ -22,7 +22,7 @@ require (
 	h12.io/socks v1.0.3
 )
 
-replace github.com/bluenviron/gortsplib/v5 => github.com/qist/gortsplib/v5 v5.3.1-0.20260203051651-e28c8bf4fb8a
+replace github.com/bluenviron/gortsplib/v5 => github.com/qist/gortsplib/v5 v5.0.0-20260204014359-c56faa234c61
 
 require (
 	github.com/AdguardTeam/golibs v0.32.7 // indirect
