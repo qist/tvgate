@@ -15,7 +15,10 @@ import (
 	"github.com/cloudflare/tableflip"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/stream"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
+
+var upgradeWg tsync.WaitGroup
 
 var (
 	upgrader  *tableflip.Upgrader
@@ -73,7 +76,7 @@ func StartListener(onUpgrade func()) {
 	signal.Notify(sigChan, syscall.SIGHUP)
 	sigMu.Unlock()
 
-	go func() {
+	upgradeWg.Go(func() {
 		for range sigChan {
 			logger.LogPrintf("收到升级信号，开始优雅退出...")
 
@@ -93,7 +96,7 @@ func StartListener(onUpgrade func()) {
 				logger.LogPrintf("升级失败: %v", err)
 			}
 		}
-	}()
+	})
 }
 
 // StopUpgradeListener 停止升级监听

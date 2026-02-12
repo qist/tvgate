@@ -90,18 +90,29 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 	fccParam := r.URL.Query().Get("fcc")
 	operatorParam := r.URL.Query().Get("operator")
 
-	if fccParam != "" {
-		hub.EnableFCC(true)
-		if operatorParam != "" {
-			hub.SetFccType(operatorParam)
-		}
-		if _, err := net.ResolveUDPAddr("udp", fccParam); err == nil {
-			
-			if err := hub.SetFccServerAddr(fccParam); err != nil {
-				logger.LogPrintf("设置FCC服务器地址失败: %v", err)
-			}
+	// 如果提供了 fcc 参数或 operator 参数，则尝试启用 FCC
+	if fccParam != "" || operatorParam != "" {
+		// 如果 fccParam 为 "false" 或 "0"，则显式禁用
+		if fccParam == "false" || fccParam == "0" {
+			hub.EnableFCC(false)
 		} else {
-			logger.LogPrintf("解析FCC服务器地址失败: %v", err)
+			hub.EnableFCC(true)
+			if operatorParam != "" {
+				hub.SetFccType(operatorParam)
+			}
+
+			// 尝试解析地址
+			if fccParam != "" {
+				if _, err := net.ResolveUDPAddr("udp", fccParam); err == nil {
+					if err := hub.SetFccServerAddr(fccParam); err != nil {
+						logger.LogPrintf("设置FCC服务器地址失败: %v", err)
+					}
+				} else if fccParam == "true" || fccParam == "1" {
+					logger.LogPrintf("FCC已通过布尔值启用")
+				} else {
+					logger.LogPrintf("解析FCC服务器地址失败: %v", err)
+				}
+			}
 		}
 	}
 

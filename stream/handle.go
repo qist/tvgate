@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/qist/tvgate/utils/buffer"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
 
 // 定义任务结构体用于sync.Pool
@@ -105,14 +106,15 @@ func executeCopyWithPool(ctx context.Context, r *http.Request, targetURL string,
 	}
 
 	// 在goroutine内部执行任务并确保完成后放回池中
-	go func() {
+	var wg tsync.WaitGroup
+	wg.Go(func() {
 		defer func() {
 			// 清空任务并放回池中
 			task.f = nil
 			handleTaskPool.Put(task)
 		}()
 		task.f()
-	}()
+	})
 
 	select {
 	case <-ctx.Done():
@@ -144,11 +146,19 @@ func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, upd
 
 	// 如果 src 是 net.Conn，给它绑 ctx
 	if c, ok := src.(net.Conn); ok {
-		go func() {
-			<-ctx.Done()
-			// 打断阻塞 read
-			_ = c.SetReadDeadline(time.Now())
-		}()
+		done := make(chan struct{})
+		defer close(done)
+		var wg tsync.WaitGroup
+		wg.Go(func() {
+			select {
+			case <-ctx.Done():
+				// 打断阻塞 read
+				_ = c.SetReadDeadline(time.Now())
+			case <-done:
+				// Copytext 完成，退出 goroutine
+				return
+			}
+		})
 	}
 
 	for {
@@ -332,9 +342,14 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 	dst.Header().Del("Content-Length")
 
 	readErrCh := make(chan error, 1)
-	go func() {
-		readErrCh <- cacheItem.ReadAll(dst, timeoutCtx.Done())
-	}()
+	var wg tsync.WaitGroup
+	wg.Go(func() {
+		defer close(readErrCh)
+		select {
+		case readErrCh <- cacheItem.ReadAll(dst, timeoutCtx.Done()):
+		case <-timeoutCtx.Done():
+		}
+	})
 
 	buf := buffer.GetBuffer(32 * 1024)
 	defer buffer.PutBuffer(32*1024, buf)

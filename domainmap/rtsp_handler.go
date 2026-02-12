@@ -24,6 +24,7 @@ import (
 	"github.com/qist/tvgate/proxy"
 	"github.com/qist/tvgate/rules"
 	"github.com/qist/tvgate/stream"
+	tsync "github.com/qist/tvgate/utils/sync"
 	// "github.com/qist/tvgate/utils/worker"
 )
 
@@ -32,7 +33,7 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request, connID string) {
 	clientIP := monitor.GetClientIP(r)
 	// connID := clientIP + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	// tokenParamName := "my_token" // 默认参数名
-	logger.LogPrintf(connID)
+	// logger.LogPrintf(connID)
 	path := strings.TrimPrefix(r.URL.Path, "/rtsp/")
 	if path == "" {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
@@ -91,9 +92,10 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request, connID string) {
 	pg := rules.ChooseProxyGroup(hostname, originalHost)
 	if pg != nil {
 		selectedProxyChan := make(chan *config.ProxyConfig, 1)
-		go func() {
-			selectedProxyChan <- lb.SelectProxy(pg, rtspURL, false)
-		}()
+		var wg tsync.WaitGroup
+		wg.Go(func() {
+			selectedProxyChan <- lb.SelectProxy(r.Context(), pg, rtspURL, false)
+		})
 
 		select {
 		case selectedProxy := <-selectedProxyChan:

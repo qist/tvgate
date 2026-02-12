@@ -12,6 +12,7 @@ import (
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
 
 type tsCacheItem struct {
@@ -44,6 +45,7 @@ type TSCache struct {
 
 	// 控制清理 goroutine 的通道
 	cleanupDone chan struct{}
+	wg          tsync.WaitGroup
 }
 
 var ErrCacheClosed = errors.New("cache item closed")
@@ -88,7 +90,7 @@ func NewTSCache(maxBytes int64, ttl time.Duration) *TSCache {
 	}
 
 	// 启动清理过期项目的goroutine
-	go cache.cleanupLoop()
+	cache.wg.Go(cache.cleanupLoop)
 
 	return cache
 }
@@ -411,6 +413,7 @@ func (c *TSCache) Close() {
 	if c.cleanupDone != nil {
 		close(c.cleanupDone)
 		c.cleanupDone = nil
+		c.wg.Wait()
 	}
 
 	for e := c.ll.Front(); e != nil; {

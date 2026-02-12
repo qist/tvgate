@@ -48,7 +48,14 @@ type BufferRef struct {
 	pool     *sync.Pool
 	next     *BufferRef
 	refCount int32
+	Source   int // 数据来源: 0=未知, 1=多播, 2=单播(FCC)
 }
+
+const (
+	SourceUnknown = iota
+	SourceMulticast
+	SourceUnicast
+)
 
 // Get 增加引用数
 func (b *BufferRef) Get() {
@@ -120,14 +127,21 @@ func (h *StreamHub) processHuaweiFCCPacket(fmtField byte, data []byte) bool {
 	case FCC_FMT_HUAWEI_RESP: // FMT 6 - 服务器响应
 		h.Mu.Lock()
 		if h.fccState == FCC_STATE_REQUESTED {
-			h.fccSetState(FCC_STATE_UNICAST_PENDING, "收到服务器响应 (FMT 6)")
+			prevState := h.fccSetStateLocked(FCC_STATE_UNICAST_PENDING)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_UNICAST_PENDING, "收到服务器响应 (FMT 6)")
+			h.Mu.Lock()
+
 			logger.LogPrintf("FCC (华为): 收到服务器响应 (FMT 6)")
 
 			// 检查是否需要NAT穿越
 			if len(data) >= 32 {
 				flag := binary.BigEndian.Uint32(data[28:32])
 				if flag&0x20000000 != 0 { // 检查NAT穿越标志
-					h.fccSetState(FCC_STATE_UNICAST_ACTIVE, "需要NAT穿越")
+					prevState := h.fccSetStateLocked(FCC_STATE_UNICAST_ACTIVE)
+					h.Mu.Unlock()
+					h.fccLogStateChange(prevState, FCC_STATE_UNICAST_ACTIVE, "需要NAT穿越")
+					h.Mu.Lock()
 					logger.LogPrintf("FCC (华为): 需要NAT穿越")
 				}
 			}
@@ -144,9 +158,10 @@ func (h *StreamHub) processHuaweiFCCPacket(fmtField byte, data []byte) bool {
 		}
 
 		if h.fccState == FCC_STATE_UNICAST_ACTIVE {
-			h.fccSetState(FCC_STATE_MCAST_REQUESTED, "收到同步通知 (FMT 8)，准备切换到组播")
-			logger.LogPrintf("FCC (华为): 收到同步通知 (FMT 8)，准备切换到组播")
+			prevState := h.fccSetStateLocked(FCC_STATE_MCAST_REQUESTED)
 			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_MCAST_REQUESTED, "收到同步通知 (FMT 8)，准备切换到组播")
+			logger.LogPrintf("FCC (华为): 收到同步通知 (FMT 8)，准备切换到组播")
 
 			// 发送终止包并切换到多播
 			h.prepareSwitchToMulticast()
@@ -158,7 +173,10 @@ func (h *StreamHub) processHuaweiFCCPacket(fmtField byte, data []byte) bool {
 	case FCC_FMT_HUAWEI_NAT: // FMT 12 - NAT穿越包
 		h.Mu.Lock()
 		if h.fccState == FCC_STATE_UNICAST_PENDING {
-			h.fccSetState(FCC_STATE_UNICAST_ACTIVE, "收到NAT穿越包 (FMT 12)")
+			prevState := h.fccSetStateLocked(FCC_STATE_UNICAST_ACTIVE)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_UNICAST_ACTIVE, "收到NAT穿越包 (FMT 12)")
+			h.Mu.Lock()
 			logger.LogPrintf("FCC (华为): 收到NAT穿越包 (FMT 12)")
 		}
 		h.Mu.Unlock()
@@ -174,7 +192,10 @@ func (h *StreamHub) processTelecomFCCPacket(fmtField byte) bool {
 	case FCC_FMT_TELECOM_RESP: // FMT 3 - 服务器响应
 		h.Mu.Lock()
 		if h.fccState == FCC_STATE_REQUESTED {
-			h.fccSetState(FCC_STATE_UNICAST_PENDING, "收到服务器响应 (FMT 3)")
+			prevState := h.fccSetStateLocked(FCC_STATE_UNICAST_PENDING)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_UNICAST_PENDING, "收到服务器响应 (FMT 3)")
+			h.Mu.Lock()
 			logger.LogPrintf("FCC (电信): 收到服务器响应 (FMT 3)")
 		}
 		h.Mu.Unlock()
@@ -188,9 +209,10 @@ func (h *StreamHub) processTelecomFCCPacket(fmtField byte) bool {
 			return true
 		}
 
-		h.fccSetState(FCC_STATE_MCAST_REQUESTED, "收到同步通知 (FMT 4)，准备切换到组播")
-		logger.LogPrintf("FCC (电信): 收到同步通知 (FMT 4)，准备切换到组播")
+		prevState := h.fccSetStateLocked(FCC_STATE_MCAST_REQUESTED)
 		h.Mu.Unlock()
+		h.fccLogStateChange(prevState, FCC_STATE_MCAST_REQUESTED, "收到同步通知 (FMT 4)，准备切换到组播")
+		logger.LogPrintf("FCC (电信): 收到同步通知 (FMT 4)，准备切换到组播")
 
 		// 调用prepareSwitchToMulticast来准备切换到多播模式
 		h.prepareSwitchToMulticast()
@@ -210,8 +232,8 @@ func (h *StreamHub) handleMcastDataDuringTransition(bufRef *BufferRef) {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
-	// 检查当前状态是否为MCAST_REQUESTED
-	if h.fccState != FCC_STATE_MCAST_REQUESTED {
+	// 检查当前状态是否为MCAST_REQUESTED或MCAST_ACTIVE
+	if h.fccState != FCC_STATE_MCAST_REQUESTED && h.fccState != FCC_STATE_MCAST_ACTIVE {
 		return
 	}
 
@@ -292,7 +314,6 @@ func (h *StreamHub) fccHandleMcastActive() {
 		// 检测IDR帧，但减少调用频率（每10个包检测一次）
 		if processedCount%10 == 0 && h.detectStrictIDRFrame(current.data) {
 			idrFrameFound = true
-			break
 		}
 
 		// 将数据广播到所有客户端
@@ -310,6 +331,10 @@ func (h *StreamHub) fccHandleMcastActive() {
 		current.Put()
 		current = next
 		processedCount++
+
+		if idrFrameFound {
+			break
+		}
 	}
 
 	// 如果找到IDR帧，清理剩余数据并关闭FCC
@@ -332,7 +357,10 @@ func (h *StreamHub) fccHandleMcastActive() {
 				nextToRelease.Put()
 			}
 
-			logger.LogPrintf("[FCC] 已关闭FCC连接并清理剩余缓冲数据")
+			prevState := h.fccSetStateLocked(FCC_STATE_INIT)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_INIT, "检测到IDR帧，FCC流程完成")
+			logger.LogPrintf("[FCC] 已关闭FCC连接并清理剩余缓冲数据，状态切换到INIT")
 			return
 		} else {
 			h.Mu.Unlock()
@@ -386,7 +414,7 @@ func (h *StreamHub) prepareSwitchToMulticast() {
 
 	// 发送FCC终止包
 	if h.fccServerAddr != nil {
-		go func() {
+		h.Wg.Go(func() {
 			// 使用当前序列号发送终止包
 			h.Mu.Lock()
 			currentSeq := h.fccTermSeq
@@ -401,7 +429,7 @@ func (h *StreamHub) prepareSwitchToMulticast() {
 				h.Mu.Unlock()
 				logger.LogPrintf("FCC: 终止包已发送，终止序列号 %d", currentSeq)
 			}
-		}()
+		})
 	}
 
 	// 启动同步超时计时器 - 仅作为备用机制，不是主要切换方式
@@ -507,7 +535,10 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 
 		// 只有在有服务器地址时才设置为REQUESTED状态，否则保持INIT状态
 		if h.fccServerAddr != nil {
-			h.fccSetState(FCC_STATE_REQUESTED, "FCC启用并进入请求状态")
+			prevState := h.fccSetStateLocked(FCC_STATE_REQUESTED)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_REQUESTED, "FCC启用并进入请求状态")
+			h.Mu.Lock()
 
 			// 在ServeHTTP中会调用initFCCConnection和sendFCCRequest
 		}
@@ -537,7 +568,10 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 		h.fccPendingListTail = nil
 		atomic.StoreInt32(&h.fccPendingCount, 0)
 
-		h.fccSetState(FCC_STATE_INIT, "FCC禁用")
+		prevState := h.fccSetStateLocked(FCC_STATE_INIT)
+		h.Mu.Unlock()
+		h.fccLogStateChange(prevState, FCC_STATE_INIT, "FCC禁用")
+		h.Mu.Lock()
 
 		// 清理PAT/PMT缓冲区
 		if h.patBuffer != nil {
@@ -799,12 +833,6 @@ func (h *StreamHub) cleanupFCC() {
 	stopTimer(&h.fccTimeoutTimer)
 	stopTimer(&h.fccUnicastTimer)
 
-	// 取消FCC响应监听器
-	if h.fccResponseCancel != nil {
-		h.fccResponseCancel()
-		h.fccResponseCancel = nil
-	}
-
 	// 重置FCC状态和相关变量
 	h.fccState = FCC_STATE_INIT
 	h.fccStartSeq = 0
@@ -842,9 +870,8 @@ func NewClientFccState() *ClientFccState {
 	}
 }
 
-// fccSetState 设置FCC状态并记录状态转换日志
-func (h *StreamHub) fccSetState(state int, reason string) {
-	h.Mu.Lock()
+// fccSetStateLocked 设置FCC状态，调用者必须持有 h.Mu 锁
+func (h *StreamHub) fccSetStateLocked(state int) int {
 	prevState := h.fccState
 	h.fccState = state
 
@@ -857,10 +884,13 @@ func (h *StreamHub) fccSetState(state int, reason string) {
 		h.fccTimeoutTimer.Stop()
 		h.fccTimeoutTimer = nil
 	}
-	h.Mu.Unlock()
+	return prevState
+}
 
+// fccLogStateChange 记录状态转换日志并处理副作用（如启动 MCAST_ACTIVE 处理）
+func (h *StreamHub) fccLogStateChange(prevState, state int, reason string) {
 	if state == FCC_STATE_MCAST_ACTIVE && prevState != FCC_STATE_MCAST_ACTIVE {
-		go h.fccHandleMcastActive()
+		h.Wg.Go(h.fccHandleMcastActive)
 	}
 
 	// 记录状态转换日志
@@ -884,6 +914,15 @@ func (h *StreamHub) fccSetState(state int, reason string) {
 	}
 
 	logger.LogPrintf("FCC State: %s -> %s (%s)", prevName, currentName, reason)
+}
+
+// fccSetState 设置FCC状态并记录状态转换日志
+func (h *StreamHub) fccSetState(state int, reason string) {
+	h.Mu.Lock()
+	prevState := h.fccSetStateLocked(state)
+	h.Mu.Unlock()
+
+	h.fccLogStateChange(prevState, state, reason)
 }
 
 // updateFCCActivity 更新FCC最后活动时间
@@ -949,7 +988,7 @@ func (h *StreamHub) sendFCCTermination(fccServerAddr *net.UDPAddr, seqNum uint16
 	for i := 0; i < 3; i++ {
 		// 检查hub是否已关闭
 		select {
-		case <-h.Closed:
+		case <-h.ctx.Done():
 			return nil
 		default:
 		}
@@ -1131,24 +1170,25 @@ func (h *StreamHub) startClientFCCListener(client *hubClient, multicastAddr *net
 		return
 	}
 
-	go func() {
+	h.Wg.Go(func() {
 		defer func() {
 			if r := recover(); r != nil {
 				logger.LogPrintf("FCC客户端监听 goroutine panic: %v", r)
 			}
 		}()
 
-		buf := make([]byte, 2048)
 		for {
 			select {
-			case <-h.Closed:
+			case <-h.ctx.Done():
 				return
 			default:
 			}
 
+			buf := h.BufPool.Get().([]byte)
 			_ = client.fccConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 			n, _, err := client.fccConn.ReadFromUDP(buf)
 			if err != nil {
+				h.BufPool.Put(buf)
 				if errors.Is(err, net.ErrClosed) {
 					return
 				}
@@ -1159,25 +1199,40 @@ func (h *StreamHub) startClientFCCListener(client *hubClient, multicastAddr *net
 				return
 			}
 			if n <= 0 {
+				h.BufPool.Put(buf)
 				continue
 			}
 
-			data := make([]byte, n)
-			copy(data, buf[:n])
+			// 检查是否是 RTCP 205 (FCC 控制包)
+			if isRTCP205(buf[:n]) {
+				data := make([]byte, n)
+				copy(data, buf[:n])
+				h.BufPool.Put(buf)
 
-			if !isRTCP205(data) {
+				fmtField := data[0] & 0x1F
+				switch h.fccType {
+				case FCC_TYPE_HUAWEI:
+					h.handleClientHuaweiFCCPacket(client, multicastAddr, fmtField, data)
+				default:
+					h.handleClientTelecomFCCPacket(client, multicastAddr, fmtField, data)
+				}
 				continue
 			}
 
-			fmtField := data[0] & 0x1F
-			switch h.fccType {
-			case FCC_TYPE_HUAWEI:
-				h.handleClientHuaweiFCCPacket(client, multicastAddr, fmtField, data)
-			default:
-				h.handleClientTelecomFCCPacket(client, multicastAddr, fmtField, data)
+			// 否则视为媒体数据包 (RTP/TS)
+			inRef := NewPooledBufferRef(buf, buf[:n], h.BufPool)
+			inRef.Source = SourceUnicast
+			outRef := h.processRTPPacketRef(inRef)
+			if outRef == nil {
+				inRef.Put()
+				continue
 			}
+			if outRef != inRef {
+				inRef.Put()
+			}
+			h.broadcastRef(outRef)
 		}
-	}()
+	})
 }
 
 func (h *StreamHub) handleClientTelecomFCCPacket(client *hubClient, multicastAddr *net.UDPAddr, fmtField byte, data []byte) {
@@ -1230,7 +1285,11 @@ func (h *StreamHub) handleClientTelecomFCCPacket(client *hubClient, multicastAdd
 			client.mu.Lock()
 			client.fccState = FCC_STATE_MCAST_ACTIVE
 			client.mu.Unlock()
-			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC服务器响应错误，降级到组播")
+
+			h.Mu.Lock()
+			prevState := h.fccSetStateLocked(FCC_STATE_MCAST_ACTIVE)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_MCAST_ACTIVE, "FCC服务器响应错误，降级到组播")
 			return
 		}
 
@@ -1239,7 +1298,11 @@ func (h *StreamHub) handleClientTelecomFCCPacket(client *hubClient, multicastAdd
 			client.mu.Lock()
 			client.fccState = FCC_STATE_MCAST_ACTIVE
 			client.mu.Unlock()
-			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC无需单播，直接组播")
+
+			h.Mu.Lock()
+			prevState := h.fccSetStateLocked(FCC_STATE_MCAST_ACTIVE)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_MCAST_ACTIVE, "FCC无需单播，直接组播")
 		case 2:
 			client.mu.Lock()
 			client.fccState = FCC_STATE_UNICAST_PENDING
@@ -1247,7 +1310,11 @@ func (h *StreamHub) handleClientTelecomFCCPacket(client *hubClient, multicastAdd
 			client.fccServerAddr = serverAddr
 			mediaPort := client.fccMediaPort
 			client.mu.Unlock()
-			h.fccSetState(FCC_STATE_UNICAST_PENDING, "FCC服务器接受请求")
+
+			h.Mu.Lock()
+			prevState := h.fccSetStateLocked(FCC_STATE_UNICAST_PENDING)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_UNICAST_PENDING, "FCC服务器接受请求")
 
 			if mediaPort != 0 {
 				mediaAddr := &net.UDPAddr{IP: serverAddr.IP, Port: mediaPort}
@@ -1265,7 +1332,11 @@ func (h *StreamHub) handleClientTelecomFCCPacket(client *hubClient, multicastAdd
 				client.fccRedirectCount = redirectCount
 				client.fccState = FCC_STATE_MCAST_ACTIVE
 				client.mu.Unlock()
-				h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC重定向过多，降级到组播")
+
+				h.Mu.Lock()
+				prevState := h.fccSetStateLocked(FCC_STATE_MCAST_ACTIVE)
+				h.Mu.Unlock()
+				h.fccLogStateChange(prevState, FCC_STATE_MCAST_ACTIVE, "FCC重定向过多，降级到组播")
 				return
 			}
 			client.mu.Lock()
@@ -1273,7 +1344,12 @@ func (h *StreamHub) handleClientTelecomFCCPacket(client *hubClient, multicastAdd
 			client.fccServerAddr = serverAddr
 			client.fccState = FCC_STATE_REQUESTED
 			client.mu.Unlock()
-			h.fccSetState(FCC_STATE_REQUESTED, "FCC服务器重定向，重新请求")
+
+			h.Mu.Lock()
+			prevState := h.fccSetStateLocked(FCC_STATE_REQUESTED)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_REQUESTED, "FCC服务器重定向，重新请求")
+
 			if multicastAddr != nil {
 				_ = h.sendFCCRequestWithConn(fccConn, multicastAddr, fccConn.LocalAddr().(*net.UDPAddr).Port, serverAddr)
 				client.startClientFCCTimeoutTimer()
@@ -1282,7 +1358,11 @@ func (h *StreamHub) handleClientTelecomFCCPacket(client *hubClient, multicastAdd
 			client.mu.Lock()
 			client.fccState = FCC_STATE_MCAST_ACTIVE
 			client.mu.Unlock()
-			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC响应类型不支持，降级到组播")
+
+			h.Mu.Lock()
+			prevState := h.fccSetStateLocked(FCC_STATE_MCAST_ACTIVE)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_MCAST_ACTIVE, "FCC响应类型不支持，降级到组播")
 		}
 	case FCC_FMT_TELECOM_SYNC:
 		client.mu.Lock()
@@ -1294,7 +1374,11 @@ func (h *StreamHub) handleClientTelecomFCCPacket(client *hubClient, multicastAdd
 		client.mu.Lock()
 		client.fccState = FCC_STATE_MCAST_REQUESTED
 		client.mu.Unlock()
-		h.fccSetState(FCC_STATE_MCAST_REQUESTED, "收到同步通知，准备切换组播")
+
+		h.Mu.Lock()
+		prevState := h.fccSetStateLocked(FCC_STATE_MCAST_REQUESTED)
+		h.Mu.Unlock()
+		h.fccLogStateChange(prevState, FCC_STATE_MCAST_REQUESTED, "收到同步通知，准备切换组播")
 		h.prepareSwitchToMulticast()
 	}
 }
@@ -1326,7 +1410,11 @@ func (h *StreamHub) handleClientHuaweiFCCPacket(client *hubClient, multicastAddr
 			client.mu.Lock()
 			client.fccState = FCC_STATE_MCAST_ACTIVE
 			client.mu.Unlock()
-			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC服务器响应错误，降级到组播")
+
+			h.Mu.Lock()
+			prevState := h.fccSetStateLocked(FCC_STATE_MCAST_ACTIVE)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_MCAST_ACTIVE, "FCC服务器响应错误，降级到组播")
 			return
 		}
 
@@ -1335,12 +1423,20 @@ func (h *StreamHub) handleClientHuaweiFCCPacket(client *hubClient, multicastAddr
 			client.mu.Lock()
 			client.fccState = FCC_STATE_MCAST_ACTIVE
 			client.mu.Unlock()
-			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC无需单播，直接组播")
+
+			h.Mu.Lock()
+			prevState := h.fccSetStateLocked(FCC_STATE_MCAST_ACTIVE)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_MCAST_ACTIVE, "FCC无需单播，直接组播")
 		case 2:
 			client.mu.Lock()
 			client.fccState = FCC_STATE_UNICAST_PENDING
 			client.mu.Unlock()
-			h.fccSetState(FCC_STATE_UNICAST_PENDING, "FCC服务器接受请求")
+
+			h.Mu.Lock()
+			prevState := h.fccSetStateLocked(FCC_STATE_UNICAST_PENDING)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_UNICAST_PENDING, "FCC服务器接受请求")
 
 			if len(data) >= 36 {
 				natFlag := data[24]
@@ -1384,7 +1480,11 @@ func (h *StreamHub) handleClientHuaweiFCCPacket(client *hubClient, multicastAddr
 				client.fccRedirectCount = redirectCount
 				client.fccState = FCC_STATE_MCAST_ACTIVE
 				client.mu.Unlock()
-				h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC重定向过多，降级到组播")
+
+				h.Mu.Lock()
+				prevState := h.fccSetStateLocked(FCC_STATE_MCAST_ACTIVE)
+				h.Mu.Unlock()
+				h.fccLogStateChange(prevState, FCC_STATE_MCAST_ACTIVE, "FCC重定向过多，降级到组播")
 				return
 			}
 			if len(data) >= 36 {
@@ -1409,7 +1509,12 @@ func (h *StreamHub) handleClientHuaweiFCCPacket(client *hubClient, multicastAddr
 			client.fccState = FCC_STATE_REQUESTED
 			serverAddr = client.fccServerAddr
 			client.mu.Unlock()
-			h.fccSetState(FCC_STATE_REQUESTED, "FCC服务器重定向，重新请求")
+
+			h.Mu.Lock()
+			prevState := h.fccSetStateLocked(FCC_STATE_REQUESTED)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_REQUESTED, "FCC服务器重定向，重新请求")
+
 			if multicastAddr != nil {
 				_ = h.sendFCCRequestWithConn(fccConn, multicastAddr, fccConn.LocalAddr().(*net.UDPAddr).Port, serverAddr)
 				client.startClientFCCTimeoutTimer()
@@ -1418,7 +1523,11 @@ func (h *StreamHub) handleClientHuaweiFCCPacket(client *hubClient, multicastAddr
 			client.mu.Lock()
 			client.fccState = FCC_STATE_MCAST_ACTIVE
 			client.mu.Unlock()
-			h.fccSetState(FCC_STATE_MCAST_ACTIVE, "FCC响应类型不支持，降级到组播")
+
+			h.Mu.Lock()
+			prevState := h.fccSetStateLocked(FCC_STATE_MCAST_ACTIVE)
+			h.Mu.Unlock()
+			h.fccLogStateChange(prevState, FCC_STATE_MCAST_ACTIVE, "FCC响应类型不支持，降级到组播")
 		}
 	case FCC_FMT_HUAWEI_SYNC:
 		client.mu.Lock()
@@ -1430,7 +1539,11 @@ func (h *StreamHub) handleClientHuaweiFCCPacket(client *hubClient, multicastAddr
 		client.mu.Lock()
 		client.fccState = FCC_STATE_MCAST_REQUESTED
 		client.mu.Unlock()
-		h.fccSetState(FCC_STATE_MCAST_REQUESTED, "收到同步通知，准备切换组播")
+
+		h.Mu.Lock()
+		prevState := h.fccSetStateLocked(FCC_STATE_MCAST_REQUESTED)
+		h.Mu.Unlock()
+		h.fccLogStateChange(prevState, FCC_STATE_MCAST_REQUESTED, "收到同步通知，准备切换组播")
 		h.prepareSwitchToMulticast()
 	}
 }
@@ -1528,10 +1641,8 @@ func (h *StreamHub) getDefaultLocalIP() net.IP {
 }
 
 // cleanupFCCResources 清理客户端的FCC相关资源
-func (c *hubClient) cleanupFCCResources() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+// cleanupFCCResourcesLocked performs cleanup while holding the lock
+func (c *hubClient) cleanupFCCResourcesLocked() {
 	// 关闭FCC连接
 	if c.fccConn != nil {
 		c.fccConn.Close()
@@ -1556,6 +1667,13 @@ func (c *hubClient) cleanupFCCResources() {
 	c.fccServerAddr = nil
 }
 
+// cleanupFCCResources 清理客户端FCC资源
+func (c *hubClient) cleanupFCCResources() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cleanupFCCResourcesLocked()
+}
+
 // startClientFCCTimeoutTimer 为客户端启动独立的FCC超时定时器
 func (c *hubClient) startClientFCCTimeoutTimer() {
 	// 如果已有定时器在运行，先停止
@@ -1568,12 +1686,12 @@ func (c *hubClient) startClientFCCTimeoutTimer() {
 	// 创建新的定时器 - 使用80ms超时时间
 	c.fccTimeoutTimer = time.AfterFunc(FCC_TIMEOUT_SIGNALING_MS*time.Millisecond, func() {
 		c.mu.Lock()
+		defer c.mu.Unlock()
 		c.fccState = FCC_STATE_MCAST_ACTIVE
 		logger.LogPrintf("FCC客户端超时: 服务器无响应，降级到组播播放，客户端: %s", c.connID)
-		c.mu.Unlock()
 
 		// 清理客户端FCC资源
-		c.cleanupFCCResources()
+		c.cleanupFCCResourcesLocked()
 	})
 	c.mu.Unlock()
 }
@@ -1703,7 +1821,7 @@ func (h *StreamHub) checkFCCStatus() {
 		case <-ticker.C:
 			// 检查Hub是否已关闭
 			select {
-			case <-h.Closed:
+			case <-h.ctx.Done():
 				return
 			default:
 			}
@@ -1744,8 +1862,19 @@ func (h *StreamHub) checkFCCStatus() {
 					logger.LogPrintf("FCC: 单播阶段停留太久 (%d ms)，主动切换到多播", elapsedSinceUnicast)
 					h.fccSetState(FCC_STATE_MCAST_ACTIVE, "单播阶段超时")
 				}
+			case FCC_STATE_MCAST_ACTIVE:
+				// 多播激活阶段超时检查 - 如果长时间没完成过渡，强制回到 INIT
+				h.Mu.RLock()
+				elapsedSinceMcast := now - h.fccLastActivityTime
+				h.Mu.RUnlock()
+
+				const FCC_MCAST_ACTIVE_MAX_DURATION = 10000 // 10秒
+				if elapsedSinceMcast > FCC_MCAST_ACTIVE_MAX_DURATION {
+					logger.LogPrintf("FCC: 多播过渡阶段超时 (%d ms)，强制回到 INIT", elapsedSinceMcast)
+					h.fccSetState(FCC_STATE_INIT, "多播过渡阶段超时")
+				}
 			}
-		case <-h.Closed:
+		case <-h.ctx.Done():
 			return
 		}
 	}

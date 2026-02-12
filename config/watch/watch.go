@@ -3,7 +3,6 @@ package watch
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -20,10 +19,13 @@ import (
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/server"
 	"github.com/qist/tvgate/stream"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
 
+var watchWg tsync.WaitGroup
+
 // WatchConfigFile 监控配置文件变更并平滑更新服务
-func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
+func WatchConfigFile(ctx context.Context, configPath string, upgrader *tableflip.Upgrader) {
 	if configPath == "" {
 		return
 	}
@@ -105,7 +107,7 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 		dns.HandleConfigUpdate(&config.Config{}, &config.Cfg)
 		config.CfgMu.RLock()
 		update.UpdateHubsOnConfigChange(config.Cfg.Server.MulticastIfaces)
-        // 设置默认值 & token 管理器
+		// 设置默认值 & token 管理器
 		config.Cfg.SetDefaults()
 		// 更新TS缓存配置
 		stream.InitOrUpdateTSCacheFromConfig()
@@ -146,7 +148,7 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 			time.Sleep(100 * time.Millisecond)
 
 			// 创建新的上下文
-			ctx, cancel := context.WithCancel(context.Background())
+			serverCtx, cancel := context.WithCancel(ctx)
 			httpCancel = cancel
 
 			// 构建需要启动的新地址列表
@@ -161,13 +163,14 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 
 			// 启动所有新服务
 			for addr := range newAddrs {
-				mux := server.RegisterMux(addr, &config.Cfg)
+				server.RegisterMux(addr, &config.Cfg)
 				logger.LogPrintf("🚀 正在启动服务 %s", addr)
-				go func(addr string, mux *http.ServeMux) {
-					if err := server.StartHTTPServerWithConfig(ctx, addr, nil, &config.Cfg); err != nil {
+				addr := addr // 局部变量捕获
+				watchWg.Go(func() {
+					if err := server.StartHTTPServerWithConfig(serverCtx, addr, nil, &config.Cfg); err != nil {
 						logger.LogPrintf("❌ 启动 HTTP 服务失败 %s: %v", addr, err)
 					}
-				}(addr, mux)
+				})
 			}
 		} else {
 			// 平滑更新路由
@@ -201,6 +204,16 @@ func WatchConfigFile(configPath string, upgrader *tableflip.Upgrader) {
 
 	for {
 		select {
+		case <-ctx.Done():
+			if debounceTimer != nil {
+				debounceTimer.Stop()
+			}
+			if httpCancel != nil {
+				httpCancel()
+			}
+			watchWg.Wait()
+			logger.LogPrintf("🛑 配置文件监控已停止")
+			return
 		case event, ok := <-watcher.Events:
 			if !ok {
 				return

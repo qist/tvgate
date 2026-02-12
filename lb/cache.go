@@ -7,6 +7,9 @@ import (
 )
 
 func SelectProxyFromCache(group *config.ProxyGroupConfig, now time.Time) *config.ProxyConfig {
+	group.Stats.Lock()
+	defer group.Stats.Unlock()
+
 	n := len(group.Proxies)
 	start := group.Stats.RoundRobinIndex
 	for i := 0; i < n; i++ {

@@ -7,7 +7,10 @@ import (
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/updater"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
+
+var githubWg tsync.WaitGroup
 
 // 注册 GitHub 升级接口
 func RegisterGithubRoutes(mux *http.ServeMux, webPath string, cookieAuth func(http.HandlerFunc) http.HandlerFunc) {
@@ -51,7 +54,8 @@ func handleGithubUpdate(w http.ResponseWriter, r *http.Request) {
 	updater.SetStatus("running", fmt.Sprintf("正在升级到版本 %s", req.Version))
 	updater.SetTargetVersion(req.Version)
 
-	go func(version string) {
+	version := req.Version
+	githubWg.Go(func() {
 		// ⛑ 防止升级 panic 杀死整个进程
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -64,7 +68,7 @@ func handleGithubUpdate(w http.ResponseWriter, r *http.Request) {
 			updater.SetStatus("error", err.Error())
 			return
 		}
-	}(req.Version)
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{

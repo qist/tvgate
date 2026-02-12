@@ -21,6 +21,7 @@ import (
 	"github.com/qist/tvgate/proxy"
 	"github.com/qist/tvgate/rules"
 	"github.com/qist/tvgate/stream"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
 
 // 读超时包装器，给响应体读加超时控制，避免代理响应体卡死
@@ -33,6 +34,7 @@ type timeoutReadCloser struct {
 	err       error
 	resetChan chan struct{}
 	doneChan  chan struct{}
+	Wg        tsync.WaitGroup
 }
 
 // NewTimeoutReadCloser 创建一个带超时控制的ReadCloser
@@ -44,7 +46,7 @@ func NewTimeoutReadCloser(rc io.ReadCloser, timeout time.Duration) *timeoutReadC
 		doneChan:   make(chan struct{}),
 	}
 	t.timer = time.NewTimer(timeout)
-	go t.timeoutWatcher()
+	t.Wg.Go(t.timeoutWatcher)
 	return t
 }
 
@@ -205,7 +207,7 @@ func Handler(client *http.Client) http.HandlerFunc {
 			auth.GetGlobalTokenManager().KeepAlive(token, connID, clientIP, r.URL.Path)
 			// logger.LogPrintf("全局token验证成功: token=%s, path=%s, ip=%s", token, r.URL.Path, clientIP)
 		}
-		ctx, cancel := context.WithCancel(context.Background()) // 可加超时限制
+		ctx, cancel := context.WithCancel(r.Context()) // 使用请求上下文，防止客户端断开后泄漏
 		defer cancel()
 
 		// 安全读取请求体（非 GET/HEAD 且有 Body）
@@ -288,21 +290,25 @@ func Handler(client *http.Client) http.HandlerFunc {
 				forceTest := attempt > 0
 
 				// 异步选择代理
+				proxyCtx, proxyCancel := context.WithTimeout(ctx, config.DefaultDialTimeout)
 				proxyRes := make(chan *config.ProxyConfig, 1)
-				go func() {
-					proxyRes <- lb.SelectProxy(pg, targetURL, forceTest)
-				}()
+				var wg tsync.WaitGroup
+				wg.Go(func() {
+					proxyRes <- lb.SelectProxy(proxyCtx, pg, targetURL, forceTest)
+				})
 
 				var selectedProxy *config.ProxyConfig
 				select {
 				case selectedProxy = <-proxyRes:
+					proxyCancel()
 					if selectedProxy != nil {
 						logger.LogPrintf("异步选择代理成功: %s", selectedProxy.Name)
 					} else {
 						logger.LogPrintf("异步选择代理返回 nil（第 %d 次尝试）", attempt+1)
 					}
-				case <-time.After(config.DefaultDialTimeout):
-					logger.LogPrintf("异步选择代理未完成，继续直连或下一次尝试（第 %d 次）", attempt+1)
+				case <-proxyCtx.Done():
+					proxyCancel()
+					logger.LogPrintf("异步选择代理超时或被取消（第 %d 次）", attempt+1)
 					selectedProxy = nil
 				}
 
@@ -334,7 +340,7 @@ func Handler(client *http.Client) http.HandlerFunc {
 					markProxyResult(pg, selectedProxy, false)
 					continue
 				}
-				
+
 				// 添加特殊头部标识，帮助识别请求来源
 				reqCopy = reqCopy.WithContext(ctx)
 				stream.CopyHeadersExceptSensitive(reqCopy.Header, r.Header, r.ProtoMajor)
@@ -474,7 +480,6 @@ func Handler(client *http.Client) http.HandlerFunc {
 		stream.HandleProxyResponse(ctx, w, r, targetURL, clientResp, updateActive)
 	}
 }
-
 
 func markProxyResult(group *config.ProxyGroupConfig, proxy *config.ProxyConfig, alive bool) {
 	group.Stats.Lock()

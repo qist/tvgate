@@ -33,26 +33,12 @@ var bufPool = sync.Pool{
 	},
 }
 
-type channelWriter struct {
-	rb *ringbuffer.RingBuffer
+type broadcastWriter struct {
+	hub *StreamHubs
 }
 
-func (w *channelWriter) Write(p []byte) (n int, err error) {
-	buf := bufPool.Get().([]byte)
-	if cap(buf) < len(p) {
-		buf = make([]byte, len(p))
-	}
-	buf = buf[:len(p)]
-	copy(buf, p)
-
-	if !w.rb.Push(buf) {
-		atomic.AddInt64(&dropCount, 1)
-		bufPool.Put(buf)
-		if atomic.LoadInt64(&dropCount)%10000 == 0 {
-			logger.LogPrintf("⚠️ TS packet dropped due to full buffer.")
-		}
-		return 0, nil
-	}
+func (w *broadcastWriter) Write(p []byte) (n int, err error) {
+	w.hub.Broadcast(p)
 	return len(p), nil
 }
 
@@ -151,33 +137,20 @@ func HandleH264AacStream(
 		// 检查是否是最后一个客户端
 		hub.mu.Lock()
 		clientCount := len(hub.clients)
-		currentClient := hub.rtspClient
 		hub.mu.Unlock()
 
 		if clientCount == 0 {
-			hub.SetStopped()
-			// 关闭RTSP客户端
-			if currentClient != nil {
-				// 仅在客户端匹配时才关闭
-				if currentClient == client {
-					currentClient.Close()
-					hub.mu.Lock()
-					// 清除RTSP客户端引用
-					if hub.rtspClient == currentClient {
-						hub.rtspClient = nil
-					}
-					hub.mu.Unlock()
-				}
-			}
+			RemoveHub(rtspURL)
 		}
 	}()
 
 	// 如果需要启动播放
 	if shouldPlay {
-		go func() {
+		hub.Go(func() {
+			hubCtx := hub.GetContext()
 			// 增加TS通道缓冲区大小，从262144增加到1048576
-			tsChan := make(chan []byte, 1048576)
-			mux := astits.NewMuxer(context.Background(), &channelWriter{rb: clientChan})
+			// tsChan := make(chan []byte, 1048576) // 不再需要
+			mux := astits.NewMuxer(hubCtx, &broadcastWriter{hub: hub})
 			mux.SetPCRPID(videoPID)
 			mux.AddElementaryStream(astits.PMTElementaryStream{
 				ElementaryPID: videoPID,
@@ -190,25 +163,35 @@ func HandleH264AacStream(
 				})
 			}
 
-			go func() {
+			// 监听上下文取消
+			hub.Go(func() {
+				<-hubCtx.Done()
+				hub.mu.Lock()
+				if hub.rtspClient == client {
+					hub.rtspClient = nil
+				}
+				hub.mu.Unlock()
+			})
+
+			hub.Go(func() {
 				ticker := time.NewTicker(500 * time.Millisecond)
 				defer ticker.Stop()
 				for {
 					select {
-					case <-ctx.Done():
+					case <-hubCtx.Done():
 						return
 					case <-ticker.C:
 						mux.WriteTables()
 					}
 				}
-			}()
+			})
 
-			go func() {
+			hub.Go(func() {
 				ticker := time.NewTicker(5 * time.Second)
 				defer ticker.Stop()
 				for {
 					select {
-					case <-ctx.Done():
+					case <-hubCtx.Done():
 						return
 					case <-ticker.C:
 						dc := atomic.SwapInt64(&dropCount, 0)
@@ -217,7 +200,7 @@ func HandleH264AacStream(
 						}
 					}
 				}
-			}()
+			})
 
 			var videoPTS int64
 			var audioPTS float64
@@ -279,17 +262,21 @@ func HandleH264AacStream(
 				// }
 			})
 
-			go func() {
+			hub.Go(func() {
 				ticker := time.NewTicker(5 * time.Second)
 				defer ticker.Stop()
 				for {
-					<-ticker.C
-					dc := atomic.SwapInt64(&videoDropCount, 0)
-					if dc > 0 {
-						// logger.LogPrintf("⚠️ Video frame decode failed: %d in last 5s", dc)
+					select {
+					case <-hubCtx.Done():
+						return
+					case <-ticker.C:
+						dc := atomic.SwapInt64(&videoDropCount, 0)
+						if dc > 0 {
+							// logger.LogPrintf("⚠️ Video frame decode failed: %d in last 5s", dc)
+						}
 					}
 				}
-			}()
+			})
 
 			// 音频
 			if audioFormat != nil {
@@ -360,17 +347,13 @@ func HandleH264AacStream(
 			// 标记流为正在播放状态
 			hub.SetPlaying()
 
-			// 向所有客户端广播数据
-			for pkt := range tsChan {
-				hub.Broadcast(pkt)
-				// ⚡ 出流量统计
-				// monitor.AddAppOutboundBytes(uint64(len(pkt)))
-				// 更新活跃时间
-				// if updateActive != nil {
-				// 	updateActive()
-				// }
-			}
-		}()
+			// ⚡ 出流量统计
+			// monitor.AddAppOutboundBytes(uint64(len(pkt)))
+			// 更新活跃时间
+			// if updateActive != nil {
+			// 	updateActive()
+			// }
+		})
 	} else {
 		// 等待流状态变为播放中
 		if !hub.WaitForPlaying(ctx) {
@@ -404,8 +387,7 @@ func HandleH264AacStream(
 			if updateActive != nil {
 				updateActive()
 			}
-		default:
-			data, ok := clientChan.Pull()
+		case data, ok := <-clientChan.Chan():
 			if !ok {
 				return nil
 			}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
+	tsync "github.com/qist/tvgate/utils/sync"
 	"github.com/shirou/gopsutil/v3/process"
 	"gopkg.in/yaml.v3"
 )
@@ -49,6 +50,7 @@ type Manager struct {
 	// 优雅退出标志，若为 true 则遇到 FFmpeg 失败不进行重启
 	gracefulExit bool
 	gracefulMu   sync.RWMutex
+	wg           tsync.WaitGroup
 }
 
 // FFmpegProcessInfo holds information about an FFmpeg process
@@ -60,19 +62,22 @@ type FFmpegProcessInfo struct {
 
 // StreamManager manages a single stream
 type StreamManager struct {
-	name            string
-	stream          *Stream
-	streamKey       string
-	oldStreamKey    string // 从URL中提取的旧密钥
-	createdAt       time.Time
-	cancel          context.CancelFunc
-	ctx             context.Context
-	mutex           sync.RWMutex
-	running         bool
-	ffmpegProcesses map[int]*FFmpegProcessInfo // 按receiver index存储FFmpeg进程信息
-	processesMutex  sync.Mutex                 // 保护ffmpegProcesses访问
-	pipeForwarder   *PipeForwarder             // 用于本地播放的管道转发器
-	streamStarted   bool                       // 标记流是否已经启动
+	name                string
+	stream              *Stream
+	streamKey           string
+	oldStreamKey        string // 从URL中提取的旧密钥
+	createdAt           time.Time
+	cancel              context.CancelFunc
+	ctx                 context.Context
+	mutex               sync.RWMutex
+	running             bool
+	ffmpegProcesses     map[int]*FFmpegProcessInfo // 按receiver index存储FFmpeg进程信息
+	processesMutex      sync.Mutex                 // 保护ffmpegProcesses访问
+	pipeForwarder       *PipeForwarder             // 用于本地播放的管道转发器 (primary)
+	backupPipeForwarder *PipeForwarder             // 备用管道转发器
+	extraPipeForwarders []*PipeForwarder           // 额外的管道转发器 (all mode)
+	streamStarted       bool                       // 标记流是否已经启动
+	wg                  tsync.WaitGroup            // 等待所有相关 goroutine 结束
 }
 
 // NewManager creates a new publisher manager
@@ -113,8 +118,8 @@ func (m *Manager) Start() error {
 			continue
 		}
 
-		// Create context for this stream
-		ctx, cancel := context.WithCancel(context.Background())
+		// Create context for this stream, using server context as parent
+		ctx, cancel := context.WithCancel(config.ServerCtx)
 
 		// 简化streamkey处理逻辑，只支持random类型
 		var streamKey string
@@ -203,7 +208,7 @@ func (m *Manager) Start() error {
 		m.streams[name] = streamManager
 
 		// 启动流 - 在初始化时总是启动流，避免配置更新时重复启动
-		go streamManager.startStreaming()
+		streamManager.wg.Go(streamManager.startStreaming)
 
 		// 如果需要更新配置文件（新生成密钥的情况），则更新配置文件
 		if needUpdateConfig {
@@ -224,7 +229,7 @@ func (m *Manager) Start() error {
 func (m *Manager) startExpirationChecker() {
 	// 每分钟检查一次密钥是否过期
 	m.expirationChecker = time.NewTicker(1 * time.Minute)
-	go func() {
+	m.wg.Go(func() {
 		for {
 			select {
 			case <-m.expirationChecker.C:
@@ -233,7 +238,7 @@ func (m *Manager) startExpirationChecker() {
 				return
 			}
 		}
-	}()
+	})
 }
 
 // checkStreamKeyExpiration 检查所有流的密钥是否过期
@@ -482,22 +487,22 @@ func (m *Manager) startStream(name string, stream *Stream) {
 		}
 	}
 
+	// Create stream manager
 	streamManager := &StreamManager{
 		name:            name,
 		stream:          stream,
 		streamKey:       streamKey,
 		createdAt:       createdAt,
-		cancel:          cancel,
 		ctx:             ctx,
+		cancel:          cancel,
 		running:         true,
-		streamStarted:   false, // 初始化为false
 		ffmpegProcesses: make(map[int]*FFmpegProcessInfo),
 	}
 
 	m.streams[name] = streamManager
 
 	// 启动流 - 在配置更新时总是启动流
-	go streamManager.startStreaming()
+	streamManager.wg.Go(streamManager.startStreaming)
 
 	// 如果需要更新配置文件（新生成密钥的情况），则更新配置文件
 	if needUpdateConfig {
@@ -597,6 +602,63 @@ func (m *Manager) UpdateConfig(newConfig *Config) {
 	logger.LogPrintf("Publisher config updated successfully")
 }
 
+// Stop stops the stream manager
+func (sm *StreamManager) Stop() {
+	sm.mutex.Lock()
+	defer sm.mutex.Unlock()
+
+	if !sm.running {
+		return
+	}
+	sm.running = false
+
+	if sm.cancel != nil {
+		sm.cancel()
+	}
+
+	if sm.pipeForwarder != nil {
+		sm.pipeForwarder.Stop()
+	}
+
+	if sm.backupPipeForwarder != nil {
+		sm.backupPipeForwarder.Stop()
+	}
+
+	for _, pf := range sm.extraPipeForwarders {
+		if pf != nil {
+			pf.Stop()
+		}
+	}
+	sm.extraPipeForwarders = nil
+
+	// 停止 FFmpeg 进程
+	sm.processesMutex.Lock()
+	for _, procInfo := range sm.ffmpegProcesses {
+		if procInfo.Process != nil {
+			procInfo.Process.Kill()
+		}
+	}
+	sm.ffmpegProcesses = make(map[int]*FFmpegProcessInfo)
+	sm.processesMutex.Unlock()
+
+	// 等待所有 goroutine 结束
+	done := make(chan struct{})
+	var waitWg tsync.WaitGroup
+	waitWg.Go(func() {
+		sm.wg.Wait()
+		close(done)
+	})
+
+	select {
+	case <-done:
+		// 正常结束
+	case <-time.After(5 * time.Second):
+		logger.LogPrintf("Stream manager for %s stop timeout", sm.name)
+	}
+
+	logger.LogPrintf("Stream manager for %s stopped", sm.name)
+}
+
 // startStreaming starts the streaming process for a single stream
 func (sm *StreamManager) startStreaming() {
 	sm.mutex.Lock()
@@ -675,11 +737,11 @@ func (sm *StreamManager) startStreaming() {
 			if streamHub != nil && sm.pipeForwarder != nil {
 				streamHub.SetPrimary(sm.pipeForwarder)
 			}
-			go func() {
+			sm.wg.Go(func() {
 				if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
 					logger.LogPrintf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
 				}
-			}()
+			})
 			return
 		}
 
@@ -719,16 +781,19 @@ func (sm *StreamManager) startStreaming() {
 					}
 
 					// 启动主管道转发器
-					go func() {
+					sm.wg.Go(func() {
 						if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
 							logger.LogPrintf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
 						}
-					}()
+					})
 				} else {
 					// 其他接收器创建独立的管道转发器
 					// 在 all 模式下，只有一个实例从源拉取数据，其他实例从共享 hub 读取数据
 					// 所以所有实例都应该使用 needPull=false
 					pipeForwarder := NewPipeForwarder(pipeName, rtmpURL, true, false, sm.pipeForwarder.hub)
+					sm.mutex.Lock()
+					sm.extraPipeForwarders = append(sm.extraPipeForwarders, pipeForwarder)
+					sm.mutex.Unlock()
 
 					// 获取 StreamHub 并注册为额外的转发器
 					streamHub := GetStreamHub(sm.name)
@@ -737,11 +802,13 @@ func (sm *StreamManager) startStreaming() {
 					}
 
 					// 启动额外的管道转发器
-					go func(pf *PipeForwarder, name string) {
+					pf := pipeForwarder
+					pName := pipeName
+					sm.wg.Go(func() {
 						if err := pf.Start(ffmpegCmd); err != nil {
-							logger.LogPrintf("Failed to start pipe forwarder for stream %s: %v", name, err)
+							logger.LogPrintf("Failed to start extra pipe forwarder for stream %s: %v", pName, err)
 						}
-					}(pipeForwarder, pipeName)
+					})
 				}
 			}
 
@@ -763,11 +830,11 @@ func (sm *StreamManager) startStreaming() {
 				sm.pipeForwarder.EnableHLS(enableHLS)
 			}
 			// 启动 primary PipeForwarder
-			go func() {
+			sm.wg.Go(func() {
 				if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
 					logger.LogPrintf("Failed to start primary pipe forwarder for stream %s: %v", sm.name, err)
 				}
-			}()
+			})
 
 			// 创建备用推流（不启动）
 			var backupPipeForwarder *PipeForwarder
@@ -782,6 +849,9 @@ func (sm *StreamManager) startStreaming() {
 				if backupPipeForwarder != nil {
 					backupPipeForwarder.EnableHLS(enableHLS)
 				}
+				sm.mutex.Lock()
+				sm.backupPipeForwarder = backupPipeForwarder
+				sm.mutex.Unlock()
 			}
 
 			// 启动推流监控（主挂才启备）
@@ -805,9 +875,12 @@ func (sm *StreamManager) startStreaming() {
 			if backupPipeForwarder != nil {
 				backupPipeForwarder.EnableHLS(enableHLS)
 			}
+			sm.mutex.Lock()
+			sm.backupPipeForwarder = backupPipeForwarder
+			sm.mutex.Unlock()
 
 			// 启动 backup PipeForwarder（但默认不激活，只有在主URL失败时才激活）
-			go func() {
+			sm.wg.Go(func() {
 				// 先不启动，等待主URL失败后再启动
 				logger.LogPrintf("Backup pipe forwarder for stream %s created, waiting for primary failure", sm.name)
 
@@ -834,7 +907,7 @@ func (sm *StreamManager) startStreaming() {
 						}
 					}
 				}
-			}()
+			})
 		} else {
 			// 对于其他模式，保持原有逻辑（只处理第一个接收器）
 			var rtmpURL string
@@ -851,11 +924,11 @@ func (sm *StreamManager) startStreaming() {
 			}
 
 			// 启动管道转发器
-			go func() {
+			sm.wg.Go(func() {
 				if err := sm.pipeForwarder.Start(ffmpegCmd); err != nil {
 					logger.LogPrintf("Failed to start pipe forwarder for stream %s: %v", sm.name, err)
 				}
-			}()
+			})
 
 			// 如果使用PipeForwarder，则不启动传统的推流方式
 			return
@@ -867,11 +940,11 @@ func (sm *StreamManager) startStreaming() {
 	logger.LogPrintf("Stream %s has %d receivers", sm.name, len(receivers))
 
 	// Start streaming for each receiver
-	var wg sync.WaitGroup
+	var wg tsync.WaitGroup
 	for i, receiver := range receivers {
-		wg.Add(1)
-		go func(index int, r Receiver) {
-			defer wg.Done()
+		idx := i
+		r := receiver
+		wg.Go(func() {
 			// 使用当前的streamKey而不是启动时的streamKey
 			sm.mutex.RLock()
 			currentStreamKey := sm.streamKey
@@ -880,26 +953,29 @@ func (sm *StreamManager) startStreaming() {
 			// 为每个接收者构建基础命令，使用接收者的FFmpeg选项
 			baseCmd := sm.stream.BuildFFmpegCommandForReceiver(&r)
 			cmd := r.BuildFFmpegPushCommand(baseCmd, currentStreamKey)
-			logger.LogPrintf("Full FFmpeg command for stream %s receiver %d: ffmpeg %s", sm.name, index+1, strings.Join(cmd, " "))
-			sm.runFFmpegStream(cmd, index+1)
-		}(i, receiver)
+			logger.LogPrintf("Full FFmpeg command for stream %s receiver %d: ffmpeg %s", sm.name, idx+1, strings.Join(cmd, " "))
+			sm.runFFmpegStream(cmd, idx+1)
+		})
 	}
 
 	// 对于 primary-backup 模式，额外处理 backup receiver
 	if sm.stream.Stream.Mode == "primary-backup" && sm.stream.Stream.Receivers.Backup != nil {
 		// 等待一段时间观察 primary 是否正常工作
-		go func() {
+		var backupWg tsync.WaitGroup
+		backupWg.Go(func() {
 			// 等待一段时间让 primary 先启动
-			time.Sleep(5 * time.Second)
+			select {
+			case <-sm.ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
 
 			// 检查 primary 是否正常运行
 			if sm.isPrimaryHealthy() {
 				logger.LogPrintf("Primary receiver for stream %s is healthy, not starting backup", sm.name)
 			} else {
 				logger.LogPrintf("Primary receiver for stream %s is unhealthy, starting backup", sm.name)
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					// 使用当前的streamKey而不是启动时的streamKey
 					sm.mutex.RLock()
 					currentStreamKey := sm.streamKey
@@ -910,17 +986,18 @@ func (sm *StreamManager) startStreaming() {
 					logger.LogPrintf("Full FFmpeg command for stream %s backup receiver: ffmpeg %s", sm.name, strings.Join(cmd, " "))
 					// index 为 2，因为 primary 是 1，backup 是 2
 					sm.runFFmpegStream(cmd, 2)
-				}()
+				})
 			}
-		}()
+		})
 	}
 
 	// 等待所有接收器完成或上下文取消
 	done := make(chan struct{})
-	go func() {
+	var doneWg tsync.WaitGroup
+	doneWg.Go(func() {
 		wg.Wait()
 		close(done)
-	}()
+	})
 
 	select {
 	case <-sm.ctx.Done():
@@ -935,7 +1012,7 @@ func (sm *StreamManager) monitorPrimaryPush(primary, backup *PipeForwarder, ffmp
 		return
 	}
 
-	go func() {
+	sm.wg.Go(func() {
 		time.Sleep(5 * time.Second)
 		for {
 			select {
@@ -959,10 +1036,15 @@ func (sm *StreamManager) monitorPrimaryPush(primary, backup *PipeForwarder, ffmp
 					}
 					return
 				}
-				time.Sleep(30 * time.Second)
+
+				select {
+				case <-sm.ctx.Done():
+					return
+				case <-time.After(30 * time.Second):
+				}
 			}
 		}
-	}()
+	})
 }
 
 // isPrimaryHealthy 检查 primary receiver 是否健康
@@ -1336,14 +1418,14 @@ func (sm *StreamManager) restartStreaming() {
 
 	// 重新创建context
 	sm.mutex.Lock()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(config.ServerCtx)
 	sm.cancel = cancel
 	sm.ctx = ctx
 	sm.running = true // 确保设置running状态为true
 	sm.mutex.Unlock()
 
 	// 启动新的推流
-	go sm.startStreaming()
+	sm.wg.Go(sm.startStreaming)
 
 	logger.LogPrintf("Restarted streaming for %s", sm.name)
 }
@@ -1352,41 +1434,13 @@ func (sm *StreamManager) restartStreaming() {
 func (sm *StreamManager) isRunning() bool {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
+
 	select {
 	case <-sm.ctx.Done():
 		return false
 	default:
 		return sm.running
 	}
-}
-
-// Stop stops the stream
-func (sm *StreamManager) Stop() {
-	logger.LogPrintf("Stopping stream manager for %s", sm.name)
-
-	sm.mutex.Lock()
-	if !sm.running {
-		sm.mutex.Unlock()
-		logger.LogPrintf("Stream manager for %s already stopped", sm.name)
-		return
-	}
-	sm.running = false
-	sm.mutex.Unlock()
-
-	// Cancel the context to stop all operations
-	if sm.cancel != nil {
-		sm.cancel()
-	}
-
-	// 停止管道转发器
-	if sm.pipeForwarder != nil {
-		sm.pipeForwarder.Stop()
-	}
-
-	// 等待一小段时间确保所有goroutine都已退出
-	time.Sleep(100 * time.Millisecond)
-
-	logger.LogPrintf("Stream manager for %s stopped", sm.name)
 }
 
 // GetStreamKey returns the current stream key

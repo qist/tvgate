@@ -19,12 +19,14 @@ import (
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/watch"
 	"github.com/qist/tvgate/dns"
+	"github.com/qist/tvgate/domainmap"
 	"github.com/qist/tvgate/groupstats"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/publisher"
 	"github.com/qist/tvgate/server"
 	"github.com/qist/tvgate/stream"
+	tsync "github.com/qist/tvgate/utils/sync"
 	"github.com/qist/tvgate/utils/upgrade"
 	"github.com/qist/tvgate/web"
 )
@@ -141,21 +143,28 @@ func main() {
 	}
 
 	// token 清理任务
+	stopTokenCleanup := make(chan struct{})
 	cleanupTask := taskPool.Get().(*mainTask)
 	cleanupTask.f = func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			tm.CleanupExpiredSessions()
+		for {
+			select {
+			case <-ticker.C:
+				tm.CleanupExpiredSessions()
+			case <-stopTokenCleanup:
+				return
+			}
 		}
 	}
-	go func() {
+	var mainWg tsync.WaitGroup
+	mainWg.Go(func() {
 		defer func() {
 			cleanupTask.f = nil
 			taskPool.Put(cleanupTask)
 		}()
 		cleanupTask.f()
-	}()
+	})
 
 	// -------------------------
 	// 启动监控 & 清理任务
@@ -169,7 +178,7 @@ func main() {
 	startTask := func(f func()) {
 		task := taskPool.Get().(*mainTask)
 		task.f = f
-		go func() {
+		mainWg.Go(func() {
 			defer func() {
 				if r := recover(); r != nil {
 					stack := make([]byte, 4096)
@@ -181,7 +190,7 @@ func main() {
 				taskPool.Put(task)
 			}()
 			task.f()
-		}()
+		})
 	}
 
 	startTask(func() { monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second, stopActiveClients) })
@@ -205,38 +214,59 @@ func main() {
 	stream.InitTSCacheFromConfig()
 
 	// -------------------------
-	// 启动配置文件监控
-	// -------------------------
-	watchTask := taskPool.Get().(*mainTask)
-	watchTask.f = func() {
-		watch.WatchConfigFile(configFilePath, upg)
-	}
-	go func() {
-		defer func() {
-			watchTask.f = nil
-			taskPool.Put(watchTask)
-		}()
-		watchTask.f()
-	}()
-
-	// -------------------------
 	// context 管理
 	// -------------------------
 	config.ServerCtx, config.Cancel = context.WithCancel(context.Background())
 
 	// -------------------------
+	// 启动配置文件监控
+	// -------------------------
+	watchTask := taskPool.Get().(*mainTask)
+	watchTask.f = func() {
+		watch.WatchConfigFile(config.ServerCtx, configFilePath, upg)
+	}
+	mainWg.Go(func() {
+		defer func() {
+			watchTask.f = nil
+			taskPool.Put(watchTask)
+		}()
+		watchTask.f()
+	})
+
+	// -------------------------
+	// 捕获系统退出信号
+	// -------------------------
+	signalTask := taskPool.Get().(*mainTask)
+	signalTask.f = func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigChan
+		fmt.Println("收到退出信号，开始优雅退出")
+		gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater, stopTokenCleanup)
+		if !isWindows && upg != nil {
+			upg.Exit()
+		} else {
+			os.Exit(0)
+		}
+	}
+	mainWg.Go(func() {
+		defer func() {
+			signalTask.f = nil
+			taskPool.Put(signalTask)
+		}()
+		signalTask.f()
+	})
+
+	// -------------------------
 	// 启动 HTTP Server（支持 tableflip 热更）
 	// -------------------------
-	var wg sync.WaitGroup
 	startServer := func(port int) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		mainWg.Go(func() {
 			addr := fmt.Sprintf(":%d", port)
 			if err := server.StartHTTPServer(config.ServerCtx, addr, upg); err != nil && err != context.Canceled {
 				logger.LogPrintf("❌ 启动 HTTP 服务失败 %s: %v", addr, err)
 			}
-		}()
+		})
 	}
 
 	if config.Cfg.Server.Port > 0 {
@@ -249,31 +279,7 @@ func main() {
 		startServer(config.Cfg.Server.TLS.HTTPSPort)
 	}
 
-	wg.Wait() // 阻塞等待所有 server
-
-	// -------------------------
-	// 捕获系统退出信号
-	// -------------------------
-	signalTask := taskPool.Get().(*mainTask)
-	signalTask.f = func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		<-sigChan
-		fmt.Println("收到退出信号，开始优雅退出")
-		gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater)
-		if !isWindows && upg != nil {
-			upg.Exit()
-		} else {
-			os.Exit(0)
-		}
-	}
-	go func() {
-		defer func() {
-			signalTask.f = nil
-			taskPool.Put(signalTask)
-		}()
-		signalTask.f()
-	}()
+	mainWg.Wait() // 阻塞等待所有 server 和任务
 
 	// -------------------------
 	// tableflip 准备完成（仅非 Windows）
@@ -285,10 +291,10 @@ func main() {
 	}
 
 	<-config.ServerCtx.Done()
-	gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater)
+	gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater, stopTokenCleanup)
 }
 
-func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater chan struct{}) {
+func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActiveClients, stopStartSystemStatsUpdater, stopTokenCleanup chan struct{}) {
 	shutdownOnce.Do(func() {
 		shutdownMux.Lock()
 		defer shutdownMux.Unlock()
@@ -300,11 +306,17 @@ func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActive
 		// Stop publisher module
 		publisher.Stop()
 
+		// Stop stream module
+		stream.Close()
+
+		domainmap.StopCacheCleaner()
+
 		close(stopCleaner)
 		close(stopAccessCleaner)
 		close(stopProxyStats)
 		close(stopActiveClients)
 		close(stopStartSystemStatsUpdater)
+		close(stopTokenCleanup)
 
 		time.Sleep(100 * time.Millisecond)
 		fmt.Println("优雅退出完成")

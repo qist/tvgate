@@ -12,12 +12,14 @@ import (
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
 
 var (
-	manager *Manager
-	handler *Handler
-	once    sync.Once
+	manager     *Manager
+	handler     *Handler
+	once        sync.Once
+	publisherWg tsync.WaitGroup
 )
 
 // Init initializes the publisher module
@@ -50,7 +52,10 @@ func Init() error {
 
 		// 启动配置文件监控
 		if config.ConfigFilePath != nil {
-			go WatchConfigFile(*config.ConfigFilePath)
+			configPath := *config.ConfigFilePath
+			publisherWg.Go(func() {
+				WatchConfigFile(configPath)
+			})
 		}
 
 		logger.LogPrintf("Publisher module initialized successfully")

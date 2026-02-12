@@ -17,9 +17,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
+	tsync "github.com/qist/tvgate/utils/sync"
 	"github.com/shirou/gopsutil/v3/process"
 )
 
@@ -75,7 +77,7 @@ func GetStreamHub(streamName string) *StreamHub {
 	}
 
 	// 创建新的StreamHub
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(config.ServerCtx)
 	newHub := &StreamHub{
 		streamName:   baseStreamName,
 		hub:          stream.NewStreamHubs(),
@@ -284,12 +286,13 @@ type PipeForwarder struct {
 	ffInLock sync.Mutex
 
 	hlsFFmpegOptions *FFmpegOptions
+	Wg               tsync.WaitGroup
 }
 
 // NewPipeForwarder 创建新的 PipeForwarder
 // NewPipeForwarder 创建新的 PipeForwarder
 func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull bool, hub *stream.StreamHubs) *PipeForwarder {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(config.ServerCtx)
 	var h *stream.StreamHubs
 	if hub != nil {
 		h = hub
@@ -524,16 +527,18 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 	}
 
 	// 启动数据转发 goroutine
-	go pf.forwardDataFromPipe()
+	pf.Wg.Go(pf.forwardDataFromPipe)
 
 	// 如果需要拉流，启动 wait goroutine，等待 ffmpeg 退出并清理
 	if pf.needPull && pf.ffmpegCmd != nil {
-		go pf.waitWithBackupSupport(ffmpegArgs)
+		pf.Wg.Go(func() {
+			pf.waitWithBackupSupport(ffmpegArgs)
+		})
 	}
 
 	// 触发启动回调
 	if pf.onStarted != nil {
-		go pf.onStarted()
+		pf.Wg.Go(pf.onStarted)
 	}
 
 	return nil
@@ -709,7 +714,7 @@ func (pf *PipeForwarder) mergeFFmpegOptionsOrdered(baseArgs []string, sourceOpti
 // forwardDataFromPipe 从 pipeReader 读取数据并分发到 hub 与可选 RTMP 推流
 func (pf *PipeForwarder) forwardDataFromPipe() {
 	var ffIn io.WriteCloser
-	var pushWg sync.WaitGroup
+	// var pushWg sync.WaitGroup // 已迁移至 pf.Wg
 
 	// 检查是否有配置接收器
 	hasReceivers := false
@@ -790,9 +795,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					pf.streamName, pf.rtmpURL, pf.ffmpegPush.Process.Pid)
 				logger.LogPrintf("[%s] RTMP push command: ffmpeg %s", pf.streamName, strings.Join(cmd, " "))
 
-				pushWg.Add(1)
-				go func() {
-					defer pushWg.Done()
+				pf.Wg.Go(func() {
 					if err := pf.ffmpegPush.Wait(); err != nil && pf.ctx.Err() == nil {
 						logger.LogPrintf("[%s] RTMP push ffmpeg exited with error: %v", pf.streamName, err)
 					} else {
@@ -803,7 +806,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					pf.ffmpegLock.Lock()
 					pf.ffmpegPush = nil
 					pf.ffmpegLock.Unlock()
-				}()
+				})
 			}
 		}
 	}
@@ -826,7 +829,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					ffIn = nil
 				}
 				pf.ffInLock.Unlock()
-				pushWg.Wait()
+				pf.Wg.Wait()
 				return
 			default:
 				n, err := pf.pipeReader.Read(buf)
@@ -857,10 +860,10 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 
 					if currentFFIn != nil {
 						wDone := make(chan error, 1)
-						go func() {
+						pf.Wg.Go(func() {
 							_, werr := currentFFIn.Write(chunk)
 							wDone <- werr
-						}()
+						})
 
 						select {
 						case werr := <-wDone:
@@ -926,7 +929,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 							ffIn = nil
 						}
 						pf.ffInLock.Unlock()
-						pushWg.Wait()
+						pf.Wg.Wait()
 						return
 					}
 
@@ -938,7 +941,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 							ffIn = nil
 						}
 						pf.ffInLock.Unlock()
-						pushWg.Wait()
+						pf.Wg.Wait()
 						return
 					}
 
@@ -965,7 +968,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 						ffIn = nil
 					}
 					pf.ffInLock.Unlock()
-					pushWg.Wait()
+					pf.Wg.Wait()
 					pf.hub.RemoveClient(pf.clientBuffer)
 					if pf.clientBuffer != nil {
 						pf.clientBuffer.Close()
@@ -981,7 +984,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 							ffIn = nil
 						}
 						pf.ffInLock.Unlock()
-						pushWg.Wait()
+						pf.Wg.Wait()
 						pf.hub.RemoveClient(pf.clientBuffer)
 						return
 					}
@@ -995,10 +998,10 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 
 						if currentFFIn != nil {
 							wDone := make(chan error, 1)
-							go func() {
+							pf.Wg.Go(func() {
 								_, werr := currentFFIn.Write(chunk)
 								wDone <- werr
-							}()
+							})
 
 							select {
 							case werr := <-wDone:
@@ -1210,6 +1213,16 @@ func (pf *PipeForwarder) waitWithBackupSupport(originalArgs []string) {
 					goto cleanup
 				}
 
+				// 重置 header 缓存状态，因为新流可能有不同的 header
+				pf.headerMutex.Lock()
+				pf.headerBuf.Reset()
+				pf.headerCaptured = false
+				pf.patPmtBuf.Reset()
+				pf.headerMutex.Unlock()
+
+				// 重新启动数据转发 goroutine
+				pf.Wg.Go(pf.forwardDataFromPipe)
+
 				logger.LogPrintf("[%s] Started PipeForwarder with backup URL, ffmpeg pid=%d", pf.streamName, pf.ffmpegCmd.Process.Pid)
 				logger.LogPrintf("[%s] Full FFmpeg command with backup URL: ffmpeg %s", pf.streamName, strings.Join(modifiedBackupArgs, " "))
 				pf.mutex.Unlock()
@@ -1308,11 +1321,19 @@ func (pf *PipeForwarder) Stop() {
 		logger.LogPrintf("[%s] Killing ffmpeg push process (pid=%d)", pf.streamName, pf.ffmpegPush.Process.Pid)
 		_ = killProcess(-pf.ffmpegPush.Process.Pid)
 		// 等待推流进程结束
-		go func() {
-			if pf.ffmpegPush != nil {
-				pf.ffmpegPush.Wait()
+		waitPushCh := make(chan struct{})
+		cmdToWait := pf.ffmpegPush
+		pf.Wg.Go(func() {
+			defer close(waitPushCh)
+			if cmdToWait != nil {
+				_ = cmdToWait.Wait()
 			}
-		}()
+		})
+		select {
+		case <-waitPushCh:
+		case <-time.After(2 * time.Second):
+			logger.LogPrintf("[%s] push ffmpeg wait timeout", pf.streamName)
+		}
 		pf.ffmpegPush = nil
 	}
 	pf.ffmpegLock.Unlock()
@@ -1322,11 +1343,19 @@ func (pf *PipeForwarder) Stop() {
 		logger.LogPrintf("[%s] Killing main ffmpeg process (pid=%d)", pf.streamName, pf.ffmpegCmd.Process.Pid)
 		_ = killProcess(-pf.ffmpegCmd.Process.Pid)
 		// 等待主进程结束
-		go func() {
-			if pf.ffmpegCmd != nil {
-				pf.ffmpegCmd.Wait()
+		waitCmdCh := make(chan struct{})
+		cmdToWaitMain := pf.ffmpegCmd
+		pf.Wg.Go(func() {
+			defer close(waitCmdCh)
+			if cmdToWaitMain != nil {
+				_ = cmdToWaitMain.Wait()
 			}
-		}()
+		})
+		select {
+		case <-waitCmdCh:
+		case <-time.After(2 * time.Second):
+			logger.LogPrintf("[%s] main ffmpeg wait timeout", pf.streamName)
+		}
 		pf.ffmpegCmd = nil
 	}
 
@@ -1368,7 +1397,7 @@ func (pf *PipeForwarder) Stop() {
 	// 回调
 	if pf.onStopped != nil {
 		logger.LogPrintf("[%s] Calling onStopped callback", pf.streamName)
-		go pf.onStopped() // 在goroutine中调用，避免阻塞
+		pf.Wg.Go(pf.onStopped) // 使用 Wg.Go 跟踪回调，避免阻塞
 	}
 
 	logger.LogPrintf("[%s] Stopped PipeForwarder", pf.streamName)

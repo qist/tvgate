@@ -7,6 +7,7 @@ import (
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
 
 /*
@@ -22,7 +23,9 @@ type ChannelManager struct {
 
 	sessionTTL time.Duration
 
+	stopCleaner chan struct{}
 	cleanerOnce sync.Once
+	Wg          tsync.WaitGroup
 }
 
 // NewChannelManager 创建新的频道管理器
@@ -38,9 +41,10 @@ func NewChannelManager() *ChannelManager {
 	}
 
 	return &ChannelManager{
-		channels:   make(map[string]*MulticastChannel),
-		cacheSize:  fccCacheSize,
-		sessionTTL: 10 * time.Second,
+		channels:    make(map[string]*MulticastChannel),
+		cacheSize:   fccCacheSize,
+		sessionTTL:  10 * time.Second,
+		stopCleaner: make(chan struct{}),
 	}
 }
 
@@ -76,15 +80,31 @@ func (cm *ChannelManager) GetOrCreate(channel string) *MulticastChannel {
 
 func (cm *ChannelManager) StartCleaner() {
 	cm.cleanerOnce.Do(func() {
-		go func() {
+		cm.Wg.Go(func() {
 			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
 
-			for range ticker.C {
-				cm.cleanup()
+			for {
+				select {
+				case <-ticker.C:
+					cm.cleanup()
+				case <-cm.stopCleaner:
+					return
+				}
 			}
-		}()
+		})
 	})
+}
+
+// Stop 停止清理器
+func (cm *ChannelManager) Stop() {
+	select {
+	case <-cm.stopCleaner:
+		// 已经关闭，直接等待
+	default:
+		close(cm.stopCleaner)
+	}
+	cm.Wg.Wait()
 }
 
 func (cm *ChannelManager) cleanup() {

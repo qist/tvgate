@@ -8,11 +8,15 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
 	// "sync"
 	"github.com/qist/tvgate/dns"
+	tsync "github.com/qist/tvgate/utils/sync"
+
 	// "github.com/qist/tvgate/logger"
-	"golang.org/x/net/proxy"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
 type DialContextWrapper struct {
@@ -42,6 +46,12 @@ func (d *DialContextWrapper) DialContext(ctx context.Context, network, addr stri
 	// 创建带超时的 context，避免连接永远挂起
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+
+	// 优先使用 ContextDialer 接口，避免创建额外的 Goroutine
+	if cd, ok := d.Base.(proxy.ContextDialer); ok {
+		return cd.DialContext(dialCtx, network, addr)
+	}
+
 	// 根据 IPv6 设置调整网络类型
 	if !d.EnableIPv6 && (network == "tcp6" || network == "tcp") {
 		network = "tcp4"
@@ -55,10 +65,11 @@ func (d *DialContextWrapper) DialContext(ctx context.Context, network, addr stri
 	resultChan := make(chan dialResult, 1)
 
 	// 异步拨号
-	go func() {
+	var wg tsync.WaitGroup
+	wg.Go(func() {
 		conn, err := d.Base.Dial(network, addr)
 		resultChan <- dialResult{conn, err}
-	}()
+	})
 
 	select {
 	case <-dialCtx.Done():
@@ -145,7 +156,7 @@ func SafeDialContext(base *net.Dialer, enableIPv6 bool) func(ctx context.Context
 			} else {
 				ips, err = resolver.LookupIPAddr(ctx, host)
 			}
-			
+
 			if err == nil && len(ips) > 0 {
 				ip := ips[0].IP.String()
 				target := net.JoinHostPort(ip, port)

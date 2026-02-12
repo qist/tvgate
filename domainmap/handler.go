@@ -909,7 +909,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			forceTest := attempt > 0
-			selectedProxy := lb.SelectProxy(pg, originalReqURL.String(), forceTest)
+			selectedProxy := lb.SelectProxy(r.Context(), pg, originalReqURL.String(), forceTest)
 
 			clientToUse := client
 			if selectedProxy != nil {
@@ -1037,7 +1037,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		buf := buffer.GetBuffer(bufSize)
 		defer buffer.PutBuffer(bufSize, buf)
-		stream.CopyResponse(r.Context(), w, r, resp, originalReqURL.String(), buf, bufSize, updateActive,resp.StatusCode)
+		stream.CopyResponse(r.Context(), w, r, resp, originalReqURL.String(), buf, bufSize, updateActive, resp.StatusCode)
 	}
 
 	logger.LogRequestAndResponse(r, originalReqURL.String(), resp)

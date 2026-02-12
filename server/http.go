@@ -21,6 +21,7 @@ import (
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/publisher"
 	httpclient "github.com/qist/tvgate/utils/http"
+	tsync "github.com/qist/tvgate/utils/sync"
 	"github.com/qist/tvgate/web"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
@@ -31,6 +32,7 @@ var (
 	serverMu  sync.Mutex
 	servers   = make(map[string]*http.Server)
 	h3servers = make(map[string]*http3.Server)
+	serverWg  tsync.WaitGroup
 )
 
 // CloseAllServers 关闭所有正在运行的服务器
@@ -59,6 +61,8 @@ func CloseAllServers() {
 		}
 		cancel()
 	}
+
+	serverWg.Wait()
 
 	// 清空maps
 	servers = make(map[string]*http.Server)
@@ -134,12 +138,12 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 			},
 		}
 
-		go func() {
+		serverWg.Go(func() {
 			logger.LogPrintf("🚀 启动 HTTP/3 %s", addr)
 			if err := h3srv.Serve(udpLn); err != nil && err != http.ErrServerClosed {
 				logger.LogPrintf("❌ HTTP/3 错误: %v", err)
 			}
-		}()
+		})
 	}
 
 	// ==================== 保存到全局 Map ====================
@@ -151,7 +155,7 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 	serverMu.Unlock()
 
 	// ==================== 启动 HTTP/1.x + HTTP/2 ====================
-	go func() {
+	serverWg.Go(func() {
 		if tlsConfig != nil {
 			_ = http2.ConfigureServer(srv, &http2.Server{})
 			logger.LogPrintf("🚀 启动 HTTPS H1/H2 %s", addr)
@@ -164,10 +168,10 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 				logger.LogPrintf("❌ HTTP 错误: %v", err)
 			}
 		}
-	}()
+	})
 
 	// ==================== 等待退出 ====================
-	go func() {
+	serverWg.Go(func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -180,7 +184,7 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 			}
 		}
 		logger.LogPrintf("✅ 端口 %s 已关闭", addr)
-	}()
+	})
 
 	return nil
 }
@@ -303,7 +307,7 @@ func RegisterJXAndProxyMux(mux *http.ServeMux, cfg *config.Config) {
 		jxPath = "/jx"
 	}
 	mux.Handle(jxPath, SecurityHeaders(http.HandlerFunc(jxHandler.Handle)))
-	
+
 	// 添加 publisher 路由（如果配置了publisher）
 	if cfg.Publisher != nil && cfg.Publisher.Path != "" {
 		publisherPath := cfg.Publisher.Path

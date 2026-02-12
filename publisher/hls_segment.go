@@ -20,6 +20,7 @@ import (
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
 
 // HLSSegmentManager 管理每个流的 HLS 输出（通过 hub -> FFmpeg 切片）
@@ -49,7 +50,7 @@ type HLSSegmentManager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	mutex  sync.Mutex
-	wg     sync.WaitGroup
+	wg     tsync.WaitGroup
 }
 
 // NewHLSSegmentManager 创建新的管理器，每个流独立目录
@@ -79,10 +80,10 @@ func NewHLSSegmentManager(parentCtx context.Context, streamName, baseDir string,
 		segmentPath:     segmentPath,
 		playlistPath:    playlistPath,
 		segmentDuration: segmentDuration,
-		enablePlayback:  true, // 默认开启回放模式
-		retentionDays:   7,    // 默认不按时间删除
-		segmentCount:    5,    // 默认保留 5 个片段，可调整
-		needPull:        true, // 默认为 true，后续会根据实际配置调整
+		enablePlayback:  true,               // 默认开启回放模式
+		retentionDays:   7 * 24 * time.Hour, // 默认保留 7 天
+		segmentCount:    5,                  // 默认保留 5 个片段，可调整
+		needPull:        true,               // 默认为 true，后续会根据实际配置调整
 		ffmpegOptions:   ffmpegOptions,
 		ctx:             ctx,
 		cancel:          cancel,
@@ -123,7 +124,7 @@ func (h *HLSSegmentManager) cleanupSegments() {
 		return
 	}
 
-	go func() {
+	h.wg.Go(func() {
 		entries, err := os.ReadDir(h.segmentPath)
 		if err != nil {
 			return
@@ -132,9 +133,8 @@ func (h *HLSSegmentManager) cleanupSegments() {
 		cutoff := time.Now().Add(-h.retentionDays)
 
 		// 并发控制，最多同时删除 5 个文件
-		concurrency := 5
-		sem := make(chan struct{}, concurrency)
-		var wg sync.WaitGroup
+		sem := make(chan struct{}, 5)
+		var wg tsync.WaitGroup
 
 		for _, e := range entries {
 			if e.IsDir() {
@@ -150,25 +150,23 @@ func (h *HLSSegmentManager) cleanupSegments() {
 			}
 
 			if info.ModTime().Before(cutoff) {
-				wg.Add(1)
 				path := filepath.Join(h.segmentPath, e.Name())
 				name := e.Name()
 
 				// 使用 goroutine 删除文件，并受限并发
-				go func(p, n string) {
-					defer wg.Done()
+				wg.Go(func() {
 					sem <- struct{}{}        // 获取并发许可
 					defer func() { <-sem }() // 释放并发许可
 
-					if err := os.Remove(p); err == nil {
-						logger.LogPrintf("[%s] removed old segment: %s", h.streamName, n)
+					if err := os.Remove(path); err == nil {
+						logger.LogPrintf("[%s] removed old segment: %s", h.streamName, name)
 					}
-				}(path, name)
+				})
 			}
 		}
 
 		wg.Wait() // 等待所有删除完成
-	}()
+	})
 }
 
 // Start 启动输出目录、注册 hub（若有）、并启动 FFmpeg 进程
@@ -303,9 +301,7 @@ func (h *HLSSegmentManager) Start() error {
 
 	// 启动数据推送（来自 hub）
 	if h.clientBuffer != nil {
-		h.wg.Add(1)
-		go func() {
-			defer h.wg.Done()
+		h.wg.Go(func() {
 			for {
 				select {
 				case <-h.ctx.Done():
@@ -331,10 +327,10 @@ func (h *HLSSegmentManager) Start() error {
 						}
 
 						writeDone := make(chan error, 1)
-						go func(d []byte) {
-							_, err := ffmpegIn.Write(d)
+						h.wg.Go(func() {
+							_, err := ffmpegIn.Write(data)
 							writeDone <- err
-						}(data)
+						})
 
 						select {
 						case <-h.ctx.Done():
@@ -355,13 +351,11 @@ func (h *HLSSegmentManager) Start() error {
 					}
 				}
 			}
-		}()
+		})
 	}
 
 	// 定期清理任务
-	h.wg.Add(1)
-	go func() {
-		defer h.wg.Done()
+	h.wg.Go(func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -375,7 +369,7 @@ func (h *HLSSegmentManager) Start() error {
 				h.updatePlaylist()
 			}
 		}
-	}()
+	})
 
 	// log.Printf("[%s] Started HLS manager and ffmpeg (output: %s)", h.streamName, h.segmentPath)
 	return nil
@@ -387,10 +381,11 @@ func (h *HLSSegmentManager) Stop() error {
 
 	// 等待所有goroutine完成，设置超时
 	done := make(chan struct{})
-	go func() {
+	var waitWg tsync.WaitGroup
+	waitWg.Go(func() {
 		h.wg.Wait()
 		close(done)
-	}()
+	})
 
 	select {
 	case <-done:
@@ -408,14 +403,16 @@ func (h *HLSSegmentManager) Stop() error {
 	if h.ffmpegCmd != nil && h.ffmpegCmd.Process != nil {
 		_ = h.ffmpegCmd.Process.Signal(syscall.SIGTERM)
 		waitCh := make(chan struct{})
-		go func() {
-			h.ffmpegCmd.Wait()
-			close(waitCh)
-		}()
+		h.wg.Go(func() {
+			defer close(waitCh)
+			_ = h.ffmpegCmd.Wait()
+		})
 		select {
 		case <-waitCh:
-		case <-time.After(1 * time.Second):
+		case <-time.After(2 * time.Second):
 			_ = killProcess(h.ffmpegCmd.Process.Pid)
+			// 等待 kill 后进程退出
+			<-waitCh
 		}
 		h.ffmpegCmd = nil
 	}

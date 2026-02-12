@@ -5,14 +5,18 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+
 	// "path/filepath"
 	// "strconv"
 	"strings"
 	"sync"
+
 	// "sync/atomic"
-	"github.com/qist/tvgate/logger"
 	"time"
+
+	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
 
 type HTTPHubClient struct {
@@ -23,7 +27,7 @@ type HTTPHubClient struct {
 
 	mu     sync.Mutex
 	closed bool
-	
+
 	// 添加客户端是否已发送头部信息的标记
 	hasReceivedHeader bool
 }
@@ -35,28 +39,29 @@ type HTTPHub struct {
 	producerRunning  bool
 	producerCancelFn context.CancelFunc
 	key              string
-	
+
 	// 添加状态管理
-	state       int // 0: stopped, 1: playing, 2: error
-	stateCond   *sync.Cond
-	lastError   error
+	state            int // 0: stopped, 1: playing, 2: error
+	stateCond        *sync.Cond
+	lastError        error
 	maxRetryAttempts int
 	retryCount       int
-	
+
 	// 添加FLV头部信息缓存
-	flvHeader        []byte
-	videoConfig      []byte
-	audioConfig      []byte
+	flvHeader   []byte
+	videoConfig []byte
+	audioConfig []byte
+	wg          tsync.WaitGroup
 }
 
 var (
-	httpHubsMu sync.RWMutex  // 使用读写锁提高并发性能
+	httpHubsMu sync.RWMutex // 使用读写锁提高并发性能
 	httpHubs   = make(map[string]*HTTPHub)
 )
 
 func GetOrCreateHTTPHub(rawURL string) *HTTPHub {
 	normalizedKey := normalizeHubKey(rawURL)
-	
+
 	httpHubsMu.RLock()
 	// 先尝试读取已存在的hub
 	if h, ok := httpHubs[normalizedKey]; ok {
@@ -64,7 +69,7 @@ func GetOrCreateHTTPHub(rawURL string) *HTTPHub {
 		h.mu.Lock()
 		isClosed := h.closed
 		h.mu.Unlock()
-		
+
 		if !isClosed {
 			httpHubsMu.RUnlock()
 			logger.LogPrintf("复用已存在的hub: %s (原始URL: %s)", normalizedKey, rawURL)
@@ -93,7 +98,7 @@ func GetOrCreateHTTPHub(rawURL string) *HTTPHub {
 		h.mu.Lock()
 		isClosed := h.closed
 		h.mu.Unlock()
-		
+
 		if !isClosed {
 			logger.LogPrintf("复用已存在的hub: %s (原始URL: %s)", normalizedKey, rawURL)
 			return h
@@ -137,14 +142,14 @@ func RemoveHTTPHub(key string) {
 func (h *HTTPHub) Close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	
+
 	if h.closed {
 		return
 	}
 	h.closed = true
 	h.state = StateStopped
 	h.stateCond.Broadcast() // 通知所有等待状态的goroutine
-	
+
 	if h.producerCancelFn != nil {
 		h.producerCancelFn()
 	}
@@ -153,15 +158,18 @@ func (h *HTTPHub) Close() {
 		clients = append(clients, c)
 	}
 	h.clients = nil
-	
+
 	for _, c := range clients {
 		c.safeClose()
 	}
+	h.mu.Unlock()
+	h.wg.Wait()
+	h.mu.Lock()
 }
 
 func (h *HTTPHub) AddClient(w http.ResponseWriter, bufSize int) *HTTPHubClient {
 	rb := createRingBuffer(bufSize) // 为每个客户端创建独立的ringbuffer
-	
+
 	c := &HTTPHubClient{
 		ch: rb,
 		w:  w,
@@ -171,8 +179,8 @@ func (h *HTTPHub) AddClient(w http.ResponseWriter, bufSize int) *HTTPHubClient {
 		c.canFlush = true
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()  // 使用defer确保解锁
-	
+	defer h.mu.Unlock() // 使用defer确保解锁
+
 	if h.closed {
 		// 如果hub已关闭，仍然返回client，但客户端会在WriteLoop中检测到并退出
 		return c
@@ -206,9 +214,9 @@ func (h *HTTPHub) RemoveClient(c *HTTPHubClient) {
 	}
 	clientCount := len(h.clients)
 	h.mu.Unlock()
-	
+
 	c.safeClose()
-	
+
 	// 如果没有客户端了，关闭Hub
 	if clientCount == 0 {
 		RemoveHTTPHub(h.key) // 使用全局函数来移除并清理Hub
@@ -222,18 +230,17 @@ func (h *HTTPHub) Broadcast(data []byte) {
 		clients = append(clients, c)
 	}
 	h.mu.Unlock()
-	
+
 	for _, c := range clients {
 		buf := make([]byte, len(data))
 		copy(buf, data) // 复制数据以避免引用问题
-		
+
 		if !c.ch.Push(buf) {
 			// 如果推送失败，可能是通道已关闭，从客户端列表中移除
 			h.removeClientIfNotExist(c)
 		}
 	}
 }
-
 
 // removeClientIfNotExist 从客户端列表中移除已不存在的客户端
 func (h *HTTPHub) removeClientIfNotExist(c *HTTPHubClient) {
@@ -260,28 +267,28 @@ func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte)
 		h.mu.Unlock()
 		return
 	}
-	
+
 	// 检查是否已经有producer在运行，如果有则不启动新的
 	if h.producerRunning {
 		h.mu.Unlock()
 		return
 	}
-	
+
 	h.producerRunning = true
 	pCtx, cancel := context.WithCancel(ctx)
 	h.producerCancelFn = cancel
 	h.mu.Unlock()
 
-	go func() {
+	h.wg.Go(func() {
 		defer func() {
 			h.mu.Lock()
 			h.producerRunning = false
 			h.mu.Unlock()
 		}()
-		
+
 		// 设置为播放状态
 		h.SetPlaying()
-		
+
 		for {
 			n, err := src.Read(buf)
 			if n > 0 {
@@ -289,7 +296,7 @@ func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte)
 				if isFLVStream(h.key) {
 					// 检查是否是头部信息并缓存
 					data := buf[:n]
-					
+
 					// 检查是否是FLV头部或配置信息并缓存
 					if isFLVHeader(data) && h.flvHeader == nil {
 						h.flvHeader = make([]byte, n)
@@ -302,20 +309,28 @@ func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte)
 						copy(h.audioConfig, data)
 					}
 				}
-				
+
 				h.Broadcast(buf[:n])
 			}
 			if err != nil {
 				logger.LogPrintf("Hub producer error: %v for hub %s", err, h.key)
-				
+
 				// 设置错误状态
 				h.SetError(err)
-				
+
 				// 尝试重连
 				if h.shouldRetry() {
 					// logger.LogPrintf("Hub %s attempting to reconnect... (attempt %d/%d)", h.key, h.retryCount, h.maxRetryAttempts)
-					time.Sleep(5 * time.Second) // 等待5秒后重试
-                    
+
+					// 使用select等待，支持上下文取消
+					select {
+					case <-time.After(5 * time.Second):
+						// 继续重试流程
+					case <-pCtx.Done():
+						// 上下文已取消，停止重试
+						return
+					}
+
 					h.SetStopped() // 重试前设置为停止状态
 					h.retryCount++
 					return // 退出当前goroutine，让新的EnsureProducer被调用
@@ -332,16 +347,14 @@ func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte)
 			default:
 			}
 		}
-	}()
+	})
 }
-
 
 func (h *HTTPHub) shouldRetry() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.retryCount < h.maxRetryAttempts && !h.closed
 }
-
 
 func (c *HTTPHubClient) safeClose() {
 	c.mu.Lock()
@@ -366,12 +379,12 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 	)
 	flushTicker := time.NewTicker(flushInterval)
 	defer flushTicker.Stop()
-	
+
 	// 等待Hub进入播放状态
 	if !c.waitForPlaying(ctx) {
 		return ctx.Err()
 	}
-	
+
 	// 获取客户端所属的Hub并发送缓存的头部信息（仅对FLV流）
 	hub := c.getHubByClient()
 	if hub != nil {
@@ -394,7 +407,7 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 			hub.mu.Unlock()
 		}
 	}
-	
+
 	for {
 		select {
 		case data, ok := <-c.ch.Chan(): // 从ringbuffer的channel读取数据
@@ -402,13 +415,13 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 				// 通道已关闭，退出循环
 				return nil
 			}
-			
+
 			// 进行类型断言
 			byteData, ok := data.([]byte)
 			if !ok {
 				continue // 如果类型断言失败，跳过此次循环
 			}
-			
+
 			written := 0
 			for written < len(byteData) {
 				n, err := c.w.Write(byteData[written:])
@@ -422,7 +435,7 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 				updateActive()
 			}
 		case <-flushTicker.C:
-			c.mu.Lock()  // 在访问flusher前加锁
+			c.mu.Lock() // 在访问flusher前加锁
 			if c.canFlush && bytesWritten > 0 &&
 				(bytesWritten >= maxFlushBytes || time.Since(lastFlush) >= maxFlushDelay) {
 				c.flusher.Flush()
@@ -444,14 +457,14 @@ func (c *HTTPHubClient) sendToClient(data []byte) {
 	if len(data) == 0 {
 		return
 	}
-	
+
 	// 立即发送数据到客户端
 	_, err := c.w.Write(data)
 	if err != nil {
 		logger.LogPrintf("发送缓存头部数据到客户端失败: %v", err)
 		return
 	}
-	
+
 	// 如果支持flush，立即发送
 	if c.canFlush {
 		c.flusher.Flush()
@@ -464,7 +477,7 @@ func (c *HTTPHubClient) waitForPlaying(ctx context.Context) bool {
 	if hub == nil {
 		return true // 如果找不到hub，直接返回
 	}
-	
+
 	return hub.WaitForPlaying(ctx)
 }
 
@@ -472,7 +485,7 @@ func (c *HTTPHubClient) waitForPlaying(ctx context.Context) bool {
 func (c *HTTPHubClient) getHubByClient() *HTTPHub {
 	httpHubsMu.RLock()
 	defer httpHubsMu.RUnlock()
-	
+
 	for _, hub := range httpHubs {
 		hub.mu.Lock()
 		_, exists := hub.clients[c]
@@ -522,39 +535,46 @@ func (h *HTTPHub) GetLastError() error {
 func (h *HTTPHub) WaitForPlaying(ctx context.Context) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	
+
 	// 如果已经关闭，直接返回
 	if h.closed {
 		return false
 	}
-	
+
 	// 如果在错误状态，返回错误
 	if h.state == StateError {
 		return false
 	}
-	
+
 	// 如果已经在播放，直接返回
 	if h.state == StatePlaying {
 		return true
 	}
-	
+
 	// 等待状态变化或context取消
-	for h.state == StateStopped && !h.closed && ctx.Err() == nil {
-		h.stateCond.Wait() // 这会自动释放锁并在唤醒时重新获取锁
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for h.state == StateStopped && !h.closed {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			// 继续检查状态
+		}
 	}
-	
+
 	// 检查context是否已取消
 	if ctx.Err() != nil {
 		return false
 	}
-	
+
 	// 检查最终状态
 	if h.state == StateError {
 		return false
 	}
 	return !h.closed && h.state == StatePlaying
 }
-
 
 // isFLVStream 根据路径判断是否为FLV流
 func isFLVStream(key string) bool {
@@ -564,7 +584,7 @@ func isFLVStream(key string) bool {
 		// 如果格式不正确，直接使用整个key作为URL
 		return isFLVStreamPathOnly(key)
 	}
-	
+
 	// 重建URL部分（去掉最后的#和状态码）
 	urlPart := strings.Join(parts[:len(parts)-1], "#")
 	return isFLVStreamPathOnly(urlPart)
@@ -589,10 +609,10 @@ func isFLVHeader(data []byte) bool {
 		return false
 	}
 	// FLV header: "FLV" + version(0x01) + flags + offset(0x00000009)
-	return data[0] == 0x46 && data[1] == 0x4C && data[2] == 0x56 &&  // "FLV"
-		   data[3] == 0x01 &&  // version
-		   data[4] & 0xFA == 0 && // flags (bit 6,7,8 should be 0)
-		   data[5] == 0x00 && data[6] == 0x00 && data[7] == 0x00 && data[8] == 0x09 // offset
+	return data[0] == 0x46 && data[1] == 0x4C && data[2] == 0x56 && // "FLV"
+		data[3] == 0x01 && // version
+		data[4]&0xFA == 0 && // flags (bit 6,7,8 should be 0)
+		data[5] == 0x00 && data[6] == 0x00 && data[7] == 0x00 && data[8] == 0x09 // offset
 }
 
 // isVideoConfig 检查数据是否为视频配置信息 (AVCDecoderConfigurationRecord)
@@ -602,13 +622,13 @@ func isVideoConfig(data []byte) bool {
 	if len(data) < 10 {
 		return false
 	}
-	
+
 	// 检查是否是AVC sequence header (0x17 0x00 0x00 0x00 0x01)
-	return data[0] == 0x17 &&  // AVC video tag
-		   data[1] == 0x00 &&  // AVC sequence header
-		   data[2] == 0x00 && 
-		   data[3] == 0x00 && 
-		   data[4] == 0x01     // AVCPacketType
+	return data[0] == 0x17 && // AVC video tag
+		data[1] == 0x00 && // AVC sequence header
+		data[2] == 0x00 &&
+		data[3] == 0x00 &&
+		data[4] == 0x01 // AVCPacketType
 }
 
 // isAudioConfig 检查数据是否为音频配置信息 (AudioSpecificConfig)
@@ -618,8 +638,8 @@ func isAudioConfig(data []byte) bool {
 	if len(data) < 4 {
 		return false
 	}
-	
+
 	// 检查是否是AAC sequence header (0xAF 0x00)
-	return data[0] == 0xAF &&  // AAC audio tag
-		   data[1] == 0x00    // AAC sequence header
+	return data[0] == 0xAF && // AAC audio tag
+		data[1] == 0x00 // AAC sequence header
 }

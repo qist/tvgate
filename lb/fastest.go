@@ -3,17 +3,21 @@ package lb
 import (
 	"context"
 	"fmt"
-	"github.com/qist/tvgate/config"
-	"github.com/qist/tvgate/logger"
-	p "github.com/qist/tvgate/proxy"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/logger"
+	p "github.com/qist/tvgate/proxy"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
 
-// selectFastestProxy 使用最快的代理
-func SelectFastestProxy(group *config.ProxyGroupConfig, targetURL string, forceTest bool) *config.ProxyConfig {
-	ctx, cancel := context.WithTimeout(context.Background(), config.DefaultDialTimeout)
+var lbWg tsync.WaitGroup
+
+// SelectFastestProxy 使用最快的代理
+func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, targetURL string, forceTest bool) *config.ProxyConfig {
+	ctx, cancel := context.WithTimeout(ctx, config.DefaultDialTimeout)
 	defer cancel()
 	now := time.Now()
 	interval := group.Interval
@@ -21,26 +25,46 @@ func SelectFastestProxy(group *config.ProxyGroupConfig, targetURL string, forceT
 		interval = 60 * time.Second
 	}
 	maxAcceptableRT := 3 * time.Second
-	// minAcceptableRT := 100 * time.Microsecond
 
-	group.Stats.Lock()
+	group.Stats.RLock()
 	n := len(group.Proxies)
+	group.Stats.RUnlock()
 	if n == 0 {
-		group.Stats.Unlock()
 		return nil
 	}
 
-	needCheck := forceTest // 如果强制测速，直接需要测速
-	if !forceTest {
-		allNoRT := true
-
+	needCheck := forceTest
+	if forceTest {
+		// 即使是强制测速，也检查一下是否刚刚才测过（1秒内）
+		// 防止外部重试逻辑导致的瞬时死循环测速
+		justChecked := true
+		group.Stats.RLock()
 		for _, proxy := range group.Proxies {
 			stats, ok := group.Stats.ProxyStats[proxy.Name]
-			if ok && now.Sub(stats.LastCheck) <= interval && stats.ResponseTime > 0 {
-				// 缓存有效且测速过，认为是“可用的”
-				allNoRT = false
+			if !ok || now.Sub(stats.LastCheck) > 1*time.Second {
+				justChecked = false
+				break
 			}
 		}
+		group.Stats.RUnlock()
+		if justChecked {
+			logger.LogPrintf("⚠️ 1秒内已触发过测速，跳过本次强制测速")
+			needCheck = false
+		}
+	}
+
+	if !needCheck {
+		allNoRT := true
+		group.Stats.RLock()
+		for _, proxy := range group.Proxies {
+			stats, ok := group.Stats.ProxyStats[proxy.Name]
+			if ok && now.Sub(stats.LastCheck) <= interval {
+				// 只要有代理在最近测速过（无论成功失败），就不强制触发全局测速
+				allNoRT = false
+				break
+			}
+		}
+		group.Stats.RUnlock()
 
 		// 至少有一个可用代理，就不测速
 		// 全部未测速成功（或缓存过期），才触发测速
@@ -50,12 +74,10 @@ func SelectFastestProxy(group *config.ProxyGroupConfig, targetURL string, forceT
 	// ===== 缓存优先使用（非强制测速时）=====
 	if !needCheck {
 		logger.LogPrintf("🌀 当前代理组缓存状态：")
-		var fastest *config.ProxyConfig
-		minTime := time.Hour
+		group.Stats.RLock()
 		for _, proxy := range group.Proxies {
 			stats := group.Stats.ProxyStats[proxy.Name]
 			if stats == nil {
-				logger.LogPrintf(" - %-16s [未测速]", proxy.Name)
 				continue
 			}
 
@@ -74,7 +96,7 @@ func SelectFastestProxy(group *config.ProxyGroupConfig, targetURL string, forceT
 			logger.LogPrintf(" - %-16s [%-3s] RT: %-10v 上次测速已过: %-6v 最小测速间隔: %-6v HTTP状态: [%-3d] 失败次数: %-2d %s",
 				proxy.Name,
 				status,
-				stats.ResponseTime.Truncate(time.Microsecond), // 保留更合理的精度
+				stats.ResponseTime.Truncate(time.Microsecond),
 				now.Sub(stats.LastCheck).Truncate(time.Second),
 				interval,
 				stats.StatusCode,
@@ -83,8 +105,9 @@ func SelectFastestProxy(group *config.ProxyGroupConfig, targetURL string, forceT
 			)
 		}
 
-		for i := range group.Proxies {
-			proxy := group.Proxies[i]
+		var fastest *config.ProxyConfig
+		minTime := time.Hour
+		for _, proxy := range group.Proxies {
 			stats, ok := group.Stats.ProxyStats[proxy.Name]
 			if !ok {
 				continue
@@ -100,54 +123,67 @@ func SelectFastestProxy(group *config.ProxyGroupConfig, targetURL string, forceT
 
 		if fastest != nil {
 			stats := group.Stats.ProxyStats[fastest.Name]
-			group.Stats.Unlock()
 			logger.LogPrintf("⚡ 使用缓存数据选择最快代理: %s，响应时间: %v，上次测速已过: %v, 最小测速间隔: %v", fastest.Name, minTime,
 				now.Sub(stats.LastCheck).Truncate(time.Second), interval)
+			group.Stats.RUnlock()
 			return fastest
 		}
+		group.Stats.RUnlock()
+	}
+
+	// ===== 并发测速 =====
+	logger.LogPrintf("🌐 启动并发测速 (原因: 缓存失效或 forceTest)")
+
+	// 更新 LastCheck 避免并发触发
+	group.Stats.Lock()
+	for _, proxy := range group.Proxies {
+		stats, ok := group.Stats.ProxyStats[proxy.Name]
+		if !ok {
+			stats = &config.ProxyStats{}
+			group.Stats.ProxyStats[proxy.Name] = stats
+		}
+		stats.LastCheck = now
 	}
 	group.Stats.Unlock()
 
-	// ===== 并发测速 =====
 	resultChan := make(chan config.TestResult, n)
+	var wg tsync.WaitGroup
 
 	tested := 0
-	// 并发测速所有代理
 	for i := range group.Proxies {
 		proxy := group.Proxies[i]
 
-		group.Stats.Lock()
+		group.Stats.RLock()
 		stats := group.Stats.ProxyStats[proxy.Name]
 		if stats != nil && now.Before(stats.CooldownUntil) {
-			group.Stats.Unlock()
+			group.Stats.RUnlock()
 			continue
 		}
-		group.Stats.Unlock()
+		group.Stats.RUnlock()
 
 		tested++
-
-		go func(proxy config.ProxyConfig) {
+		wg.Go(func() {
+			pCopy := *proxy
 			if strings.HasPrefix(targetURL, "rtsp://") {
-				// start := time.Now()
-				rt, err := TestRTSPProxy(proxy, targetURL)
+				rt, err := TestRTSPProxy(ctx, pCopy, targetURL)
 				resultChan <- config.TestResult{
-					Proxy:        proxy,
+					Proxy:        pCopy,
 					ResponseTime: rt,
 					Err:          err,
-					StatusCode:   200, // RTSP 没有 HTTP 状态码，这里用 200 表示成功
+					StatusCode:   200,
 				}
 			} else {
-				proxyCtx, proxyCancel := context.WithTimeout(context.Background(), config.DefaultDialTimeout)
+				proxyCtx, proxyCancel := context.WithTimeout(ctx, config.DefaultDialTimeout)
 				defer proxyCancel()
 
-				client, err := p.CreateProxyClient(proxyCtx, &config.Cfg, proxy, group.IPv6)
+				client, err := p.CreateProxyClient(proxyCtx, &config.Cfg, pCopy, group.IPv6)
 				if err != nil {
-					resultChan <- config.TestResult{Proxy: proxy, Err: err}
+					resultChan <- config.TestResult{Proxy: pCopy, Err: err}
 					return
 				}
 
 				req, _ := http.NewRequestWithContext(proxyCtx, "GET", targetURL, nil)
-				req.Header.Set("Range", "bytes=0-2047") // 测试前2048字节
+				req.Header.Set("Range", "bytes=0-2047")
 
 				start := time.Now()
 				resp, err := client.Do(req)
@@ -162,21 +198,22 @@ func SelectFastestProxy(group *config.ProxyGroupConfig, targetURL string, forceT
 				}
 
 				resultChan <- config.TestResult{
-					Proxy:        proxy,
+					Proxy:        pCopy,
 					ResponseTime: duration,
 					Err:          err,
 					StatusCode:   statusCode,
 				}
 			}
-		}(*proxy)
+		})
 	}
 
 	successReturned := false
-
+	consumed := 0
 loop:
 	for i := 0; i < tested; i++ {
 		select {
 		case res := <-resultChan:
+			consumed++
 			group.Stats.Lock()
 			stats := group.Stats.ProxyStats[res.Proxy.Name]
 			if stats == nil {
@@ -185,8 +222,7 @@ loop:
 			}
 			stats.LastCheck = now
 
-			if res.Err == nil &&
-				res.ResponseTime >= 0 && res.StatusCode < 500 {
+			if res.Err == nil && res.ResponseTime >= 0 && res.StatusCode < 500 {
 				stats.Alive = true
 				stats.ResponseTime = res.ResponseTime
 				stats.StatusCode = res.StatusCode
@@ -197,14 +233,19 @@ loop:
 				if !successReturned {
 					logger.LogPrintf("🚀 立即返回测速成功代理: %s 响应时间: %v，状态码: %d", res.Proxy.Name, res.ResponseTime, res.StatusCode)
 					successReturned = true
-					// 异步消费剩余结果
-					remaining := tested
-					if successReturned {
-						remaining -= 1
-					}
+					remaining := tested - consumed
 					logger.LogPrintf("📥 异步处理剩余 %d 个测速结果", remaining)
-					go ConsumeRemainingResults(resultChan, remaining, group, now)
-					return &res.Proxy
+					lbWg.Go(func() {
+						ConsumeRemainingResults(resultChan, remaining, group, now)
+					})
+
+					// 返回原始代理对象的指针
+					for _, p := range group.Proxies {
+						if p.Name == res.Proxy.Name {
+							return p
+						}
+					}
+					return &res.Proxy // 兜底，虽然不应该走到这里
 				}
 			} else {
 				if res.Err != nil {
@@ -229,6 +270,9 @@ loop:
 	}
 
 	logger.LogPrintf("❌ 无可用代理立即返回，全部失败或响应超时")
-	go ConsumeRemainingResults(resultChan, 0, group, now)
+	remaining := tested - consumed
+	lbWg.Go(func() {
+		ConsumeRemainingResults(resultChan, remaining, group, now)
+	})
 	return nil
 }

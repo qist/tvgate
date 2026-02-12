@@ -3,6 +3,7 @@ package publisher
 import (
 	"context"
 	"fmt"
+
 	// "log"
 	"net/http"
 	"strings"
@@ -11,10 +12,12 @@ import (
 	"crypto/rand"
 	"math/big"
 
-	"github.com/qist/tvgate/logger"
-	"github.com/shirou/gopsutil/v3/process"
 	"os/exec"
 	"syscall"
+
+	"github.com/qist/tvgate/logger"
+	tsync "github.com/qist/tvgate/utils/sync"
+	"github.com/shirou/gopsutil/v3/process"
 )
 
 // GenerateStreamKey generates a stream key based on the configuration
@@ -406,14 +409,17 @@ func (s *Stream) ExecuteFFmpegWithMonitoring(ctx context.Context, args []string,
 
 	// Channel to signal when the process has finished
 	done := make(chan error, 1)
-	go func() {
+	var wg tsync.WaitGroup
+	wg.Go(func() {
 		done <- cmd.Wait()
-	}()
+	})
 
 	// Monitor the process if we have callbacks
 	if (onStarted != nil || onStatsUpdate != nil) && cmd.Process != nil {
 		pid := int32(cmd.Process.Pid)
-		go s.monitorFFmpegProcess(ctx, pid, onStatsUpdate)
+		wg.Go(func() {
+			s.monitorFFmpegProcess(ctx, pid, onStatsUpdate)
+		})
 	}
 
 	// Wait for the command to finish or context to be cancelled

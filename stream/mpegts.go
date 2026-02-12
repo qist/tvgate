@@ -66,31 +66,16 @@ func HandleMpegtsStream(
 		// 检查是否是最后一个客户端
 		hub.mu.Lock()
 		clientCount := len(hub.clients)
-		currentClient := hub.rtspClient
 		hub.mu.Unlock()
 
 		if clientCount == 0 {
-			hub.SetStopped()
-			// 关闭RTSP客户端
-			if currentClient != nil && currentClient == client {
-				currentClient.Close()
-				hub.mu.Lock()
-				// 清除RTSP客户端引用
-				if hub.rtspClient == currentClient {
-					hub.rtspClient = nil
-				}
-				hub.mu.Unlock()
-			}
-
-			// 在关闭RTSP客户端后，确保只关闭一次clientChan
-			// 注意：clientChan已经在RemoveClient中被关闭了，这里不需要再次关闭
+			RemoveHub(rtspURL)
 		}
 	}()
 
 	// 如果需要启动播放
 	if shouldPlay {
-
-		go func() {
+		hub.Go(func() {
 			var packetLossCount int64 // 添加丢包计数器
 			client.OnPacketRTP(videoMedia, mpegtsFormat, func(pkt *rtp.Packet) {
 				// 检查是否有丢包
@@ -125,7 +110,7 @@ func HandleMpegtsStream(
 
 			// 标记流为正在播放状态
 			hub.SetPlaying()
-		}()
+		})
 	} else {
 		// 等待流状态变为播放中
 		if !hub.WaitForPlaying(ctx) {
@@ -159,8 +144,7 @@ func HandleMpegtsStream(
 			if updateActive != nil {
 				updateActive()
 			}
-		default:
-			data, ok := clientChan.Pull()
+		case data, ok := <-clientChan.Chan():
 			if !ok {
 				return nil
 			}

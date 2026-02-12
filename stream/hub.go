@@ -3,11 +3,14 @@ package stream
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/bluenviron/gortsplib/v5"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
+	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
 
 const (
@@ -20,6 +23,10 @@ type StreamHubs struct {
 	mu       sync.RWMutex // 使用读写锁提高并发性能
 	clients  map[*ringbuffer.RingBuffer]struct{}
 	isClosed bool
+	// 添加生命周期管理
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     tsync.WaitGroup
 	// 添加流状态管理
 	state     int // 0: stopped, 1: playing, 2: error
 	stateCond *sync.Cond
@@ -33,9 +40,12 @@ type StreamHubs struct {
 }
 
 func NewStreamHubs() *StreamHubs {
+	ctx, cancel := context.WithCancel(config.ServerCtx)
 	hub := &StreamHubs{
 		clients: make(map[*ringbuffer.RingBuffer]struct{}),
 		state:   StateStopped,
+		ctx:     ctx,
+		cancel:  cancel,
 	}
 	hub.stateCond = sync.NewCond(&hub.mu)
 	return hub
@@ -101,8 +111,8 @@ func (hub *StreamHubs) ClientCount() int {
 
 func (hub *StreamHubs) Close() {
 	hub.mu.Lock()
-	defer hub.mu.Unlock()
 	if hub.isClosed {
+		hub.mu.Unlock()
 		return
 	}
 	hub.isClosed = true
@@ -119,6 +129,36 @@ func (hub *StreamHubs) Close() {
 		ch.Close()
 	}
 	hub.clients = nil
+
+	// 取消上下文并等待 goroutine
+	if hub.cancel != nil {
+		hub.cancel()
+	}
+	hub.mu.Unlock()
+
+	hub.wg.Wait()
+}
+
+// GetContext 获取 hub 的上下文
+func (hub *StreamHubs) GetContext() context.Context {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	return hub.ctx
+}
+
+// AddWG 为 hub 添加等待组计数
+func (hub *StreamHubs) AddWG(n int) {
+	hub.wg.Add(n)
+}
+
+// DoneWG 减少 hub 等待组计数
+func (hub *StreamHubs) DoneWG() {
+	hub.wg.Done()
+}
+
+// Go 启动一个协程并自动管理 WaitGroup 的计数
+func (hub *StreamHubs) Go(f func()) {
+	hub.wg.Go(f)
 }
 
 // 新增方法：设置流为播放状态
@@ -175,20 +215,29 @@ func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 	}
 
 	// 等待状态变化或context取消
-	for hub.state == StateStopped && !hub.isClosed && ctx.Err() == nil {
-		hub.stateCond.Wait() // 这会自动释放锁并在唤醒时重新获取锁
-	}
+	// 使用轮询代替 sync.Cond.Wait() 以支持 context 取消
+	hub.mu.Unlock() // 释放锁进入轮询
 
-	// 检查context是否已取消
-	if ctx.Err() != nil {
-		return false
-	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 
-	// 检查最终状态
-	if hub.state == StateError {
-		return false
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			hub.mu.Lock()
+			if hub.isClosed || hub.state == StateError {
+				hub.mu.Unlock()
+				return false
+			}
+			if hub.state == StatePlaying {
+				hub.mu.Unlock()
+				return true
+			}
+			hub.mu.Unlock()
+		}
 	}
-	return !hub.isClosed && hub.state == StatePlaying
 }
 
 // 新增方法：设置RTSP客户端

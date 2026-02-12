@@ -14,7 +14,7 @@ import (
 )
 
 // TestRTSPProxy 测试代理访问 RTSP 流（OPTIONS + DESCRIBE + SETUP + PLAY）
-func TestRTSPProxy(proxy config.ProxyConfig, rtspURL string) (time.Duration, error) {
+func TestRTSPProxy(ctx context.Context, proxy config.ProxyConfig, rtspURL string) (time.Duration, error) {
 	// fmt.Printf("DEBUG TestRTSPProxy: proxy=%s://%s:%d, rtspURL=%s\n", proxy.Type, proxy.Server, proxy.Port, rtspURL)
 
 	// 创建代理 Dialer
@@ -43,9 +43,26 @@ func TestRTSPProxy(proxy config.ProxyConfig, rtspURL string) (time.Duration, err
 		AnyPortEnable:              true,
 		DisableRTCPSenderReports:   true,
 		DisableRTCPReceiverReports: true,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		ReadTimeout:                config.DefaultDialTimeout,
+		WriteTimeout:               config.DefaultDialTimeout,
+		DialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
 			// fmt.Printf("DEBUG DialContext: network=%s, addr=%s\n", network, addr)
-			return proxyDialer.DialContext(ctx, network, addr)
+			// Ensure we respect the parent context if provided
+			if ctx != nil {
+				// Create a merged context or just use proxyDialer with existing context logic
+				// But proxyDialer.DialContext takes a context.
+				// If gortsplib passes a context (from DialTimeout), we use that.
+				// But we also want to respect 'ctx'.
+				// Since we can't easily merge contexts here without losing the deadline from dialCtx,
+				// we'll rely on DialTimeout setting a deadline on dialCtx.
+				// However, to support cancellation from 'ctx', we should check it.
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				default:
+				}
+			}
+			return proxyDialer.DialContext(dialCtx, network, addr)
 		},
 	}
 	defer client.Close()

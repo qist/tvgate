@@ -9,6 +9,7 @@ import (
 
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/stream"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
 
 // URLCacheItem 表示缓存的URL项
@@ -33,8 +34,11 @@ var (
 	urlCache = &URLCache{
 		cache: make(map[string]*URLCacheItem),
 	}
-	urlHubs = make(map[string]*URLHub)
-	hubMu   sync.RWMutex
+	urlHubs     = make(map[string]*URLHub)
+	hubMu       sync.RWMutex
+	cleanerOnce sync.Once
+	stopCleaner chan struct{}
+	domainmapWg tsync.WaitGroup
 )
 
 // GetOrCreateHub 获取或创建一个URL Hub
@@ -110,12 +114,34 @@ func (uc *URLCache) RemoveExpired() {
 
 // StartCacheCleaner 启动缓存清理器
 func StartCacheCleaner() {
-	ticker := time.NewTicker(5 * time.Minute)
-	go func() {
-		for range ticker.C {
-			urlCache.RemoveExpired()
+	cleanerOnce.Do(func() {
+		stopCleaner = make(chan struct{})
+		domainmapWg.Go(func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					urlCache.RemoveExpired()
+				case <-stopCleaner:
+					return
+				}
+			}
+		})
+	})
+}
+
+// StopCacheCleaner 停止缓存清理器
+func StopCacheCleaner() {
+	if stopCleaner != nil {
+		select {
+		case <-stopCleaner:
+		default:
+			close(stopCleaner)
 		}
-	}()
+		domainmapWg.Wait()
+		stopCleaner = nil
+	}
 }
 
 // ValidateURL 验证URL是否有效
@@ -154,7 +180,7 @@ func (dm *DomainMapper) GetValidURL(originalURL, frontendScheme, frontendHost st
 
 	// 生成新的URL
 	newURL, replaced, _ := dm.replaceSpecialNestedURL(parsedURL, frontendScheme, frontendHost, tm, tokenParam)
-	
+
 	// 如果URL被替换了，验证新URL的有效性
 	if replaced {
 		// 验证URL是否有效
@@ -163,7 +189,7 @@ func (dm *DomainMapper) GetValidURL(originalURL, frontendScheme, frontendHost st
 			urlCache.SetCachedURL(cacheKey, newURL, time.Hour)
 			return newURL, nil
 		}
-		
+
 		// 如果新URL无效，回退到原始URL
 		// 但仍然缓存结果以避免重复验证
 		urlCache.SetCachedURL(cacheKey, originalURL, 30*time.Minute)

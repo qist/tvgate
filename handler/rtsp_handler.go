@@ -23,6 +23,7 @@ import (
 	"github.com/qist/tvgate/proxy"
 	"github.com/qist/tvgate/rules"
 	"github.com/qist/tvgate/stream"
+	tsync "github.com/qist/tvgate/utils/sync"
 )
 
 func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
@@ -120,10 +121,15 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 
 	pg := rules.ChooseProxyGroup(hostname, originalHost)
 	if pg != nil {
+		// 使用请求上下文，以便客户端断开时能取消代理选择
+		proxyCtx, proxyCancel := context.WithCancel(r.Context())
+		defer proxyCancel()
+
 		selectedProxyChan := make(chan *config.ProxyConfig, 1)
-		go func() {
-			selectedProxyChan <- lb.SelectProxy(pg, rtspURL, false)
-		}()
+		var wg tsync.WaitGroup
+		wg.Go(func() {
+			selectedProxyChan <- lb.SelectProxy(proxyCtx, pg, rtspURL, false)
+		})
 
 		select {
 		case selectedProxy := <-selectedProxyChan:
@@ -137,6 +143,7 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case <-time.After(config.DefaultDialTimeout):
+			proxyCancel() // 超时立即取消后台任务
 			logger.LogPrintf("选择代理超时，降级直连")
 		}
 	}
@@ -175,6 +182,14 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "RTSP connect error: "+err.Error(), 500)
 			return
 		}
+
+		// Ensure client is closed if setup fails
+		setupSuccess := false
+		defer func() {
+			if !setupSuccess {
+				client.Close()
+			}
+		}()
 
 		// // 用 parsedURL 构造 *base.URL 用于 Setup
 		// setupURL := &base.URL{
@@ -240,6 +255,7 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 			hub.SetAudioMediaInfo(audioMedia, audioFormat)
 		}
 		hub.SetRtspClient(client)
+		setupSuccess = true
 	}
 
 	ctx := r.Context()
