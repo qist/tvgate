@@ -7,6 +7,8 @@
     <title>{{.title}}</title>
     <link rel="stylesheet" href="{{.webPath}}static/common.css">
     <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+    <link rel="stylesheet" href="{{.webPath}}static/version.css">
+    <script src="{{.webPath}}static/js/theme.js"></script>
     <style>
         .log-container {
             max-width: 1300px;
@@ -14,7 +16,7 @@
             padding: 20px;
             background-color: var(--win11-surface);
             border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 2px 10px var(--win11-shadow);
         }
 
         .log-header {
@@ -32,11 +34,11 @@
         .log-output {
             height: 65vh;
             padding: 12px;
-            background: #0f111a;
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: var(--win11-card);
+            border: 1px solid var(--win11-border);
             border-radius: 8px;
             overflow: auto;
-            color: #c7d0ff;
+            color: var(--win11-text-primary);
             font-family: "Courier New", monospace;
             font-size: 12px;
             white-space: pre;
@@ -64,6 +66,7 @@
 
     <script>
         const webPath = "{{.webPath}}";
+        window.webPath = webPath;
         const logOutput = document.getElementById('logOutput');
         const logStatus = document.getElementById('logStatus');
 

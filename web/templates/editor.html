@@ -6,6 +6,7 @@
     <title>{{.title}}</title>
     <link rel="stylesheet" href="{{.webPath}}static/common.css">
     <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+    <link rel="stylesheet" href="{{.webPath}}static/version.css">
     <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/codemirror.min.css">
     <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/lint.min.css">
     <script src="{{.webPath}}static/js/codemirror/codemirror.min.js"></script>
@@ -366,6 +367,7 @@
         let hasUnsavedChanges = false;
         const monitorPath = "{{.monitorPath}}";
         const webPath = "{{.webPath}}";
+        window.webPath = webPath;
         const configPath = "{{.configPath}}";  // 添加配置文件路径
         window.monitorPath = monitorPath; // 设为全局变量供system-stats.js使用
         // 初始化编辑器

@@ -6,6 +6,7 @@
 <title>配置备份管理</title>
 <link rel="stylesheet" href="{{.webPath}}static/common.css">
 <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+<link rel="stylesheet" href="{{.webPath}}static/version.css">
 <script src="{{.webPath}}static/js/theme.js"></script>
 <style>
 .main-container {
@@ -223,6 +224,7 @@ tr:hover {
 
 <script>
 const webPath = "{{.webPath}}";
+window.webPath = webPath;
 
 function showAlert(message, type) {
     const alert = document.getElementById('alert');

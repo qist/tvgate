@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 
 <head>
     <meta charset="UTF-8">
@@ -7,6 +7,7 @@
     <title>{{.title}}</title>
     <link rel="stylesheet" href="{{.webPath}}static/common.css">
     <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+    <link rel="stylesheet" href="{{.webPath}}static/version.css">
     <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/codemirror.min.css">
     <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/theme/material-darker.min.css">
     <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/addon/lint/lint.min.css">
@@ -1029,6 +1030,7 @@
     <script>
         // 获取Web路径前缀
         const webPath = "{{.webPath}}";
+        window.webPath = webPath;
         let currentNode = "{{.node}}" || "server";  // 如果没有指定节点，默认为server
         let currentGroup = "{{.group}}";
         let groupType = "";

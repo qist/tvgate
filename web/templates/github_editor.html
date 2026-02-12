@@ -7,6 +7,7 @@
     <title>GitHub 配置编辑器 - TVGate Web管理</title>
     <link rel="stylesheet" href="{{.webPath}}static/common.css">
     <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+    <link rel="stylesheet" href="{{.webPath}}static/version.css">
     <script src="{{.webPath}}static/js/theme.js"></script>
     <style>
         body {
@@ -257,6 +258,8 @@
     </div>
 
     <script>
+        const webPath = "{{.webPath}}";
+        window.webPath = webPath;
         // 全局变量
         let backupUrls = [];
 
