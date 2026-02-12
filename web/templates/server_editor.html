@@ -424,126 +424,6 @@
                 </div>
             </div>
             
-            <div class="section">
-                <h2 class="section-title">组播配置</h2>
-                
-                <div class="form-group">
-                    <label>组播监听接口:</label>
-                    <div class="multicast-ifaces-container" id="multicast-ifaces-container">
-                        <!-- 动态添加接口项 -->
-                    </div>
-                    <button type="button" class="add-iface-btn" onclick="addMulticastIface()">添加接口</button>
-                    <div class="help-text">用于接收组播流量的网络接口列表，留空表示使用默认接口</div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="mcast_rejoin_interval">多播重新加入间隔:</label>
-                    <input type="text" id="mcast_rejoin_interval" class="form-control" 
-                           placeholder="0s" 
-                           value="{{ .config.mcast_rejoin_interval }}" 
-                           onchange="updateConfig('mcast_rejoin_interval', this.value)">
-                    <div class="help-text">多播重新加入间隔时间（默认0，表示禁用）<br>
-                    设置为正数（例如60s）以定期重新加入多播组<br>
-                    这是一个兼容性解决方案，适用于具有IGMP侦听交换机的网络<br>
-                    推荐值：30-120秒（小于典型交换机超时时间260秒）<br>
-                    仅在遇到多播流中断时启用</div>
-                </div>
-            </div>
-            
-            <div class="section">
-                <h2 class="section-title">FCC配置</h2>
-                
-                <div class="form-group">
-                    <label for="fcc_type">FCC类型:</label>
-                    <select id="fcc_type" class="form-control" onchange="updateConfig('fcc_type', this.value)">
-                        <option value="telecom">电信/中兴/烽火</option>
-                        <option value="huawei">华为</option>
-                    </select>
-                    <div class="help-text">选择FCC协议类型</div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="fcc_cache_size">FCC缓存大小:</label>
-                    <input type="number" id="fcc_cache_size" class="form-control" 
-                           placeholder="16384" 
-                           value="{{ if .config.fcc_cache_size }}{{ .config.fcc_cache_size }}{{ else }}16384{{ end }}"
-                           onchange="updateConfig('fcc_cache_size', parseInt(this.value))">
-                    <div class="help-text">FCC缓存的数据包数量（默认16384）</div>
-                </div>
-                
-                <div class="form-row">
-                    <div class="form-group" style="flex: 1; margin-right: 10px;">
-                        <label for="fcc_listen_port_min">FCC监听端口最小值:</label>
-                        <input type="number" id="fcc_listen_port_min" class="form-control" 
-                               placeholder="40000" 
-                               value="{{ if .config.fcc_listen_port_min }}{{ .config.fcc_listen_port_min }}{{ else }}40000{{ end }}"
-                               onchange="updateConfig('fcc_listen_port_min', parseInt(this.value))">
-                        <div class="help-text">FCC监听端口范围的最小值（默认40000）</div>
-                    </div>
-                    
-                    <div class="form-group" style="flex: 1;">
-                        <label for="fcc_listen_port_max">FCC监听端口最大值:</label>
-                        <input type="number" id="fcc_listen_port_max" class="form-control" 
-                               placeholder="40100" 
-                               value="{{ if .config.fcc_listen_port_max }}{{ .config.fcc_listen_port_max }}{{ else }}40100{{ end }}"
-                               onchange="updateConfig('fcc_listen_port_max', parseInt(this.value))">
-                        <div class="help-text">FCC监听端口范围的最大值（默认40100）</div>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="upstream_interface">上游接口 (多播/通用):</label>
-                    <input type="text" id="upstream_interface" class="form-control" 
-                           placeholder="eth0" 
-                           value="{{ if .config.upstream_interface }}{{ .config.upstream_interface }}{{ end }}"
-                           onchange="updateConfig('upstream_interface', this.value)">
-                    <div class="help-text">通用上游接口，用于多播和非FCC连接（可选）</div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="upstream_interface_fcc">FCC专用上游接口:</label>
-                    <input type="text" id="upstream_interface_fcc" class="form-control" 
-                           placeholder="eth0" 
-                           value="{{ if .config.upstream_interface_fcc }}{{ .config.upstream_interface_fcc }}{{ end }}"
-                           onchange="updateConfig('upstream_interface_fcc', this.value)">
-                    <div class="help-text">FCC专用上游接口，优先级高于通用接口。留空则使用通用接口</div>
-                </div>
-            </div>
-            
-            <div class="section">
-                <h2 class="section-title">TS缓存配置</h2>
-                
-                <div class="form-group">
-                    <label for="enable_ts_cache">
-                        <input type="checkbox" id="enable_ts_cache" 
-                               onchange="updateTSConfig('enable', this.checked)" />
-                        启用TS缓存功能
-                    </label>
-                    <div class="help-text">启用TS文件缓存功能，可提升重复访问性能<br>
-                                          路由器小设备建议关闭缓存</div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="ts_cache_size">TS缓存大小:</label>
-                    <input type="number" id="ts_cache_size" class="form-control" 
-                           placeholder="128" 
-                           value="{{ if and .config.ts .config.ts.cache_size }}{{ .config.ts.cache_size }}{{ else }}128{{ end }}"
-                           onchange="updateTSConfig('cache_size', parseInt(this.value))">
-                    <div class="help-text">TS缓存大小，单位MB（默认128MB）<br>
-                                          缓存大小计算公式一个频道：TS 缓存大小 ≈ 码率(Mbps) × 缓存时间(秒) ÷ 8× 1.2 <br>
-                                          例如：8Mbps × 120秒 ÷ 8 × 1.2 ≈ 144MB<br>
-                                         多留 20% 冗余，避免： 多客户端同时读， TS 边界碎片浪费</div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="ts_cache_ttl">TS缓存TTL:</label>
-                    <input type="text" id="ts_cache_ttl" class="form-control" 
-                           placeholder="2m" 
-                           value="{{ if and .config.ts .config.ts.cache_ttl }}{{ .config.ts.cache_ttl }}{{ else }}2m{{ end }}"
-                           onchange="updateTSConfig('cache_ttl', this.value)">
-                    <div class="help-text">TS缓存生存时间（默认2m，如：2m表示2分钟，1h表示1小时）</div>
-                </div>
-            </div>
         </form>
     </div>
 
@@ -586,10 +466,6 @@
                     if (!serverConfig.tls) {
                         serverConfig.tls = {};
                     }
-                    // 确保ts字段存在
-                    if (!serverConfig.ts) {
-                        serverConfig.ts = {};
-                    }
                     originalConfig = JSON.parse(JSON.stringify(serverConfig)); // 保存原始配置副本
                     populateForm();
                 })
@@ -622,37 +498,6 @@
                 document.getElementById('enable_h3').checked = !!serverConfig.tls.enable_h3;
             }
             
-            // 填充组播配置
-            const multicastIfaces = Array.isArray(serverConfig.multicast_ifaces) ? serverConfig.multicast_ifaces : [];
-            const container = document.getElementById('multicast-ifaces-container');
-            container.innerHTML = ''; // 清空现有内容
-            if (multicastIfaces.length > 0) {
-                multicastIfaces.forEach(iface => {
-                    addMulticastIface(iface);
-                });
-            } else {
-                // 默认添加一个空的接口输入框
-                addMulticastIface();
-            }
-            
-            // 处理 mcast_rejoin_interval 字段
-            document.getElementById('mcast_rejoin_interval').value = serverConfig.mcast_rejoin_interval || '0s';
-            
-            // 填充FCC配置
-            document.getElementById('fcc_type').value = serverConfig.fcc_type || 'telecom';
-            document.getElementById('fcc_cache_size').value = serverConfig.fcc_cache_size || '';
-            document.getElementById('fcc_listen_port_min').value = serverConfig.fcc_listen_port_min || '';
-            document.getElementById('fcc_listen_port_max').value = serverConfig.fcc_listen_port_max || '';
-            document.getElementById('upstream_interface').value = serverConfig.upstream_interface || '';
-            document.getElementById('upstream_interface_fcc').value = serverConfig.upstream_interface_fcc || '';
-            
-            // 填充TS配置
-            if (serverConfig.ts) {
-                document.getElementById('enable_ts_cache').checked = !!serverConfig.ts.enable;
-                document.getElementById('ts_cache_size').value = serverConfig.ts.cache_size || '';
-                document.getElementById('ts_cache_ttl').value = serverConfig.ts.cache_ttl || '';
-            }
-            
             // 确保所有onchange事件触发以更新内部状态
             document.getElementById('port').dispatchEvent(new Event('change'));
             document.getElementById('http_port').dispatchEvent(new Event('change'));
@@ -672,66 +517,11 @@
                 document.getElementById('tls_ssl_ecdh_curve').dispatchEvent(new Event('change'));
                 document.getElementById('enable_h3').dispatchEvent(new Event('change'));
             }
-            
-            document.getElementById('mcast_rejoin_interval').dispatchEvent(new Event('change'));
-            
-            // 触发FCC配置更新事件
-            document.getElementById('fcc_type').dispatchEvent(new Event('change'));
-            document.getElementById('fcc_cache_size').dispatchEvent(new Event('change'));
-            document.getElementById('fcc_listen_port_min').dispatchEvent(new Event('change'));
-            document.getElementById('fcc_listen_port_max').dispatchEvent(new Event('change'));
-            document.getElementById('upstream_interface').dispatchEvent(new Event('change'));
-            document.getElementById('upstream_interface_fcc').dispatchEvent(new Event('change'));
-            
-            // 触发TS配置更新事件
-            document.getElementById('enable_ts_cache').dispatchEvent(new Event('change'));
-            document.getElementById('ts_cache_size').dispatchEvent(new Event('change'));
-            document.getElementById('ts_cache_ttl').dispatchEvent(new Event('change'));
-        }
-
-        // 添加组播接口输入框
-        function addMulticastIface(value = '') {
-            const container = document.getElementById('multicast-ifaces-container');
-            const ifaceItem = document.createElement('div');
-            ifaceItem.className = 'iface-item';
-            ifaceItem.innerHTML = `
-                <input type="text" class="form-control" placeholder="eth0" value="${value}">
-                <button type="button" onclick="removeMulticastIface(this)">删除</button>
-            `;
-            container.appendChild(ifaceItem);
-        }
-
-        // 删除组播接口输入框
-        function removeMulticastIface(button) {
-            const ifaceItem = button.parentElement;
-            ifaceItem.remove();
-        }
-
-        // 获取所有组播接口值
-        function getMulticastIfaces() {
-            const ifaces = [];
-            const inputs = document.querySelectorAll('#multicast-ifaces-container .iface-item input');
-            inputs.forEach(input => {
-                const value = input.value.trim();
-                if (value) {
-                    ifaces.push(value);
-                }
-            });
-            return ifaces;
         }
 
         // 检查表单是否有未保存的更改
         function hasUnsavedChanges() {
-            // 特别处理multicast_ifaces字段
             const currentConfig = JSON.parse(JSON.stringify(serverConfig));
-            currentConfig.multicast_ifaces = getMulticastIfaces();
-            
-            // 特别处理 mcast_rejoin_interval 字段
-            const intervalInput = document.getElementById('mcast_rejoin_interval');
-            if (intervalInput) {
-                currentConfig.mcast_rejoin_interval = intervalInput.value;
-            }
-            
             return JSON.stringify(currentConfig) !== JSON.stringify(originalConfig);
         }
 
@@ -761,26 +551,8 @@
             console.log('Updated TLS config:', key, '=', value);
         }
 
-        // 更新TS配置值
-        function updateTSConfig(key, value) {
-            if (!serverConfig.ts) {
-                serverConfig.ts = {};
-            }
-            
-            if (value === '' || value === null || value === undefined || 
-                (typeof value === 'number' && isNaN(value))) {
-                delete serverConfig.ts[key];
-            } else {
-                serverConfig.ts[key] = value;
-            }
-            console.log('Updated TS config:', key, '=', value);
-        }
-
         // 保存配置
         function saveConfig() {
-            // 收集组播接口数据
-            serverConfig.multicast_ifaces = getMulticastIfaces();
-            
             // 发送保存请求
             fetch(webPath + 'config/save-server', {
                 method: 'POST',

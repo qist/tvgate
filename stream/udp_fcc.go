@@ -398,7 +398,7 @@ func (h *StreamHub) prepareSwitchToMulticast() {
 
 	// 确保使用最新的配置值
 	config.CfgMu.RLock()
-	latestFccCacheSize := config.Cfg.Server.FccCacheSize
+	latestFccCacheSize := config.Cfg.Multicast.FccCacheSize
 	config.CfgMu.RUnlock()
 
 	// 如果配置的缓存大小有效，则使用它，否则使用当前保存的值
@@ -498,11 +498,11 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 		// 如果fccCacheSize等参数没有初始化，则从配置加载
 		if h.fccCacheSize == 0 {
 			config.CfgMu.RLock()
-			h.fccCacheSize = config.Cfg.Server.FccCacheSize
-			h.fccPortMin = config.Cfg.Server.FccListenPortMin
-			h.fccPortMax = config.Cfg.Server.FccListenPortMax
+			h.fccCacheSize = config.Cfg.Multicast.FccCacheSize
+			h.fccPortMin = config.Cfg.Multicast.FccListenPortMin
+			h.fccPortMax = config.Cfg.Multicast.FccListenPortMax
 			h.fccType = FCC_TYPE_TELECOM // 默认为电信类型
-			fccTypeStr := config.Cfg.Server.FccType
+			fccTypeStr := config.Cfg.Multicast.FccType
 			config.CfgMu.RUnlock()
 
 			// 设置默认值
@@ -1551,7 +1551,7 @@ func (h *StreamHub) handleClientHuaweiFCCPacket(client *hubClient, multicastAddr
 // getLocalIPForFCC 获取用于FCC的本地IP地址，支持指定接口
 func (h *StreamHub) getLocalIPForFCC() net.IP {
 	h.Mu.RLock()
-	serverConfig := config.Cfg.Server
+	serverConfig := config.Cfg.Multicast
 	h.Mu.RUnlock()
 
 	// 获取FCC专用接口，如果未配置则使用通用上游接口

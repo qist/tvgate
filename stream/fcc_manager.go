@@ -32,7 +32,7 @@ type ChannelManager struct {
 func NewChannelManager() *ChannelManager {
 	// 从配置中获取FCC缓存大小
 	config.CfgMu.RLock()
-	fccCacheSize := config.Cfg.Server.FccCacheSize
+	fccCacheSize := config.Cfg.Multicast.FccCacheSize
 	config.CfgMu.RUnlock()
 
 	// 如果配置中没有设置或设置为0，默认使用16384

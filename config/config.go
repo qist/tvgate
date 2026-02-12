@@ -31,25 +31,19 @@ func init() {
 // Config 主配置结构
 type Config struct {
 	Server struct {
-		Port                 int           `yaml:"port"`                   // 旧端口
-		HTTPPort             int           `yaml:"http_port"`              // HTTP 可配置端口
-		CertFile             string        `yaml:"certfile"`               // TLS证书文件
-		KeyFile              string        `yaml:"keyfile"`                // TLS私钥文件
-		SSLProtocols         string        `yaml:"ssl_protocols"`          // 支持的TLS协议版本
-		SSLCiphers           string        `yaml:"ssl_ciphers"`            // 支持的TLS加密算法
-		SSLECDHCurve         string        `yaml:"ssl_ecdh_curve"`         // 支持的TLS曲线
-		TLS                  TLSConfig     `yaml:"tls"`                    // TLS 配置
-		HTTPToHTTPS          bool          `yaml:"http_to_https"`          // HTTP 跳转 HTTPS
-		MulticastIfaces      []string      `yaml:"multicast_ifaces"`       // 多播网卡
-		McastRejoinInterval  time.Duration `yaml:"mcast_rejoin_interval"`  // 多播重连间隔时间
-		FccType              string        `yaml:"fcc_type"`               // FCC类型: telecom, huawei
-		FccCacheSize         int           `yaml:"fcc_cache_size"`         // FCC缓存大小，默认16384
-		FccListenPortMin     int           `yaml:"fcc_listen_port_min"`    // FCC监听端口范围最小值
-		FccListenPortMax     int           `yaml:"fcc_listen_port_max"`    // FCC监听端口范围最大值
-		UpstreamInterface    string        `yaml:"upstream_interface"`     // 默认上游接口
-		UpstreamInterfaceFcc string        `yaml:"upstream_interface_fcc"` // FCC专用上游接口
-		TS                   TSConfig      `yaml:"ts"`                     // TS 配置
+		Port         int       `yaml:"port"`           // 旧端口
+		HTTPPort     int       `yaml:"http_port"`      // HTTP 可配置端口
+		CertFile     string    `yaml:"certfile"`       // TLS证书文件
+		KeyFile      string    `yaml:"keyfile"`        // TLS私钥文件
+		SSLProtocols string    `yaml:"ssl_protocols"`  // 支持的TLS协议版本
+		SSLCiphers   string    `yaml:"ssl_ciphers"`    // 支持的TLS加密算法
+		SSLECDHCurve string    `yaml:"ssl_ecdh_curve"` // 支持的TLS曲线
+		TLS          TLSConfig `yaml:"tls"`            // TLS 配置
+		HTTPToHTTPS  bool      `yaml:"http_to_https"`  // HTTP 跳转 HTTPS
 	} `yaml:"server"`
+
+	Multicast MulticastConfig `yaml:"multicast"` // 组播配置
+	TS        TSConfig        `yaml:"ts"`        // TS 缓存配置
 
 	Log struct {
 		Enabled    bool   `yaml:"enabled"`    // 启用日志
@@ -104,6 +98,17 @@ type Config struct {
 
 	// Publisher配置 - 修改为直接包含streams
 	Publisher *PublisherConfig `yaml:"publisher"` // 推流配置
+}
+
+type MulticastConfig struct {
+	MulticastIfaces      []string      `yaml:"multicast_ifaces"`       // 多播网卡
+	McastRejoinInterval  time.Duration `yaml:"mcast_rejoin_interval"`  // 多播重连间隔时间
+	FccType              string        `yaml:"fcc_type"`               // FCC类型: telecom, huawei
+	FccCacheSize         int           `yaml:"fcc_cache_size"`         // FCC缓存大小，默认16384
+	FccListenPortMin     int           `yaml:"fcc_listen_port_min"`    // FCC监听端口范围最小值
+	FccListenPortMax     int           `yaml:"fcc_listen_port_max"`    // FCC监听端口范围最大值
+	UpstreamInterface    string        `yaml:"upstream_interface"`     // 默认上游接口
+	UpstreamInterfaceFcc string        `yaml:"upstream_interface_fcc"` // FCC专用上游接口
 }
 
 type TSConfig struct {
@@ -446,29 +451,27 @@ func (c *Config) SetDefaults() {
 	if c.HTTP.InsecureSkipVerify == nil {
 		c.HTTP.InsecureSkipVerify = ptr(false)
 	}
-	// Server 默认值
-	if c.Server.FccListenPortMin == 0 {
-		c.Server.FccListenPortMin = 40000
+	// Multicast 默认值
+	if c.Multicast.FccListenPortMin == 0 {
+		c.Multicast.FccListenPortMin = 40000
 	}
-	if c.Server.FccListenPortMax == 0 {
-		c.Server.FccListenPortMax = 40100
-
+	if c.Multicast.FccListenPortMax == 0 {
+		c.Multicast.FccListenPortMax = 40100
 	}
-	// 设置默认值
-	if c.Server.FccCacheSize <= 0 {
-		c.Server.FccCacheSize = 16384
+	if c.Multicast.FccCacheSize <= 0 {
+		c.Multicast.FccCacheSize = 16384
 	}
 
 	//TS 缓存开关
-	if c.Server.TS.Enable == nil {
-		c.Server.TS.Enable = ptr(false)
+	if c.TS.Enable == nil {
+		c.TS.Enable = ptr(false)
 	}
 	// TS缓存默认值
-	if c.Server.TS.CacheSize <= 0 {
-		c.Server.TS.CacheSize = 128 // 默认128MB
+	if c.TS.CacheSize <= 0 {
+		c.TS.CacheSize = 128 // 默认128MB
 	}
-	if c.Server.TS.CacheTTL <= 0 {
-		c.Server.TS.CacheTTL = 2 * time.Minute // 默认2分钟
+	if c.TS.CacheTTL <= 0 {
+		c.TS.CacheTTL = 2 * time.Minute // 默认2分钟
 	}
 
 	// DNS 默认值

@@ -245,10 +245,10 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 
 	// 获取FCC配置
 	config.CfgMu.RLock()
-	fccTypeStr := config.Cfg.Server.FccType
-	fccCacheSize := config.Cfg.Server.FccCacheSize
-	fccPortMin := config.Cfg.Server.FccListenPortMin
-	fccPortMax := config.Cfg.Server.FccListenPortMax
+	fccTypeStr := config.Cfg.Multicast.FccType
+	fccCacheSize := config.Cfg.Multicast.FccCacheSize
+	fccPortMin := config.Cfg.Multicast.FccListenPortMin
+	fccPortMax := config.Cfg.Multicast.FccListenPortMax
 	config.CfgMu.RUnlock()
 
 	// 设置默认值
@@ -311,7 +311,7 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 
 	// 获取多播重新加入间隔配置
 	config.CfgMu.RLock()
-	hub.rejoinInterval = config.Cfg.Server.McastRejoinInterval
+	hub.rejoinInterval = config.Cfg.Multicast.McastRejoinInterval
 	config.CfgMu.RUnlock()
 
 	var lastErr error

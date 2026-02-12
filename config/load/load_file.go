@@ -3,7 +3,7 @@ package load
 import (
 	"fmt"
 	"os"
-	"strings"
+	// "strings"
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/groupstats"
@@ -29,14 +29,13 @@ func LoadConfig(configPath string) error {
 	}
 
 	// trim iface names
-	cleaned := make([]string, 0, len(config.Cfg.Server.MulticastIfaces))
-	for _, n := range config.Cfg.Server.MulticastIfaces {
-		n = strings.TrimSpace(n)
+	cleaned := make([]string, 0, len(config.Cfg.Multicast.MulticastIfaces))
+	for _, n := range config.Cfg.Multicast.MulticastIfaces {
 		if n != "" {
 			cleaned = append(cleaned, n)
 		}
 	}
-	config.Cfg.Server.MulticastIfaces = cleaned
+	config.Cfg.Multicast.MulticastIfaces = cleaned
 
 	config.LogConfigMutex.Lock()
 	defer config.LogConfigMutex.Unlock()

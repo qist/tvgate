@@ -1,16 +1,17 @@
 package handler
 
 import (
-	"github.com/qist/tvgate/auth"
-	"github.com/qist/tvgate/config"
-	"github.com/qist/tvgate/logger"
-	"github.com/qist/tvgate/monitor"
-	"github.com/qist/tvgate/stream"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/qist/tvgate/auth"
+	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
+	"github.com/qist/tvgate/stream"
 )
 
 func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
@@ -75,7 +76,7 @@ func UdpRtpHandler(w http.ResponseWriter, r *http.Request, prefix string) {
 		}
 	} else {
 		config.CfgMu.RLock()
-		ifaces = append(ifaces, config.Cfg.Server.MulticastIfaces...)
+		ifaces = append(ifaces, config.Cfg.Multicast.MulticastIfaces...)
 		config.CfgMu.RUnlock()
 	}
 

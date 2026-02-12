@@ -57,7 +57,7 @@ var tsCacheOnce sync.Once
 func InitTSCacheFromConfig() {
 	tsCacheOnce.Do(func() {
 		config.CfgMu.RLock()
-		tsCfg := config.Cfg.Server.TS
+		tsCfg := config.Cfg.TS
 		config.CfgMu.RUnlock()
 
 		// 🔑 开关判断
@@ -345,7 +345,7 @@ func (c *TSCache) Remove(key string) {
 
 func InitOrUpdateTSCacheFromConfig() {
 	config.CfgMu.RLock()
-	tsCfg := config.Cfg.Server.TS
+	tsCfg := config.Cfg.TS
 	config.CfgMu.RUnlock()
 
 	// 🔴 关闭语义 - 检查 Enable 指针是否为 nil 或为 false

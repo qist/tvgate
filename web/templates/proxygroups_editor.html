@@ -642,7 +642,7 @@
         // 页面加载完成后获取配置
         window.addEventListener('load', function () {
             // console.log('页面加载完成，开始加载配置');
-            loadConfig();
+            loadConfig(); 
         });
 
         // 显示提示信息
@@ -1351,6 +1351,8 @@
                 }
             });
 
+            const existingProxies = (proxyGroups[oldName] && proxyGroups[oldName].proxies) || [];
+
             // 如果名称改变
             if (oldName !== name) {
                 if (proxyGroups[name]) {
@@ -1359,8 +1361,6 @@
                 }
                 delete proxyGroups[oldName];
             }
-
-            const existingProxies = (proxyGroups[oldName] && proxyGroups[oldName].proxies) || [];
 
             proxyGroups[name] = {
                 proxies: existingProxies,
@@ -1451,9 +1451,18 @@
                 })
                 .then(data => {
                     // console.log('保存成功:', data);
-                    showAlert('配置保存成功,点击重新加载', 'success');
-                    // 保存成功后刷新列表
-                    return loadConfig();
+                    showAlert('配置保存成功', 'success');
+                    // 触发后端重新加载配置以使更改生效
+                    fetch(webPath + 'config/reload', { method: 'POST' })
+                        .then(response => {
+                            if (response.ok) {
+                                showAlert('配置保存并已重新加载生效', 'success');
+                            }
+                        })
+                        .catch(err => console.error('Reload error:', err));
+                    
+                    // 移除保存后的 loadConfig() 调用，避免覆盖前端状态
+                    // return loadConfig();
                 })
                 .then(() => {
                     // console.log('配置重新加载完成');

@@ -81,7 +81,7 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 		if pg.Stats != nil {
 			statsMap = make(map[string]interface{})
 			proxyStatsMap := make(map[string]interface{})
-			
+
 			pg.Stats.RLock()
 			for proxyName, proxyStats := range pg.Stats.ProxyStats {
 				proxyStatsMap[proxyName] = map[string]interface{}{
@@ -95,7 +95,7 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 				}
 			}
 			pg.Stats.RUnlock()
-			
+
 			statsMap["ProxyStats"] = proxyStatsMap
 		}
 
@@ -130,6 +130,38 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 
 // handleProxyGroupsConfigSave 处理代理组配置保存请求
 func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *http.Request) {
+	// 辅助函数：将接口值转换为 int
+	interfaceToInt := func(v interface{}) (int, bool) {
+		switch val := v.(type) {
+		case float64:
+			return int(val), true
+		case int:
+			return val, true
+		case string:
+			var i int
+			if _, err := fmt.Sscanf(val, "%d", &i); err == nil {
+				return i, true
+			}
+		}
+		return 0, false
+	}
+
+	// 辅助函数：将接口值转换为 float64
+	interfaceToFloat64 := func(v interface{}) (float64, bool) {
+		switch val := v.(type) {
+		case float64:
+			return val, true
+		case int:
+			return float64(val), true
+		case string:
+			var f float64
+			if _, err := fmt.Sscanf(val, "%f", &f); err == nil {
+				return f, true
+			}
+		}
+		return 0, false
+	}
+
 	// logger.LogPrintf("开始处理代理组配置保存请求")
 
 	// 检查请求方法
@@ -255,9 +287,8 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 						// 处理端口，提供默认值 80
 						port := 80
 						if portVal, ok := proxyMap["port"]; ok {
-							// logger.LogPrintf("端口值: %v (类型: %T)", portVal, portVal)
-							if portFloat, ok := portVal.(float64); ok {
-								port = int(portFloat)
+							if p, ok := interfaceToInt(portVal); ok {
+								port = p
 							}
 						}
 						proxyNode.Content = append(proxyNode.Content,
@@ -410,7 +441,7 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 		// 添加max_retries字段，提供默认值 1
 		maxRetries := 1
 		if maxRetriesVal, ok := pg["max_retries"]; ok {
-			if maxRetriesFloat, ok := maxRetriesVal.(float64); ok {
+			if maxRetriesFloat, ok := interfaceToFloat64(maxRetriesVal); ok {
 				maxRetries = int(maxRetriesFloat)
 			}
 		}
@@ -459,24 +490,32 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 			for i := 0; i < len(doc.Content); i += 2 {
 				keyNode := doc.Content[i]
 				if keyNode.Kind == yaml.ScalarNode && keyNode.Value == "proxygroups" {
-					// 直接替换整个proxygroups节点的值
-					proxyGroupsNode := &yaml.Node{Kind: yaml.MappingNode}
-					for name, node := range yamlProxyGroups {
-						proxyGroupsNode.Content = append(proxyGroupsNode.Content,
-							&yaml.Node{Kind: yaml.ScalarNode, Value: name},
-							node,
-						)
+					proxyGroupsNode := doc.Content[i+1]
+					if proxyGroupsNode.Kind != yaml.MappingNode {
+						proxyGroupsNode.Kind = yaml.MappingNode
+						proxyGroupsNode.Content = nil
 					}
-					// 替换值节点
-					doc.Content[i+1] = proxyGroupsNode
-					found = true
-					// logger.LogPrintf("找到并更新了proxygroups节点，新节点包含 %d 个代理组", len(proxyGroupsNode.Content)/2)
-					// 打印代理组名称以供验证
+
+					// 将现有代理组建立索引，方便更新
+					existingGroups := make(map[string]int)
 					for j := 0; j < len(proxyGroupsNode.Content); j += 2 {
-						if j+1 < len(proxyGroupsNode.Content) {
-							// logger.LogPrintf("  代理组: %s", proxyGroupsNode.Content[j].Value)
+						existingGroups[proxyGroupsNode.Content[j].Value] = j
+					}
+
+					// 更新或添加新的代理组
+					for name, newNode := range yamlProxyGroups {
+						if idx, exists := existingGroups[name]; exists {
+							// 更新现有代理组的值节点
+							proxyGroupsNode.Content[idx+1] = newNode
+						} else {
+							// 添加新的代理组
+							proxyGroupsNode.Content = append(proxyGroupsNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: name},
+								newNode,
+							)
 						}
 					}
+					found = true
 					break
 				}
 			}

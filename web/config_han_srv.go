@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/qist/tvgate/config"
@@ -39,22 +38,14 @@ func (h *ConfigHandler) handleServerConfig(w http.ResponseWriter, r *http.Reques
 
 	// 转换为可JSON序列化的格式
 	serverConfig := map[string]interface{}{
-		"port":                   server.Port,
-		"http_port":              server.HTTPPort,
-		"certfile":               server.CertFile,
-		"keyfile":                server.KeyFile,
-		"ssl_protocols":          server.SSLProtocols,
-		"ssl_ciphers":            server.SSLCiphers,
-		"ssl_ecdh_curve":         server.SSLECDHCurve,
-		"http_to_https":          server.HTTPToHTTPS,
-		"multicast_ifaces":       server.MulticastIfaces,
-		"mcast_rejoin_interval":  server.McastRejoinInterval.String(),
-		"fcc_type":               server.FccType,
-		"fcc_cache_size":         server.FccCacheSize,
-		"fcc_listen_port_min":    server.FccListenPortMin,
-		"fcc_listen_port_max":    server.FccListenPortMax,
-		"upstream_interface":     server.UpstreamInterface,
-		"upstream_interface_fcc": server.UpstreamInterfaceFcc,
+		"port":           server.Port,
+		"http_port":      server.HTTPPort,
+		"certfile":       server.CertFile,
+		"keyfile":        server.KeyFile,
+		"ssl_protocols":  server.SSLProtocols,
+		"ssl_ciphers":    server.SSLCiphers,
+		"ssl_ecdh_curve": server.SSLECDHCurve,
+		"http_to_https":  server.HTTPToHTTPS,
 		"tls": map[string]interface{}{
 			"https_port":     server.TLS.HTTPSPort,
 			"certfile":       server.TLS.CertFile,
@@ -63,11 +54,6 @@ func (h *ConfigHandler) handleServerConfig(w http.ResponseWriter, r *http.Reques
 			"ssl_ciphers":    server.TLS.Ciphers,
 			"ssl_ecdh_curve": server.TLS.ECDHCurve,
 			"enable_h3":      server.TLS.EnableH3,
-		},
-		"ts": map[string]interface{}{
-			"enable":     server.TS.Enable,
-			"cache_size": server.TS.CacheSize,
-			"cache_ttl":  server.TS.CacheTTL.String(),
 		},
 	}
 
@@ -208,260 +194,6 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 							newServerNode.Content = append(newServerNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "http_to_https"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "true"})
-						}
-					}
-
-					// 添加multicast_ifaces
-					if multicastIfaces, ok := serverConfig["multicast_ifaces"]; ok {
-						if ifaces, ok := multicastIfaces.([]interface{}); ok && len(ifaces) > 0 {
-							ifacesNode := &yaml.Node{Kind: yaml.SequenceNode}
-							for _, iface := range ifaces {
-								ifaceStr := fmt.Sprintf("%v", iface)
-								if ifaceStr != "" {
-									ifacesNode.Content = append(ifacesNode.Content,
-										&yaml.Node{Kind: yaml.ScalarNode, Value: ifaceStr})
-								}
-							}
-							if len(ifacesNode.Content) > 0 {
-								newServerNode.Content = append(newServerNode.Content,
-									&yaml.Node{Kind: yaml.ScalarNode, Value: "multicast_ifaces"},
-									ifacesNode)
-							}
-						} else if ifacesStr, ok := multicastIfaces.(string); ok {
-							// 处理字符串形式的接口列表
-							ifaces := strings.Split(ifacesStr, ",")
-							ifacesNode := &yaml.Node{Kind: yaml.SequenceNode}
-							for _, iface := range ifaces {
-								iface = strings.TrimSpace(iface)
-								if iface != "" {
-									ifacesNode.Content = append(ifacesNode.Content,
-										&yaml.Node{Kind: yaml.ScalarNode, Value: iface})
-								}
-							}
-							if len(ifacesNode.Content) > 0 {
-								newServerNode.Content = append(newServerNode.Content,
-									&yaml.Node{Kind: yaml.ScalarNode, Value: "multicast_ifaces"},
-									ifacesNode)
-							}
-						}
-					}
-
-					// 添加 mcast_rejoin_interval
-					if mcastRejoinInterval, ok := serverConfig["mcast_rejoin_interval"]; ok {
-						mcastRejoinIntervalStr := fmt.Sprintf("%v", mcastRejoinInterval)
-						// 清理字符串，去除引号等可能的额外字符
-						mcastRejoinIntervalStr = strings.Trim(mcastRejoinIntervalStr, "\"")
-						if mcastRejoinIntervalStr != "" && mcastRejoinIntervalStr != "0s" && mcastRejoinIntervalStr != "0" {
-							newServerNode.Content = append(newServerNode.Content,
-								&yaml.Node{Kind: yaml.ScalarNode, Value: "mcast_rejoin_interval"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: mcastRejoinIntervalStr})
-						}
-					}
-
-					// 添加fcc_type
-					if fccType, ok := serverConfig["fcc_type"]; ok {
-						fccTypeStr := fmt.Sprintf("%v", fccType)
-						if fccTypeStr != "" {
-							newServerNode.Content = append(newServerNode.Content,
-								&yaml.Node{Kind: yaml.ScalarNode, Value: "fcc_type"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: fccTypeStr})
-						}
-					}
-
-					// 添加fcc_cache_size
-					if fccCacheSize, ok := serverConfig["fcc_cache_size"]; ok {
-						fccCacheSizeValue := fmt.Sprintf("%v", fccCacheSize)
-						if fccCacheSizeValue != "" && fccCacheSizeValue != "0" {
-							newServerNode.Content = append(newServerNode.Content,
-								&yaml.Node{Kind: yaml.ScalarNode, Value: "fcc_cache_size"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: fccCacheSizeValue})
-						}
-					}
-
-					// 添加fcc_listen_port_min
-					if fccListenPortMin, ok := serverConfig["fcc_listen_port_min"]; ok {
-						fccListenPortMinValue := fmt.Sprintf("%v", fccListenPortMin)
-						if fccListenPortMinValue != "" && fccListenPortMinValue != "0" {
-							newServerNode.Content = append(newServerNode.Content,
-								&yaml.Node{Kind: yaml.ScalarNode, Value: "fcc_listen_port_min"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: fccListenPortMinValue})
-						}
-					}
-
-					// 添加fcc_listen_port_max
-					if fccListenPortMax, ok := serverConfig["fcc_listen_port_max"]; ok {
-						fccListenPortMaxValue := fmt.Sprintf("%v", fccListenPortMax)
-						if fccListenPortMaxValue != "" && fccListenPortMaxValue != "0" {
-							newServerNode.Content = append(newServerNode.Content,
-								&yaml.Node{Kind: yaml.ScalarNode, Value: "fcc_listen_port_max"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: fccListenPortMaxValue})
-						}
-					}
-
-					// 添加upstream_interface
-					if upstreamInterface, ok := serverConfig["upstream_interface"]; ok {
-						upstreamInterfaceStr := fmt.Sprintf("%v", upstreamInterface)
-						if upstreamInterfaceStr != "" {
-							newServerNode.Content = append(newServerNode.Content,
-								&yaml.Node{Kind: yaml.ScalarNode, Value: "upstream_interface"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: upstreamInterfaceStr})
-						}
-					}
-
-					// 添加upstream_interface_fcc
-					if upstreamInterfaceFcc, ok := serverConfig["upstream_interface_fcc"]; ok {
-						upstreamInterfaceFccStr := fmt.Sprintf("%v", upstreamInterfaceFcc)
-						if upstreamInterfaceFccStr != "" {
-							newServerNode.Content = append(newServerNode.Content,
-								&yaml.Node{Kind: yaml.ScalarNode, Value: "upstream_interface_fcc"},
-								&yaml.Node{Kind: yaml.ScalarNode, Value: upstreamInterfaceFccStr})
-						}
-					}
-
-					// 添加tls配置块
-					if tlsConfig, ok := serverConfig["tls"]; ok {
-						if tlsMap, ok := tlsConfig.(map[string]interface{}); ok {
-							tlsNode := &yaml.Node{Kind: yaml.MappingNode}
-
-							// 添加https_port
-							if httpsPort, ok := tlsMap["https_port"]; ok {
-								httpsPortValue := fmt.Sprintf("%v", httpsPort)
-								if httpsPortValue != "" && httpsPortValue != "0" {
-									tlsNode.Content = append(tlsNode.Content,
-										&yaml.Node{Kind: yaml.ScalarNode, Value: "https_port"},
-										&yaml.Node{Kind: yaml.ScalarNode, Value: httpsPortValue})
-								}
-							}
-
-							// 添加certfile
-							if certfile, ok := tlsMap["certfile"]; ok {
-								certfileStr := fmt.Sprintf("%v", certfile)
-								if certfileStr != "" {
-									tlsNode.Content = append(tlsNode.Content,
-										&yaml.Node{Kind: yaml.ScalarNode, Value: "certfile"},
-										&yaml.Node{Kind: yaml.ScalarNode, Value: certfileStr, Style: yaml.DoubleQuotedStyle})
-								}
-							}
-
-							// 添加keyfile
-							if keyfile, ok := tlsMap["keyfile"]; ok {
-								keyfileStr := fmt.Sprintf("%v", keyfile)
-								if keyfileStr != "" {
-									tlsNode.Content = append(tlsNode.Content,
-										&yaml.Node{Kind: yaml.ScalarNode, Value: "keyfile"},
-										&yaml.Node{Kind: yaml.ScalarNode, Value: keyfileStr, Style: yaml.DoubleQuotedStyle})
-								}
-							}
-
-							// 添加ssl_protocols
-							if sslProtocols, ok := tlsMap["ssl_protocols"]; ok {
-								sslProtocolsStr := fmt.Sprintf("%v", sslProtocols)
-								if sslProtocolsStr != "" {
-									tlsNode.Content = append(tlsNode.Content,
-										&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_protocols"},
-										&yaml.Node{Kind: yaml.ScalarNode, Value: sslProtocolsStr, Style: yaml.DoubleQuotedStyle})
-								}
-							}
-
-							// 添加ssl_ciphers
-							if sslCiphers, ok := tlsMap["ssl_ciphers"]; ok {
-								sslCiphersStr := fmt.Sprintf("%v", sslCiphers)
-								if sslCiphersStr != "" {
-									tlsNode.Content = append(tlsNode.Content,
-										&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_ciphers"},
-										&yaml.Node{Kind: yaml.ScalarNode, Value: sslCiphersStr, Style: yaml.DoubleQuotedStyle})
-								}
-							}
-
-							// 添加ssl_ecdh_curve
-							if sslECDHCurve, ok := tlsMap["ssl_ecdh_curve"]; ok {
-								sslECDHCurveStr := fmt.Sprintf("%v", sslECDHCurve)
-								if sslECDHCurveStr != "" {
-									tlsNode.Content = append(tlsNode.Content,
-										&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_ecdh_curve"},
-										&yaml.Node{Kind: yaml.ScalarNode, Value: sslECDHCurveStr, Style: yaml.DoubleQuotedStyle})
-								}
-							}
-
-							// 添加enable_h3
-							if enableH3, ok := tlsMap["enable_h3"]; ok {
-								enableH3Str := fmt.Sprintf("%v", enableH3)
-								if enableH3Str == "true" || enableH3Str == "1" {
-									tlsNode.Content = append(tlsNode.Content,
-										&yaml.Node{Kind: yaml.ScalarNode, Value: "enable_h3"},
-										&yaml.Node{Kind: yaml.ScalarNode, Value: "true"})
-								}
-							}
-
-							if len(tlsNode.Content) > 0 {
-								newServerNode.Content = append(newServerNode.Content,
-									&yaml.Node{Kind: yaml.ScalarNode, Value: "tls"},
-									tlsNode)
-							}
-						}
-					}
-
-					// 添加ts配置块
-					if tsConfig, ok := serverConfig["ts"]; ok {
-						if tsMap, ok := tsConfig.(map[string]interface{}); ok {
-							tsNode := &yaml.Node{Kind: yaml.MappingNode}
-
-							// 缓存开关
-							// 处理 enable
-							enableStr := "false"
-							if val, ok := tsMap["enable"]; ok {
-								switch v := val.(type) {
-								case bool:
-									if v {
-										enableStr = "true"
-									}
-								case int:
-									if v != 0 {
-										enableStr = "true"
-									}
-								case string:
-									if v != "" && v != "0" && v != "false" {
-										enableStr = "true"
-									}
-								default:
-									// 兜底，任何非空非零都视为 true
-									if fmt.Sprintf("%v", v) != "" && fmt.Sprintf("%v", v) != "0" {
-										enableStr = "true"
-									}
-								}
-							}
-
-							// 写入 enable
-							tsNode.Content = append(tsNode.Content,
-								&yaml.Node{Kind: yaml.ScalarNode, Value: "enable"},
-								&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: enableStr},
-							)
-
-							// 添加cache_size
-							if cacheSize, ok := tsMap["cache_size"]; ok {
-								cacheSizeValue := fmt.Sprintf("%v", cacheSize)
-								if cacheSizeValue != "" && cacheSizeValue != "0" {
-									tsNode.Content = append(tsNode.Content,
-										&yaml.Node{Kind: yaml.ScalarNode, Value: "cache_size"},
-										&yaml.Node{Kind: yaml.ScalarNode, Value: cacheSizeValue})
-								}
-							}
-
-							// 添加cache_ttl
-							if cacheTTL, ok := tsMap["cache_ttl"]; ok {
-								cacheTTLValue := fmt.Sprintf("%v", cacheTTL)
-								if cacheTTLValue != "" && cacheTTLValue != "0s" && cacheTTLValue != "0" {
-									tsNode.Content = append(tsNode.Content,
-										&yaml.Node{Kind: yaml.ScalarNode, Value: "cache_ttl"},
-										&yaml.Node{Kind: yaml.ScalarNode, Value: cacheTTLValue})
-								}
-							}
-
-							if len(tsNode.Content) > 0 {
-								newServerNode.Content = append(newServerNode.Content,
-									&yaml.Node{Kind: yaml.ScalarNode, Value: "ts"},
-									tsNode)
-							}
 						}
 					}
 

@@ -18,7 +18,10 @@ func MergeProxyStats(oldGroups, newGroups map[string]*config.ProxyGroupConfig) {
 		// 初始化新组运行状态
 		if newGroup.Stats == nil {
 			newGroup.Stats = &config.GroupStats{
-				ProxyStats: make(map[string]*config.ProxyStats),
+				LastCheck:       oldGroup.Stats.LastCheck,
+				RoundRobinIndex: oldGroup.Stats.RoundRobinIndex,
+				CurrentIndex:    oldGroup.Stats.CurrentIndex,
+				ProxyStats:      make(map[string]*config.ProxyStats),
 			}
 		}
 

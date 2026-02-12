@@ -106,7 +106,7 @@ func WatchConfigFile(ctx context.Context, configPath string, upgrader *tableflip
 		// 🔹 这里刷新 DNS 实例
 		dns.HandleConfigUpdate(&config.Config{}, &config.Cfg)
 		config.CfgMu.RLock()
-		update.UpdateHubsOnConfigChange(config.Cfg.Server.MulticastIfaces)
+		update.UpdateHubsOnConfigChange(config.Cfg.Multicast.MulticastIfaces)
 		// 设置默认值 & token 管理器
 		config.Cfg.SetDefaults()
 		// 更新TS缓存配置

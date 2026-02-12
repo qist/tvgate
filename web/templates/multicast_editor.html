@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>组播配置编辑器 - TVGate Web管理</title>
+    <link rel="stylesheet" href="{{.webPath}}static/common.css">
+    <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+    <style>
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--win11-bg);
+            color: var(--win11-text-primary);
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: var(--win11-surface);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px var(--win11-shadow);
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, box-shadow 0.3s;
+        }
+
+        h1 {
+            color: var(--win11-text-primary);
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .auth-section {
+            text-align: right;
+            margin-bottom: 20px;
+        }
+
+        .auth-section a {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: var(--win11-success);
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+
+        .auth-section a.logout {
+            background-color: var(--win11-danger);
+        }
+
+        .auth-section a:hover {
+            opacity: 0.9;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--win11-text-secondary);
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--win11-card);
+            border: 1px solid var(--win11-border);
+            border-radius: 4px;
+            color: var(--win11-text-primary);
+            box-sizing: border-box;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--win11-accent);
+            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: var(--win11-accent);
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background-color 0.3s, transform 0.2s;
+        }
+
+        .btn:hover {
+            background-color: var(--win11-accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            background-color: var(--win11-accent-active);
+            transform: translateY(0);
+        }
+
+        .btn-success {
+            background-color: var(--win11-success);
+        }
+
+        .btn-success:hover {
+            background-color: #57a357;
+        }
+
+        .btn-warning {
+            background-color: var(--win11-warning);
+            color: #000000;
+        }
+
+        .btn-warning:hover {
+            background-color: #e6b800;
+        }
+
+        .form-buttons {
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            transition: all 0.3s;
+            animation: fadeIn 0.3s;
+        }
+
+        .alert-success {
+            background-color: rgba(102, 194, 102, 0.2);
+            color: var(--win11-success);
+            border: 1px solid var(--win11-success);
+        }
+
+        .alert-danger {
+            background-color: rgba(232, 17, 35, 0.2);
+            color: var(--win11-danger);
+            border: 1px solid var(--win11-danger);
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .section {
+            background-color: var(--win11-card);
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, transform 0.3s;
+        }
+
+        .section:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px var(--win11-shadow);
+        }
+
+        .section-title {
+            color: var(--win11-text-primary);
+            margin-top: 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--win11-border);
+        }
+
+        .help-text {
+            font-size: 13px;
+            color: var(--win11-text-tertiary);
+            margin-top: 5px;
+        }
+        
+        .multicast-ifaces-container {
+            margin-top: 10px;
+        }
+        
+        .iface-item {
+            display: flex;
+            margin-bottom: 5px;
+        }
+        
+        .iface-item input {
+            flex: 1;
+            margin-right: 10px;
+        }
+        
+        .iface-item button {
+            background-color: var(--win11-danger);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 5px 10px;
+            transition: background-color 0.3s;
+        }
+        
+        .iface-item button:hover {
+            background-color: #c40f1d;
+        }
+        
+        .add-iface-btn {
+            background-color: var(--win11-success);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 8px 12px;
+            margin-top: 10px;
+            transition: background-color 0.3s;
+        }
+        
+        .add-iface-btn:hover {
+            background-color: #57a357;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+    </style>
+    <script src="{{.webPath}}static/js/js-yaml.min.js"></script>
+    <script src="{{.webPath}}static/js/theme.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="auth-section">
+            <a href="{{.webPath}}logout" class="logout">退出</a>
+        </div>
+
+        <h1>组播配置编辑器</h1>
+
+        <div id="alert-container" class="hidden"></div>
+
+        <div class="form-buttons">
+            <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+            <button class="btn btn-warning" onclick="reloadConfig()">重新加载</button>
+            <a href="{{.webPath}}" class="btn">返回首页</a>
+        </div>
+
+        <form id="multicast-config-form">
+            <div class="section">
+                <h2 class="section-title">组播配置</h2>
+                
+                <div class="form-group">
+                    <label>组播监听接口:</label>
+                    <div class="multicast-ifaces-container" id="multicast-ifaces-container">
+                        <!-- 动态添加接口项 -->
+                    </div>
+                    <button type="button" class="add-iface-btn" onclick="addMulticastIface()">添加接口</button>
+                    <div class="help-text">用于接收组播流量的网络接口列表，留空表示使用默认接口</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="mcast_rejoin_interval">多播重新加入间隔:</label>
+                    <input type="text" id="mcast_rejoin_interval" class="form-control" 
+                           placeholder="0s" 
+                           onchange="updateConfig('mcast_rejoin_interval', this.value)">
+                    <div class="help-text">多播重新加入间隔时间（默认0，表示禁用）<br>
+                    设置为正数（例如60s）以定期重新加入多播组<br>
+                    这是一个兼容性解决方案，适用于具有IGMP侦听交换机的网络<br>
+                    推荐值：30-120秒（小于典型交换机超时时间260秒）<br>
+                    仅在遇到多播流中断时启用</div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2 class="section-title">FCC配置</h2>
+                
+                <div class="form-group">
+                    <label for="fcc_type">FCC类型:</label>
+                    <select id="fcc_type" class="form-control" onchange="updateConfig('fcc_type', this.value)">
+                        <option value="telecom">电信/中兴/烽火</option>
+                        <option value="huawei">华为</option>
+                    </select>
+                    <div class="help-text">选择FCC协议类型</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="fcc_cache_size">FCC缓存大小:</label>
+                    <input type="number" id="fcc_cache_size" class="form-control" 
+                           placeholder="16384" 
+                           onchange="updateConfig('fcc_cache_size', parseInt(this.value))">
+                    <div class="help-text">FCC缓存的数据包数量（默认16384）</div>
+                </div>
+                
+                <div class="form-row" style="display: flex;">
+                    <div class="form-group" style="flex: 1; margin-right: 10px;">
+                        <label for="fcc_listen_port_min">FCC监听端口最小值:</label>
+                        <input type="number" id="fcc_listen_port_min" class="form-control" 
+                               placeholder="40000" 
+                               onchange="updateConfig('fcc_listen_port_min', parseInt(this.value))">
+                        <div class="help-text">FCC监听端口范围的最小值（默认40000）</div>
+                    </div>
+                    
+                    <div class="form-group" style="flex: 1;">
+                        <label for="fcc_listen_port_max">FCC监听端口最大值:</label>
+                        <input type="number" id="fcc_listen_port_max" class="form-control" 
+                               placeholder="50000" 
+                               onchange="updateConfig('fcc_listen_port_max', parseInt(this.value))">
+                        <div class="help-text">FCC监听端口范围的最大值（默认50000）</div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="upstream_interface">通用上游接口:</label>
+                    <input type="text" id="upstream_interface" class="form-control" 
+                           placeholder="eth0" 
+                           onchange="updateConfig('upstream_interface', this.value)">
+                    <div class="help-text">通用上游接口，用于多播和非FCC连接（可选）</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="upstream_interface_fcc">FCC专用上游接口:</label>
+                    <input type="text" id="upstream_interface_fcc" class="form-control" 
+                           placeholder="eth0" 
+                           onchange="updateConfig('upstream_interface_fcc', this.value)">
+                    <div class="help-text">FCC专用上游接口，优先级高于通用接口。留空则使用通用接口</div>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        const webPath = "{{.webPath}}";
+        window.webPath = webPath;
+        let mcastConfig = {};
+        let originalConfig = {};
+
+        window.addEventListener('load', function() {
+            loadConfig();
+        });
+
+        function showAlert(message, type) {
+            const alertContainer = document.getElementById('alert-container');
+            alertContainer.className = `alert alert-${type}`;
+            alertContainer.innerHTML = message;
+            alertContainer.classList.remove('hidden');
+            setTimeout(() => {
+                alertContainer.classList.add('hidden');
+            }, 5000);
+        }
+
+        function loadConfig() {
+            fetch(webPath + 'config/multicast')
+                .then(response => {
+                    if (!response.ok) throw new Error('加载配置失败');
+                    return response.json();
+                })
+                .then(data => {
+                    mcastConfig = data || {};
+                    originalConfig = JSON.parse(JSON.stringify(mcastConfig));
+                    populateForm();
+                })
+                .catch(error => {
+                    console.error('加载配置失败:', error);
+                    showAlert('加载配置失败: ' + error.message, 'danger');
+                });
+        }
+
+        function populateForm() {
+            // 填充组播接口
+            const multicastIfaces = Array.isArray(mcastConfig.multicast_ifaces) ? mcastConfig.multicast_ifaces : [];
+            const container = document.getElementById('multicast-ifaces-container');
+            container.innerHTML = '';
+            if (multicastIfaces.length > 0) {
+                multicastIfaces.forEach(iface => addMulticastIface(iface));
+            } else {
+                addMulticastIface();
+            }
+            
+            document.getElementById('mcast_rejoin_interval').value = mcastConfig.mcast_rejoin_interval || '0s';
+            document.getElementById('fcc_type').value = mcastConfig.fcc_type || 'telecom';
+            document.getElementById('fcc_cache_size').value = mcastConfig.fcc_cache_size || '';
+            document.getElementById('fcc_listen_port_min').value = mcastConfig.fcc_listen_port_min || '';
+            document.getElementById('fcc_listen_port_max').value = mcastConfig.fcc_listen_port_max || '';
+            document.getElementById('upstream_interface').value = mcastConfig.upstream_interface || '';
+            document.getElementById('upstream_interface_fcc').value = mcastConfig.upstream_interface_fcc || '';
+        }
+
+        function addMulticastIface(value = '') {
+            const container = document.getElementById('multicast-ifaces-container');
+            const ifaceItem = document.createElement('div');
+            ifaceItem.className = 'iface-item';
+            ifaceItem.innerHTML = `
+                <input type="text" class="form-control" placeholder="eth0" value="${value}">
+                <button type="button" onclick="removeMulticastIface(this)">删除</button>
+            `;
+            container.appendChild(ifaceItem);
+        }
+
+        function removeMulticastIface(button) {
+            button.parentElement.remove();
+        }
+
+        function getMulticastIfaces() {
+            const ifaces = [];
+            document.querySelectorAll('#multicast-ifaces-container .iface-item input').forEach(input => {
+                const value = input.value.trim();
+                if (value) ifaces.push(value);
+            });
+            return ifaces;
+        }
+
+        function updateConfig(key, value) {
+            if (value === '' || value === null || value === undefined || (typeof value === 'number' && isNaN(value))) {
+                delete mcastConfig[key];
+            } else {
+                mcastConfig[key] = value;
+            }
+        }
+
+        function hasUnsavedChanges() {
+            const currentConfig = JSON.parse(JSON.stringify(mcastConfig));
+            currentConfig.multicast_ifaces = getMulticastIfaces();
+            return JSON.stringify(currentConfig) !== JSON.stringify(originalConfig);
+        }
+
+        function saveConfig() {
+            mcastConfig.multicast_ifaces = getMulticastIfaces();
+            fetch(webPath + 'config/save-multicast', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(mcastConfig)
+            })
+            .then(response => {
+                if (!response.ok) return response.text().then(text => { throw new Error(text); });
+                return response.text();
+            })
+            .then(data => {
+                originalConfig = JSON.parse(JSON.stringify(mcastConfig));
+                showAlert('配置保存成功', 'success');
+            })
+            .catch(error => {
+                console.error('保存配置失败:', error);
+                showAlert('保存配置失败: ' + error.message, 'danger');
+            });
+        }
+
+        function reloadConfig() {
+            if (confirm('确定要重新加载配置吗？未保存的更改将会丢失。')) {
+                fetch(webPath + 'config/reload', { method: 'POST' })
+                .then(response => {
+                    if (!response.ok) return response.text().then(text => { throw new Error(text); });
+                    return response.text();
+                })
+                .then(data => {
+                    showAlert('配置重新加载成功', 'success');
+                    setTimeout(() => location.reload(), 1000);
+                })
+                .catch(error => {
+                    console.error('重新加载配置失败:', error);
+                    showAlert('重新加载配置失败: ' + error.message, 'danger');
+                });
+            }
+        }
+    </script>
+</body>
+</html>

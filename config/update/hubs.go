@@ -10,12 +10,11 @@ import (
 // 配置变更时调用
 func UpdateHubsOnConfigChange(newIfaces []string) {
 	config.CfgMu.RLock()
-	newRejoinInterval := config.Cfg.Server.McastRejoinInterval
-	// 获取FCC相关配置
-	newFccTypeStr := config.Cfg.Server.FccType
-	newFccCacheSize := config.Cfg.Server.FccCacheSize
-	newFccPortMin := config.Cfg.Server.FccListenPortMin
-	newFccPortMax := config.Cfg.Server.FccListenPortMax
+	newRejoinInterval := config.Cfg.Multicast.McastRejoinInterval
+	newFccTypeStr := config.Cfg.Multicast.FccType
+	newFccCacheSize := config.Cfg.Multicast.FccCacheSize
+	newFccPortMin := config.Cfg.Multicast.FccListenPortMin
+	newFccPortMax := config.Cfg.Multicast.FccListenPortMax
 	
 	config.CfgMu.RUnlock()
 	

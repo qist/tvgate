@@ -1,8 +1,8 @@
 package web
 
 import (
-	"time"
 	"fmt"
+	"time"
 )
 
 // formatDuration 格式化时间持续时间，如果为0则返回空字符串
@@ -10,78 +10,24 @@ func formatDuration(d time.Duration) string {
 	if d <= 0 {
 		return ""
 	}
-
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	s := int(d.Seconds()) % 60
-	ms := int(d.Milliseconds()) % 1000
-
-	switch {
-	case h > 0:
-		if m == 0 && s == 0 {
-			return fmt.Sprintf("%dh", h)
-		} else if s == 0 {
-			return fmt.Sprintf("%dh%dm", h, m)
-		} else {
-			return fmt.Sprintf("%dh%dm%ds", h, m, s)
-		}
-	case m > 0:
-		if s == 0 {
-			return fmt.Sprintf("%dm", m)
-		}
-		return fmt.Sprintf("%dm%ds", m, s)
-	case ms > 0:
-		if ms < 1000 {
-			return fmt.Sprintf("%dms", ms)
-		}
-		return fmt.Sprintf("%ds", s)
-	default:
-		return fmt.Sprintf("%ds", s)
-	}
+	return compactDuration(d)
 }
 
 // formatDurationString 格式化时间字符串，去掉多余的 0m0s
 func formatDurationString(durationStr string) string {
-    // 尝试解析为 Duration
-    d, err := time.ParseDuration(durationStr)
-    if err != nil {
-        // 如果原字符串没有单位，当成秒
-        if d2, err2 := time.ParseDuration(durationStr + "s"); err2 == nil {
-            d = d2
-        } else {
-            return durationStr // 无法解析，原样返回
-        }
-    }
+	// 尝试解析为 Duration
+	d, err := time.ParseDuration(durationStr)
+	if err != nil {
+		// 如果原字符串没有单位，当成秒
+		if d2, err2 := time.ParseDuration(durationStr + "s"); err2 == nil {
+			d = d2
+		} else {
+			return durationStr // 无法解析，原样返回
+		}
+	}
 
-    h := int(d.Hours())
-    m := int(d.Minutes()) % 60
-    s := int(d.Seconds()) % 60
-    ms := int(d.Milliseconds()) % 1000
-
-    switch {
-    case h > 0:
-        if m == 0 && s == 0 {
-            return fmt.Sprintf("%dh", h)
-        } else if s == 0 {
-            return fmt.Sprintf("%dh%dm", h, m)
-        } else {
-            return fmt.Sprintf("%dh%dm%ds", h, m, s)
-        }
-    case m > 0:
-        if s == 0 {
-            return fmt.Sprintf("%dm", m)
-        }
-        return fmt.Sprintf("%dm%ds", m, s)
-    case s > 0:
-        if ms > 0 {
-            return fmt.Sprintf("%ds%dms", s, ms)
-        }
-        return fmt.Sprintf("%ds", s)
-    default:
-        return fmt.Sprintf("%dms", ms)
-    }
+	return compactDuration(d)
 }
-
 
 func formatDurationValue(value interface{}) (string, error) {
 	var d time.Duration
@@ -111,6 +57,18 @@ func formatDurationValue(value interface{}) (string, error) {
 		}
 		d = v
 
+	case float64:
+		if v <= 0 {
+			return "", fmt.Errorf("zero or negative duration")
+		}
+		d = time.Duration(v) * time.Second
+
+	case int:
+		if v <= 0 {
+			return "", fmt.Errorf("zero or negative duration")
+		}
+		d = time.Duration(v) * time.Second
+
 	default:
 		return "", fmt.Errorf("unsupported duration type: %T", value)
 	}
@@ -119,7 +77,11 @@ func formatDurationValue(value interface{}) (string, error) {
 		return "", nil
 	}
 
-	// 格式化为精简形式（支持 ms）
+	return compactDuration(d), nil
+}
+
+// compactDuration 将 Duration 转换为 "1h"、"30m"、"45s"、"200ms" 这种简洁形式
+func compactDuration(d time.Duration) string {
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
 	s := int(d.Seconds()) % 60
@@ -128,46 +90,23 @@ func formatDurationValue(value interface{}) (string, error) {
 	switch {
 	case h > 0:
 		if m == 0 && s == 0 {
-			return fmt.Sprintf("%dh", h), nil
+			return fmt.Sprintf("%dh", h)
 		} else if s == 0 {
-			return fmt.Sprintf("%dh%dm", h, m), nil
+			return fmt.Sprintf("%dh%dm", h, m)
 		} else {
-			return fmt.Sprintf("%dh%dm%ds", h, m, s), nil
+			return fmt.Sprintf("%dh%dm%ds", h, m, s)
 		}
 	case m > 0:
 		if s == 0 {
-			return fmt.Sprintf("%dm", m), nil
+			return fmt.Sprintf("%dm", m)
 		}
-		return fmt.Sprintf("%dm%ds", m, s), nil
+		return fmt.Sprintf("%dm%ds", m, s)
 	case s > 0:
 		if ms > 0 {
-			return fmt.Sprintf("%ds%dms", s, ms), nil
+			return fmt.Sprintf("%ds%dms", s, ms)
 		}
-		return fmt.Sprintf("%ds", s), nil
-	default:
-		return fmt.Sprintf("%dms", ms), nil
-	}
-}
-
-
-// compactDuration 将 Duration 转换为 "1h"、"30m"、"45s" 这种简洁形式
-func compactDuration(d time.Duration) string {
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	s := int(d.Seconds()) % 60
-
-	switch {
-	case h > 0 && m == 0 && s == 0:
-		return fmt.Sprintf("%dh", h)
-	case h > 0 && s == 0:
-		return fmt.Sprintf("%dh%dm", h, m)
-	case h > 0:
-		return fmt.Sprintf("%dh%dm%ds", h, m, s)
-	case m > 0 && s == 0:
-		return fmt.Sprintf("%dm", m)
-	case m > 0:
-		return fmt.Sprintf("%dm%ds", m, s)
-	default:
 		return fmt.Sprintf("%ds", s)
+	default:
+		return fmt.Sprintf("%dms", ms)
 	}
 }
