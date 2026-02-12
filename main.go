@@ -193,8 +193,8 @@ func main() {
 		})
 	}
 
-	startTask(func() { monitor.ActiveClients.StartCleaner(30*time.Second, 20*time.Second, stopActiveClients) })
-	startTask(func() { monitor.StartSystemStatsUpdater(30*time.Second, stopStartSystemStatsUpdater) })
+	startTask(func() { monitor.ActiveClients.StartCleaner(5*time.Second, 10*time.Second, stopActiveClients) })
+	startTask(func() { monitor.StartSystemStatsUpdater(5*time.Second, stopStartSystemStatsUpdater) })
 	startTask(func() { clear.StartRedirectChainCleaner(10*time.Minute, 30*time.Minute, stopCleaner) })
 	startTask(func() { clear.StartAccessCacheCleaner(10*time.Minute, 30*time.Minute, stopAccessCleaner) })
 	startTask(func() { clear.StartGlobalProxyStatsCleaner(10*time.Minute, 2*time.Hour, stopProxyStats) })
