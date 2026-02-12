@@ -1722,9 +1722,12 @@ func (h *StreamHub) UpdateInterfaces(ifaces []string) error {
 
 	// 替换 UDPConns
 	for _, conn := range h.UdpConns {
-		_ = conn.Close()
+		if conn != nil {
+			_ = conn.Close()
+		}
 	}
 	h.UdpConns = newConns
+	h.ifaces = ifaces // 更新接口列表
 
 	// 重新启动 readLoops
 	h.startReadLoops()
@@ -1753,6 +1756,8 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 
 	// 迁移缓存数据
 	frames := h.CacheBuffer.GetAllRefs()
+	// 注意：这里不直接发送缓存给迁移的客户端，避免播放回跳
+	// 仅将缓存迁移到新 Hub，确保新加入的客户端有缓存可用
 	for _, f := range frames {
 		if f == nil {
 			continue
@@ -1763,6 +1768,7 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 		}
 	}
 
+	// 迁移最后关键帧
 	if h.LastFrame != nil {
 		if newHub.LastFrame != nil {
 			newHub.LastFrame.Put()
@@ -1774,29 +1780,7 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 	// 迁移客户端
 	for connID, client := range h.Clients {
 		newHub.Clients[connID] = client
-
-		// 发送最后关键帧序列
-		for _, frame := range frames {
-			if frame == nil {
-				continue
-			}
-			frame.Get()
-			select {
-			case client.ch <- frame:
-			default:
-				frame.Put()
-			}
-		}
-
-		// 再发送最后一帧数据，保证客户端能立即播放
-		if h.LastFrame != nil {
-			h.LastFrame.Get()
-			select {
-			case client.ch <- h.LastFrame:
-			default:
-				h.LastFrame.Put()
-			}
-		}
+		// 注意：不在这里 client.ch <- frames，保持当前播放进度连续
 	}
 
 	for _, frame := range frames {
