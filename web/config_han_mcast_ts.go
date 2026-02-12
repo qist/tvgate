@@ -57,6 +57,12 @@ func (h *ConfigHandler) handleMulticastConfig(w http.ResponseWriter, r *http.Req
 		"fcc_listen_port_max":    mcast.FccListenPortMax,
 		"upstream_interface":     mcast.UpstreamInterface,
 		"upstream_interface_fcc": mcast.UpstreamInterfaceFcc,
+		// 传递默认值，避免前端硬编码
+		"defaults": map[string]interface{}{
+			"fcc_cache_size":      16384,
+			"fcc_listen_port_min": 40000,
+			"fcc_listen_port_max": 50000,
+		},
 	}
 
 	if err := json.NewEncoder(w).Encode(mcastConfig); err != nil {
@@ -167,7 +173,7 @@ func (h *ConfigHandler) handleMulticastConfigSave(w http.ResponseWriter, r *http
 				doc.Content = append(doc.Content,
 					&yaml.Node{Kind: yaml.ScalarNode, Value: "multicast"},
 					newMcastNode)
-				
+
 				// Re-run the field addition for the new node
 				fields := []string{"mcast_rejoin_interval", "fcc_type", "fcc_cache_size", "fcc_listen_port_min", "fcc_listen_port_max", "upstream_interface", "upstream_interface_fcc"}
 				if ifaces, ok := mcastConfig["multicast_ifaces"]; ok {
@@ -276,7 +282,7 @@ func (h *ConfigHandler) handleTSConfigSave(w http.ResponseWriter, r *http.Reques
 				doc.Content = append(doc.Content,
 					&yaml.Node{Kind: yaml.ScalarNode, Value: "ts"},
 					newTSNode)
-				
+
 				if enable, ok := tsConfig["enable"]; ok {
 					enableStr := "false"
 					if e, ok := enable.(bool); ok && e {

@@ -294,7 +294,7 @@
                     <input type="number" id="fcc_cache_size" class="form-control" 
                            placeholder="16384" 
                            onchange="updateConfig('fcc_cache_size', parseInt(this.value))">
-                    <div class="help-text">FCC缓存的数据包数量（默认16384）</div>
+                    <div class="help-text" id="help-fcc_cache_size">FCC缓存的数据包数量（默认16384）</div>
                 </div>
                 
                 <div class="form-row" style="display: flex;">
@@ -303,7 +303,7 @@
                         <input type="number" id="fcc_listen_port_min" class="form-control" 
                                placeholder="40000" 
                                onchange="updateConfig('fcc_listen_port_min', parseInt(this.value))">
-                        <div class="help-text">FCC监听端口范围的最小值（默认40000）</div>
+                        <div class="help-text" id="help-fcc_listen_port_min">FCC监听端口范围的最小值（默认40000）</div>
                     </div>
                     
                     <div class="form-group" style="flex: 1;">
@@ -311,7 +311,7 @@
                         <input type="number" id="fcc_listen_port_max" class="form-control" 
                                placeholder="50000" 
                                onchange="updateConfig('fcc_listen_port_max', parseInt(this.value))">
-                        <div class="help-text">FCC监听端口范围的最大值（默认50000）</div>
+                        <div class="help-text" id="help-fcc_listen_port_max">FCC监听端口范围的最大值（默认50000）</div>
                     </div>
                 </div>
 
@@ -372,6 +372,22 @@
         }
 
         function populateForm() {
+            // 填充默认值占位符
+            if (mcastConfig.defaults) {
+                const defs = mcastConfig.defaults;
+                const fields = ['fcc_cache_size', 'fcc_listen_port_min', 'fcc_listen_port_max'];
+                fields.forEach(field => {
+                    const el = document.getElementById(field);
+                    const helpEl = document.getElementById('help-' + field);
+                    if (el && defs[field] !== undefined) {
+                        el.placeholder = defs[field];
+                    }
+                    if (helpEl && defs[field] !== undefined) {
+                        helpEl.innerText = helpEl.innerText.replace(/\(默认\d+\)/, `(默认${defs[field]})`);
+                    }
+                });
+            }
+
             // 填充组播接口
             const multicastIfaces = Array.isArray(mcastConfig.multicast_ifaces) ? mcastConfig.multicast_ifaces : [];
             const container = document.getElementById('multicast-ifaces-container');

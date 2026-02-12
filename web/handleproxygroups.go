@@ -502,19 +502,17 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 						existingGroups[proxyGroupsNode.Content[j].Value] = j
 					}
 
-					// 更新或添加新的代理组
+					// 构建新的 Content 数组，仅包含传入的数据中存在的代理组
+					var newContent []*yaml.Node
+					// 我们需要保持原有的顺序，或者按传入的数据顺序重新构建
+					// 这里选择按传入的数据顺序构建，这样删除操作自然就生效了
 					for name, newNode := range yamlProxyGroups {
-						if idx, exists := existingGroups[name]; exists {
-							// 更新现有代理组的值节点
-							proxyGroupsNode.Content[idx+1] = newNode
-						} else {
-							// 添加新的代理组
-							proxyGroupsNode.Content = append(proxyGroupsNode.Content,
-								&yaml.Node{Kind: yaml.ScalarNode, Value: name},
-								newNode,
-							)
-						}
+						newContent = append(newContent,
+							&yaml.Node{Kind: yaml.ScalarNode, Value: name},
+							newNode,
+						)
 					}
+					proxyGroupsNode.Content = newContent
 					found = true
 					break
 				}
