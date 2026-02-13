@@ -726,7 +726,7 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 				Path:     webPath,
 				HttpOnly: true,
 				SameSite: http.SameSiteStrictMode,
-				MaxAge:   3600, // 1小时
+				MaxAge:   2592000, // 30天
 			})
 
 			w.WriteHeader(http.StatusOK)
