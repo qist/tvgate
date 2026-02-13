@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-
+	"path/filepath"
 	"github.com/cloudflare/tableflip"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/stream"
@@ -144,7 +144,20 @@ func Exit() {
 
 // UpgradeProcess 复制新文件、清理临时目录并启动新进程
 func UpgradeProcess(newExecPath, configPath, tmpDir string) {
-	execPath := os.Args[0]
+	execPath, err := os.Executable()
+	if err != nil {
+		execPath = os.Args[0] // fallback
+	}
+
+	// 确保路径是绝对路径
+	if abs, err := filepath.Abs(execPath); err == nil {
+		execPath = abs
+	}
+	if abs, err := filepath.Abs(configPath); err == nil {
+		configPath = abs
+	}
+
+	logger.LogPrintf("开始升级进程: execPath=%s, newExecPath=%s", execPath, newExecPath)
 
 	// 关闭升级监听，释放 socket
 	StopUpgradeListener()
@@ -153,9 +166,11 @@ func UpgradeProcess(newExecPath, configPath, tmpDir string) {
 	fn := closeFn
 	closeMu.Unlock()
 	if fn != nil {
+		logger.LogPrintf("正在关闭所有服务器...")
 		fn()
 	}
 
+	logger.LogPrintf("正在关闭所有 StreamHub...")
 	stream.GlobalMultiChannelHub.Mu.Lock()
 	for key, hub := range stream.GlobalMultiChannelHub.Hubs {
 		hub.Close()
@@ -164,6 +179,7 @@ func UpgradeProcess(newExecPath, configPath, tmpDir string) {
 	stream.GlobalMultiChannelHub.Mu.Unlock()
 
 	// 删除旧程序
+	logger.LogPrintf("正在替换可执行文件...")
 	_ = os.Remove(execPath)
 
 	// 复制新程序到旧程序位置
@@ -180,7 +196,7 @@ func UpgradeProcess(newExecPath, configPath, tmpDir string) {
 	// 设置可执行权限
 	_ = os.Chmod(execPath, 0755)
 
-	// 检查是否 systemd/procd 管理（可选，仅用于日志）
+	// 检查是否 systemd/procd 管理
 	isManaged := false
 	if pName, err := getProcessName(os.Getppid()); err == nil {
 		if strings.Contains(pName, "systemd") || strings.Contains(pName, "procd") {
@@ -190,10 +206,10 @@ func UpgradeProcess(newExecPath, configPath, tmpDir string) {
 
 	if isManaged {
 		logger.LogPrintf("检测到 systemd/procd 管理，旧进程退出，由管理器拉起新进程")
-		// 直接退出旧进程即可
 		os.Exit(0)
 	} else {
 		// 单进程模式 → 启动新程序
+		logger.LogPrintf("正在启动新进程: %s", execPath)
 		cmd := exec.Command(execPath, "-config="+configPath)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -201,6 +217,7 @@ func UpgradeProcess(newExecPath, configPath, tmpDir string) {
 		if err := cmd.Start(); err != nil {
 			logger.LogPrintf("启动新程序失败: %v\n", err)
 		}
+		logger.LogPrintf("新进程已启动，旧进程退出")
 		os.Exit(0)
 	}
 }

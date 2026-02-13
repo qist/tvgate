@@ -38,7 +38,6 @@ var (
 // CloseAllServers 关闭所有正在运行的服务器
 func CloseAllServers() {
 	serverMu.Lock()
-	defer serverMu.Unlock()
 
 	// 关闭所有HTTP/HTTPS服务器
 	for addr, srv := range servers {
@@ -62,11 +61,12 @@ func CloseAllServers() {
 		cancel()
 	}
 
-	serverWg.Wait()
-
 	// 清空maps
 	servers = make(map[string]*http.Server)
 	h3servers = make(map[string]*http3.Server)
+	serverMu.Unlock()
+
+	serverWg.Wait()
 }
 
 // ==================== HTTP/TLS 服务器 ====================
@@ -171,7 +171,7 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 	})
 
 	// ==================== 等待退出 ====================
-	serverWg.Go(func() {
+	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -184,7 +184,7 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 			}
 		}
 		logger.LogPrintf("✅ 端口 %s 已关闭", addr)
-	})
+	}()
 
 	return nil
 }
