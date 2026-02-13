@@ -37,6 +37,7 @@ type StreamHubs struct {
 	videoFormat interface{}
 	audioMedia  *description.Media
 	audioFormat *format.MPEG4Audio
+	setupMu     sync.Mutex // 用于同步初始化过程
 }
 
 func NewStreamHubs() *StreamHubs {
@@ -116,8 +117,14 @@ func (hub *StreamHubs) Close() {
 		return
 	}
 	hub.isClosed = true
-	hub.state = 0
+	hub.state = StateStopped
 	hub.stateCond.Broadcast()
+
+	// 清理媒体信息
+	hub.videoMedia = nil
+	hub.videoFormat = nil
+	hub.audioMedia = nil
+	hub.audioFormat = nil
 
 	// 关闭RTSP客户端
 	if hub.rtspClient != nil {
@@ -178,13 +185,31 @@ func (hub *StreamHubs) SetStopped() {
 	hub.stateCond.Broadcast()
 }
 
-// 新增方法：设置流为错误状态
+// SetError 设置流为错误状态
 func (hub *StreamHubs) SetError(err error) {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
-	hub.state = 2 // error state
+	hub.state = StateError
 	hub.lastError = err
 	hub.stateCond.Broadcast()
+
+	// 清除媒体信息
+	hub.videoMedia = nil
+	hub.videoFormat = nil
+	hub.audioMedia = nil
+	hub.audioFormat = nil
+
+	// 如果有 RTSP 客户端，也将其关闭
+	if hub.rtspClient != nil {
+		hub.rtspClient.Close()
+		hub.rtspClient = nil
+	}
+
+	// 关闭所有现有客户端通道，让他们重新连接
+	for ch := range hub.clients {
+		ch.Close()
+	}
+	hub.clients = make(map[*ringbuffer.RingBuffer]struct{})
 }
 
 // 新增方法：获取最后的错误
@@ -285,4 +310,24 @@ func (h *StreamHubs) SetAudioMediaInfo(media *description.Media, format *format.
 	defer h.mu.Unlock()
 	h.audioMedia = media
 	h.audioFormat = format
+}
+
+// ClearMediaInfo 清除媒体信息
+func (h *StreamHubs) ClearMediaInfo() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.videoMedia = nil
+	h.videoFormat = nil
+	h.audioMedia = nil
+	h.audioFormat = nil
+}
+
+// GetSetupLock 获取初始化锁
+func (h *StreamHubs) GetSetupLock() {
+	h.setupMu.Lock()
+}
+
+// ReleaseSetupLock 释放初始化锁
+func (h *StreamHubs) ReleaseSetupLock() {
+	h.setupMu.Unlock()
 }

@@ -61,11 +61,14 @@ func GetOrCreateHub(url string) *URLHub {
 // RemoveHub 移除一个URL Hub
 func RemoveHub(url string) {
 	hubMu.Lock()
-	defer hubMu.Unlock()
-
-	if hub, exists := urlHubs[url]; exists {
-		hub.hub.Close()
+	hub, exists := urlHubs[url]
+	if exists {
 		delete(urlHubs, url)
+	}
+	hubMu.Unlock()
+
+	if exists {
+		hub.hub.Close()
 	}
 }
 

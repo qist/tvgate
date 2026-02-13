@@ -110,6 +110,8 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		}(),
 		DisableRTCPSenderReports:   true,
 		DisableRTCPReceiverReports: true,
+		ReadTimeout:                10 * time.Second,
+		WriteTimeout:               10 * time.Second,
 	}
 
 	// 代理组选择
@@ -158,6 +160,8 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		audioFormat  *format.MPEG4Audio
 	)
 
+	// 使用 setupMu 同步初始化过程，避免多个请求同时初始化同一个 hub
+	hub.GetSetupLock()
 	existingClient := hub.GetRtspClient()
 	if existingClient != nil {
 		client = existingClient
@@ -176,9 +180,20 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		if storedAudioFormat != nil {
 			audioFormat = storedAudioFormat
 		}
+		hub.ReleaseSetupLock()
 	} else {
+		// 确保在初始化发生错误时也能释放锁
+		setupDone := false
+		defer func() {
+			if !setupDone {
+				hub.ReleaseSetupLock()
+			}
+		}()
+
+		// 连接 RTSP 服务端
 		err = client.Start()
 		if err != nil {
+			hub.ClearMediaInfo()
 			http.Error(w, "RTSP connect error: "+err.Error(), 500)
 			return
 		}
@@ -188,17 +203,16 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if !setupSuccess {
 				client.Close()
+				hub.ClearMediaInfo()
 			}
 		}()
 
-		// // 用 parsedURL 构造 *base.URL 用于 Setup
-		// setupURL := &base.URL{
-		// 	Scheme:   parsedURL.Scheme,
-		// 	Host:     parsedURL.Host,
-		// 	Path:     parsedURL.Path,
-		// 	RawQuery: parsedURL.RawQuery,
-		// }
 		parsedURL, err := base.ParseURL(rtspURL)
+		if err != nil {
+			http.Error(w, "RTSP URL parse error: "+err.Error(), 500)
+			return
+		}
+
 		_, err = client.Options(parsedURL)
 		if err != nil {
 			http.Error(w, "RTSP OPTIONS error: "+err.Error(), 500)
@@ -256,6 +270,8 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		hub.SetRtspClient(client)
 		setupSuccess = true
+		setupDone = true
+		hub.ReleaseSetupLock()
 	}
 
 	ctx := r.Context()

@@ -47,14 +47,14 @@ func HandleMpegtsStream(
 
 	// 判断是否需要启动播放
 	switch hub.state {
-	case 0: // stopped
+	case StateStopped: // stopped
 		shouldPlay = true
-		hub.state = 1
+		hub.state = StatePlaying
 		hub.rtspClient = client
 
-	case 2: // error
+	case StateError: // error
 		shouldPlay = true
-		hub.state = 1
+		hub.state = StatePlaying
 		hub.lastError = nil
 		hub.rtspClient = client
 	}
@@ -63,13 +63,9 @@ func HandleMpegtsStream(
 	defer func() {
 		hub.RemoveClient(clientChan)
 
-		// 检查是否是最后一个客户端
-		hub.mu.Lock()
-		clientCount := len(hub.clients)
-		hub.mu.Unlock()
-
-		if clientCount == 0 {
-			RemoveHub(rtspURL)
+		// 检查是否是最后一个客户端，如果是则移除 hub
+		if hub.ClientCount() == 0 {
+			RemoveHubIfEmpty(rtspURL, hub)
 		}
 	}()
 
