@@ -230,8 +230,14 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 				if n < len(data) {
 					return io.ErrShortWrite
 				}
-				if f, ok := dst.(http.Flusher); ok {
-					f.Flush()
+				// 检查 context 是否已取消，避免在连接关闭后调用 Flush 导致 panic
+				select {
+				case <-done:
+					return nil
+				default:
+					if f, ok := dst.(http.Flusher); ok {
+						f.Flush()
+					}
 				}
 			}
 			seq++

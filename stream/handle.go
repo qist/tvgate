@@ -119,6 +119,8 @@ func executeCopyWithPool(ctx context.Context, r *http.Request, targetURL string,
 	select {
 	case <-ctx.Done():
 		logger.LogPrintf("客户端断开连接: %s", targetURL)
+		// 必须等待任务真正结束，否则 http.ResponseWriter 可能会被回收导致 panic
+		<-done
 	case <-done:
 		logger.LogPrintf("响应成功完成: %s", targetURL)
 	}
@@ -179,14 +181,17 @@ func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, upd
 
 			// 大数据量触发 flush
 			if canFlush && bytesWritten >= 32*1024 {
-				flusher.Flush()
+				// 再次检查 ctx，避免无效 flush
+				if ctx.Err() == nil {
+					flusher.Flush()
+				}
 				bytesWritten = 0
 			}
 		}
 
 		// 错误处理
 		if readErr != nil {
-			if canFlush && bytesWritten > 0 {
+			if canFlush && bytesWritten > 0 && ctx.Err() == nil {
 				flusher.Flush()
 			}
 			if errors.Is(readErr, io.EOF) {
@@ -332,7 +337,7 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 		if err := cacheItem.ReadAll(dst, timeoutCtx.Done()); err != nil && err != io.EOF {
 			logger.LogPrintf("[TS缓存] 读取出错: %v, key: %s", err, key)
 		}
-		if f, ok := dst.(http.Flusher); ok {
+		if f, ok := dst.(http.Flusher); ok && timeoutCtx.Err() == nil {
 			f.Flush()
 		}
 		return nil
@@ -381,7 +386,13 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 	if err := <-readErrCh; err != nil && err != io.EOF {
 		return err
 	}
-	if f, ok := dst.(http.Flusher); ok {
+
+	// 检查 context 是否已取消
+	if timeoutCtx.Err() != nil {
+		return timeoutCtx.Err()
+	}
+
+	if f, ok := dst.(http.Flusher); ok && timeoutCtx.Err() == nil {
 		f.Flush()
 	}
 	return nil
