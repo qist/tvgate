@@ -72,6 +72,7 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 	}
 
 	// ===== 缓存优先使用（非强制测速时）=====
+	ignoreCooldown := false
 	if !needCheck {
 		logger.LogPrintf("🌀 当前代理组缓存状态：")
 		group.Stats.RLock()
@@ -129,10 +130,12 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 			return fastest
 		}
 		group.Stats.RUnlock()
+		logger.LogPrintf("🚫 缓存无可用代理，强制触发测速并忽略冷却")
+		ignoreCooldown = true
 	}
 
 	// ===== 并发测速 =====
-	logger.LogPrintf("🌐 启动并发测速 (原因: 缓存失效或 forceTest)")
+	logger.LogPrintf("🌐 启动并发测速 (原因: 缓存失效或 forceTest, ignoreCooldown=%v)", ignoreCooldown)
 
 	// 更新 LastCheck 避免并发触发
 	group.Stats.Lock()
@@ -155,7 +158,7 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 
 		group.Stats.RLock()
 		stats := group.Stats.ProxyStats[proxy.Name]
-		if stats != nil && now.Before(stats.CooldownUntil) {
+		if !ignoreCooldown && stats != nil && now.Before(stats.CooldownUntil) {
 			group.Stats.RUnlock()
 			continue
 		}

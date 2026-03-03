@@ -77,7 +77,8 @@ func SelectRoundRobinProxy(ctx context.Context, group *config.ProxyGroupConfig, 
 		needCheck = allNoRT
 	}
 
-	// 使用缓存选择代理
+	// ===== 缓存优先使用（非强制测速时）=====
+	ignoreCooldown := false
 	if !needCheck {
 		logger.LogPrintf("🌀 当前代理组缓存状态：")
 		group.Stats.RLock()
@@ -151,12 +152,14 @@ func SelectRoundRobinProxy(ctx context.Context, group *config.ProxyGroupConfig, 
 			return fallback
 		}
 
-		logger.LogPrintf("🚫 没有触发测速条件，也无可用缓存代理，返回 nil")
-		return nil
+		logger.LogPrintf("🚫 没有触发测速条件，也无可用缓存代理，强制触发测速并忽略冷却")
+		// return nil // 修改：不直接返回，而是强制测速
+		needCheck = true
+		ignoreCooldown = true
 	}
 
 	// ===== 测速阶段 =====
-	logger.LogPrintf("🌐 启动并发测速 (触发原因: %v, forceTest=%v)", needCheck, forceTest)
+	logger.LogPrintf("🌐 启动并发测速 (触发原因: %v, forceTest=%v, ignoreCooldown=%v)", needCheck, forceTest, ignoreCooldown)
 
 	// 更新 LastCheck 避免并发触发
 	group.Stats.Lock()
@@ -179,7 +182,7 @@ func SelectRoundRobinProxy(ctx context.Context, group *config.ProxyGroupConfig, 
 
 		group.Stats.RLock()
 		stats := group.Stats.ProxyStats[proxy.Name]
-		if stats != nil && now.Before(stats.CooldownUntil) {
+		if !ignoreCooldown && stats != nil && now.Before(stats.CooldownUntil) {
 			group.Stats.RUnlock()
 			continue
 		}
