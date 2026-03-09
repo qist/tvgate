@@ -26,6 +26,9 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 		interval = 60 * time.Second
 	}
 	maxAcceptableRT := 3 * time.Second
+	if group.MaxRT > 0 {
+		maxAcceptableRT = group.MaxRT
+	}
 
 	group.Stats.RLock()
 	n := len(group.Proxies)
