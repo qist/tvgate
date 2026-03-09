@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -350,6 +351,10 @@ func Handler(client *http.Client) http.HandlerFunc {
 				// 发起代理请求
 				proxyResp, err := proxyClient.Do(reqCopy)
 				if err != nil {
+					if errors.Is(err, context.Canceled) {
+						logger.LogPrintf("⚠️ 代理请求被取消（客户端断开）：%v", err)
+						return
+					}
 					logger.LogPrintf("⚠️ 代理请求网络错误（第 %d 次）：%v", attempt+1, err)
 					markProxyResult(pg, selectedProxy, false)
 					if attempt == maxRetries {

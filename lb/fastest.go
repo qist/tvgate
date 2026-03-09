@@ -2,6 +2,7 @@ package lb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -251,6 +252,10 @@ loop:
 					return &res.Proxy // 兜底，虽然不应该走到这里
 				}
 			} else {
+				if res.Err != nil && errors.Is(res.Err, context.Canceled) {
+					group.Stats.Unlock()
+					continue
+				}
 				if res.Err != nil {
 					logger.LogPrintf("❌ 代理 %s 测速失败: %v", res.Proxy.Name, res.Err)
 				} else {
@@ -267,7 +272,13 @@ loop:
 				group.Stats.Unlock()
 			}
 		case <-ctx.Done():
-			logger.LogPrintf("⏰ 测速超时，跳出循环")
+			if ctx.Err() == context.Canceled {
+				logger.LogPrintf("❌ 测速被取消 (Context Canceled)")
+			} else if ctx.Err() == context.DeadlineExceeded {
+				logger.LogPrintf("⏰ 测速超时 (Timeout)")
+			} else {
+				logger.LogPrintf("⏰ 测速超时或取消: %v", ctx.Err())
+			}
 			break loop
 		}
 	}

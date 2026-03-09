@@ -1,6 +1,8 @@
 package lb
 
 import (
+	"context"
+	"errors"
 	"time"
 
 	"github.com/qist/tvgate/config"
@@ -23,6 +25,11 @@ func ConsumeRemainingResults(ch chan config.TestResult, count int, group *config
 			group.Stats.ProxyStats[res.Proxy.Name] = stats
 		}
 		stats.LastCheck = now
+
+		if res.Err != nil && errors.Is(res.Err, context.Canceled) {
+			group.Stats.Unlock()
+			continue
+		}
 
 		if res.Err == nil &&
 			res.ResponseTime > 0 {
