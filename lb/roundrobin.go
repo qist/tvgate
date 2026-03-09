@@ -80,7 +80,7 @@ func SelectRoundRobinProxy(ctx context.Context, group *config.ProxyGroupConfig, 
 
 	// ===== 缓存优先使用（非强制测速时）=====
 	ignoreCooldown := false
-	if !needCheck {
+	if !forceTest || !needCheck {
 		logger.LogPrintf("🌀 当前代理组缓存状态：")
 		group.Stats.RLock()
 		start := group.Stats.RoundRobinIndex
@@ -153,8 +153,7 @@ func SelectRoundRobinProxy(ctx context.Context, group *config.ProxyGroupConfig, 
 			return fallback
 		}
 
-		logger.LogPrintf("🚫 没有触发测速条件，也无可用缓存代理，强制触发测速并忽略冷却")
-		// return nil // 修改：不直接返回，而是强制测速
+		logger.LogPrintf("🚫 缓存无可用代理，强制触发测速并忽略冷却")
 		needCheck = true
 		ignoreCooldown = true
 	}

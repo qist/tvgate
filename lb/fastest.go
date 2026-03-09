@@ -25,10 +25,6 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 	if interval == 0 {
 		interval = 60 * time.Second
 	}
-	maxAcceptableRT := 3 * time.Second
-	if group.MaxRT > 0 {
-		maxAcceptableRT = group.MaxRT
-	}
 
 	group.Stats.RLock()
 	n := len(group.Proxies)
@@ -117,7 +113,7 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 			if !ok {
 				continue
 			}
-			if now.Before(stats.CooldownUntil) || !stats.Alive || stats.ResponseTime > maxAcceptableRT {
+			if now.Before(stats.CooldownUntil) || !stats.Alive {
 				continue
 			}
 			if stats.ResponseTime < minTime && stats.ResponseTime > 0 {
@@ -133,6 +129,7 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 			group.Stats.RUnlock()
 			return fastest
 		}
+
 		group.Stats.RUnlock()
 		logger.LogPrintf("🚫 缓存无可用代理，强制触发测速并忽略冷却")
 		ignoreCooldown = true
