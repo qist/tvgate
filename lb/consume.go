@@ -24,13 +24,13 @@ func ConsumeRemainingResults(ch chan config.TestResult, count int, group *config
 			stats = &config.ProxyStats{}
 			group.Stats.ProxyStats[res.Proxy.Name] = stats
 		}
-		stats.LastCheck = now
-
 		if res.Err != nil && errors.Is(res.Err, context.Canceled) {
+			logger.LogPrintf("⏭️ 异步：代理 %s 测速被取消，跳过写入缓存", res.Proxy.Name)
 			group.Stats.Unlock()
 			continue
 		}
 
+		stats.LastCheck = now
 		if res.Err == nil &&
 			res.ResponseTime > 0 {
 			stats.Alive = true

@@ -18,8 +18,8 @@ var lbWg tsync.WaitGroup
 
 // SelectFastestProxy 使用最快的代理
 func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, targetURL string, forceTest bool) *config.ProxyConfig {
-	ctx, cancel := context.WithTimeout(ctx, config.DefaultDialTimeout)
-	defer cancel()
+	waitCtx, waitCancel := context.WithTimeout(ctx, config.DefaultDialTimeout)
+	defer waitCancel()
 	now := time.Now()
 	interval := group.Interval
 	if interval == 0 {
@@ -169,7 +169,9 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 		wg.Go(func() {
 			pCopy := *proxy
 			if strings.HasPrefix(targetURL, "rtsp://") {
-				rt, err := TestRTSPProxy(ctx, pCopy, targetURL)
+				proxyCtx, proxyCancel := context.WithTimeout(context.Background(), config.DefaultDialTimeout)
+				defer proxyCancel()
+				rt, err := TestRTSPProxy(proxyCtx, pCopy, targetURL)
 				resultChan <- config.TestResult{
 					Proxy:        pCopy,
 					ResponseTime: rt,
@@ -177,7 +179,7 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 					StatusCode:   200,
 				}
 			} else {
-				proxyCtx, proxyCancel := context.WithTimeout(ctx, config.DefaultDialTimeout)
+				proxyCtx, proxyCancel := context.WithTimeout(context.Background(), config.DefaultDialTimeout)
 				defer proxyCancel()
 
 				client, err := p.CreateProxyClient(proxyCtx, &config.Cfg, pCopy, group.IPv6)
@@ -211,8 +213,8 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 		})
 	}
 
-	successReturned := false
 	consumed := 0
+	successReturned := false
 loop:
 	for i := 0; i < tested; i++ {
 		select {
@@ -224,8 +226,12 @@ loop:
 				stats = &config.ProxyStats{}
 				group.Stats.ProxyStats[res.Proxy.Name] = stats
 			}
-			stats.LastCheck = now
+			if res.Err != nil && errors.Is(res.Err, context.Canceled) {
+				group.Stats.Unlock()
+				continue
+			}
 
+			stats.LastCheck = now
 			if res.Err == nil && res.ResponseTime >= 0 && res.StatusCode < 500 {
 				stats.Alive = true
 				stats.ResponseTime = res.ResponseTime
@@ -233,29 +239,26 @@ loop:
 				stats.FailCount = 0
 				stats.CooldownUntil = time.Time{}
 				group.Stats.Unlock()
-
 				if !successReturned {
 					logger.LogPrintf("🚀 立即返回测速成功代理: %s 响应时间: %v，状态码: %d", res.Proxy.Name, res.ResponseTime, res.StatusCode)
 					successReturned = true
-					remaining := tested - consumed
-					logger.LogPrintf("📥 异步处理剩余 %d 个测速结果", remaining)
-					lbWg.Go(func() {
-						ConsumeRemainingResults(resultChan, remaining, group, now)
-					})
 
-					// 返回原始代理对象的指针
-					for _, p := range group.Proxies {
-						if p.Name == res.Proxy.Name {
-							return p
+					remaining := tested - consumed
+					if remaining > 0 {
+						logger.LogPrintf("📥 异步处理剩余 %d 个测速结果", remaining)
+						lbWg.Go(func() {
+							ConsumeRemainingResults(resultChan, remaining, group, now)
+						})
+					}
+
+					for _, pxy := range group.Proxies {
+						if pxy.Name == res.Proxy.Name {
+							return pxy
 						}
 					}
-					return &res.Proxy // 兜底，虽然不应该走到这里
+					return &res.Proxy
 				}
 			} else {
-				if res.Err != nil && errors.Is(res.Err, context.Canceled) {
-					group.Stats.Unlock()
-					continue
-				}
 				if res.Err != nil {
 					logger.LogPrintf("❌ 代理 %s 测速失败: %v", res.Proxy.Name, res.Err)
 				} else {
@@ -271,22 +274,25 @@ loop:
 				}
 				group.Stats.Unlock()
 			}
-		case <-ctx.Done():
-			if ctx.Err() == context.Canceled {
+		case <-waitCtx.Done():
+			if waitCtx.Err() == context.Canceled {
 				logger.LogPrintf("❌ 测速被取消 (Context Canceled)")
-			} else if ctx.Err() == context.DeadlineExceeded {
+			} else if waitCtx.Err() == context.DeadlineExceeded {
 				logger.LogPrintf("⏰ 测速超时 (Timeout)")
 			} else {
-				logger.LogPrintf("⏰ 测速超时或取消: %v", ctx.Err())
+				logger.LogPrintf("⏰ 测速超时或取消: %v", waitCtx.Err())
 			}
 			break loop
 		}
 	}
 
-	logger.LogPrintf("❌ 无可用代理立即返回，全部失败或响应超时")
 	remaining := tested - consumed
-	lbWg.Go(func() {
-		ConsumeRemainingResults(resultChan, remaining, group, now)
-	})
+	if remaining > 0 {
+		lbWg.Go(func() {
+			ConsumeRemainingResults(resultChan, remaining, group, now)
+		})
+	}
+
+	logger.LogPrintf("❌ 无可用代理返回，全部失败或响应超时")
 	return nil
 }

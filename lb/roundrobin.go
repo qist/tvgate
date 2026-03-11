@@ -16,8 +16,8 @@ import (
 
 // SelectRoundRobinProxy 使用轮询方式选择代理
 func SelectRoundRobinProxy(ctx context.Context, group *config.ProxyGroupConfig, targetURL string, forceTest bool) *config.ProxyConfig {
-	ctx, cancel := context.WithTimeout(ctx, config.DefaultDialTimeout)
-	defer cancel()
+	waitCtx, waitCancel := context.WithTimeout(ctx, config.DefaultDialTimeout)
+	defer waitCancel()
 	now := time.Now()
 
 	interval := group.Interval
@@ -192,7 +192,9 @@ func SelectRoundRobinProxy(ctx context.Context, group *config.ProxyGroupConfig, 
 		wg.Go(func() {
 			pCopy := *proxy
 			if strings.HasPrefix(targetURL, "rtsp://") {
-				rt, err := TestRTSPProxy(ctx, pCopy, targetURL)
+				proxyCtx, proxyCancel := context.WithTimeout(context.Background(), config.DefaultDialTimeout)
+				defer proxyCancel()
+				rt, err := TestRTSPProxy(proxyCtx, pCopy, targetURL)
 				resultChan <- config.TestResult{
 					Proxy:        pCopy,
 					ResponseTime: rt,
@@ -200,7 +202,7 @@ func SelectRoundRobinProxy(ctx context.Context, group *config.ProxyGroupConfig, 
 					StatusCode:   200,
 				}
 			} else {
-				proxyCtx, proxyCancel := context.WithTimeout(ctx, config.DefaultDialTimeout)
+				proxyCtx, proxyCancel := context.WithTimeout(context.Background(), config.DefaultDialTimeout)
 				defer proxyCancel()
 
 				client, err := p.CreateProxyClient(proxyCtx, &config.Cfg, pCopy, group.IPv6)
@@ -247,8 +249,12 @@ LOOP:
 				stats = &config.ProxyStats{}
 				group.Stats.ProxyStats[res.Proxy.Name] = stats
 			}
-			stats.LastCheck = now
+			if res.Err != nil && errors.Is(res.Err, context.Canceled) {
+				group.Stats.Unlock()
+				continue
+			}
 
+			stats.LastCheck = now
 			if res.Err == nil && res.ResponseTime >= minAcceptableRT && res.StatusCode < 500 {
 				stats.Alive = true
 				stats.ResponseTime = res.ResponseTime
@@ -281,10 +287,6 @@ LOOP:
 					}
 				}
 			} else {
-				if res.Err != nil && errors.Is(res.Err, context.Canceled) {
-					group.Stats.Unlock()
-					continue
-				}
 				if res.Err != nil {
 					logger.LogPrintf("❌ 代理 %s 测速失败: %v", res.Proxy.Name, res.Err)
 				} else {
@@ -300,13 +302,13 @@ LOOP:
 				}
 				group.Stats.Unlock()
 			}
-		case <-ctx.Done():
-			if ctx.Err() == context.Canceled {
+		case <-waitCtx.Done():
+			if waitCtx.Err() == context.Canceled {
 				logger.LogPrintf("❌ 并发测速被取消 (Context Canceled)")
-			} else if ctx.Err() == context.DeadlineExceeded {
+			} else if waitCtx.Err() == context.DeadlineExceeded {
 				logger.LogPrintf("⏰ 并发测速超时 (Timeout)")
 			} else {
-				logger.LogPrintf("⏰ 并发测速超时或取消: %v", ctx.Err())
+				logger.LogPrintf("⏰ 并发测速超时或取消: %v", waitCtx.Err())
 			}
 			break LOOP
 		}
