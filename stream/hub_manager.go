@@ -66,6 +66,7 @@ func GetOrCreateHubs(streamURL string) *StreamHubs {
 
 	// 创建一个新的 hub
 	hub := NewStreamHubs()
+	hub.key = streamURL
 	hubManager[streamURL] = hub
 	return hub
 }

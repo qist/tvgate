@@ -20,9 +20,12 @@ const (
 )
 
 type StreamHubs struct {
-	mu       sync.RWMutex // 使用读写锁提高并发性能
-	clients  map[*ringbuffer.RingBuffer]struct{}
-	isClosed bool
+	mu        sync.RWMutex // 使用读写锁提高并发性能
+	clients   map[*ringbuffer.RingBuffer]struct{}
+	isClosed  bool
+	key       string
+	idleGen   uint64
+	idleTimer *time.Timer
 	// 添加生命周期管理
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -59,6 +62,7 @@ func (hub *StreamHubs) AddClient(ch *ringbuffer.RingBuffer) {
 		ch.Close()
 		return
 	}
+	hub.cancelIdleCloseLocked()
 	hub.clients[ch] = struct{}{}
 }
 
@@ -70,6 +74,9 @@ func (hub *StreamHubs) RemoveClient(ch *ringbuffer.RingBuffer) {
 	if _, exists := hub.clients[ch]; exists {
 		delete(hub.clients, ch)
 		ch.Close()
+	}
+	if !hub.isClosed && len(hub.clients) == 0 {
+		hub.scheduleIdleCloseLocked()
 	}
 	// 如果channel不存在于clients映射中，说明已经被Broadcast方法移除并关闭了
 }
@@ -102,6 +109,9 @@ func (hub *StreamHubs) removeClientIfNotExist(ch *ringbuffer.RingBuffer) {
 		delete(hub.clients, ch)
 		ch.Close()
 	}
+	if !hub.isClosed && len(hub.clients) == 0 {
+		hub.scheduleIdleCloseLocked()
+	}
 }
 
 func (hub *StreamHubs) ClientCount() int {
@@ -117,6 +127,7 @@ func (hub *StreamHubs) Close() {
 		return
 	}
 	hub.isClosed = true
+	hub.cancelIdleCloseLocked()
 	hub.state = StateStopped
 	hub.stateCond.Broadcast()
 
@@ -144,6 +155,37 @@ func (hub *StreamHubs) Close() {
 	hub.mu.Unlock()
 
 	hub.wg.Wait()
+}
+
+func (hub *StreamHubs) scheduleIdleCloseLocked() {
+	hub.idleGen++
+	gen := hub.idleGen
+	key := hub.key
+	if key == "" {
+		return
+	}
+	if hub.idleTimer != nil {
+		hub.idleTimer.Stop()
+	}
+	hub.idleTimer = time.AfterFunc(10*time.Second, func() {
+		hub.mu.RLock()
+		closed := hub.isClosed
+		empty := len(hub.clients) == 0
+		sameGen := hub.idleGen == gen
+		hub.mu.RUnlock()
+		if closed || !empty || !sameGen {
+			return
+		}
+		RemoveHub(key)
+	})
+}
+
+func (hub *StreamHubs) cancelIdleCloseLocked() {
+	hub.idleGen++
+	if hub.idleTimer != nil {
+		hub.idleTimer.Stop()
+		hub.idleTimer = nil
+	}
 }
 
 // GetContext 获取 hub 的上下文

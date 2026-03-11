@@ -73,6 +73,12 @@ func (d *DialContextWrapper) DialContext(ctx context.Context, network, addr stri
 
 	select {
 	case <-dialCtx.Done():
+		go func() {
+			res := <-resultChan
+			if res.conn != nil {
+				res.conn.Close()
+			}
+		}()
 		return nil, dialCtx.Err()
 	case res := <-resultChan:
 		return res.conn, res.err
