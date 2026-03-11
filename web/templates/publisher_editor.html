@@ -1,0 +1,2060 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <link rel="stylesheet" href="{{.webPath}}static/common.css">
+    <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+    <link rel="stylesheet" href="{{.webPath}}static/version.css">
+    <style>
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--win11-bg);
+            color: var(--win11-text-primary);
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: var(--win11-surface);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px var(--win11-shadow);
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, box-shadow 0.3s;
+        }
+        h1 {
+            color: var(--win11-text-primary);
+            text-align: center;
+            font-weight: 600;
+        }
+        .auth-section {
+            text-align: right;
+            margin-bottom: 20px;
+        }
+        .auth-section a {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: var(--win11-success);
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+        .auth-section a.logout {
+            background-color: var(--win11-danger);
+        }
+        .auth-section a:hover {
+            opacity: 0.9;
+        }
+        .form-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: var(--win11-accent);
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background-color 0.3s, transform 0.2s;
+        }
+        .btn:hover {
+            background-color: var(--win11-accent-hover);
+            transform: translateY(-1px);
+        }
+        .btn-danger {
+            background-color: var(--win11-danger);
+        }
+        .btn-danger:hover {
+            background-color: #c40f1d;
+        }
+        .btn-success {
+            background-color: var(--win11-success);
+        }
+        .btn-success:hover {
+            background-color: #57a357;
+        }
+        .btn-warning {
+            background-color: var(--win11-warning);
+            color: #000000;
+        }
+        .btn-warning:hover {
+            background-color: #e6b800;
+        }
+        .btn-sm {
+            padding: 8px 12px;
+            font-size: 13px;
+        }
+        .alert {
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 4px;
+        }
+        .alert-success {
+            background-color: rgba(102, 194, 102, 0.2);
+            color: var(--win11-success);
+            border: 1px solid var(--win11-success);
+        }
+        .alert-danger {
+            background-color: rgba(232, 17, 35, 0.2);
+            color: var(--win11-danger);
+            border: 1px solid var(--win11-danger);
+        }
+        .alert-warning {
+            background-color: rgba(255, 185, 0, 0.2);
+            color: var(--win11-text);
+            border: 1px solid var(--win11-warning);
+        }
+        .hidden {
+            display: none;
+        }
+        .stream-grid {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 12px;
+        }
+        .stream-card {
+            background-color: var(--win11-card);
+            border: 1px solid var(--win11-border);
+            border-radius: 8px;
+            padding: 15px;
+            transition: all 0.3s;
+        }
+        .stream-card:hover {
+            background-color: var(--win11-surface);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px var(--win11-shadow);
+        }
+        .stream-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--win11-border);
+            margin-bottom: 10px;
+        }
+        .stream-header h3 {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--win11-text-primary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            border: 1px solid var(--win11-border);
+            color: var(--win11-text-secondary);
+            background: rgba(255, 255, 255, 0.06);
+            flex: 0 0 auto;
+        }
+        .badge-on {
+            border-color: var(--win11-success);
+            color: var(--win11-success);
+        }
+        .badge-off {
+            border-color: var(--win11-danger);
+            color: var(--win11-danger);
+        }
+        .kv {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 6px 10px;
+            font-size: 13px;
+            color: var(--win11-text-secondary);
+        }
+        .kv .k {
+            color: var(--win11-text-tertiary);
+        }
+        .error {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid var(--win11-danger);
+            color: var(--win11-danger);
+            background-color: rgba(232, 17, 35, 0.12);
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .stream-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+        .meta {
+            text-align: center;
+            color: var(--win11-text-tertiary);
+            font-size: 12px;
+            margin-top: 10px;
+        }
+        .form-control {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--win11-card);
+            border: 1px solid var(--win11-border);
+            border-radius: 4px;
+            color: var(--win11-text-primary);
+            box-sizing: border-box;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        }
+        textarea.form-control {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            resize: vertical;
+        }
+        .form-control:focus {
+            outline: none;
+            border-color: var(--win11-accent);
+            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+        }
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 14px;
+        }
+        .toolbar .field {
+            flex: 1 1 420px;
+            max-width: 720px;
+        }
+        .toolbar label {
+            display: block;
+            font-size: 13px;
+            color: var(--win11-text-secondary);
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+        .help {
+            margin-top: 6px;
+            font-size: 12px;
+            color: var(--win11-text-tertiary);
+            text-align: center;
+        }
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            z-index: 2000;
+        }
+        .modal {
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            left: auto;
+            top: auto;
+            height: auto;
+            width: min(900px, 100%);
+            max-height: calc(100vh - 40px);
+            background-color: var(--win11-surface);
+            border: 1px solid var(--win11-border);
+            border-radius: 10px;
+            box-shadow: 0 12px 40px var(--win11-shadow);
+            overflow: hidden;
+        }
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--win11-border);
+            flex: 0 0 auto;
+        }
+        .modal-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--win11-text-primary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .modal-body {
+            padding: 16px;
+            overflow: auto;
+            flex: 1 1 auto;
+        }
+        .modal-footer {
+            padding: 14px 16px;
+            border-top: 1px solid var(--win11-border);
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+            background-color: var(--win11-surface);
+            flex: 0 0 auto;
+        }
+        .modal-open {
+            display: flex;
+        }
+        .section {
+            background-color: var(--win11-card);
+            border: 1px solid var(--win11-border);
+            border-radius: 8px;
+            padding: 14px;
+            margin-bottom: 12px;
+            transition: background-color 0.3s, transform 0.3s, box-shadow 0.3s;
+        }
+        .section:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px var(--win11-shadow);
+        }
+        .section-title {
+            margin: 0 0 12px 0;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--win11-text-primary);
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--win11-border);
+        }
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .form-row-1 {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+        }
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            color: var(--win11-text-secondary);
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+        .checkbox-inline {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--win11-text-secondary);
+            user-select: none;
+        }
+        .checkbox-inline input[type="checkbox"] {
+            transform: scale(1.2);
+        }
+        .receiver-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .receiver-item {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 10px;
+            align-items: center;
+        }
+        .muted {
+            color: var(--win11-text-tertiary);
+            font-size: 12px;
+            margin-top: 6px;
+        }
+        @media (max-width: 820px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="auth-section">
+            <a href="{{.webPath}}" class="btn">返回首页</a>
+            <a href="{{.webPath}}logout" class="logout">退出</a>
+        </div>
+
+        <h1>推流管理</h1>
+
+        <div id="alert-container" class="hidden"></div>
+        <div id="ffmpeg-banner" class="hidden"></div>
+
+        <div class="form-buttons">
+            <button class="btn btn-warning" onclick="refreshAll()">刷新</button>
+            <button class="btn btn-success" onclick="saveAllConfig()">保存配置</button>
+            <button class="btn" onclick="addStream()">新增推流</button>
+        </div>
+
+        <div class="toolbar">
+            <div class="field">
+                <label for="publisher-path">Publisher Path</label>
+                <input id="publisher-path" class="form-control" placeholder="例如 /live/ 或自定义路径" />
+            </div>
+        </div>
+        <div class="help">修改后点“保存配置”。推流状态和统计会自动刷新。</div>
+
+        <div id="stream-grid" class="stream-grid"></div>
+        <div id="meta" class="meta"></div>
+    </div>
+
+    <div id="modal-backdrop" class="modal-backdrop" onclick="onBackdropClick(event)">
+        <div class="modal" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div id="modal-title" class="modal-title">编辑推流</div>
+                <button class="btn btn-sm btn-danger" onclick="closeModal()">关闭</button>
+            </div>
+            <div class="modal-body">
+                <div class="section">
+                    <div class="section-title">基础</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>推流名称</label>
+                            <input id="m-name" class="form-control" disabled />
+                            <div class="muted">名称用于 URL/统计标识，创建后不建议修改</div>
+                        </div>
+                        <div class="form-group">
+                            <label>协议</label>
+                            <select id="m-protocol" class="form-control">
+                                <option value="rtmp">rtmp</option>
+                                <option value="http">http</option>
+                                <option value="https">https</option>
+                                <option value="srt">srt</option>
+                                <option value="udp">udp</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>源地址 URL</label>
+                            <input id="m-source-url" class="form-control" placeholder="例如 http://... 或 udp://..." />
+                        </div>
+                        <div class="form-group">
+                            <label>备用源 URL（可选）</label>
+                            <input id="m-backup-url" class="form-control" placeholder="例如 http://..." />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="checkbox-inline">
+                                <input id="m-enabled" type="checkbox" />
+                                启用推流
+                            </label>
+                            <div class="muted">关闭后不会启动推流进程</div>
+                        </div>
+                        <div class="form-group">
+                            <label>模式</label>
+                            <select id="m-mode" class="form-control" onchange="onModeChange()">
+                                <option value="primary-backup">primary-backup（主推/备推）</option>
+                                <option value="all">all（同时推多个）</option>
+                                <option value="local-only">local-only（不推送，仅本地播放/录制）</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">StreamKey</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>类型</label>
+                            <select id="m-sk-type" class="form-control">
+                                <option value="random">random</option>
+                                <option value="fixed">fixed</option>
+                                <option value="external">external</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>固定值（fixed 可用）</label>
+                            <input id="m-sk-value" class="form-control" placeholder="固定 streamkey 值" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>随机长度（random 可用）</label>
+                            <input id="m-sk-length" class="form-control" type="number" min="0" placeholder="例如 16" />
+                        </div>
+                        <div class="form-group">
+                            <label>过期时间（可选）</label>
+                            <input id="m-sk-exp" class="form-control" placeholder="例如 24h" />
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">FFmpegOptions（源）</div>
+                    <div class="form-row-1">
+                        <div class="form-group">
+                            <label class="checkbox-inline">
+                                <input id="m-src-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                自定义源 FFmpegOptions
+                            </label>
+                            <div class="muted">留空则使用默认参数；这里的配置会被本地播放/接收端按层级合并</div>
+                        </div>
+                    </div>
+                    <div id="src-ff-fields" class="form-row hidden">
+                        <div class="form-group">
+                            <label>视频编码器 (video_codec)</label>
+                            <select id="m-src-video_codec" class="form-control">
+                                <option value="">默认（不设置）</option>
+                                <option value="copy">copy</option>
+                                <option value="libx264">libx264</option>
+                                <option value="libx265">libx265</option>
+                                <option value="h264_nvenc">h264_nvenc</option>
+                                <option value="hevc_nvenc">hevc_nvenc</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>音频编码器 (audio_codec)</label>
+                            <select id="m-src-audio_codec" class="form-control">
+                                <option value="">默认（不设置）</option>
+                                <option value="copy">copy</option>
+                                <option value="aac">aac</option>
+                                <option value="libfdk_aac">libfdk_aac</option>
+                                <option value="opus">opus</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="src-ff-fields2" class="form-row hidden">
+                        <div class="form-group">
+                            <label>视频码率 (video_bitrate)</label>
+                            <select id="m-src-video_bitrate" class="form-control" onchange="onFFmpegSelectChange()">
+                                <option value="">默认（不设置）</option>
+                                <option value="1M">1M</option>
+                                <option value="2M">2M</option>
+                                <option value="4M">4M</option>
+                                <option value="6M">6M</option>
+                                <option value="8M">8M</option>
+                                <option value="__custom__">自定义（输入）</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                            <input id="m-src-video_bitrate_custom" class="form-control hidden" placeholder="例如 3500k / 4M" />
+                        </div>
+                        <div class="form-group">
+                            <label>音频码率 (audio_bitrate)</label>
+                            <select id="m-src-audio_bitrate" class="form-control" onchange="onFFmpegSelectChange()">
+                                <option value="">默认（不设置）</option>
+                                <option value="96k">96k</option>
+                                <option value="128k">128k</option>
+                                <option value="192k">192k</option>
+                                <option value="256k">256k</option>
+                                <option value="__custom__">自定义（输入）</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                            <input id="m-src-audio_bitrate_custom" class="form-control hidden" placeholder="例如 160k" />
+                        </div>
+                    </div>
+                    <div id="src-ff-fields3" class="form-row hidden">
+                        <div class="form-group">
+                            <label>Preset (preset)</label>
+                            <select id="m-src-preset" class="form-control">
+                                <option value="">默认（不设置）</option>
+                                <option value="ultrafast">ultrafast</option>
+                                <option value="superfast">superfast</option>
+                                <option value="veryfast">veryfast</option>
+                                <option value="faster">faster</option>
+                                <option value="fast">fast</option>
+                                <option value="medium">medium</option>
+                                <option value="slow">slow</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>CRF (crf)</label>
+                            <select id="m-src-crf" class="form-control" onchange="onFFmpegSelectChange()">
+                                <option value="">默认（不设置）</option>
+                                <option value="18">18</option>
+                                <option value="20">20</option>
+                                <option value="23">23</option>
+                                <option value="26">26</option>
+                                <option value="28">28</option>
+                                <option value="__custom__">自定义（输入）</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                            <input id="m-src-crf_custom" class="form-control hidden" type="number" min="0" placeholder="例如 23" />
+                        </div>
+                    </div>
+                    <div id="src-ff-fields4" class="form-row hidden">
+                        <div class="form-group">
+                            <label>像素格式 (pix_fmt)</label>
+                            <select id="m-src-pix_fmt" class="form-control">
+                                <option value="">默认（不设置）</option>
+                                <option value="yuv420p">yuv420p</option>
+                                <option value="yuv422p">yuv422p</option>
+                                <option value="yuv420p10le">yuv420p10le</option>
+                                <option value="nv12">nv12</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>GOP (gop_size)</label>
+                            <select id="m-src-gop_size" class="form-control" onchange="onFFmpegSelectChange()">
+                                <option value="">默认（不设置）</option>
+                                <option value="25">25</option>
+                                <option value="50">50</option>
+                                <option value="60">60</option>
+                                <option value="100">100</option>
+                                <option value="__custom__">自定义（输入）</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                            <input id="m-src-gop_size_custom" class="form-control hidden" type="number" min="0" placeholder="例如 50" />
+                        </div>
+                    </div>
+                    <div id="src-ff-fields5" class="form-row hidden">
+                        <div class="form-group">
+                            <label>User-Agent (user_agent)</label>
+                            <select id="m-src-user_agent" class="form-control">
+                                <option value="">默认（不设置）</option>
+                                <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36">Chrome</option>
+                                <option value="VLC/3.0.20 LibVLC/3.0.20">VLC</option>
+                                <option value="Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36">Android Chrome</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>输出格式 (output_format)</label>
+                            <select id="m-src-output_format" class="form-control">
+                                <option value="">默认（不设置）</option>
+                                <option value="flv">flv</option>
+                                <option value="mpegts">mpegts</option>
+                                <option value="matroska">matroska</option>
+                                <option value="mp4">mp4</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="src-ff-fields6" class="form-row hidden">
+                        <div class="form-group">
+                            <label class="checkbox-inline">
+                                <input id="m-src-stream_copy" type="checkbox" />
+                                StreamCopy (stream_copy)
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-inline">
+                                <input id="m-src-use_re_flag" type="checkbox" />
+                                UseReFlag (use_re_flag)
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">本地播放 / 录制</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="checkbox-inline">
+                                <input id="m-flv-enable" type="checkbox" onchange="onLocalToggleChange()" />
+                                开启本地 FLV 播放
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-inline">
+                                <input id="m-hls-enable" type="checkbox" onchange="onLocalToggleChange()" />
+                                开启本地 HLS（可用于录制/回放）
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="checkbox-inline">
+                                <input id="m-flv-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                自定义 FLV FFmpegOptions
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-inline">
+                                <input id="m-hls-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                自定义 HLS FFmpegOptions
+                            </label>
+                        </div>
+                    </div>
+                    <div id="hls-fields" class="form-row hidden">
+                        <div class="form-group">
+                            <label>HLS 片段时长（秒）</label>
+                            <input id="m-hls-seg-dur" class="form-control" type="number" min="1" placeholder="例如 2" />
+                        </div>
+                        <div class="form-group">
+                            <label>HLS 片段数量</label>
+                            <input id="m-hls-seg-cnt" class="form-control" type="number" min="1" placeholder="例如 6" />
+                        </div>
+                    </div>
+                    <div id="hls-fields2" class="form-row hidden">
+                        <div class="form-group">
+                            <label>HLS 存储路径（可选）</label>
+                            <input id="m-hls-path" class="form-control" placeholder="例如 ./hls 或 /data/hls" />
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-inline" style="margin-top: 28px;">
+                                <input id="m-hls-playback" type="checkbox" />
+                                开启回放（保留 TS）
+                            </label>
+                        </div>
+                    </div>
+                    <div id="hls-fields3" class="form-row hidden">
+                        <div class="form-group">
+                            <label>TS 保留时长（例如 24h / 7d，可选）</label>
+                            <input id="m-hls-retention" class="form-control" placeholder="例如 24h" />
+                        </div>
+                        <div class="form-group">
+                            <label>TS 文件名模板（可选）</label>
+                            <input id="m-ts-template" class="form-control" placeholder="例如 {stream}/{date}/{seq}.ts" />
+                        </div>
+                    </div>
+                    <div id="flv-ff-fields" class="form-row hidden">
+                        <div class="form-group">
+                            <label>FLV 方案</label>
+                            <select id="m-flv-ff-template" class="form-control">
+                                <option value="inherit">继承（不设置）</option>
+                                <option value="copy">copy（不转码）</option>
+                                <option value="h264_fast">H264 + AAC（快）</option>
+                                <option value="h265_fast">H265 + AAC（快）</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                        </div>
+                        <div class="form-group"></div>
+                    </div>
+                    <div id="hls-ff-fields" class="form-row hidden">
+                        <div class="form-group">
+                            <label>HLS 方案</label>
+                            <select id="m-hls-ff-template" class="form-control">
+                                <option value="inherit">继承（不设置）</option>
+                                <option value="copy">copy（不转码）</option>
+                                <option value="h264_fast">H264 + AAC（快）</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                        </div>
+                        <div class="form-group"></div>
+                    </div>
+                </div>
+
+                <div id="receivers-primary-backup" class="section">
+                    <div class="section-title">接收端（主/备）</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Primary Push URL</label>
+                            <input id="m-primary-push" class="form-control" placeholder="例如 rtmp://host/app" />
+                        </div>
+                        <div class="form-group">
+                            <label>Backup Push URL（可选）</label>
+                            <input id="m-backup-push" class="form-control" placeholder="例如 rtmp://host/app" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="checkbox-inline">
+                                <input id="m-primary-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                Primary 自定义 FFmpegOptions
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-inline">
+                                <input id="m-backup-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                Backup 自定义 FFmpegOptions
+                            </label>
+                        </div>
+                    </div>
+                    <div id="primary-ff-fields" class="form-row hidden">
+                        <div class="form-group">
+                            <label>Primary 方案</label>
+                            <select id="m-primary-ff-template" class="form-control">
+                                <option value="inherit">继承（不设置）</option>
+                                <option value="copy">copy（不转码）</option>
+                                <option value="h264_fast">H264 + AAC（快）</option>
+                                <option value="h265_fast">H265 + AAC（快）</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                        </div>
+                        <div class="form-group"></div>
+                    </div>
+                    <div id="backup-ff-fields" class="form-row hidden">
+                        <div class="form-group">
+                            <label>Backup 方案</label>
+                            <select id="m-backup-ff-template" class="form-control">
+                                <option value="inherit">继承（不设置）</option>
+                                <option value="copy">copy（不转码）</option>
+                                <option value="h264_fast">H264 + AAC（快）</option>
+                                <option value="h265_fast">H265 + AAC（快）</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                        </div>
+                        <div class="form-group"></div>
+                    </div>
+                </div>
+
+                <div id="receivers-all" class="section hidden">
+                    <div class="section-title">接收端（同时推多个）</div>
+                    <div id="m-all-list" class="receiver-list"></div>
+                    <div class="form-buttons" style="justify-content: flex-start; margin-top: 12px;">
+                        <button class="btn btn-sm" onclick="addAllReceiver()">新增接收端</button>
+                    </div>
+                    <div class="form-row" style="margin-top: 10px;">
+                        <div class="form-group">
+                            <label class="checkbox-inline">
+                                <input id="m-all-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                为所有接收端应用同一套 FFmpegOptions
+                            </label>
+                        </div>
+                        <div class="form-group"></div>
+                    </div>
+                    <div id="all-ff-fields" class="form-row hidden">
+                        <div class="form-group">
+                            <label>All 方案</label>
+                            <select id="m-all-ff-template" class="form-control">
+                                <option value="inherit">继承（不设置）</option>
+                                <option value="copy">copy（不转码）</option>
+                                <option value="h264_fast">H264 + AAC（快）</option>
+                                <option value="h265_fast">H265 + AAC（快）</option>
+                                <option value="__keep__">其它（保持原值）</option>
+                            </select>
+                        </div>
+                        <div class="form-group"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" onclick="deleteStreamFromModal()">删除推流</button>
+                <button class="btn btn-success" onclick="saveStreamFromModal()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        window.onerror = function(msg, url, line, col, error) {
+            const e = document.getElementById('alert-container');
+            if (e) {
+                e.classList.remove('hidden');
+                e.innerHTML = '<div class="alert alert-danger">JS Error: ' + msg + ' (Line ' + line + ')</div>';
+            } else {
+                alert('JS Error: ' + msg + ' (Line ' + line + ')');
+            }
+        };
+    </script>
+    <script>
+        const webPath = '{{.webPath}}';
+        window.webPath = webPath;
+
+        let publisherConfig = null;
+        let statsTimer = null;
+        let editingStreamName = null;
+
+        function sanitizeId(name) {
+            return name.replace(/[^a-zA-Z0-9_-]/g, '_');
+        }
+
+        function showAlert(message, type) {
+            const el = document.getElementById('alert-container');
+            el.textContent = message;
+            el.className = 'alert alert-' + type;
+            el.classList.remove('hidden');
+            setTimeout(() => el.classList.add('hidden'), 3500);
+        }
+
+        function showFFmpegBanner(info) {
+            const el = document.getElementById('ffmpeg-banner');
+            if (!el) return;
+
+            const installed = !!(info && info.installed);
+            if (!installed) {
+                const err = info && info.error ? String(info.error) : '';
+                el.innerHTML = [
+                    '<div><strong>未检测到 FFmpeg</strong>：推流相关功能无法正常工作</div>',
+                    err ? ('<div class="muted">错误：' + escapeHtml(err) + '</div>') : '',
+                    '<div class="muted">请安装 ffmpeg，并确保在 <code>./ffmpeg/bin/ffmpeg</code> 或系统 <code>PATH</code> 中可找到</div>',
+                ].join('');
+                el.className = 'alert alert-warning';
+                el.classList.remove('hidden');
+                return;
+            }
+
+            const ver = info && info.version ? String(info.version) : '';
+            const p = info && info.path ? String(info.path) : '';
+            el.textContent = 'FFmpeg 已安装' + (ver ? ('：' + ver) : '') + (p ? ('（' + p + '）') : '');
+            el.className = 'alert alert-success';
+            el.classList.remove('hidden');
+        }
+
+        function escapeHtml(s) {
+            return String(s)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+        async function loadFFmpegStatus() {
+            const resp = await fetch(webPath + 'api/publisher/ffmpeg');
+            if (!resp.ok) {
+                throw new Error(await resp.text());
+            }
+            return await resp.json();
+        }
+
+        function formatBitrate(bps) {
+            if (!bps || bps <= 0) return '-';
+            const kbps = bps / 1000;
+            if (kbps < 1000) return kbps.toFixed(0) + ' Kbps';
+            const mbps = kbps / 1000;
+            if (mbps < 1000) return mbps.toFixed(2) + ' Mbps';
+            return (mbps / 1000).toFixed(2) + ' Gbps';
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes || bytes <= 0) return '-';
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let v = bytes;
+            let i = 0;
+            while (v >= 1024 && i < units.length - 1) {
+                v /= 1024;
+                i++;
+            }
+            return v.toFixed(i === 0 ? 0 : 2) + ' ' + units[i];
+        }
+
+        function formatDuration(seconds) {
+            if (!seconds || seconds <= 0) return '-';
+            const s = Math.floor(seconds);
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            const ss = s % 60;
+            if (h > 0) return h + 'h ' + m + 'm ' + ss + 's';
+            if (m > 0) return m + 'm ' + ss + 's';
+            return ss + 's';
+        }
+
+        async function loadPublisherConfig() {
+            const resp = await fetch(webPath + 'config/publisher');
+            if (!resp.ok) {
+                throw new Error(await resp.text());
+            }
+            publisherConfig = await resp.json();
+            const pathInput = document.getElementById('publisher-path');
+            if (pathInput) {
+                pathInput.value = (publisherConfig && typeof publisherConfig.path === 'string') ? publisherConfig.path : '';
+            }
+        }
+
+        function getStreamNames() {
+            if (!publisherConfig) return [];
+            return Object.keys(publisherConfig).filter(k => k !== 'path');
+        }
+
+        function isEnabled(name) {
+            return !!(publisherConfig && publisherConfig[name] && publisherConfig[name].enabled);
+        }
+
+        function getStreamConfig(name) {
+            if (!publisherConfig) return null;
+            return publisherConfig[name] || null;
+        }
+
+        function getNested(obj, path) {
+            try {
+                return path.split('.').reduce((acc, k) => (acc && acc[k] !== undefined ? acc[k] : undefined), obj);
+            } catch {
+                return undefined;
+            }
+        }
+
+        function renderCards() {
+            const grid = document.getElementById('stream-grid');
+            grid.innerHTML = '';
+
+            const names = getStreamNames().sort();
+            if (names.length === 0) {
+                grid.innerHTML = '<div class="stream-card"><div class="stream-header"><h3>未配置推流</h3></div><div class="kv"><div class="k">提示</div><div class="v">点“新增推流”创建</div></div></div>';
+                return;
+            }
+
+            for (const name of names) {
+                const id = sanitizeId(name);
+                const enabled = isEnabled(name);
+                const cfg = getStreamConfig(name) || {};
+                const protocol = cfg.protocol || '-';
+                const sourceURL = getNested(cfg, 'stream.source.url') || '-';
+                const primaryPush = getNested(cfg, 'stream.receivers.primary.push_url') || '-';
+
+                const card = document.createElement('div');
+                card.className = 'stream-card';
+                card.id = 'stream_' + id;
+                card.dataset.name = name;
+
+                card.innerHTML = `
+                    <div class="stream-header">
+                        <h3 title="${name}">${name}</h3>
+                        <span class="badge ${enabled ? 'badge-on' : 'badge-off'}" data-role="enabled-badge">${enabled ? '已启用' : '已关闭'}</span>
+                    </div>
+                    <div class="kv">
+                        <div class="k">协议</div>
+                        <div class="v">${protocol}</div>
+                        <div class="k">源地址</div>
+                        <div class="v" title="${sourceURL}">${sourceURL}</div>
+                        <div class="k">主推地址</div>
+                        <div class="v" title="${primaryPush}">${primaryPush}</div>
+                        <div class="k">运行状态</div>
+                        <div class="v" data-role="running">-</div>
+                        <div class="k">码率</div>
+                        <div class="v" data-role="bitrate">-</div>
+                        <div class="k">CPU</div>
+                        <div class="v" data-role="cpu">-</div>
+                        <div class="k">内存</div>
+                        <div class="v" data-role="mem">-</div>
+                        <div class="k">累计输出</div>
+                        <div class="v" data-role="bytes">-</div>
+                        <div class="k">运行时长</div>
+                        <div class="v" data-role="dur">-</div>
+                        <div class="k">重启次数</div>
+                        <div class="v" data-role="restarts">-</div>
+                    </div>
+                    <div class="error hidden" data-role="error"></div>
+                    <div class="stream-actions">
+                        <button class="btn btn-sm ${enabled ? 'btn-danger' : 'btn-success'}" data-action="toggle">${enabled ? '关闭推流' : '开启推流'}</button>
+                        <button class="btn btn-sm" data-action="edit">编辑</button>
+                        <button class="btn btn-sm btn-danger" data-action="delete">删除</button>
+                    </div>
+                `;
+
+                card.querySelector('[data-action="toggle"]').addEventListener('click', () => toggleStream(name));
+                card.querySelector('[data-action="edit"]').addEventListener('click', () => openStreamModal(name));
+                card.querySelector('[data-action="delete"]').addEventListener('click', () => deleteStream(name));
+
+                grid.appendChild(card);
+            }
+        }
+
+        async function savePublisherConfig() {
+            const resp = await fetch(webPath + 'config/save-publisher', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(publisherConfig || {})
+            });
+            if (!resp.ok) {
+                throw new Error(await resp.text());
+            }
+        }
+
+        async function saveAllConfig() {
+            const pathInput = document.getElementById('publisher-path');
+            if (publisherConfig && pathInput) {
+                publisherConfig.path = pathInput.value || '';
+            }
+            try {
+                await savePublisherConfig();
+                showAlert('配置已保存', 'success');
+                await refreshAll();
+            } catch (e) {
+                showAlert('保存失败: ' + (e.message || String(e)), 'danger');
+            }
+        }
+
+        async function toggleStream(name) {
+            if (!publisherConfig || !publisherConfig[name]) {
+                showAlert('找不到推流配置: ' + name, 'danger');
+                return;
+            }
+            const next = !isEnabled(name);
+            const tip = next ? '确定要开启推流吗？' : '确定要关闭推流吗？';
+            if (!confirm(tip)) return;
+
+            publisherConfig[name].enabled = next;
+            try {
+                await savePublisherConfig();
+                showAlert('配置已保存，等待推流状态更新', 'success');
+                await refreshAll();
+            } catch (e) {
+                showAlert('保存失败: ' + (e.message || String(e)), 'danger');
+            }
+        }
+
+        function openStreamModal(name) {
+            const isNew = !name;
+            editingStreamName= isNew ? null : name;
+
+            const title = document.getElementById('modal-title');
+            if (title) title.textContent = isNew ? '新增推流' : ('编辑推流：' + name);
+
+            const backdrop = document.getElementById('modal-backdrop');
+            if (backdrop) {
+                backdrop.classList.add('modal-open');
+                backdrop.style.display = 'flex';
+            }
+
+            const nameInput = document.getElementById('m-name');
+            if (nameInput) {
+                nameInput.disabled = !isNew;
+                nameInput.value = isNew ? '' : name;
+            }
+
+            // 控制删除按钮显示/隐藏
+            const deleteBtn = document.querySelector('.modal-footer .btn-danger');
+            if (deleteBtn) {
+                if (isNew) {
+                    deleteBtn.classList.add('hidden');
+                } else {
+                    deleteBtn.classList.remove('hidden');
+                    deleteBtn.textContent = '删除推流';
+                    // 确保重新绑定事件（虽然 onclick 已经在 HTML 里写死了，这里只是改显示）
+                }
+            }
+
+            try {
+                if (isNew) {
+                    setModalFromConfig('', defaultStreamConfig());
+                } else {
+                    const cfg = getStreamConfig(name);
+                    if (!cfg) {
+                        showAlert('找不到推流配置: ' + name, 'danger');
+                        closeModal();
+                        return;
+                    }
+                    setModalFromConfig(name, cfg);
+                }
+            } catch (e) {
+                showAlert('打开编辑失败: ' + (e && e.message ? e.message : String(e)), 'danger');
+            }
+        }
+
+        function closeModal() {
+            editingStreamName = null;
+            const backdrop = document.getElementById('modal-backdrop');
+            if (backdrop) {
+                backdrop.classList.remove('modal-open');
+                backdrop.style.display = 'none';
+            }
+        }
+
+        function onBackdropClick(e) {
+            if (e.target && e.target.id === 'modal-backdrop') closeModal();
+        }
+
+        function deepClone(obj) {
+            return JSON.parse(JSON.stringify(obj || {}));
+        }
+
+        function ensureObject(parent, key) {
+            if (!parent[key] || typeof parent[key] !== 'object' || Array.isArray(parent[key])) {
+                parent[key] = {};
+            }
+            return parent[key];
+        }
+
+        function normalizeLocalPlayUrls(arr) {
+            if (!Array.isArray(arr)) return [];
+            return arr.filter(x => x && typeof x === 'object' && !Array.isArray(x) && typeof x.protocol === 'string');
+        }
+
+        function upsertLocalPlayUrl(arr, protocol, updater) {
+            const list = normalizeLocalPlayUrls(arr);
+            const idx = list.findIndex(x => x.protocol === protocol);
+            const base = idx >= 0 ? list[idx] : { protocol: protocol };
+            const next = updater(deepClone(base));
+            if (idx >= 0) {
+                list[idx] = next;
+            } else {
+                list.push(next);
+            }
+            return list;
+        }
+
+        function removeLocalPlayUrl(arr, protocol) {
+            const list = normalizeLocalPlayUrls(arr);
+            return list.filter(x => x.protocol !== protocol);
+        }
+
+        function setFormValue(id, value) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (el.type === 'checkbox') {
+                el.checked = !!value;
+            } else {
+                el.value = (value === undefined || value === null) ? '' : String(value);
+            }
+        }
+
+        function getFormValue(id) {
+            const el = document.getElementById(id);
+            if (!el) return '';
+            if (el.type === 'checkbox') return !!el.checked;
+            return el.value;
+        }
+
+        function setAllReceivers(list) {
+            const root = document.getElementById('m-all-list');
+            if (!root) return;
+            root.innerHTML = '';
+            const items = Array.isArray(list) ? list : [];
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i] || {};
+                const row = document.createElement('div');
+                row.className = 'receiver-item';
+                row.dataset.index = String(i);
+                const input = document.createElement('input');
+                input.className = 'form-control';
+                input.placeholder = 'Push URL';
+                input.dataset.role = 'push';
+                input.value = (item.push_url || '');
+
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-sm btn-danger';
+                btn.textContent = '移除';
+                btn.addEventListener('click', () => removeAllReceiver(i));
+
+                row.appendChild(input);
+                row.appendChild(btn);
+                root.appendChild(row);
+            }
+            if (items.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'muted';
+                empty.textContent = '暂无接收端，点“新增接收端”添加';
+                root.appendChild(empty);
+            }
+        }
+
+        function readAllReceiversFromDOM() {
+            const root = document.getElementById('m-all-list');
+            if (!root) return [];
+            const inputs = root.querySelectorAll('input[data-role="push"]');
+            const list = [];
+            for (const input of inputs) {
+                const v = (input.value || '').trim();
+                if (!v) continue;
+                list.push({ push_url: v });
+            }
+            return list;
+        }
+
+        function onModeChange() {
+            const mode = getFormValue('m-mode');
+            const pb = document.getElementById('receivers-primary-backup');
+            const all = document.getElementById('receivers-all');
+            if (!pb || !all) return;
+            if (mode === 'all') {
+                pb.classList.add('hidden');
+                all.classList.remove('hidden');
+            } else if (mode === 'primary-backup') {
+                pb.classList.remove('hidden');
+                all.classList.add('hidden');
+            } else {
+                pb.classList.add('hidden');
+                all.classList.add('hidden');
+            }
+            onFFmpegToggleChange();
+        }
+
+        function onLocalToggleChange() {
+            const hls = getFormValue('m-hls-enable');
+            const el1 = document.getElementById('hls-fields');
+            const el2 = document.getElementById('hls-fields2');
+            const el3 = document.getElementById('hls-fields3');
+            if (!el1 || !el2 || !el3) return;
+            if (hls) {
+                el1.classList.remove('hidden');
+                el2.classList.remove('hidden');
+                el3.classList.remove('hidden');
+            } else {
+                el1.classList.add('hidden');
+                el2.classList.add('hidden');
+                el3.classList.add('hidden');
+            }
+            onFFmpegToggleChange();
+        }
+
+        function hasAnyFFmpegOptions(opts) {
+            if (!opts || typeof opts !== 'object') return false;
+            const keys = Object.keys(opts);
+            for (const k of keys) {
+                const v = opts[k];
+                if (v === null || v === undefined) continue;
+                if (typeof v === 'string' && v.trim() === '') continue;
+                if (typeof v === 'number' && v === 0) continue;
+                if (typeof v === 'boolean' && v === false) continue;
+                if (Array.isArray(v) && v.length === 0) continue;
+                if (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0) continue;
+                return true;
+            }
+            return false;
+        }
+
+        function selectHasValue(selectId, value) {
+            const el = document.getElementById(selectId);
+            if (!el) return false;
+            const opts = Array.from(el.options || []).map(o => o.value);
+            return opts.includes(value);
+        }
+
+        function setSelectValueOrKeep(selectId, value) {
+            const el = document.getElementById(selectId);
+            if (!el) return;
+            el.dataset.original = '';
+
+            if (!value) {
+                el.value = '';
+                return;
+            }
+
+            if (selectHasValue(selectId, value)) {
+                el.value = value;
+                return;
+            }
+
+            if (selectHasValue(selectId, '__custom__')) {
+                el.value = '__custom__';
+                return;
+            }
+
+            if (selectHasValue(selectId, '__keep__')) {
+                el.value = '__keep__';
+                el.dataset.original = String(value);
+                return;
+            }
+
+            el.value = '';
+        }
+
+        function readSelectValueOrKeep(selectId, existingValue) {
+            const el = document.getElementById(selectId);
+            if (!el) return undefined;
+            const v = String(el.value || '');
+            if (!v) return undefined;
+            if (v === '__keep__') return existingValue;
+            return v;
+        }
+
+        function toggleCustomField(selectId, customInputId) {
+            const sel = document.getElementById(selectId);
+            const input = document.getElementById(customInputId);
+            if (!sel || !input) return;
+            const show = (sel.value === '__custom__');
+            if (show) input.classList.remove('hidden'); else input.classList.add('hidden');
+        }
+
+        function setSelectWithCustom(selectId, customInputId, value) {
+            const sel = document.getElementById(selectId);
+            const input = document.getElementById(customInputId);
+            if (!sel || !input) return;
+            sel.dataset.original = '';
+
+            if (!value) {
+                sel.value = '';
+                input.value = '';
+                input.classList.add('hidden');
+                return;
+            }
+
+            if (selectHasValue(selectId, String(value))) {
+                sel.value = String(value);
+                input.value = '';
+                input.classList.add('hidden');
+                return;
+            }
+
+            if (selectHasValue(selectId, '__custom__')) {
+                sel.value = '__custom__';
+                input.value = String(value);
+                input.classList.remove('hidden');
+                return;
+            }
+
+            if (selectHasValue(selectId, '__keep__')) {
+                sel.value = '__keep__';
+                sel.dataset.original = String(value);
+                input.value = '';
+                input.classList.add('hidden');
+                return;
+            }
+
+            sel.value = '';
+            input.value = '';
+            input.classList.add('hidden');
+        }
+
+        function readSelectWithCustom(selectId, customInputId, existingValue) {
+            const sel = document.getElementById(selectId);
+            const input = document.getElementById(customInputId);
+            if (!sel || !input) return undefined;
+
+            const v = String(sel.value || '');
+            if (!v) return undefined;
+            if (v === '__keep__') return existingValue;
+            if (v === '__custom__') {
+                const raw = (input.value || '').trim();
+                return raw ? raw : undefined;
+            }
+            return v;
+        }
+
+        function readNumberSelectWithCustom(selectId, customInputId, existingValue) {
+            const sel = document.getElementById(selectId);
+            const input = document.getElementById(customInputId);
+            if (!sel || !input) return undefined;
+
+            const v = String(sel.value || '');
+            if (!v) return undefined;
+            if (v === '__keep__') return existingValue;
+            if (v === '__custom__') {
+                const raw = (input.value || '').trim();
+                if (!raw) return undefined;
+                const n = Number(raw);
+                return (!Number.isNaN(n) && n > 0) ? n : undefined;
+            }
+            const n = Number(v);
+            return (!Number.isNaN(n) && n > 0) ? n : undefined;
+        }
+
+        function onFFmpegSelectChange() {
+            toggleCustomField('m-src-video_bitrate', 'm-src-video_bitrate_custom');
+            toggleCustomField('m-src-audio_bitrate', 'm-src-audio_bitrate_custom');
+            toggleCustomField('m-src-crf', 'm-src-crf_custom');
+            toggleCustomField('m-src-gop_size', 'm-src-gop_size_custom');
+        }
+
+        function ffTemplateToOptions(key) {
+            switch (key) {
+                case 'copy':
+                    return { video_codec: 'copy', audio_codec: 'copy' };
+                case 'h264_fast':
+                    return { video_codec: 'libx264', audio_codec: 'aac', preset: 'ultrafast', crf: 23, pix_fmt: 'yuv420p' };
+                case 'h265_fast':
+                    return { video_codec: 'libx265', audio_codec: 'aac', preset: 'ultrafast', crf: 28, pix_fmt: 'yuv420p' };
+                case 'inherit':
+                default:
+                    return null;
+            }
+        }
+
+        function guessTemplateFromOptions(opts) {
+            if (!opts || typeof opts !== 'object') return 'inherit';
+            const o = opts;
+            if (o.video_codec === 'copy' && o.audio_codec === 'copy') return 'copy';
+            if (o.video_codec === 'libx264' && o.audio_codec === 'aac' && o.preset === 'ultrafast' && o.crf === 23) return 'h264_fast';
+            if (o.video_codec === 'libx265' && o.audio_codec === 'aac' && o.preset === 'ultrafast' && o.crf === 28) return 'h265_fast';
+            return '__keep__';
+        }
+
+        function onFFmpegToggleChange() {
+            const src = !!getFormValue('m-src-ff-enable');
+            for (const id of ['src-ff-fields', 'src-ff-fields2', 'src-ff-fields3', 'src-ff-fields4', 'src-ff-fields5', 'src-ff-fields6']) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                if (src) el.classList.remove('hidden'); else el.classList.add('hidden');
+            }
+
+            const flvEnabled = !!getFormValue('m-flv-enable');
+            const flvFF = flvEnabled && !!getFormValue('m-flv-ff-enable');
+            for (const id of ['flv-ff-fields']) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                if (flvFF) el.classList.remove('hidden'); else el.classList.add('hidden');
+            }
+
+            const hlsEnabled = !!getFormValue('m-hls-enable');
+            const hlsFF = hlsEnabled && !!getFormValue('m-hls-ff-enable');
+            for (const id of ['hls-ff-fields']) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                if (hlsFF) el.classList.remove('hidden'); else el.classList.add('hidden');
+            }
+
+            const mode = getFormValue('m-mode');
+            const pbOn = (mode === 'primary-backup');
+            const pFF = pbOn && !!getFormValue('m-primary-ff-enable');
+            const bFF = pbOn && !!getFormValue('m-backup-ff-enable');
+            for (const id of ['primary-ff-fields']) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                if (pFF) el.classList.remove('hidden'); else el.classList.add('hidden');
+            }
+            for (const id of ['backup-ff-fields']) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                if (bFF) el.classList.remove('hidden'); else el.classList.add('hidden');
+            }
+
+            const allOn = (mode === 'all');
+            const allFF = allOn && !!getFormValue('m-all-ff-enable');
+            for (const id of ['all-ff-fields']) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                if (allFF) el.classList.remove('hidden'); else el.classList.add('hidden');
+            }
+            onFFmpegSelectChange();
+        }
+
+        function setModalFromConfig(name, cfg) {
+            const c = cfg || {};
+            setFormValue('m-name', name);
+            setFormValue('m-enabled', !!c.enabled);
+            setFormValue('m-protocol', c.protocol || 'rtmp');
+            setFormValue('m-source-url', getNested(c, 'stream.source.url') || '');
+            setFormValue('m-backup-url', getNested(c, 'stream.source.backup_url') || '');
+
+            {
+                const mode = getNested(c, 'stream.mode') || 'primary-backup';
+                const allowed = new Set(['primary-backup', 'all', 'local-only']);
+                setFormValue('m-mode', allowed.has(mode) ? mode : 'primary-backup');
+            }
+
+            const sk = c.streamkey || {};
+            setFormValue('m-sk-type', sk.type || 'random');
+            setFormValue('m-sk-value', sk.value || '');
+            setFormValue('m-sk-length', sk.length || '');
+            setFormValue('m-sk-exp', sk.expiration || '');
+
+            const lpu = normalizeLocalPlayUrls(getNested(c, 'stream.local_play_urls'));
+            const flvObj = lpu.find(x => x.protocol === 'flv') || null;
+            const hlsObj = lpu.find(x => x.protocol === 'hls') || null;
+            setFormValue('m-flv-enable', !!(flvObj && flvObj.enabled));
+            setFormValue('m-hls-enable', !!(hlsObj && hlsObj.enabled));
+
+            setFormValue('m-hls-seg-dur', (hlsObj && hlsObj.hls_segment_duration) ? hlsObj.hls_segment_duration : '');
+            setFormValue('m-hls-seg-cnt', (hlsObj && hlsObj.hls_segment_count) ? hlsObj.hls_segment_count : '');
+            setFormValue('m-hls-path', (hlsObj && hlsObj.hls_path) ? hlsObj.hls_path : '');
+            setFormValue('m-hls-playback', !!(hlsObj && hlsObj.hls_enable_playback));
+            setFormValue('m-hls-retention', (hlsObj && hlsObj.hls_retention_days) ? hlsObj.hls_retention_days : '');
+            setFormValue('m-ts-template', (hlsObj && hlsObj.ts_filename_template) ? hlsObj.ts_filename_template : '');
+
+            setFormValue('m-primary-push', getNested(c, 'stream.receivers.primary.push_url') || '');
+            setFormValue('m-backup-push', getNested(c, 'stream.receivers.backup.push_url') || '');
+
+            setAllReceivers(getNested(c, 'stream.receivers.all') || []);
+
+            onModeChange();
+            onLocalToggleChange();
+            {
+                const srcOpts = getNested(c, 'stream.source.ffmpeg_options');
+                const so = (srcOpts && typeof srcOpts === 'object' && !Array.isArray(srcOpts)) ? srcOpts : {};
+                setFormValue('m-src-ff-enable', !!(srcOpts && hasAnyFFmpegOptions(srcOpts)));
+
+                setSelectValueOrKeep('m-src-video_codec', so.video_codec);
+                setSelectValueOrKeep('m-src-audio_codec', so.audio_codec);
+                setSelectWithCustom('m-src-video_bitrate', 'm-src-video_bitrate_custom', so.video_bitrate);
+                setSelectWithCustom('m-src-audio_bitrate', 'm-src-audio_bitrate_custom', so.audio_bitrate);
+                setSelectValueOrKeep('m-src-preset', so.preset);
+                setSelectWithCustom('m-src-crf', 'm-src-crf_custom', (so.crf && Number(so.crf) > 0) ? String(so.crf) : '');
+                setSelectValueOrKeep('m-src-pix_fmt', so.pix_fmt);
+                setSelectWithCustom('m-src-gop_size', 'm-src-gop_size_custom', (so.gop_size && Number(so.gop_size) > 0) ? String(so.gop_size) : '');
+                setSelectValueOrKeep('m-src-user_agent', so.user_agent);
+                setSelectValueOrKeep('m-src-output_format', so.output_format);
+                setFormValue('m-src-stream_copy', !!so.stream_copy);
+                setFormValue('m-src-use_re_flag', !!so.use_re_flag);
+                onFFmpegSelectChange();
+            }
+            {
+                const flvOpts = flvObj ? flvObj.flv_ffmpeg_options : null;
+                setFormValue('m-flv-ff-enable', !!(flvOpts && hasAnyFFmpegOptions(flvOpts)));
+                const sel = document.getElementById('m-flv-ff-template');
+                if (sel) sel.value = guessTemplateFromOptions(flvOpts);
+            }
+            {
+                const hlsOpts = hlsObj ? hlsObj.hls_ffmpeg_options : null;
+                setFormValue('m-hls-ff-enable', !!(hlsOpts && hasAnyFFmpegOptions(hlsOpts)));
+                const sel = document.getElementById('m-hls-ff-template');
+                if (sel) sel.value = guessTemplateFromOptions(hlsOpts);
+            }
+            {
+                const pOpts = getNested(c, 'stream.receivers.primary.ffmpeg_options');
+                const bOpts = getNested(c, 'stream.receivers.backup.ffmpeg_options');
+                setFormValue('m-primary-ff-enable', !!(pOpts && hasAnyFFmpegOptions(pOpts)));
+                setFormValue('m-backup-ff-enable', !!(bOpts && hasAnyFFmpegOptions(bOpts)));
+                const ps = document.getElementById('m-primary-ff-template');
+                const bs = document.getElementById('m-backup-ff-template');
+                if (ps) ps.value = guessTemplateFromOptions(pOpts);
+                if (bs) bs.value = guessTemplateFromOptions(bOpts);
+            }
+            {
+                const all = getNested(c, 'stream.receivers.all');
+                let common = null;
+                let ok = true;
+                if (Array.isArray(all) && all.length > 0) {
+                    for (const item of all) {
+                        const o = item && typeof item === 'object' ? item.ffmpeg_options : null;
+                        const key = (o && hasAnyFFmpegOptions(o)) ? JSON.stringify(o) : '';
+                        if (common === null) {
+                            common = key;
+                        } else if (common !== key) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                } else {
+                    ok = false;
+                }
+                const sel = document.getElementById('m-all-ff-template');
+                if (ok && common !== null && common !== '') {
+                    const parsed = JSON.parse(common);
+                    setFormValue('m-all-ff-enable', true);
+                    if (sel) sel.value = guessTemplateFromOptions(parsed);
+                } else {
+                    setFormValue('m-all-ff-enable', false);
+                    if (sel) sel.value = 'inherit';
+                }
+            }
+            onFFmpegToggleChange();
+        }
+
+        function buildConfigFromModal(existing) {
+            const base = deepClone(existing || {});
+
+            base.enabled = !!getFormValue('m-enabled');
+            base.protocol = getFormValue('m-protocol') || 'rtmp';
+
+            const stream = ensureObject(base, 'stream');
+            const source = ensureObject(stream, 'source');
+            source.url = (getFormValue('m-source-url') || '').trim();
+            const backupURL = (getFormValue('m-backup-url') || '').trim();
+            if (backupURL) {
+                source.backup_url = backupURL;
+            } else {
+                delete source.backup_url;
+            }
+
+            stream.mode = getFormValue('m-mode') || 'primary-backup';
+            const existingSrcFF = getNested(existing, 'stream.source.ffmpeg_options');
+            if (getFormValue('m-src-ff-enable')) {
+                const prev = (existingSrcFF && typeof existingSrcFF === 'object' && !Array.isArray(existingSrcFF)) ? existingSrcFF : null;
+                const opts = prev ? deepClone(prev) : {};
+
+                const setOrDelete = (k, v) => {
+                    if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) {
+                        delete opts[k];
+                    } else {
+                        opts[k] = v;
+                    }
+                };
+
+                setOrDelete('video_codec', readSelectValueOrKeep('m-src-video_codec', prev ? prev.video_codec : undefined));
+                setOrDelete('audio_codec', readSelectValueOrKeep('m-src-audio_codec', prev ? prev.audio_codec : undefined));
+                setOrDelete('video_bitrate', readSelectWithCustom('m-src-video_bitrate', 'm-src-video_bitrate_custom', prev ? prev.video_bitrate : undefined));
+                setOrDelete('audio_bitrate', readSelectWithCustom('m-src-audio_bitrate', 'm-src-audio_bitrate_custom', prev ? prev.audio_bitrate : undefined));
+                setOrDelete('preset', readSelectValueOrKeep('m-src-preset', prev ? prev.preset : undefined));
+                setOrDelete('crf', readNumberSelectWithCustom('m-src-crf', 'm-src-crf_custom', prev ? prev.crf : undefined));
+                setOrDelete('pix_fmt', readSelectValueOrKeep('m-src-pix_fmt', prev ? prev.pix_fmt : undefined));
+                setOrDelete('gop_size', readNumberSelectWithCustom('m-src-gop_size', 'm-src-gop_size_custom', prev ? prev.gop_size : undefined));
+                setOrDelete('user_agent', readSelectValueOrKeep('m-src-user_agent', prev ? prev.user_agent : undefined));
+                setOrDelete('output_format', readSelectValueOrKeep('m-src-output_format', prev ? prev.output_format : undefined));
+
+                if (getFormValue('m-src-stream_copy')) opts.stream_copy = true; else delete opts.stream_copy;
+                if (getFormValue('m-src-use_re_flag')) opts.use_re_flag = true; else delete opts.use_re_flag;
+
+                if (hasAnyFFmpegOptions(opts)) source.ffmpeg_options = opts; else delete source.ffmpeg_options;
+            } else {
+                delete source.ffmpeg_options;
+            }
+
+            if (!base.streamkey || typeof base.streamkey !== 'object' || Array.isArray(base.streamkey)) {
+                base.streamkey = {};
+            }
+            base.streamkey.type = getFormValue('m-sk-type') || 'random';
+            const skValue = (getFormValue('m-sk-value') || '').trim();
+            if (skValue) {
+                base.streamkey.value = skValue;
+            } else {
+                delete base.streamkey.value;
+            }
+            const skLenStr = (getFormValue('m-sk-length') || '').trim();
+            if (skLenStr) {
+                const n = Number(skLenStr);
+                if (!Number.isNaN(n)) base.streamkey.length = n;
+            } else {
+                delete base.streamkey.length;
+            }
+            const skExp = (getFormValue('m-sk-exp') || '').trim();
+            if (skExp) {
+                base.streamkey.expiration = skExp;
+            } else {
+                delete base.streamkey.expiration;
+            }
+
+            let localPlay = normalizeLocalPlayUrls(stream.local_play_urls);
+            const flvEnabled = !!getFormValue('m-flv-enable');
+            const hlsEnabled = !!getFormValue('m-hls-enable');
+
+            if (flvEnabled) {
+                localPlay = upsertLocalPlayUrl(localPlay, 'flv', (obj) => {
+                    obj.protocol = 'flv';
+                    obj.enabled = true;
+                    if (getFormValue('m-flv-ff-enable')) {
+                        const key = getFormValue('m-flv-ff-template') || 'inherit';
+                        if (key === '__keep__') {
+                        } else {
+                            const o = ffTemplateToOptions(key);
+                            if (o) obj.flv_ffmpeg_options = o; else delete obj.flv_ffmpeg_options;
+                        }
+                    } else {
+                        delete obj.flv_ffmpeg_options;
+                    }
+                    return obj;
+                });
+            } else {
+                localPlay = removeLocalPlayUrl(localPlay, 'flv');
+            }
+
+            if (hlsEnabled) {
+                localPlay = upsertLocalPlayUrl(localPlay, 'hls', (obj) => {
+                    obj.protocol = 'hls';
+                    obj.enabled = true;
+                    const segDur = Number((getFormValue('m-hls-seg-dur') || '').trim());
+                    const segCnt = Number((getFormValue('m-hls-seg-cnt') || '').trim());
+                    if (!Number.isNaN(segDur) && segDur > 0) obj.hls_segment_duration = segDur;
+                    if (!Number.isNaN(segCnt) && segCnt > 0) obj.hls_segment_count = segCnt;
+                    const p = (getFormValue('m-hls-path') || '').trim();
+                    if (p) obj.hls_path = p; else delete obj.hls_path;
+                    obj.hls_enable_playback = !!getFormValue('m-hls-playback');
+                    const retention = (getFormValue('m-hls-retention') || '').trim();
+                    if (retention) obj.hls_retention_days = retention; else delete obj.hls_retention_days;
+                    const tpl = (getFormValue('m-ts-template') || '').trim();
+                    if (tpl) obj.ts_filename_template = tpl; else delete obj.ts_filename_template;
+                    if (getFormValue('m-hls-ff-enable')) {
+                        const key = getFormValue('m-hls-ff-template') || 'inherit';
+                        if (key === '__keep__') {
+                        } else {
+                            const o = ffTemplateToOptions(key);
+                            if (o) obj.hls_ffmpeg_options = o; else delete obj.hls_ffmpeg_options;
+                        }
+                    } else {
+                        delete obj.hls_ffmpeg_options;
+                    }
+                    return obj;
+                });
+            } else {
+                localPlay = removeLocalPlayUrl(localPlay, 'hls');
+            }
+
+            if (localPlay.length > 0) {
+                stream.local_play_urls = localPlay;
+            } else {
+                delete stream.local_play_urls;
+            }
+
+            const receivers = ensureObject(stream, 'receivers');
+
+            if (stream.mode === 'primary-backup') {
+                const p = (getFormValue('m-primary-push') || '').trim();
+                const b = (getFormValue('m-backup-push') || '').trim();
+                if (p) {
+                    receivers.primary = receivers.primary && typeof receivers.primary === 'object' ? receivers.primary : {};
+                    receivers.primary.push_url = p;
+                    if (getFormValue('m-primary-ff-enable')) {
+                        const key = getFormValue('m-primary-ff-template') || 'inherit';
+                        if (key === '__keep__') {
+                        } else {
+                            const o = ffTemplateToOptions(key);
+                            if (o) receivers.primary.ffmpeg_options = o; else delete receivers.primary.ffmpeg_options;
+                        }
+                    } else {
+                        delete receivers.primary.ffmpeg_options;
+                    }
+                } else {
+                    delete receivers.primary;
+                }
+                if (b) {
+                    receivers.backup = receivers.backup && typeof receivers.backup === 'object' ? receivers.backup : {};
+                    receivers.backup.push_url = b;
+                    if (getFormValue('m-backup-ff-enable')) {
+                        const key = getFormValue('m-backup-ff-template') || 'inherit';
+                        if (key === '__keep__') {
+                        } else {
+                            const o = ffTemplateToOptions(key);
+                            if (o) receivers.backup.ffmpeg_options = o; else delete receivers.backup.ffmpeg_options;
+                        }
+                    } else {
+                        delete receivers.backup.ffmpeg_options;
+                    }
+                } else {
+                    delete receivers.backup;
+                }
+                delete receivers.all;
+            } else if (stream.mode === 'all') {
+                const root = document.getElementById('m-all-list');
+                const inputs = root.querySelectorAll('input[data-role="push"]');
+                const prevAll = getNested(existing, 'stream.receivers.all');
+                const prevList = Array.isArray(prevAll) ? prevAll : [];
+                const applyAll = !!getFormValue('m-all-ff-enable');
+                const allKey = getFormValue('m-all-ff-template') || 'inherit';
+                const allKeep = applyAll && (allKey === '__keep__');
+                const allOpts = (applyAll && !allKeep) ? ffTemplateToOptions(allKey) : null;
+
+                const list = [];
+                let idx = 0;
+                for (const input of inputs) {
+                    const push = (input.value || '').trim();
+                    const prev = prevList[idx] && typeof prevList[idx] === 'object' ? prevList[idx] : null;
+                    idx++;
+                    if (!push) continue;
+                    const item = { push_url: push };
+                    if (prev && prev.play_urls) item.play_urls = deepClone(prev.play_urls);
+                    if (applyAll) {
+                        if (allKeep) {
+                            if (prev && prev.ffmpeg_options) item.ffmpeg_options = deepClone(prev.ffmpeg_options);
+                        } else {
+                            if (allOpts) item.ffmpeg_options = allOpts;
+                        }
+                    } else {
+                        if (prev && prev.ffmpeg_options) item.ffmpeg_options = deepClone(prev.ffmpeg_options);
+                    }
+                    list.push(item);
+                }
+                receivers.all = list;
+                delete receivers.primary;
+                delete receivers.backup;
+            } else {
+                delete stream.receivers;
+            }
+
+            return base;
+        }
+
+        async function saveStreamFromModal() {
+            let currentName = editingStreamName;
+            let isNew = false;
+
+            if (!currentName) {
+                // 新建模式
+                const nameInput = document.getElementById('m-name');
+                if (!nameInput) return;
+                currentName = (nameInput.value || '').trim();
+                if (!currentName) {
+                    showAlert('请输入推流名称', 'danger');
+                    return;
+                }
+                // 简单校验名称格式
+                if (!/^[a-zA-Z0-9_-]+$/.test(currentName)) {
+                    showAlert('推流名称只能包含字母、数字、下划线和连字符', 'danger');
+                    return;
+                }
+                if (publisherConfig && publisherConfig[currentName]) {
+                    showAlert('已存在同名推流: ' + currentName, 'danger');
+                    return;
+                }
+                isNew = true;
+            }
+
+            const existing = isNew ? defaultStreamConfig() : (getStreamConfig(currentName) || {});
+            const next = buildConfigFromModal(existing);
+
+            // 再次校验源地址
+            if (!getNested(next, 'stream.source.url')) {
+                showAlert('源地址 URL 不能为空', 'danger');
+                return;
+            }
+
+            if (!publisherConfig) publisherConfig = {};
+            publisherConfig[currentName] = next;
+
+            try {
+                await savePublisherConfig();
+                showAlert(isNew ? '推流已创建' : '推流配置已保存', 'success');
+                closeModal();
+                await refreshAll();
+            } catch (e) {
+                showAlert('保存失败: ' + (e.message || String(e)), 'danger');
+            }
+        }
+
+        async function deleteStreamFromModal() {
+            if (!editingStreamName) return;
+            await deleteStream(editingStreamName, true);
+        }
+
+        async function deleteStream(name, fromModal = false) {
+            if (!publisherConfig || !publisherConfig[name]) {
+                showAlert('找不到推流配置: ' + name, 'danger');
+                return;
+            }
+            if (!confirm('确定要删除推流配置吗？删除后不可恢复（会写入配置文件备份）')) return;
+            delete publisherConfig[name];
+            try {
+                await savePublisherConfig();
+                showAlert('推流已删除', 'success');
+                if (fromModal) closeModal();
+                await refreshAll();
+            } catch (e) {
+                showAlert('保存失败: ' + (e.message || String(e)), 'danger');
+            }
+        }
+
+        function defaultStreamConfig() {
+            return {
+                buffer_size: 0,
+                protocol: "rtmp",
+                enabled: true,
+                streamkey: {
+                    type: "random",
+                    length: 16
+                },
+                stream: {
+                    source: {
+                        type: "",
+                        url: "",
+                        backup_url: ""
+                    },
+                    local_play_urls: [],
+                    mode: "primary-backup",
+                    receivers: {
+                        primary: {
+                            push_url: ""
+                        },
+                        backup: {
+                            push_url: ""
+                        }
+                    }
+                }
+            };
+        }
+
+        function addStream() {
+            openStreamModal(null);
+        }
+
+        function addAllReceiver() {
+            const root = document.getElementById('m-all-list');
+            const inputs = root.querySelectorAll('input[data-role="push"]');
+            const vals = [];
+            for (const input of inputs) {
+                vals.push({ push_url: input.value || "" });
+            }
+            vals.push({ push_url: "" });
+            setAllReceivers(vals);
+        }
+
+        function removeAllReceiver(index) {
+            const root = document.getElementById('m-all-list');
+            const inputs = root.querySelectorAll('input[data-role="push"]');
+            const vals = [];
+            for (let i = 0; i < inputs.length; i++) {
+                if (i === index) continue;
+                vals.push({ push_url: inputs[i].value || "" });
+            }
+            setAllReceivers(vals);
+        }
+
+        function updateCardStats(name, st) {
+            const card = document.querySelector('[data-name="' + CSS.escape(name) + '"]');
+            if (!card) return;
+
+            const enabled = isEnabled(name);
+            const badge = card.querySelector('[data-role="enabled-badge"]');
+            badge.textContent = enabled ? '已启用' : '已关闭';
+            badge.className = 'badge ' + (enabled ? 'badge-on' : 'badge-off');
+
+            const btn = card.querySelector('[data-action="toggle"]');
+            btn.textContent = enabled ? '关闭推流' : '开启推流';
+            btn.className = 'btn btn-sm ' + (enabled ? 'btn-danger' : 'btn-success');
+
+            const runningEl = card.querySelector('[data-role="running"]');
+            const bitrateEl = card.querySelector('[data-role="bitrate"]');
+            const cpuEl = card.querySelector('[data-role="cpu"]');
+            const memEl = card.querySelector('[data-role="mem"]');
+            const bytesEl = card.querySelector('[data-role="bytes"]');
+            const durEl = card.querySelector('[data-role="dur"]');
+            const restartsEl = card.querySelector('[data-role="restarts"]');
+            const errEl = card.querySelector('[data-role="error"]');
+
+            if (!st || !st.has_manager) {
+                runningEl.textContent = 'Publisher 未初始化';
+                bitrateEl.textContent = '-';
+                cpuEl.textContent = '-';
+                memEl.textContent = '-';
+                bytesEl.textContent = '-';
+                durEl.textContent = '-';
+                restartsEl.textContent = '-';
+                errEl.textContent = '';
+                errEl.classList.add('hidden');
+                return;
+            }
+
+            const p = st.primary;
+            if (!p) {
+                runningEl.textContent = enabled ? '等待启动' : '未启用';
+                bitrateEl.textContent = '-';
+                cpuEl.textContent = '-';
+                memEl.textContent = '-';
+                bytesEl.textContent = '-';
+                durEl.textContent = '-';
+                restartsEl.textContent = '-';
+                errEl.textContent = '';
+                errEl.classList.add('hidden');
+                return;
+            }
+
+            runningEl.textContent = p.running ? ('运行中 (PID ' + p.pid + ')') : '未运行';
+            bitrateEl.textContent = formatBitrate(p.current_bitrate) + ' (avg ' + formatBitrate(p.avg_bitrate) + ')';
+            cpuEl.textContent = (p.cpu_percent || 0).toFixed(1) + ' %';
+            memEl.textContent = formatBytes(p.memory_rss);
+            bytesEl.textContent = formatBytes(p.bytes_transferred);
+            durEl.textContent = formatDuration(p.duration);
+            restartsEl.textContent = String(p.restarts || 0);
+
+            if (p.last_error) {
+                errEl.textContent = p.last_error;
+                errEl.classList.remove('hidden');
+            } else {
+                errEl.textContent = '';
+                errEl.classList.add('hidden');
+            }
+        }
+
+        async function loadStatsOnce() {
+            const resp = await fetch(webPath + 'api/publisher/stats');
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const streams = Array.isArray(data.streams) ? data.streams : [];
+            for (const st of streams) {
+                updateCardStats(st.name, st);
+            }
+            const meta = document.getElementById('meta');
+            if (data.ts) {
+                const d = new Date(data.ts * 1000);
+                meta.textContent = '更新时间: ' + d.toLocaleString();
+            }
+        }
+
+        async function refreshAll() {
+            try {
+                const ff = await loadFFmpegStatus();
+                showFFmpegBanner(ff);
+            } catch (e) {
+                showFFmpegBanner({ installed: false, error: e.message || String(e) });
+            }
+            await loadPublisherConfig();
+            renderCards();
+            await loadStatsOnce();
+        }
+
+        function startPolling() {
+            if (statsTimer) clearInterval(statsTimer);
+            statsTimer = setInterval(loadStatsOnce, 2000);
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                await refreshAll();
+                startPolling();
+            } catch (e) {
+                showAlert('加载失败: ' + (e.message || String(e)), 'danger');
+            }
+        });
+    </script>
+    <script src="{{.webPath}}static/js/theme.js"></script>
+</body>
+</html>

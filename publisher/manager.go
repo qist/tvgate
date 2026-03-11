@@ -1541,7 +1541,7 @@ func (sm *StreamManager) updateConfigFile(newStreamKey string) error {
 
 // updateFFmpegStats updates the FFmpeg process statistics
 func (m *Manager) updateFFmpegStats(streamName string, receiverIndex int, pid int32, running bool, err error, bytesTransferred uint64, currentTime time.Time) {
-	key := streamName + "_" + string(rune(receiverIndex+'0'))
+	key := fmt.Sprintf("%s_%d", streamName, receiverIndex)
 
 	m.statsMutex.Lock()
 	defer m.statsMutex.Unlock()
@@ -1552,17 +1552,24 @@ func (m *Manager) updateFFmpegStats(streamName string, receiverIndex int, pid in
 			StreamName:    streamName,
 			ReceiverIndex: receiverIndex,
 			PID:           pid,
-			StartTime:     time.Now(),
+			StartTime:     currentTime,
 		}
 		m.ffmpegStats[key] = stat
 	}
 
-	stat.LastUpdate = time.Now()
+	prevUpdate := stat.LastUpdate
+	prevRunning := stat.Running
+
+	if pid > 0 {
+		stat.PID = pid
+	}
+
+	stat.LastUpdate = currentTime
 	stat.Running = running
-	stat.BytesTransferred = bytesTransferred
+	stat.BytesTransferred += bytesTransferred
 
 	// 计算运行时长
-	stat.Duration = time.Since(stat.StartTime).Seconds()
+	stat.Duration = currentTime.Sub(stat.StartTime).Seconds()
 
 	// 计算平均码率
 	if stat.Duration > 0 {
@@ -1570,17 +1577,20 @@ func (m *Manager) updateFFmpegStats(streamName string, receiverIndex int, pid in
 	}
 
 	// 计算当前码率（基于上次更新）
-	if exists && !stat.LastUpdate.IsZero() {
-		timeDiff := time.Since(stat.LastUpdate).Seconds()
-		bytesDiff := bytesTransferred - stat.BytesTransferred
+	if exists && !prevUpdate.IsZero() {
+		timeDiff := currentTime.Sub(prevUpdate).Seconds()
 		if timeDiff > 0 {
-			stat.CurrentBitrate = uint64(float64(bytesDiff*8) / timeDiff)
+			stat.CurrentBitrate = uint64(float64(bytesTransferred*8) / timeDiff)
 		}
 	}
 
+	if exists && !prevRunning && running {
+		stat.Restarts++
+	}
+
 	// 获取进程的CPU和内存使用情况
-	if pid > 0 {
-		proc, err := process.NewProcess(pid)
+	if stat.PID > 0 {
+		proc, err := process.NewProcess(stat.PID)
 		if err == nil {
 			// 获取CPU使用率
 			cpuPercent, err := proc.CPUPercent()
