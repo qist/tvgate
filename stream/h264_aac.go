@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,12 +25,6 @@ const (
 )
 
 var dropCount int64
-
-var bufPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 188*512) // TS包一般188字节，按需调整
-	},
-}
 
 type broadcastWriter struct {
 	hub *StreamHubs
@@ -361,12 +354,38 @@ func HandleH264AacStream(
 	logger.LogRequestAndResponse(r, rtspURL, &http.Response{StatusCode: http.StatusOK})
 	w.Header().Set("Content-Type", "video/mp2t")
 	flusher, _ := w.(http.Flusher)
+	rc := http.NewResponseController(w)
+
+	go func() {
+		<-ctx.Done()
+		clientChan.Close()
+	}()
 
 	flushTicker := time.NewTicker(200 * time.Millisecond)
 	defer flushTicker.Stop()
 
 	activeTicker := time.NewTicker(5 * time.Second)
 	defer activeTicker.Stop()
+
+	dataReady := make(chan []byte, 256)
+	go func() {
+		defer close(dataReady)
+		for {
+			v, ok := clientChan.PullWithContext(ctx)
+			if !ok {
+				return
+			}
+			payload, ok := v.([]byte)
+			if !ok || len(payload) == 0 {
+				continue
+			}
+			select {
+			case dataReady <- payload:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	bufferedBytes := 0
 	const maxBufferSize = 128 * 1024 // 128KB缓冲区
@@ -383,19 +402,13 @@ func HandleH264AacStream(
 			if updateActive != nil {
 				updateActive()
 			}
-		case data, ok := <-clientChan.Chan():
+		case payload, ok := <-dataReady:
 			if !ok {
 				return nil
 			}
 
-			payload := data.([]byte)
-			if len(payload) == 0 {
-				bufPool.Put(payload[:cap(payload)])
-				continue
-			}
-
+			_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			n, err := w.Write(payload)
-			bufPool.Put(payload[:cap(payload)])
 
 			if err != nil {
 				return err

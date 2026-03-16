@@ -67,16 +67,26 @@ func (hub *StreamHubs) AddClient(ch *ringbuffer.RingBuffer) {
 }
 
 func (hub *StreamHubs) RemoveClient(ch *ringbuffer.RingBuffer) {
-	hub.mu.Lock()
-	defer hub.mu.Unlock()
+	var rtspToClose *gortsplib.Client
 
+	hub.mu.Lock()
 	// 检查channel是否还在clients映射中
 	if _, exists := hub.clients[ch]; exists {
 		delete(hub.clients, ch)
 		ch.Close()
 	}
 	if !hub.isClosed && len(hub.clients) == 0 {
+		if hub.rtspClient != nil {
+			rtspToClose = hub.rtspClient
+			hub.rtspClient = nil
+		}
+		hub.state = StateStopped
 		hub.scheduleIdleCloseLocked()
+	}
+	hub.mu.Unlock()
+
+	if rtspToClose != nil {
+		rtspToClose.Close()
 	}
 	// 如果channel不存在于clients映射中，说明已经被Broadcast方法移除并关闭了
 }
@@ -101,16 +111,26 @@ func (hub *StreamHubs) Broadcast(data []byte) {
 
 // removeClientIfNotExist 从客户端列表中移除已不存在的客户端
 func (hub *StreamHubs) removeClientIfNotExist(ch *ringbuffer.RingBuffer) {
-	hub.mu.Lock()
-	defer hub.mu.Unlock()
+	var rtspToClose *gortsplib.Client
 
+	hub.mu.Lock()
 	// 再次确认客户端是否还在列表中
 	if _, exists := hub.clients[ch]; exists {
 		delete(hub.clients, ch)
 		ch.Close()
 	}
 	if !hub.isClosed && len(hub.clients) == 0 {
+		if hub.rtspClient != nil {
+			rtspToClose = hub.rtspClient
+			hub.rtspClient = nil
+		}
+		hub.state = StateStopped
 		hub.scheduleIdleCloseLocked()
+	}
+	hub.mu.Unlock()
+
+	if rtspToClose != nil {
+		rtspToClose.Close()
 	}
 }
 
