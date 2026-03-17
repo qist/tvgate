@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -97,6 +98,15 @@ func HandleH264AacStream(
 		return err
 	}
 	hub.AddClient(clientChan)
+	var cleanupOnce sync.Once
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			hub.RemoveClient(clientChan)
+			if hub.ClientCount() == 0 {
+				RemoveHubIfEmpty(rtspURL, hub)
+			}
+		})
+	}
 
 	// 检查是否需要启动播放或者恢复播放
 	shouldPlay := false
@@ -124,14 +134,7 @@ func HandleH264AacStream(
 	}
 	hub.mu.Unlock()
 
-	defer func() {
-		hub.RemoveClient(clientChan)
-
-		// 检查是否是最后一个客户端，如果是则移除 hub
-		if hub.ClientCount() == 0 {
-			RemoveHubIfEmpty(rtspURL, hub)
-		}
-	}()
+	defer cleanup()
 
 	// 如果需要启动播放
 	if shouldPlay {
@@ -358,7 +361,7 @@ func HandleH264AacStream(
 
 	go func() {
 		<-ctx.Done()
-		clientChan.Close()
+		cleanup()
 	}()
 
 	flushTicker := time.NewTicker(200 * time.Millisecond)

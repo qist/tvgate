@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/bluenviron/gortsplib/v5"
@@ -33,6 +34,15 @@ func HandleMpegtsStream(
 	}
 
 	hub.AddClient(clientChan)
+	var cleanupOnce sync.Once
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			hub.RemoveClient(clientChan)
+			if hub.ClientCount() == 0 {
+				RemoveHubIfEmpty(rtspURL, hub)
+			}
+		})
+	}
 
 	// 检查是否需要启动播放或者恢复播放
 	shouldPlay := false
@@ -60,14 +70,7 @@ func HandleMpegtsStream(
 	}
 	hub.mu.Unlock()
 
-	defer func() {
-		hub.RemoveClient(clientChan)
-
-		// 检查是否是最后一个客户端，如果是则移除 hub
-		if hub.ClientCount() == 0 {
-			RemoveHubIfEmpty(rtspURL, hub)
-		}
-	}()
+	defer cleanup()
 
 	// 如果需要启动播放
 	if shouldPlay {
@@ -122,7 +125,7 @@ func HandleMpegtsStream(
 
 	go func() {
 		<-ctx.Done()
-		clientChan.Close()
+		cleanup()
 	}()
 
 	flushTicker := time.NewTicker(200 * time.Millisecond) // 定时 flush
