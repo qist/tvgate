@@ -73,6 +73,17 @@ jobs:
           go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'" -o $OUTPUT .
           echo "OUTPUT=$OUTPUT" >> $GITHUB_ENV
 
+      - name: Install UPX (optional)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y upx-ucl || sudo apt-get install -y upx || true
+
+      - name: UPX compress (optional)
+        run: |
+          if command -v upx >/dev/null 2>&1; then
+            upx -9 "$OUTPUT" >/dev/null 2>&1 || true
+          fi
+
       - name: Prepare packaging
         run: |
           mkdir -p package

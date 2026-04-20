@@ -116,6 +116,9 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 			if now.Before(stats.CooldownUntil) || !stats.Alive {
 				continue
 			}
+			if stats.LastCheck.IsZero() || now.Sub(stats.LastCheck) > interval {
+				continue
+			}
 			if stats.ResponseTime < minTime && stats.ResponseTime > 0 {
 				minTime = stats.ResponseTime
 				fastest = proxy

@@ -16,14 +16,16 @@ ARG VERSION=latest
 # 禁用 CGO，纯 Go 静态编译
 ENV CGO_ENABLED=0
 
+RUN apk add --no-cache upx
+
 # 针对 ARM 处理 GOARM
 RUN if [ "$TARGETARCH" = "arm" ]; then \
         GOARM="${TARGETVARIANT#v}" ; \
         echo "Building for $TARGETOS/$TARGETARCH with GOARM=$GOARM" ; \
-        GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=$GOARM go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=${VERSION}'" -o build/TVGate main.go ; \
+        GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=$GOARM go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=${VERSION}'" -o build/TVGate main.go ; upx -9 build/TVGate >/dev/null 2>&1 || true ; \
     else \
         echo "Building for $TARGETOS/$TARGETARCH" ; \
-        GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=${VERSION}'" -o build/TVGate main.go ; \
+        GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=${VERSION}'" -o build/TVGate main.go ; upx -9 build/TVGate >/dev/null 2>&1 || true ; \
     fi
 
 # ========================================================

@@ -31,6 +31,14 @@
 
 ---
 changelog
+v3.0.0
+
+```
+fix(lb): Interval 参数生效，过期测速缓存不再复用
+- fastest/round-robin 选择缓存代理时增加 LastCheck > Interval 过滤
+- 超过 Interval 自动触发原有重测流程，避免一直使用过期测速结果
+```
+
 v2.1.20
 
 ```

@@ -123,6 +123,9 @@ func SelectRoundRobinProxy(ctx context.Context, group *config.ProxyGroupConfig, 
 			if !ok || !stats.Alive || now.Before(stats.CooldownUntil) {
 				continue
 			}
+			if stats.LastCheck.IsZero() || now.Sub(stats.LastCheck) > interval {
+				continue
+			}
 
 			if stats.ResponseTime >= minAcceptableRT && stats.ResponseTime <= threshold {
 				group.Stats.RUnlock() // 必须先解锁再调用可能锁的操作
