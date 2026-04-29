@@ -301,28 +301,33 @@ func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 		return true
 	}
 
-	// 等待状态变化或context取消
-	// 使用轮询代替 sync.Cond.Wait() 以支持 context 取消
-	hub.mu.Unlock() // 释放锁进入轮询
-
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
+	// 使用条件变量等待状态变化，同时支持 context 取消
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			hub.mu.Lock()
+			hub.stateCond.Broadcast() // 唤醒等待的 goroutine
+			hub.mu.Unlock()
+		case <-done:
+		}
+	}()
 
 	for {
 		select {
 		case <-ctx.Done():
+			close(done)
 			return false
-		case <-ticker.C:
-			hub.mu.Lock()
+		default:
 			if hub.isClosed || hub.state == StateError {
-				hub.mu.Unlock()
+				close(done)
 				return false
 			}
 			if hub.state == StatePlaying {
-				hub.mu.Unlock()
+				close(done)
 				return true
 			}
-			hub.mu.Unlock()
+			hub.stateCond.Wait() // 释放锁并等待通知
 		}
 	}
 }

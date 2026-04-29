@@ -68,6 +68,7 @@ func HandleMpegtsStream(
 		hub.lastError = nil
 		hub.rtspClient = client
 	}
+	hub.stateCond.Broadcast() // 通知等待的客户端状态变化
 	hub.mu.Unlock()
 
 	defer cleanup()
@@ -134,28 +135,8 @@ func HandleMpegtsStream(
 	activeTicker := time.NewTicker(5 * time.Second) // 定时更新活跃
 	defer activeTicker.Stop()
 
-	dataReady := make(chan []byte, 256)
-	go func() {
-		defer close(dataReady)
-		for {
-			v, ok := clientChan.PullWithContext(ctx)
-			if !ok {
-				return
-			}
-			payload, ok := v.([]byte)
-			if !ok || len(payload) == 0 {
-				continue
-			}
-			select {
-			case dataReady <- payload:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
 	bufferedBytes := 0
-	const maxBufferSize = 128 * 1024 // 128KB缓冲区
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -169,11 +150,18 @@ func HandleMpegtsStream(
 			if updateActive != nil {
 				updateActive()
 			}
-		case payload, ok := <-dataReady:
+		default:
+			data, ok := clientChan.PullWithContext(ctx)
 			if !ok {
 				return nil
 			}
 
+			payload, ok := data.([]byte)
+			if !ok || len(payload) == 0 {
+				continue
+			}
+
+			// 设置写入超时
 			_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			n, err := w.Write(payload)
 			if err != nil {
@@ -181,12 +169,6 @@ func HandleMpegtsStream(
 				return err
 			}
 			bufferedBytes += n
-			if bufferedBytes >= maxBufferSize {
-				if flusher != nil {
-					flusher.Flush()
-					bufferedBytes = 0
-				}
-			}
 		}
 	}
 }

@@ -132,6 +132,7 @@ func HandleH264AacStream(
 		hub.lastError = nil
 		hub.rtspClient = client
 	}
+	hub.stateCond.Broadcast() // 通知等待的客户端状态变化
 	hub.mu.Unlock()
 
 	defer cleanup()
@@ -370,28 +371,8 @@ func HandleH264AacStream(
 	activeTicker := time.NewTicker(5 * time.Second)
 	defer activeTicker.Stop()
 
-	dataReady := make(chan []byte, 256)
-	go func() {
-		defer close(dataReady)
-		for {
-			v, ok := clientChan.PullWithContext(ctx)
-			if !ok {
-				return
-			}
-			payload, ok := v.([]byte)
-			if !ok || len(payload) == 0 {
-				continue
-			}
-			select {
-			case dataReady <- payload:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
 	bufferedBytes := 0
-	const maxBufferSize = 128 * 1024 // 128KB缓冲区
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -405,9 +386,15 @@ func HandleH264AacStream(
 			if updateActive != nil {
 				updateActive()
 			}
-		case payload, ok := <-dataReady:
+		default:
+			data, ok := clientChan.PullWithContext(ctx)
 			if !ok {
 				return nil
+			}
+
+			payload, ok := data.([]byte)
+			if !ok || len(payload) == 0 {
+				continue
 			}
 
 			_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -418,12 +405,6 @@ func HandleH264AacStream(
 			}
 
 			bufferedBytes += n
-			if bufferedBytes >= maxBufferSize {
-				if flusher != nil {
-					flusher.Flush()
-					bufferedBytes = 0
-				}
-			}
 		}
 	}
 }
