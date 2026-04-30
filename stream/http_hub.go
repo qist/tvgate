@@ -369,16 +369,15 @@ func (c *HTTPHubClient) safeClose() {
 
 func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) error {
 	const (
-		flushInterval = 100 * time.Millisecond
 		maxFlushBytes = 32 * 1024
 		maxFlushDelay = 200 * time.Millisecond
+		activeInterval = 5 * time.Second
 	)
 	var (
-		lastFlush    = time.Now()
-		bytesWritten = 0
+		lastFlush        = time.Now()
+		bytesWritten     = 0
+		lastActiveUpdate = time.Now()
 	)
-	flushTicker := time.NewTicker(flushInterval)
-	defer flushTicker.Stop()
 
 	// 等待Hub进入播放状态
 	if !c.waitForPlaying(ctx) {
@@ -409,45 +408,50 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 	}
 
 	for {
+		// 先阻塞读取数据
+		data, ok := <-c.ch.Chan()
+		if !ok {
+			// 通道已关闭，退出循环
+			return nil
+		}
+
+		// 读取成功后检查上下文
 		select {
-		case data, ok := <-c.ch.Chan(): // 从ringbuffer的channel读取数据
-			if !ok {
-				// 通道已关闭，退出循环
-				return nil
-			}
-
-			// 进行类型断言
-			byteData, ok := data.([]byte)
-			if !ok {
-				continue // 如果类型断言失败，跳过此次循环
-			}
-
-			written := 0
-			for written < len(byteData) {
-				n, err := c.w.Write(byteData[written:])
-				if err != nil {
-					return err
-				}
-				written += n
-				bytesWritten += n
-			}
-			if updateActive != nil {
-				updateActive()
-			}
-		case <-flushTicker.C:
-			c.mu.Lock() // 在访问flusher前加锁
-			if c.canFlush && bytesWritten > 0 &&
-				(bytesWritten >= maxFlushBytes || time.Since(lastFlush) >= maxFlushDelay) {
-				c.flusher.Flush()
-				bytesWritten = 0
-				lastFlush = time.Now()
-				if updateActive != nil {
-					updateActive()
-				}
-			}
-			c.mu.Unlock()
 		case <-ctx.Done():
 			return ctx.Err()
+		default:
+		}
+
+		// 进行类型断言
+		byteData, ok := data.([]byte)
+		if !ok {
+			continue // 如果类型断言失败，跳过此次循环
+		}
+
+		written := 0
+		for written < len(byteData) {
+			n, err := c.w.Write(byteData[written:])
+			if err != nil {
+				return err
+			}
+			written += n
+			bytesWritten += n
+		}
+
+		// 基于时间的活跃更新（避免定时器开销）
+		now := time.Now()
+		if updateActive != nil && now.Sub(lastActiveUpdate) >= activeInterval {
+			updateActive()
+			lastActiveUpdate = now
+		}
+
+		// 基于时间和数据量的flush（避免定时器开销）
+		if c.canFlush && bytesWritten > 0 {
+			if bytesWritten >= maxFlushBytes || now.Sub(lastFlush) >= maxFlushDelay {
+				c.flusher.Flush()
+				bytesWritten = 0
+				lastFlush = now
+			}
 		}
 	}
 }

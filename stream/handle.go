@@ -128,23 +128,19 @@ func executeCopyWithPool(ctx context.Context, r *http.Request, targetURL string,
 
 // Copytext 流式复制 src -> dst，使用 buffer 池，bufio 内部缓存可控
 func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, updateActive func()) error {
-	// 活跃时间心跳
-	var activeTicker *time.Ticker
-	if updateActive != nil {
-		activeTicker = time.NewTicker(5 * time.Second)
-		defer activeTicker.Stop()
-		defer updateActive() // 退出前更新一次
-	}
-
-	// flush 定时器（降低延迟）
-	flushTicker := time.NewTicker(200 * time.Millisecond)
-	defer flushTicker.Stop()
-
 	// 是否支持 http flush
 	flusher, canFlush := dst.(http.Flusher)
 
 	// 统计写入字节数
 	bytesWritten := 0
+
+	// 活跃时间更新间隔（5秒）
+	lastActiveUpdate := time.Now()
+	activeInterval := 5 * time.Second
+
+	// flush 间隔（200毫秒）
+	lastFlushTime := time.Now()
+	flushInterval := 200 * time.Millisecond
 
 	// 如果 src 是 net.Conn，给它绑 ctx
 	if c, ok := src.(net.Conn); ok {
@@ -164,7 +160,7 @@ func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, upd
 	}
 
 	for {
-		// 读取数据
+		// 读取数据（阻塞）
 		n, readErr := src.Read(buf)
 		if n > 0 {
 			// monitor.AddAppInboundBytes(uint64(n))
@@ -179,13 +175,14 @@ func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, upd
 			}
 			// monitor.AddAppOutboundBytes(uint64(n))
 
-			// 大数据量触发 flush
+			// 大数据量触发 flush（32KB）
 			if canFlush && bytesWritten >= 32*1024 {
 				// 再次检查 ctx，避免无效 flush
 				if ctx.Err() == nil {
 					flusher.Flush()
 				}
 				bytesWritten = 0
+				lastFlushTime = time.Now()
 			}
 		}
 
@@ -200,20 +197,25 @@ func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, upd
 			return fmt.Errorf("读取错误: %w", readErr)
 		}
 
-		// 非阻塞检查 ctx / ticker
+		// 检查上下文取消（非阻塞）
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-flushTicker.C:
-			if canFlush && bytesWritten > 0 {
-				flusher.Flush()
-				bytesWritten = 0
-			}
-		case <-activeTicker.C:
-			if updateActive != nil {
-				updateActive()
-			}
 		default:
+		}
+
+		// 基于时间的 flush（避免忙等待）
+		now := time.Now()
+		if canFlush && bytesWritten > 0 && now.Sub(lastFlushTime) >= flushInterval {
+			flusher.Flush()
+			bytesWritten = 0
+			lastFlushTime = now
+		}
+
+		// 基于时间的活跃更新（避免定时器开销）
+		if updateActive != nil && now.Sub(lastActiveUpdate) >= activeInterval {
+			updateActive()
+			lastActiveUpdate = now
 		}
 	}
 }
@@ -346,20 +348,22 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 	logger.LogPrintf("[TS缓存] 未命中，开始下载并缓存，key: %s", key)
 	dst.Header().Del("Content-Length")
 
+	// 异步读取缓存内容到客户端
 	readErrCh := make(chan error, 1)
 	var wg tsync.WaitGroup
 	wg.Go(func() {
 		defer close(readErrCh)
-		select {
-		case readErrCh <- cacheItem.ReadAll(dst, timeoutCtx.Done()):
-		case <-timeoutCtx.Done():
-		}
+		readErrCh <- cacheItem.ReadAll(dst, timeoutCtx.Done())
 	})
 
 	buf := buffer.GetBuffer(32 * 1024)
 	defer buffer.PutBuffer(32*1024, buf)
 
+	// 将源数据写入缓存
 	for {
+		n, rErr := src.Read(buf) // 阻塞读取
+
+		// 读取成功后检查上下文
 		if timeoutCtx.Err() != nil {
 			if rc, ok := src.(io.ReadCloser); ok {
 				_ = rc.Close()
@@ -369,10 +373,10 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 			break
 		}
 
-		n, rErr := src.Read(buf)
 		if n > 0 {
 			cache.WriteChunkWithByteTracking(cacheItem, buf[:n])
 		}
+
 		if rErr != nil {
 			if rErr == io.EOF {
 				cacheItem.Seal(nil)
@@ -383,16 +387,17 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 		}
 	}
 
+	// 等待缓存读取完成
 	if err := <-readErrCh; err != nil && err != io.EOF {
 		return err
 	}
 
-	// 检查 context 是否已取消
+	// 最后检查 context
 	if timeoutCtx.Err() != nil {
 		return timeoutCtx.Err()
 	}
 
-	if f, ok := dst.(http.Flusher); ok && timeoutCtx.Err() == nil {
+	if f, ok := dst.(http.Flusher); ok {
 		f.Flush()
 	}
 	return nil
