@@ -455,12 +455,7 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 	_ = pconn.SetControlMessage(ipv4.FlagDst, true)
 
 	for {
-		select {
-		case <-h.ctx.Done():
-			return
-		default:
-		}
-
+		// 先尝试读取数据（阻塞），只有在读取成功后才检查上下文
 		buf := h.BufPool.Get().([]byte)
 		n, cm, _, err := pconn.ReadFrom(buf)
 		if err != nil {
@@ -469,6 +464,14 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 				logger.LogPrintf("❌ UDP 读取错误: %v", err)
 			}
 			return
+		}
+
+		// 读取成功后检查上下文
+		select {
+		case <-h.ctx.Done():
+			h.BufPool.Put(buf)
+			return
+		default:
 		}
 
 		if cm != nil && cm.Dst.String() != dstIP {
@@ -508,21 +511,32 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 // 处理RTP包，返回零拷贝引用
 func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	data := inRef.data
-	if h.processFCCPacket(data) {
-		return nil
-	}
+
+	// 快速路径：直接是TS包
 	if len(data) >= 188 && data[0] == 0x47 {
 		return inRef
 	}
+
+	// 快速路径：数据太短，不是有效RTP包
 	if len(data) < 12 {
 		return inRef
 	}
+
+	// FCC包处理
+	if h.processFCCPacket(data) {
+		return nil
+	}
+
+	// RTP版本检查
 	version := (data[0] >> 6) & 0x03
 	if version != RTP_VERSION {
 		return inRef
 	}
+
 	sequence := binary.BigEndian.Uint16(data[2:4])
 	ssrc := binary.BigEndian.Uint32(data[8:12])
+
+	// 重复检测（减少锁持有时间）
 	h.Mu.Lock()
 	if h.rtpSequenceMap == nil {
 		h.rtpSequenceMap = make(map[uint32]*rtpSeqEntry)
@@ -532,49 +546,71 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		entry = &rtpSeqEntry{}
 		h.rtpSequenceMap[ssrc] = entry
 	}
+
+	// 快速检查重复（只检查最近的几个序列号）
 	duplicate := false
-	for i := 0; i < entry.seqCount; i++ {
-		if entry.seq[i] == sequence {
+	checkCount := entry.seqCount
+	if checkCount > 8 { // 只检查最近8个
+		checkCount = 8
+	}
+	startPos := entry.seqPos - checkCount
+	if startPos < 0 {
+		startPos += rtpSequenceWindow
+	}
+	for i := 0; i < checkCount; i++ {
+		if entry.seq[(startPos+i)%rtpSequenceWindow] == sequence {
 			duplicate = true
 			break
 		}
 	}
+
 	if duplicate {
 		h.Mu.Unlock()
 		return nil
 	}
+
+	// 更新序列记录
 	entry.seq[entry.seqPos] = sequence
 	entry.seqPos = (entry.seqPos + 1) % rtpSequenceWindow
 	if entry.seqCount < rtpSequenceWindow {
 		entry.seqCount++
 	}
-	now := time.Now()
-	entry.lastActive = now
-	if h.rtpLastCleanup.IsZero() || now.Sub(h.rtpLastCleanup) >= 5*time.Second {
-		h.rtpLastCleanup = now
-		h.cleanupOldSSRCsLocked(now)
+	entry.lastActive = time.Now()
+
+	// 定期清理（每5秒一次）
+	if time.Since(h.rtpLastCleanup) >= 5*time.Second {
+		h.rtpLastCleanup = time.Now()
+		h.cleanupOldSSRCsLocked(h.rtpLastCleanup)
 	}
 	h.Mu.Unlock()
+
+	// 提取RTP负载
 	startOff, endOff, err := rtpPayloadGet(data)
 	if err != nil || startOff >= len(data)-endOff {
 		return inRef
 	}
+
 	payloadType := data[1] & 0x7F
 	if payloadType == P_MPGA || payloadType == P_MPGV {
 		if startOff+4 < len(data)-endOff {
 			startOff += 4
 		}
 	}
+
 	payload := data[startOff : len(data)-endOff]
 	if len(payload) < 188 || payload[0] != 0x47 || len(payload)%188 != 0 {
 		return inRef
 	}
+
+	// 累积RTP数据到缓冲区
 	h.Mu.Lock()
 	h.rtpBuffer = append(h.rtpBuffer, payload...)
 	if len(h.rtpBuffer) < 188 {
 		h.Mu.Unlock()
 		return nil
 	}
+
+	// 对齐到TS包边界
 	if h.rtpBuffer[0] != 0x47 {
 		idx := bytes.IndexByte(h.rtpBuffer, 0x47)
 		if idx < 0 {
@@ -589,6 +625,7 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 			return nil
 		}
 	}
+
 	alignedSize := (len(h.rtpBuffer) / 188) * 188
 	chunk := h.rtpBuffer[:alignedSize]
 	if alignedSize < len(h.rtpBuffer) {
@@ -598,17 +635,26 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		h.rtpBuffer = h.rtpBuffer[:0]
 	}
 	h.Mu.Unlock()
+
+	// 使用内存池缓冲区，按需扩展
 	poolBuf := h.BufPool.Get().([]byte)
 	backing := poolBuf
 	pool := h.BufPool
 	out := backing[:0]
+
+	// 确保缓冲区有足够空间
 	ensure := func(add int) {
 		if len(out)+add <= cap(out) {
 			return
 		}
+		// 扩展缓冲区，最多扩展到2倍原始大小（限制内存使用）
 		newCap := cap(out) * 2
 		if newCap < len(out)+add {
 			newCap = len(out) + add
+		}
+		// 限制最大缓冲区大小为64KB，避免内存暴涨
+		if newCap > 64*1024 {
+			newCap = 64 * 1024
 		}
 		newBacking := make([]byte, newCap)
 		copy(newBacking, out)
@@ -619,6 +665,8 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		pool = nil
 		out = backing[:len(out)]
 	}
+
+	// 写入null包
 	appendNullTS := func() {
 		ensure(188)
 		start := len(out)
@@ -631,10 +679,12 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 			out[i] = 0xFF
 		}
 	}
+
 	h.Mu.RLock()
-	// 只要有一个客户端启用了FCC，我们就认为全局FCC是开启的，用于缓存PAT/PMT
 	fccEnabled := h.fccEnabled
+	lastCCMap := h.lastCCMap
 	h.Mu.RUnlock()
+
 	for i := 0; i < len(chunk); i += 188 {
 		ts := chunk[i : i+188]
 		if ts[0] != 0x47 {
@@ -642,6 +692,8 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		}
 		pid := ((int(ts[1]) & 0x1F) << 8) | int(ts[2])
 		tsCC := ts[3] & 0x0F
+
+		// FCC PAT/PMT缓存（独立锁）
 		if fccEnabled {
 			if pid == PAT_PID && (ts[1]&0x40) != 0 {
 				h.Mu.Lock()
@@ -650,8 +702,7 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 				}
 				copy(h.patBuffer, ts)
 				h.Mu.Unlock()
-			}
-			if pid == PMT_PID && (ts[1]&0x40) != 0 {
+			} else if pid == PMT_PID && (ts[1]&0x40) != 0 {
 				h.Mu.Lock()
 				if h.pmtBuffer == nil {
 					h.pmtBuffer = pmtBufferPool.Get().([]byte)
@@ -660,22 +711,32 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 				h.Mu.Unlock()
 			}
 		}
+
+		// CC连续性检查
 		if pid != NULL_PID {
 			h.Mu.Lock()
-			if last, ok := h.lastCCMap[pid]; ok {
+			if last, ok := lastCCMap[pid]; ok {
 				diff := (int(tsCC) - int(last) + 16) & 0x0F
 				if diff > 1 {
-					for j := 1; j < diff; j++ {
+					// 插入null包（限制最多插入3个，避免内存暴涨）
+					nullCount := diff - 1
+					if nullCount > 3 {
+						nullCount = 3
+					}
+					for j := 0; j < nullCount; j++ {
 						appendNullTS()
 					}
 				}
 			}
-			h.lastCCMap[pid] = tsCC
+			lastCCMap[pid] = tsCC
 			h.Mu.Unlock()
 		}
+
+		// 复制TS包
 		ensure(len(ts))
 		out = append(out, ts...)
 	}
+
 	outRef := NewPooledBufferRef(backing, out, pool)
 	outRef.Source = inRef.Source
 	return outRef
@@ -823,19 +884,24 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 
 	// 获取客户端列表和全局FCC状态
 	fccEnabled := h.fccEnabled
-	clients := make([]*hubClient, 0, len(h.Clients))
+	clientCount := len(h.Clients)
+
+	// 预分配足够的客户端切片，避免动态扩容
+	clients := make([]*hubClient, 0, clientCount)
 	for _, v := range h.Clients {
 		clients = append(clients, v)
+	}
+
+	// 预先获取 addrList 用于后续FCC处理
+	var addrList []string
+	if fccEnabled {
+		addrList = append([]string(nil), h.AddrList...)
 	}
 	h.Mu.Unlock()
 
 	// 异步写入频道缓存（仅在启用FCC且是多播TS包时）
 	data := bufRef.data
 	if fccEnabled && len(data) >= 188 && data[0] == 0x47 && bufRef.Source == SourceMulticast {
-		h.Mu.RLock()
-		addrList := append([]string(nil), h.AddrList...)
-		h.Mu.RUnlock()
-
 		for _, addr := range addrList {
 			if channel := GlobalChannelManager.Get(addr); channel != nil && channel.RefCount() > 0 {
 				channel.AddTsPacket(data)
@@ -844,8 +910,9 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	}
 
 	addedToPending := false
+	isMulticast := bufRef.Source == SourceMulticast
 
-	// 遍历客户端进行分发
+	// 遍历客户端进行分发（减少分支判断）
 	for _, client := range clients {
 		client.mu.Lock()
 		if client.closed {
@@ -858,34 +925,25 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 
 		if !fccEnabled {
 			// 如果全局未启用FCC，所有多播数据都发送
-			if bufRef.Source == SourceMulticast {
-				shouldSend = true
-			}
+			shouldSend = isMulticast
 		} else {
 			// 启用FCC时的分发逻辑
-			if bufRef.Source == SourceMulticast {
+			if isMulticast {
 				switch state {
 				case FCC_STATE_INIT:
-					// 非FCC客户端或已完成切换的客户端，直接发送多播数据
 					shouldSend = true
 				case FCC_STATE_MCAST_REQUESTED, FCC_STATE_MCAST_ACTIVE:
-					// 处于切换过渡期的客户端，将多播数据存入待处理列表
 					if !addedToPending {
 						h.handleMcastDataDuringTransition(bufRef)
 						addedToPending = true
 					}
-					// 如果是活动状态，尝试触发排放
 					if state == FCC_STATE_MCAST_ACTIVE {
 						h.Wg.Go(h.fccHandleMcastActive)
 					}
-				default:
-					// UNICAST_ACTIVE 等状态下，丢弃多播数据
 				}
-			} else if bufRef.Source == SourceUnicast {
+			} else {
 				// 单播数据仅发送给处于FCC流程中的客户端
-				if state != FCC_STATE_INIT {
-					shouldSend = true
-				}
+				shouldSend = (state != FCC_STATE_INIT)
 			}
 		}
 
