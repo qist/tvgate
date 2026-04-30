@@ -129,19 +129,30 @@ func HandleMpegtsStream(
 		cleanup()
 	}()
 
-	flushTicker := time.NewTicker(200 * time.Millisecond) // 定时 flush
-	defer flushTicker.Stop()
-
-	activeTicker := time.NewTicker(5 * time.Second) // 定时更新活跃
-	defer activeTicker.Stop()
-
-	bufferedBytes := 0
+	// 使用时间戳替代定时器，减少 CPU 开销
+	const (
+		maxFlushBytes   = 32 * 1024
+		maxFlushDelay   = 200 * time.Millisecond
+		activeInterval  = 5 * time.Second
+	)
+	var (
+		bufferedBytes     = 0
+		lastFlush         = time.Now()
+		lastActiveUpdate  = time.Now()
+	)
 
 	for {
 		// 先尝试获取数据，阻塞直到有数据或 context 取消
 		data, ok := clientChan.PullWithContext(ctx)
 		if !ok {
 			return nil
+		}
+
+		// 检查上下文取消
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 
 		payload, ok := data.([]byte)
@@ -158,21 +169,20 @@ func HandleMpegtsStream(
 		}
 		bufferedBytes += n
 
-		// 使用 select 等待：要么有新数据，要么需要 flush，要么 context 取消
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-flushTicker.C:
-			if flusher != nil && bufferedBytes > 0 {
+		// 基于时间和数据量的 flush（避免定时器开销）
+		now := time.Now()
+		if flusher != nil && bufferedBytes > 0 {
+			if bufferedBytes >= maxFlushBytes || now.Sub(lastFlush) >= maxFlushDelay {
 				flusher.Flush()
 				bufferedBytes = 0
+				lastFlush = now
 			}
-		case <-activeTicker.C:
-			if updateActive != nil {
-				updateActive()
-			}
-		default:
-			// 如果有数据就继续处理，不等待
+		}
+
+		// 基于时间的活跃更新（避免定时器开销）
+		if updateActive != nil && now.Sub(lastActiveUpdate) >= activeInterval {
+			updateActive()
+			lastActiveUpdate = now
 		}
 	}
 }
