@@ -42,7 +42,6 @@ func TestRTSPProxy(ctx context.Context, proxy config.ProxyConfig, rtspURL string
 		Protocol:                   &protocol,
 		AnyPortEnable:              true,
 		DisableRTCPSenderReports:   true,
-		DisableRTCPReceiverReports: true,
 		ReadTimeout:                config.DefaultDialTimeout,
 		WriteTimeout:               config.DefaultDialTimeout,
 		DialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {

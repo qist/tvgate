@@ -138,6 +138,27 @@ func HandleMpegtsStream(
 	bufferedBytes := 0
 
 	for {
+		// 先尝试获取数据，阻塞直到有数据或 context 取消
+		data, ok := clientChan.PullWithContext(ctx)
+		if !ok {
+			return nil
+		}
+
+		payload, ok := data.([]byte)
+		if !ok || len(payload) == 0 {
+			continue
+		}
+
+		// 设置写入超时
+		_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		n, err := w.Write(payload)
+		if err != nil {
+			logger.LogPrintf("Write error: %v", err)
+			return err
+		}
+		bufferedBytes += n
+
+		// 使用 select 等待：要么有新数据，要么需要 flush，要么 context 取消
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -151,24 +172,7 @@ func HandleMpegtsStream(
 				updateActive()
 			}
 		default:
-			data, ok := clientChan.PullWithContext(ctx)
-			if !ok {
-				return nil
-			}
-
-			payload, ok := data.([]byte)
-			if !ok || len(payload) == 0 {
-				continue
-			}
-
-			// 设置写入超时
-			_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			n, err := w.Write(payload)
-			if err != nil {
-				logger.LogPrintf("Write error: %v", err)
-				return err
-			}
-			bufferedBytes += n
+			// 如果有数据就继续处理，不等待
 		}
 	}
 }

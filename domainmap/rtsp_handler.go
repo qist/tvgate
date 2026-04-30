@@ -79,7 +79,6 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request, connID string) {
 			return &t
 		}(),
 		DisableRTCPSenderReports:   true,
-		DisableRTCPReceiverReports: true,
 		ReadTimeout:                10 * time.Second,
 		WriteTimeout:               10 * time.Second,
 	}

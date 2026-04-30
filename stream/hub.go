@@ -9,6 +9,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
 	tsync "github.com/qist/tvgate/utils/sync"
 )
@@ -93,18 +94,36 @@ func (hub *StreamHubs) RemoveClient(ch *ringbuffer.RingBuffer) {
 
 func (hub *StreamHubs) Broadcast(data []byte) {
 	hub.mu.RLock() // 使用读锁，提高并发性能
-	clients := make([]*ringbuffer.RingBuffer, 0, len(hub.clients))
+	clientCount := len(hub.clients)
+	if clientCount == 0 {
+		hub.mu.RUnlock()
+		return
+	}
+	clients := make([]*ringbuffer.RingBuffer, 0, clientCount)
 	for ch := range hub.clients {
 		clients = append(clients, ch)
 	}
 	hub.mu.RUnlock()
 
+	// 快速检测是否是 H264 关键帧（只检查前5字节）
+	isKeyFrame := len(data) >= 5 &&
+		data[0] == 0x00 && data[1] == 0x00 &&
+		data[2] == 0x00 && data[3] == 0x01 &&
+		(data[4]&0x1F) == 5 // NAL type 5 = IDR frame
+
 	for _, ch := range clients {
 		buf := make([]byte, len(data))
 		copy(buf, data)
 		if !ch.Push(buf) {
-			// 如果推送失败，可能是通道已关闭，从客户端列表中移除
-			hub.removeClientIfNotExist(ch)
+			if isKeyFrame {
+				// 关键帧：等待一小段时间重试一次
+				time.Sleep(30 * time.Millisecond)
+				if !ch.Push(buf) {
+					// 重试失败，记录日志但不移除客户端
+					logger.LogPrintf("Key frame dropped for slow client")
+				}
+			}
+			// 非关键帧：直接丢弃，不通知客户端，避免不必要的剔除
 		}
 	}
 }
@@ -301,34 +320,25 @@ func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 		return true
 	}
 
-	// 使用条件变量等待状态变化，同时支持 context 取消
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			hub.mu.Lock()
-			hub.stateCond.Broadcast() // 唤醒等待的 goroutine
-			hub.mu.Unlock()
-		case <-done:
-		}
-	}()
-
+	// 使用带超时的条件变量等待，支持 context 取消
 	for {
+		// 检查 context 是否已取消
 		select {
 		case <-ctx.Done():
-			close(done)
 			return false
 		default:
-			if hub.isClosed || hub.state == StateError {
-				close(done)
-				return false
-			}
-			if hub.state == StatePlaying {
-				close(done)
-				return true
-			}
-			hub.stateCond.Wait() // 释放锁并等待通知
 		}
+
+		// 检查状态
+		if hub.isClosed || hub.state == StateError {
+			return false
+		}
+		if hub.state == StatePlaying {
+			return true
+		}
+
+		// 等待状态变化（最多等待 100ms，以便检查 context）
+		hub.stateCond.Wait()
 	}
 }
 
