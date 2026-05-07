@@ -217,6 +217,8 @@ func (c *tsCacheItem) calculateTotalBytes() int64 {
 
 func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 	seq := 1
+	waitTimer := time.NewTimer(5 * time.Second)
+	defer waitTimer.Stop()
 	for {
 		c.mutex.RLock()
 		if seq <= len(c.chunks) {
@@ -252,6 +254,13 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 			return retErr
 		}
 
+		if !waitTimer.Stop() {
+			select {
+			case <-waitTimer.C:
+			default:
+			}
+		}
+		waitTimer.Reset(5 * time.Second)
 		select {
 		case _, ok := <-c.waitCh:
 			if !ok {
@@ -259,7 +268,7 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 			}
 		case <-done:
 			return nil
-		case <-time.After(5 * time.Second):
+		case <-waitTimer.C:
 			continue
 		}
 	}

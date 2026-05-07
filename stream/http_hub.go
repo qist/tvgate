@@ -289,6 +289,12 @@ func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte)
 		// 设置为播放状态
 		h.SetPlaying()
 
+		retryTimer := time.NewTimer(0)
+		if !retryTimer.Stop() {
+			<-retryTimer.C
+		}
+		defer retryTimer.Stop()
+
 		for {
 			n, err := src.Read(buf)
 			if n > 0 {
@@ -323,8 +329,9 @@ func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte)
 					// logger.LogPrintf("Hub %s attempting to reconnect... (attempt %d/%d)", h.key, h.retryCount, h.maxRetryAttempts)
 
 					// 使用select等待，支持上下文取消
+					retryTimer.Reset(5 * time.Second)
 					select {
-					case <-time.After(5 * time.Second):
+					case <-retryTimer.C:
 						// 继续重试流程
 					case <-pCtx.Done():
 						// 上下文已取消，停止重试
@@ -555,17 +562,17 @@ func (h *HTTPHub) WaitForPlaying(ctx context.Context) bool {
 		return true
 	}
 
-	// 等待状态变化或context取消
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
+	// 使用 condvar 等待状态变化，避免 100ms 轮询浪费 CPU
+	go func() {
+		<-ctx.Done()
+		h.stateCond.Broadcast()
+	}()
 
 	for h.state == StateStopped && !h.closed {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return false
-		case <-ticker.C:
-			// 继续检查状态
 		}
+		h.stateCond.Wait()
 	}
 
 	// 检查context是否已取消

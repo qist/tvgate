@@ -1014,6 +1014,8 @@ func (sm *StreamManager) monitorPrimaryPush(primary, backup *PipeForwarder, ffmp
 
 	sm.wg.Go(func() {
 		time.Sleep(5 * time.Second)
+		monitorTicker := time.NewTicker(30 * time.Second)
+		defer monitorTicker.Stop()
 		for {
 			select {
 			case <-sm.ctx.Done():
@@ -1040,7 +1042,7 @@ func (sm *StreamManager) monitorPrimaryPush(primary, backup *PipeForwarder, ffmp
 				select {
 				case <-sm.ctx.Done():
 					return
-				case <-time.After(30 * time.Second):
+				case <-monitorTicker.C:
 				}
 			}
 		}
@@ -1072,6 +1074,11 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 	useBackup := false
 	maxRetries := 3
 	retryCount := 0
+	retryTimer := time.NewTimer(0)
+	if !retryTimer.Stop() {
+		<-retryTimer.C
+	}
+	defer retryTimer.Stop()
 
 	for {
 		if !sm.isRunning() {
@@ -1181,10 +1188,11 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 				}
 
 				// 等待 5 秒后重试
+				retryTimer.Reset(5 * time.Second)
 				select {
 				case <-sm.ctx.Done():
 					return
-				case <-time.After(5 * time.Second):
+				case <-retryTimer.C:
 				}
 				continue
 			} else {
@@ -1203,10 +1211,11 @@ func (sm *StreamManager) runFFmpegStream(cmd []string, receiverIndex int) {
 				}
 
 				// 等待 1 秒后继续循环
+				retryTimer.Reset(1 * time.Second)
 				select {
 				case <-sm.ctx.Done():
 					return
-				case <-time.After(1 * time.Second):
+				case <-retryTimer.C:
 					logger.LogPrintf("Restarting stream %s receiver %d after normal finish", sm.name, receiverIndex)
 				}
 			}

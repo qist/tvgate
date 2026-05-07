@@ -1813,17 +1813,20 @@ func (h *StreamHub) detectStrictIDRFrame(data []byte) bool {
 
 // checkFCCStatus 定期检查FCC状态，实现主动超时释放
 func (h *StreamHub) checkFCCStatus() {
-	ticker := time.NewTicker(100 * time.Millisecond) // 每100毫秒检查一次
+	// FCC 未激活时使用较长间隔，避免空转浪费 CPU
+	const (
+		activeInterval   = 100 * time.Millisecond // FCC 活跃时检查间隔
+		inactiveInterval = 2 * time.Second         // FCC 未激活时检查间隔
+	)
+
+	ticker := time.NewTicker(inactiveInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			// 检查Hub是否已关闭
-			select {
-			case <-h.ctx.Done():
+			if h.ctx.Err() != nil {
 				return
-			default:
 			}
 
 			h.Mu.RLock()
@@ -1832,8 +1835,13 @@ func (h *StreamHub) checkFCCStatus() {
 			h.Mu.RUnlock()
 
 			if !fccEnabled {
+				// 确保使用慢速间隔
+				ticker.Reset(inactiveInterval)
 				continue
 			}
+
+			// FCC 活跃时切换到快速检查间隔
+			ticker.Reset(activeInterval)
 
 			now := time.Now().UnixNano() / 1e6 // 当前时间（毫秒）
 

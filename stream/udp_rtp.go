@@ -211,7 +211,6 @@ type StreamHub struct {
 	pmtBuffer              []byte
 	lastFccDataTime        int64
 	rtpBuffer              []byte
-	LastFrame              *BufferRef
 	OnEmpty                func(*StreamHub)
 
 	// 缓存视频PID，避免重复解析PAT/PMT
@@ -276,7 +275,7 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		AddCh:          make(chan *hubClient, 1024),
 		RemoveCh:       make(chan string, 1024),
 		UdpConns:       make([]*net.UDPConn, 0, len(addrs)),
-		CacheBuffer:    NewRingBuffer(8192), // 默认缓存8192帧
+		CacheBuffer:    nil, // 懒分配：有客户端连接时才创建
 		Closed:         make(chan struct{}),
 		BufPool:        &sync.Pool{New: func() any { return make([]byte, 2048) }},
 		AddrList:       addrs,
@@ -483,7 +482,7 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 		inRef.Source = SourceMulticast
 
 		h.Mu.RLock()
-		isStopped := h.state == StateError || h.CacheBuffer == nil
+		isStopped := h.state == StateError
 		h.Mu.RUnlock()
 		if isStopped {
 			inRef.Put()
@@ -861,14 +860,18 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	}
 
 	h.Mu.Lock()
-	if h.Closed == nil || h.CacheBuffer == nil || h.Clients == nil {
+	if h.Closed == nil || h.Clients == nil {
 		h.Mu.Unlock()
 		bufRef.Put()
 		return
 	}
 
+	// 懒分配 CacheBuffer
+	if h.CacheBuffer == nil {
+		h.CacheBuffer = NewRingBuffer(4096)
+	}
+
 	// 更新状态和缓存
-	h.LastFrame = bufRef
 	bufRef.Get()
 	if evicted := h.CacheBuffer.PushWithReuse(bufRef); evicted != nil {
 		evicted.Put()
@@ -1454,10 +1457,6 @@ func (h *StreamHub) Close() {
 		h.CacheBuffer.Reset()
 		h.CacheBuffer = nil
 	}
-	if h.LastFrame != nil {
-		h.LastFrame.Put()
-		h.LastFrame = nil
-	}
 	h.rtpBuffer = nil
 
 	// 状态更新
@@ -1538,28 +1537,33 @@ func (h *StreamHub) WaitForPlaying(ctx context.Context) bool {
 	}
 	h.Mu.Unlock()
 
-	// 使用计时器或 context 来等待
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
+	// 使用 condvar 等待状态变化，避免 100ms 轮询浪费 CPU
+	waitCtx, waitCancel := context.WithCancel(context.Background())
+	go func() {
 		select {
 		case <-ctx.Done():
-			return false
 		case <-h.Closed:
-			return false
-		case <-ticker.C:
-			h.Mu.Lock()
-			if h.state == StatePlaying {
-				h.Mu.Unlock()
-				return true
-			}
-			if h.state == StateError || h.CacheBuffer == nil {
-				h.Mu.Unlock()
-				return false
-			}
-			h.Mu.Unlock()
 		}
+		waitCancel()
+		h.stateCond.Broadcast() // 唤醒 condvar 等待
+	}()
+	defer waitCancel()
+
+	h.Mu.Lock()
+	for {
+		if h.state == StatePlaying {
+			h.Mu.Unlock()
+			return true
+		}
+		if h.state == StateError {
+			h.Mu.Unlock()
+			return false
+		}
+		if waitCtx.Err() != nil {
+			h.Mu.Unlock()
+			return false
+		}
+		h.stateCond.Wait()
 	}
 }
 
@@ -1808,43 +1812,35 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 	if newHub.Clients == nil {
 		newHub.Clients = make(map[string]*hubClient)
 	}
-	if newHub.CacheBuffer == nil {
-		newHub.CacheBuffer = NewRingBuffer(h.CacheBuffer.size)
-	}
+	if h.CacheBuffer != nil {
+		if newHub.CacheBuffer == nil {
+			newHub.CacheBuffer = NewRingBuffer(h.CacheBuffer.size)
+		}
 
-	// 迁移缓存数据
-	frames := h.CacheBuffer.GetAllRefs()
-	// 注意：这里不直接发送缓存给迁移的客户端，避免播放回跳
-	// 仅将缓存迁移到新 Hub，确保新加入的客户端有缓存可用
-	for _, f := range frames {
-		if f == nil {
-			continue
+		// 迁移缓存数据
+		frames := h.CacheBuffer.GetAllRefs()
+		// 注意：这里不直接发送缓存给迁移的客户端，避免播放回跳
+		// 仅将缓存迁移到新 Hub，确保新加入的客户端有缓存可用
+		for _, f := range frames {
+			if f == nil {
+				continue
+			}
+			f.Get()
+			if evicted := newHub.CacheBuffer.PushWithReuse(f); evicted != nil {
+				evicted.Put()
+			}
 		}
-		f.Get()
-		if evicted := newHub.CacheBuffer.PushWithReuse(f); evicted != nil {
-			evicted.Put()
+		for _, frame := range frames {
+			if frame != nil {
+				frame.Put()
+			}
 		}
-	}
-
-	// 迁移最后关键帧
-	if h.LastFrame != nil {
-		if newHub.LastFrame != nil {
-			newHub.LastFrame.Put()
-		}
-		h.LastFrame.Get()
-		newHub.LastFrame = h.LastFrame
 	}
 
 	// 迁移客户端
 	for connID, client := range h.Clients {
 		newHub.Clients[connID] = client
 		// 注意：不在这里 client.ch <- frames，保持当前播放进度连续
-	}
-
-	for _, frame := range frames {
-		if frame != nil {
-			frame.Put()
-		}
 	}
 
 	h.Clients = make(map[string]*hubClient)
@@ -1985,8 +1981,15 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 
 		// 获取缓存快照
 		h.Mu.RLock()
-		cachedFrames := h.CacheBuffer.GetAllRefs()
+		var cachedFrames []*BufferRef
+		if h.CacheBuffer != nil {
+			cachedFrames = h.CacheBuffer.GetAllRefs()
+		}
 		h.Mu.RUnlock()
+
+		if len(cachedFrames) == 0 {
+			return
+		}
 
 		// 异步非阻塞发送
 		clientCh := client.ch
@@ -2030,7 +2033,7 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 		}
 		if len(frames) > 0 {
 			packets = append(packets, frames...)
-		} else {
+		} else if h.CacheBuffer != nil {
 			cachedFrames := h.CacheBuffer.GetAllRefs()
 			packets = append(packets, cachedFrames...)
 		}
@@ -2045,14 +2048,16 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 		}
 
 		// 补充普通缓存（如果没有FCC帧或者需要更多数据）
-		if !fccFramesAvailable || len(packets) < 10 {
+		if (!fccFramesAvailable || len(packets) < 10) && h.CacheBuffer != nil {
 			cachedFrames := h.CacheBuffer.GetAllRefs()
 			packets = append(packets, cachedFrames...)
 		}
 	default:
 		// 对于其他状态，使用普通缓存
-		cachedFrames := h.CacheBuffer.GetAllRefs()
-		packets = append(packets, cachedFrames...)
+		if h.CacheBuffer != nil {
+			cachedFrames := h.CacheBuffer.GetAllRefs()
+			packets = append(packets, cachedFrames...)
+		}
 	}
 
 	h.Mu.RUnlock()

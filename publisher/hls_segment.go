@@ -302,6 +302,11 @@ func (h *HLSSegmentManager) Start() error {
 	// 启动数据推送（来自 hub）
 	if h.clientBuffer != nil {
 		h.wg.Go(func() {
+			writeTimeout := time.NewTimer(0)
+			if !writeTimeout.Stop() {
+				<-writeTimeout.C
+			}
+			defer writeTimeout.Stop()
 			for {
 				select {
 				case <-h.ctx.Done():
@@ -332,6 +337,7 @@ func (h *HLSSegmentManager) Start() error {
 							writeDone <- err
 						})
 
+						writeTimeout.Reset(5 * time.Second)
 						select {
 						case <-h.ctx.Done():
 							return
@@ -342,7 +348,7 @@ func (h *HLSSegmentManager) Start() error {
 								h.cancel()
 								return
 							}
-						case <-time.After(5 * time.Second):
+						case <-writeTimeout.C:
 							logger.LogPrintf("[%s] timeout writing to ffmpeg stdin", h.streamName)
 							// 不直接调用h.Stop()，而是取消上下文让其他goroutine自行退出
 							h.cancel()
