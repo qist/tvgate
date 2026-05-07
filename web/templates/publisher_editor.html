@@ -31,25 +31,25 @@
             text-align: center;
             font-weight: 600;
         }
-        .auth-section {
-            text-align: right;
+        .page-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
             margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--win11-border);
         }
-        .auth-section a {
-            display: inline-block;
-            padding: 8px 16px;
-            background-color: var(--win11-success);
-            color: white;
-            text-decoration: none;
-            border-radius: 4px;
-            transition: background-color 0.3s;
-            margin-left: 10px;
+        .page-header h1 {
+            margin: 0;
+            font-size: 22px;
+            white-space: nowrap;
         }
-        .auth-section a.logout {
-            background-color: var(--win11-danger);
-        }
-        .auth-section a:hover {
-            opacity: 0.9;
+        .page-header-nav {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
         }
         .form-buttons {
             display: flex;
@@ -381,26 +381,97 @@
             .form-row {
                 grid-template-columns: 1fr;
             }
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .page-header-nav {
+                flex-wrap: wrap;
+            }
+        }
+        .section-title-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin: 0 0 12px 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--win11-border);
+        }
+        .section-title-row h3 {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--win11-text-primary);
+        }
+        .section-help {
+            margin: -6px 0 12px 0;
+            font-size: 12px;
+            color: var(--win11-text-tertiary);
+            line-height: 1.5;
+        }
+        .ff-accordion {
+            border: 1px solid var(--win11-border);
+            border-radius: 6px;
+            margin-top: 12px;
+            overflow: hidden;
+        }
+        .ff-accordion-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background-color: rgba(255, 255, 255, 0.03);
+            cursor: pointer;
+            user-select: none;
+            transition: background-color 0.2s;
+        }
+        .ff-accordion-header:hover {
+            background-color: rgba(255, 255, 255, 0.06);
+        }
+        .ff-accordion-header .ff-accordion-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--win11-text-secondary);
+        }
+        .ff-accordion-header .ff-accordion-toggle {
+            font-size: 11px;
+            color: var(--win11-text-tertiary);
+            transition: transform 0.25s;
+        }
+        .ff-accordion.open .ff-accordion-toggle {
+            transform: rotate(90deg);
+        }
+        .ff-accordion-content {
+            display: none;
+            padding: 12px 14px;
+            border-top: 1px solid var(--win11-border);
+        }
+        .ff-accordion.open .ff-accordion-content {
+            display: block;
+        }
+        .ff-accordion.disabled .ff-accordion-header {
+            opacity: 0.5;
+            cursor: default;
+            pointer-events: none;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="auth-section">
-            <a href="{{.webPath}}" class="btn">返回首页</a>
-            <a href="{{.webPath}}logout" class="logout">退出</a>
+        <div class="page-header">
+            <h1>推流管理</h1>
+            <div class="page-header-nav">
+                <button class="btn btn-warning btn-sm" onclick="refreshAll()">刷新</button>
+                <button class="btn btn-success btn-sm" onclick="saveAllConfig()">保存配置</button>
+                <button class="btn btn-sm" onclick="addStream()">新增推流</button>
+                <a href="{{.webPath}}" class="btn btn-sm">首页</a>
+                <a href="{{.webPath}}logout" class="btn btn-sm btn-danger">退出</a>
+            </div>
         </div>
-
-        <h1>推流管理</h1>
 
         <div id="alert-container" class="hidden"></div>
         <div id="ffmpeg-banner" class="hidden"></div>
-
-        <div class="form-buttons">
-            <button class="btn btn-warning" onclick="refreshAll()">刷新</button>
-            <button class="btn btn-success" onclick="saveAllConfig()">保存配置</button>
-            <button class="btn" onclick="addStream()">新增推流</button>
-        </div>
 
         <div class="toolbar">
             <div class="field">
@@ -514,21 +585,29 @@
                 </div>
 
                 <div class="section">
-                    <div class="section-title">FFmpegOptions（源）</div>
-                    <div class="form-row-1">
-                        <div class="form-group">
-                            <label class="checkbox-inline">
-                                <input id="m-src-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
-                                自定义源 FFmpegOptions
-                            </label>
-                            <div class="muted">留空则使用默认参数；这里的配置会被本地播放/接收端按层级合并</div>
+                    <div class="section-title-row">
+                        <h3>FFmpegOptions（源）</h3>
+                        <label class="checkbox-inline">
+                            <input id="m-src-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                            自定义
+                        </label>
+                    </div>
+                    <div class="section-help">留空则使用默认参数；这里的配置会被本地播放/接收端按层级合并</div>
+                    <div id="src-ff-accordion" class="ff-accordion disabled">
+                        <div class="ff-accordion-header" onclick="toggleAccordion('src-ff-accordion')">
+                            <span class="ff-accordion-title">FFmpeg 参数</span>
+                            <span class="ff-accordion-toggle">&#9654;</span>
+                        </div>
+                        <div class="ff-accordion-content">
+                            <div id="src-ff-container"></div>
                         </div>
                     </div>
-                    <div id="src-ff-container"></div>
                 </div>
 
                 <div class="section">
-                    <div class="section-title">本地播放 / 录制</div>
+                    <div class="section-title-row">
+                        <h3>本地播放 / 录制</h3>
+                    </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label class="checkbox-inline">
@@ -543,21 +622,39 @@
                             </label>
                         </div>
                     </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="checkbox-inline">
-                                <input id="m-flv-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
-                                自定义 FLV FFmpegOptions
-                            </label>
-                        </div>
-                        <div class="form-group">
-                            <label class="checkbox-inline">
-                                <input id="m-hls-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
-                                自定义 HLS FFmpegOptions
-                            </label>
+                    <div id="flv-ff-section" class="hidden">
+                        <div id="flv-ff-accordion" class="ff-accordion disabled" style="margin-top:10px;">
+                            <div class="ff-accordion-header" onclick="toggleAccordion('flv-ff-accordion')">
+                                <span class="ff-accordion-title">
+                                    <label class="checkbox-inline" onclick="event.stopPropagation()">
+                                        <input id="m-flv-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                        自定义 FLV FFmpegOptions
+                                    </label>
+                                </span>
+                                <span class="ff-accordion-toggle">&#9654;</span>
+                            </div>
+                            <div class="ff-accordion-content">
+                                <div id="flv-ff-container"></div>
+                            </div>
                         </div>
                     </div>
-                    <div id="hls-fields" class="form-row hidden">
+                    <div id="hls-ff-section" class="hidden">
+                        <div id="hls-ff-accordion" class="ff-accordion disabled" style="margin-top:10px;">
+                            <div class="ff-accordion-header" onclick="toggleAccordion('hls-ff-accordion')">
+                                <span class="ff-accordion-title">
+                                    <label class="checkbox-inline" onclick="event.stopPropagation()">
+                                        <input id="m-hls-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                        自定义 HLS FFmpegOptions
+                                    </label>
+                                </span>
+                                <span class="ff-accordion-toggle">&#9654;</span>
+                            </div>
+                            <div class="ff-accordion-content">
+                                <div id="hls-ff-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="hls-fields" class="form-row hidden" style="margin-top:12px;">
                         <div class="form-group">
                             <label>HLS 片段时长（秒）</label>
                             <input id="m-hls-seg-dur" class="form-control" type="number" min="1" placeholder="例如 2" />
@@ -600,12 +697,12 @@
                             <input id="m-ts-template" class="form-control hidden" placeholder="例如 {stream}/{date}/{seq}.ts" style="margin-top: 5px;" />
                         </div>
                     </div>
-                    <div id="flv-ff-container"></div>
-                    <div id="hls-ff-container"></div>
                 </div>
 
                 <div id="receivers-primary-backup" class="section">
-                    <div class="section-title">接收端（主/备）</div>
+                    <div class="section-title-row">
+                        <h3>接收端（主/备）</h3>
+                    </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label>Primary Push URL</label>
@@ -616,30 +713,42 @@
                             <input id="m-backup-push" class="form-control" placeholder="例如 rtmp://host/app" />
                         </div>
                     </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="checkbox-inline">
-                                <input id="m-primary-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
-                                Primary 自定义 FFmpegOptions
-                            </label>
+                    <div id="primary-ff-accordion" class="ff-accordion disabled" style="margin-top:10px;">
+                        <div class="ff-accordion-header" onclick="toggleAccordion('primary-ff-accordion')">
+                            <span class="ff-accordion-title">
+                                <label class="checkbox-inline" onclick="event.stopPropagation()">
+                                    <input id="m-primary-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                    Primary 自定义 FFmpegOptions
+                                </label>
+                            </span>
+                            <span class="ff-accordion-toggle">&#9654;</span>
                         </div>
-                        <div class="form-group">
-                            <label class="checkbox-inline">
-                                <input id="m-backup-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
-                                Backup 自定义 FFmpegOptions
-                            </label>
+                        <div class="ff-accordion-content">
+                            <div id="primary-ff-container"></div>
                         </div>
                     </div>
-                    <div id="primary-ff-container"></div>
-                    <div id="backup-ff-container"></div>
+                    <div id="backup-ff-accordion" class="ff-accordion disabled" style="margin-top:10px;">
+                        <div class="ff-accordion-header" onclick="toggleAccordion('backup-ff-accordion')">
+                            <span class="ff-accordion-title">
+                                <label class="checkbox-inline" onclick="event.stopPropagation()">
+                                    <input id="m-backup-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                    Backup 自定义 FFmpegOptions
+                                </label>
+                            </span>
+                            <span class="ff-accordion-toggle">&#9654;</span>
+                        </div>
+                        <div class="ff-accordion-content">
+                            <div id="backup-ff-container"></div>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="receivers-all" class="section hidden">
-                    <div class="section-title">接收端（同时推多个）</div>
-                    <div id="m-all-list" class="receiver-list"></div>
-                    <div class="form-buttons" style="justify-content: flex-start; margin-top: 12px;">
+                    <div class="section-title-row">
+                        <h3>接收端（同时推多个）</h3>
                         <button class="btn btn-sm" onclick="addAllReceiver()">新增接收端</button>
                     </div>
+                    <div id="m-all-list" class="receiver-list"></div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -1159,19 +1268,32 @@
         }
 
         function onLocalToggleChange() {
-            const hls = getFormValue('m-hls-enable');
+            const flv = !!getFormValue('m-flv-enable');
+            const hls = !!getFormValue('m-hls-enable');
+
+            const flvFFSection = document.getElementById('flv-ff-section');
+            if (flvFFSection) {
+                if (flv) flvFFSection.classList.remove('hidden'); else flvFFSection.classList.add('hidden');
+            }
+
+            const hlsFFSection = document.getElementById('hls-ff-section');
+            if (hlsFFSection) {
+                if (hls) hlsFFSection.classList.remove('hidden'); else hlsFFSection.classList.add('hidden');
+            }
+
             const el1 = document.getElementById('hls-fields');
             const el2 = document.getElementById('hls-fields2');
             const el3 = document.getElementById('hls-fields3');
-            if (!el1 || !el2 || !el3) return;
-            if (hls) {
-                el1.classList.remove('hidden');
-                el2.classList.remove('hidden');
-                el3.classList.remove('hidden');
-            } else {
-                el1.classList.add('hidden');
-                el2.classList.add('hidden');
-                el3.classList.add('hidden');
+            if (el1 && el2 && el3) {
+                if (hls) {
+                    el1.classList.remove('hidden');
+                    el2.classList.remove('hidden');
+                    el3.classList.remove('hidden');
+                } else {
+                    el1.classList.add('hidden');
+                    el2.classList.add('hidden');
+                    el3.classList.add('hidden');
+                }
             }
             onFFmpegToggleChange();
         }
@@ -1414,17 +1536,40 @@
             }
         }
 
+        function toggleAccordion(id) {
+            const el = document.getElementById(id);
+            if (el) el.classList.toggle('open');
+        }
+
+        function setAccordionState(id, open) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (open) el.classList.add('open'); else el.classList.remove('open');
+        }
+
+        function setAccordionEnabled(id, enabled) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (enabled) el.classList.remove('disabled'); else el.classList.add('disabled');
+        }
+
         function onFFmpegToggleChange() {
             const src = !!getFormValue('m-src-ff-enable');
             toggleFFmpegFields('src', src);
+            setAccordionEnabled('src-ff-accordion', src);
+            if (!src) setAccordionState('src-ff-accordion', false);
 
             const flvEnabled = !!getFormValue('m-flv-enable');
             const flvFF = flvEnabled && !!getFormValue('m-flv-ff-enable');
             toggleFFmpegFields('flv', flvFF);
+            setAccordionEnabled('flv-ff-accordion', flvFF);
+            if (!flvFF) setAccordionState('flv-ff-accordion', false);
 
             const hlsEnabled = !!getFormValue('m-hls-enable');
             const hlsFF = hlsEnabled && !!getFormValue('m-hls-ff-enable');
             toggleFFmpegFields('hls', hlsFF);
+            setAccordionEnabled('hls-ff-accordion', hlsFF);
+            if (!hlsFF) setAccordionState('hls-ff-accordion', false);
 
             const mode = getFormValue('m-mode');
             const pbOn = (mode === 'primary-backup');
@@ -1432,6 +1577,10 @@
             const bFF = pbOn && !!getFormValue('m-backup-ff-enable');
             toggleFFmpegFields('primary', pFF);
             toggleFFmpegFields('backup', bFF);
+            setAccordionEnabled('primary-ff-accordion', pFF);
+            setAccordionEnabled('backup-ff-accordion', bFF);
+            if (!pFF) setAccordionState('primary-ff-accordion', false);
+            if (!bFF) setAccordionState('backup-ff-accordion', false);
 
             const rows = document.querySelectorAll('.receiver-item');
             for (const row of rows) {
@@ -1904,6 +2053,11 @@
         }
 
         document.addEventListener('DOMContentLoaded', async () => {
+            renderFFmpegFields('src', 'src-ff-container');
+            renderFFmpegFields('flv', 'flv-ff-container');
+            renderFFmpegFields('hls', 'hls-ff-container');
+            renderFFmpegFields('primary', 'primary-ff-container');
+            renderFFmpegFields('backup', 'backup-ff-container');
             try {
                 await refreshAll();
                 startPolling();
@@ -2113,14 +2267,6 @@ function renderFFmpegFields(prefix, containerId) {
     `;
     container.innerHTML = html;
 }
-
-document.addEventListener("DOMContentLoaded", () => {
-    renderFFmpegFields('src', 'src-ff-container');
-    renderFFmpegFields('flv', 'flv-ff-container');
-    renderFFmpegFields('hls', 'hls-ff-container');
-    renderFFmpegFields('primary', 'primary-ff-container');
-    renderFFmpegFields('backup', 'backup-ff-container');
-});
 </script>
 
 </body>
