@@ -453,7 +453,6 @@
         .ff-accordion.disabled .ff-accordion-header {
             opacity: 0.5;
             cursor: default;
-            pointer-events: none;
         }
     </style>
 </head>
@@ -626,8 +625,8 @@
                         <div id="flv-ff-accordion" class="ff-accordion disabled" style="margin-top:10px;">
                             <div class="ff-accordion-header" onclick="toggleAccordion('flv-ff-accordion')">
                                 <span class="ff-accordion-title">
-                                    <label class="checkbox-inline" onclick="event.stopPropagation()">
-                                        <input id="m-flv-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                    <label class="checkbox-inline">
+                                        <input id="m-flv-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" onclick="event.stopPropagation()" />
                                         自定义 FLV FFmpegOptions
                                     </label>
                                 </span>
@@ -642,8 +641,8 @@
                         <div id="hls-ff-accordion" class="ff-accordion disabled" style="margin-top:10px;">
                             <div class="ff-accordion-header" onclick="toggleAccordion('hls-ff-accordion')">
                                 <span class="ff-accordion-title">
-                                    <label class="checkbox-inline" onclick="event.stopPropagation()">
-                                        <input id="m-hls-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                    <label class="checkbox-inline">
+                                        <input id="m-hls-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" onclick="event.stopPropagation()" />
                                         自定义 HLS FFmpegOptions
                                     </label>
                                 </span>
@@ -716,8 +715,8 @@
                     <div id="primary-ff-accordion" class="ff-accordion disabled" style="margin-top:10px;">
                         <div class="ff-accordion-header" onclick="toggleAccordion('primary-ff-accordion')">
                             <span class="ff-accordion-title">
-                                <label class="checkbox-inline" onclick="event.stopPropagation()">
-                                    <input id="m-primary-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                <label class="checkbox-inline">
+                                    <input id="m-primary-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" onclick="event.stopPropagation()" />
                                     Primary 自定义 FFmpegOptions
                                 </label>
                             </span>
@@ -730,8 +729,8 @@
                     <div id="backup-ff-accordion" class="ff-accordion disabled" style="margin-top:10px;">
                         <div class="ff-accordion-header" onclick="toggleAccordion('backup-ff-accordion')">
                             <span class="ff-accordion-title">
-                                <label class="checkbox-inline" onclick="event.stopPropagation()">
-                                    <input id="m-backup-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" />
+                                <label class="checkbox-inline">
+                                    <input id="m-backup-ff-enable" type="checkbox" onchange="onFFmpegToggleChange()" onclick="event.stopPropagation()" />
                                     Backup 自定义 FFmpegOptions
                                 </label>
                             </span>
@@ -1538,7 +1537,9 @@
 
         function toggleAccordion(id) {
             const el = document.getElementById(id);
-            if (el) el.classList.toggle('open');
+            if (!el) return;
+            if (el.classList.contains('disabled')) return;
+            el.classList.toggle('open');
         }
 
         function setAccordionState(id, open) {
