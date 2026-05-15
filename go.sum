@@ -8,8 +8,8 @@ github.com/asticode/go-astikit v0.30.0 h1:DkBkRQRIxYcknlaU7W7ksNfn4gMFsB0tqMJflx
 github.com/asticode/go-astikit v0.30.0/go.mod h1:h4ly7idim1tNhaVkdVBeXQZEE3L0xblP7fCWbgwipF0=
 github.com/asticode/go-astits v1.15.0 h1:yRyCiUc8Jj4F7clt2GDxHghMpWuFL5rkaLuGUd2/0J4=
 github.com/asticode/go-astits v1.15.0/go.mod h1:QSHmknZ51pf6KJdHKZHJTLlMegIrhega3LPWz3ND/iI=
-github.com/bluenviron/gortsplib/v5 v5.5.2 h1:EECKxin9jhNAHbii/V+cZgdKGdQQHELEC5c+t50x/Nc=
-github.com/bluenviron/gortsplib/v5 v5.5.2/go.mod h1:y18pB9TlQwzm9WdmsbrB2SOvEbzu/sT2MI/782d9bPk=
+github.com/bluenviron/gortsplib/v5 v5.5.3 h1:aKdP14cRP8CorUCw2K4Qn/Zrs4AXTbAKUENVqh3B3vM=
+github.com/bluenviron/gortsplib/v5 v5.5.3/go.mod h1:e4abL49yJF5TR+1m9+0K+UuCSkyJn345Dt2XIJfu4Nc=
 github.com/bluenviron/mediacommon/v2 v2.8.3 h1:T6xb7ZK3eBixi/HynzhtGRCEIrazwcmGIeu0WDTVISY=
 github.com/bluenviron/mediacommon/v2 v2.8.3/go.mod h1:CsYjGgzIz8RbloQf4BHR4uReogZsB4PEKWfePVIzJv8=
 github.com/cloudflare/tableflip v1.2.3 h1:8I+B99QnnEWPHOY3fWipwVKxS70LGgUsslG7CSfmHMw=
