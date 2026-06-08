@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/qist/tvgate/auth"
@@ -29,6 +30,12 @@ import (
 	"github.com/qist/tvgate/rules"
 	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/utils/buffer"
+)
+
+// 预编译的正则表达式，避免在热路径中重复编译
+var (
+	domainURIRegex = regexp.MustCompile(`URI="([^"]+)"`)
+	domainURLRegex = regexp.MustCompile(`https?://[^/\s]+`)
 )
 
 // ---------------------------
@@ -73,6 +80,7 @@ type DomainMapper struct {
 	tokenManagers   map[string]*auth.TokenManager
 	realHostMap     map[string]string // 真实地址映射表
 	realHostMapMu   sync.RWMutex      // 保护realHostMap的互斥锁
+	cleanCounter    uint64            // 请求计数器，用于节流 CleanTokenManagers 调用
 }
 
 type RedirectHandler struct {
@@ -101,9 +109,6 @@ func NewDomainMapper(mappings auth.DomainMapList, client *http.Client, next http
 
 	// 初始化时清理tokenManagers
 	dm.CleanTokenManagers()
-
-	// 启动缓存清理器
-	StartCacheCleaner()
 
 	dm.redirectHandler = &RedirectHandler{
 		domainMapper: dm,
@@ -339,6 +344,12 @@ func (dm *DomainMapper) AddRealHostMapping(realHost, sourceHost string) {
 	dm.realHostMapMu.Lock()
 	defer dm.realHostMapMu.Unlock()
 
+	// 防止 map 无限增长：超过上限时清空旧映射
+	const maxRealHostMapSize = 10000
+	if len(dm.realHostMap) >= maxRealHostMapSize {
+		dm.realHostMap = make(map[string]string)
+	}
+
 	// logger.LogPrintf("DEBUG: 添加映射关系到缓存 - RealHost: %s -> SourceHost: %s", realHost, sourceHost)
 	dm.realHostMap[realHost] = sourceHost
 }
@@ -380,9 +391,8 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 	if strings.HasPrefix(trimmed, "#") {
 		// 检查是否包含 URI=
 		if strings.Contains(trimmed, "URI=\"") {
-			re := regexp.MustCompile(`URI="([^"]+)"`)
-			trimmed = re.ReplaceAllStringFunc(trimmed, func(match string) string {
-				uri := re.FindStringSubmatch(match)[1]
+			trimmed = domainURIRegex.ReplaceAllStringFunc(trimmed, func(match string) string {
+				uri := domainURIRegex.FindStringSubmatch(match)[1]
 				newURI := uri
 
 				// 生成 token
@@ -554,7 +564,10 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 // ---------------------------
 
 func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	defer dm.CleanTokenManagers()
+	// 每 100 个请求清理一次 token 管理器，避免每次请求都执行 O(n*m) 扫描
+	if atomic.AddUint64(&dm.cleanCounter, 1)%100 == 0 {
+		defer dm.CleanTokenManagers()
+	}
 	targetHost, protocol, found := dm.MapDomain(r.Host)
 	// logger.LogPrintf("映射域名: %s -> %s", r.Host, targetHost)
 	if !found {
@@ -999,8 +1012,7 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if strings.Contains(lineStr, "http://") || strings.Contains(lineStr, "https://") {
 					// logger.LogPrintf("DEBUG: 在M3U8中发现URL行: %s", strings.TrimSpace(lineStr))
 					// 提取URL并记录映射关系
-					re := regexp.MustCompile(`https?://[^/\s]+`)
-					matches := re.FindAllString(lineStr, -1)
+					matches := domainURLRegex.FindAllString(lineStr, -1)
 					for _, match := range matches {
 						if parsedURL, err := url.Parse(match); err == nil {
 							// logger.LogPrintf("DEBUG: 解析出URL Host: %s", parsedURL.Host)
@@ -1048,9 +1060,8 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // ---------------------------
 
 func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, maxRedirect int, frontendScheme, frontendHost string, tokenParam string) (*http.Response, error) {
-	defer dm.CleanTokenManagers()
 	reqBodyBytes, _ := io.ReadAll(req.Body)
-	// req.Body.Close()
+	req.Body.Close()
 
 	for i := 0; i < maxRedirect; i++ {
 		req.Body = io.NopCloser(bytes.NewReader(reqBodyBytes))
@@ -1061,7 +1072,7 @@ func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, m
 
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 			loc := resp.Header.Get("Location")
-			// resp.Body.Close()
+			resp.Body.Close()
 			if loc == "" {
 				return resp, nil
 			}

@@ -52,6 +52,9 @@ func (r *RingBuffer) Close() {
 
 // Reset restores Pull() behavior after a Close().
 func (r *RingBuffer) Reset() {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
 	for i := uint64(0); i < r.size; i++ {
 		r.buffer[i] = nil
 	}

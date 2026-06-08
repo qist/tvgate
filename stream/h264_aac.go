@@ -27,6 +27,13 @@ const (
 
 var dropCount int64
 
+// bytes.Buffer 池，减少视频帧处理时的频繁分配
+var videoBufPool = sync.Pool{
+	New: func() any {
+		return &bytes.Buffer{}
+	},
+}
+
 type broadcastWriter struct {
 	hub *StreamHubs
 }
@@ -230,11 +237,16 @@ func HandleH264AacStream(
 					videoPTS += step
 					lastVideoTS = pkt.Timestamp
 				}
-				buf := &bytes.Buffer{}
+				buf := videoBufPool.Get().(*bytes.Buffer)
+				buf.Reset()
 				for _, nalu := range nalus {
 					buf.Write([]byte{0x00, 0x00, 0x00, 0x01})
 					buf.Write(nalu)
 				}
+				// 复制数据，因为 buf 归还后内容会被覆盖
+				data := make([]byte, buf.Len())
+				copy(data, buf.Bytes())
+				videoBufPool.Put(buf)
 				mux.WriteData(&astits.MuxerData{
 					PID: videoPID,
 					PES: &astits.PESData{
@@ -246,7 +258,7 @@ func HandleH264AacStream(
 								DataAlignmentIndicator: true,
 							},
 						},
-						Data: buf.Bytes(),
+						Data: data,
 					},
 				})
 				// 更新活跃时间
@@ -274,23 +286,23 @@ func HandleH264AacStream(
 			// 音频
 			if audioFormat != nil {
 				aDecoder, _ := audioFormat.CreateDecoder()
-				var audioDropCount int64 // 添加音频丢包计数器
+				var audioDropCount int64 // 添加音频丢包计数器（使用原子操作避免数据竞争）
 				client.OnPacketRTP(audioMedia, audioFormat, func(pkt *rtp.Packet) {
 					// ⚡ 入流量统计
 					// monitor.AddAppInboundBytes(uint64(len(pkt.Payload)))
 					aus, err := aDecoder.Decode(pkt)
 					if err != nil || len(aus) == 0 {
-						audioDropCount++
+						count := atomic.AddInt64(&audioDropCount, 1)
 						// 添加日志记录，每10次丢包记录一次
-						if audioDropCount%10 == 0 {
-							logger.LogPrintf("%d RTP packets lost", audioDropCount)
-							audioDropCount = 0 // 重置计数
+						if count%10 == 0 {
+							logger.LogPrintf("%d RTP packets lost", count)
+							atomic.StoreInt64(&audioDropCount, 0) // 重置计数
 						}
 						return
 					}
 					// 重置计数
-					if audioDropCount > 0 {
-						audioDropCount = 0
+					if atomic.LoadInt64(&audioDropCount) > 0 {
+						atomic.StoreInt64(&audioDropCount, 0)
 					}
 					for _, au := range aus {
 						if len(au) == 0 {
@@ -359,11 +371,6 @@ func HandleH264AacStream(
 	w.Header().Set("Content-Type", "video/mp2t")
 	flusher, _ := w.(http.Flusher)
 	rc := http.NewResponseController(w)
-
-	go func() {
-		<-ctx.Done()
-		cleanup()
-	}()
 
 	// 使用时间戳替代定时器，减少 CPU 开销
 	const (

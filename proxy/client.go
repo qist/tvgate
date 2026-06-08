@@ -5,16 +5,28 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/qist/tvgate/config"
-	"github.com/qist/tvgate/logger"
-	conf "github.com/qist/tvgate/proxy/config"
-	httpclient "github.com/qist/tvgate/utils/http"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/logger"
+	conf "github.com/qist/tvgate/proxy/config"
+	httpclient "github.com/qist/tvgate/utils/http"
 )
+
+// Transport 缓存，避免每次请求都创建新的 http.Transport
+var transportCache sync.Map
+
+type transportCacheKey struct {
+	proxyType   string
+	proxyAddr   string
+	enableIPv6  bool
+	insecureTLS bool
+}
 
 // createProxyClient 根据代理配置和 IPv6 开关创建 http.Client
 func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig config.ProxyConfig, enableIPv6 bool) (*http.Client, error) {
@@ -22,6 +34,20 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 
 	proxyType := strings.ToLower(proxyConfig.Type)
 	proxyAddr := fmt.Sprintf("%s:%d", proxyConfig.Server, proxyConfig.Port)
+
+	// 检查缓存中是否有可用的 transport
+	cacheKey := transportCacheKey{
+		proxyType:   proxyType,
+		proxyAddr:   proxyAddr,
+		enableIPv6:  enableIPv6,
+		insecureTLS: *cfg.HTTP.InsecureSkipVerify,
+	}
+
+	if cached, ok := transportCache.Load(cacheKey); ok {
+		transport := cached.(*http.Transport)
+		client := httpclient.NewHTTPClient(cfg, transport)
+		return client, nil
+	}
 
 	transport := &http.Transport{
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: *cfg.HTTP.InsecureSkipVerify},
@@ -117,6 +143,9 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 		}
 
 	}
+	// 缓存 transport 以便复用
+	transportCache.Store(cacheKey, transport)
+
 	// 这里使用 NewHTTPClient 生成最终 client
 	client := httpclient.NewHTTPClient(cfg, transport)
 

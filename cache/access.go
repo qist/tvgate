@@ -6,10 +6,7 @@ import (
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/utils/proxy"
-	tsync "github.com/qist/tvgate/utils/sync"
 )
-
-var accessWg tsync.WaitGroup
 
 func LoadAccessCache(key string) *config.ProxyGroupConfig {
 	config.AccessCache.RLock()
@@ -19,14 +16,13 @@ func LoadAccessCache(key string) *config.ProxyGroupConfig {
 		return nil
 	}
 
-	// 异步更新访问时间，防止阻塞读取
-	accessWg.Go(func() {
-		config.AccessCache.Lock()
-		if c, exists := config.AccessCache.Mapping[key]; exists {
-			c.LastUsed = time.Now()
-		}
-		config.AccessCache.Unlock()
-	})
+	// 直接内联更新访问时间，避免每次读取都创建 goroutine
+	// 使用写锁但操作极快（仅设置时间戳），不会造成明显阻塞
+	config.AccessCache.Lock()
+	if c, exists := config.AccessCache.Mapping[key]; exists {
+		c.LastUsed = time.Now()
+	}
+	config.AccessCache.Unlock()
 
 	return cached.Group
 }

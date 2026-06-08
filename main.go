@@ -19,7 +19,6 @@ import (
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/config/watch"
 	"github.com/qist/tvgate/dns"
-	"github.com/qist/tvgate/domainmap"
 	"github.com/qist/tvgate/groupstats"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
@@ -136,12 +135,6 @@ func main() {
 		auth.GlobalTokenManager = nil
 	}
 
-	tm := &auth.TokenManager{
-		Enabled:       true,
-		StaticTokens:  make(map[string]*auth.SessionInfo),
-		DynamicTokens: make(map[string]*auth.SessionInfo),
-	}
-
 	// token 清理任务
 	stopTokenCleanup := make(chan struct{})
 	cleanupTask := taskPool.Get().(*mainTask)
@@ -151,7 +144,9 @@ func main() {
 		for {
 			select {
 			case <-ticker.C:
-				tm.CleanupExpiredSessions()
+				if auth.GlobalTokenManager != nil {
+					auth.GlobalTokenManager.CleanupExpiredSessions()
+				}
 			case <-stopTokenCleanup:
 				return
 			}
@@ -308,8 +303,6 @@ func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActive
 
 		// Stop stream module
 		stream.Close()
-
-		domainmap.StopCacheCleaner()
 
 		close(stopCleaner)
 		close(stopAccessCleaner)

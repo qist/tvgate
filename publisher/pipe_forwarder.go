@@ -193,6 +193,11 @@ func (sh *StreamHub) Close() {
 	if sh.hub != nil {
 		sh.hub.Close()
 	}
+
+	// 从全局管理器中移除，防止内存泄漏
+	streamHubManager.mutex.Lock()
+	delete(streamHubManager.hubs, sh.streamName)
+	streamHubManager.mutex.Unlock()
 }
 
 // SwitchToBackup 通知StreamHub切换到备用推流器

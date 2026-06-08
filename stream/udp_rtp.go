@@ -207,6 +207,7 @@ type StreamHub struct {
 	fccUnicastTimer        *time.Timer   // FCC单播阶段超时定时器
 	fccUnicastDuration     time.Duration // FCC单播阶段最大持续时间
 	fccLastActivityTime    int64         // 最后FCC活动时间，用于超时检测
+	fccMcastActiveCh       chan struct{} // FCC MCAST_ACTIVE 通知通道，避免每包创建 goroutine
 	patBuffer              []byte
 	pmtBuffer              []byte
 	lastFccDataTime        int64
@@ -292,6 +293,7 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		fccPortMax:        fccPortMax,
 		fccState:          FCC_STATE_INIT,
 		fccUnicastBufPool: &sync.Pool{New: func() any { return make([]byte, 2048) }},
+		fccMcastActiveCh:  make(chan struct{}, 1), // 带缓冲的通知通道
 		lastFccDataTime:   time.Now().UnixNano() / 1e6, // 初始化为当前时间
 		createdAt:         time.Now(),
 	}
@@ -604,6 +606,17 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	// 累积RTP数据到缓冲区
 	h.Mu.Lock()
 	h.rtpBuffer = append(h.rtpBuffer, payload...)
+
+	// 防止 rtpBuffer 无限增长：超过 128KB 时重置
+	// 正常 TS 包 188 字节，RTP 负载通常 7 个包约 1.3KB
+	// 128KB 足够处理高码率流（如 4K）的临时累积，同时防止畸形数据导致内存泄漏
+	const maxRTPBufferSize = 128 * 1024
+	if len(h.rtpBuffer) > maxRTPBufferSize {
+		h.rtpBuffer = h.rtpBuffer[:0]
+		h.Mu.Unlock()
+		return nil
+	}
+
 	if len(h.rtpBuffer) < 188 {
 		h.Mu.Unlock()
 		return nil
@@ -941,7 +954,12 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 						addedToPending = true
 					}
 					if state == FCC_STATE_MCAST_ACTIVE {
-						h.Wg.Go(h.fccHandleMcastActive)
+						// 使用通知通道避免每包创建 goroutine
+						select {
+						case h.fccMcastActiveCh <- struct{}{}:
+						default:
+							// 通道已有通知，跳过
+						}
 					}
 				}
 			} else {
@@ -970,6 +988,9 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 func (h *StreamHub) run() {
 	// 启动定期检查FCC状态的goroutine
 	h.Wg.Go(h.checkFCCStatus)
+
+	// 启动 MCAST_ACTIVE 通知处理 goroutine，避免每包创建 goroutine
+	h.Wg.Go(h.fccMcastActiveNotifier)
 
 	for {
 		select {
@@ -1380,8 +1401,15 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	h.sendInitialToClient(client)
 
 	// 使用 defer 确保客户端始终被移除
+	removed := false
 	defer func() {
-		h.RemoveCh <- connID
+		if !removed {
+			// 客户端断开连接，立即标记为关闭
+			client.mu.Lock()
+			client.closed = true
+			client.mu.Unlock()
+			h.RemoveCh <- connID
+		}
 	}()
 
 	for {
@@ -1416,7 +1444,13 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 				updateActive()
 			}
 		case <-ctx.Done():
-			// 客户端断开连接，退出循环
+			// 客户端断开连接，立即标记为关闭，停止接收数据
+			client.mu.Lock()
+			client.closed = true
+			client.mu.Unlock()
+			removed = true
+			// 从hub中移除客户端
+			h.RemoveCh <- connID
 			return
 		case <-h.ctx.Done():
 			return

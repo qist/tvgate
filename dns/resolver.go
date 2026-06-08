@@ -24,6 +24,14 @@ import (
 	"github.com/quic-go/quic-go/http3"
 )
 
+// 缓存本地 IP，避免每次 DNS 查询都创建 UDP 连接
+var (
+	cachedLocalIP    net.IP
+	cachedLocalIPAt  time.Time
+	cachedLocalIPMu  sync.RWMutex
+	localIPCacheTTL  = 5 * time.Minute
+)
+
 // --------------------------- DNS 客户端接口 ---------------------------
 
 type dnsClient interface {
@@ -461,7 +469,26 @@ func (c *plainDNSClient) LookupIPAddr(ctx context.Context, host string) ([]net.I
 }
 
 // getLocalIP 获取本地IP地址，用于EDNS Client Subnet (ECS)
+// 使用缓存避免每次 DNS 查询都创建 UDP 连接
 func getLocalIP() (net.IP, error) {
+	// 先检查缓存（读锁快速路径）
+	cachedLocalIPMu.RLock()
+	if cachedLocalIP != nil && time.Since(cachedLocalIPAt) < localIPCacheTTL {
+		ip := cachedLocalIP
+		cachedLocalIPMu.RUnlock()
+		return ip, nil
+	}
+	cachedLocalIPMu.RUnlock()
+
+	// 缓存过期或为空，需要重新获取（写锁）
+	cachedLocalIPMu.Lock()
+	defer cachedLocalIPMu.Unlock()
+
+	// 双重检查：可能其他 goroutine 已经更新了
+	if cachedLocalIP != nil && time.Since(cachedLocalIPAt) < localIPCacheTTL {
+		return cachedLocalIP, nil
+	}
+
 	// 准备多个备选地址
 	dnsServers := []string{"223.5.5.5:80", "223.6.6.6:80", "119.29.29.29:80"}
 
@@ -470,8 +497,11 @@ func getLocalIP() (net.IP, error) {
 		if err != nil {
 			continue // 当前服务器失败，尝试下一个
 		}
-		defer conn.Close()
+		conn.Close()
 		localAddr := conn.LocalAddr().(*net.UDPAddr)
+		// 更新缓存
+		cachedLocalIP = localAddr.IP
+		cachedLocalIPAt = time.Now()
 		return localAddr.IP, nil
 	}
 	return nil, fmt.Errorf("could not connect to any DNS server")
@@ -845,15 +875,36 @@ func (c *quicClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAdd
 
 // --------------------------- 网络请求实现 ---------------------------
 
-func sendDoHQuery(ctx context.Context, dnsServer, b64 string, timeout time.Duration, maxConns int) ([]byte, error) {
-	tlsConfig := &tls.Config{InsecureSkipVerify: *config.Cfg.HTTP.InsecureSkipVerify}
-	
-	// 创建带连接数限制的传输器
+// DoH transport 缓存，避免每次查询都创建新的 http.Transport
+var dohTransportCache sync.Map
+
+type dohTransportKey struct {
+	dnsServer string
+	maxConns  int
+	insecure  bool
+}
+
+func getDoHTransport(dnsServer string, maxConns int) *http.Transport {
+	key := dohTransportKey{
+		dnsServer: dnsServer,
+		maxConns:  maxConns,
+		insecure:  *config.Cfg.HTTP.InsecureSkipVerify,
+	}
+	if cached, ok := dohTransportCache.Load(key); ok {
+		return cached.(*http.Transport)
+	}
 	transport := &http.Transport{
-		TLSClientConfig: tlsConfig,
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: key.insecure},
 		MaxConnsPerHost: maxConns,
 	}
-	
+	dohTransportCache.Store(key, transport)
+	return transport
+}
+
+func sendDoHQuery(ctx context.Context, dnsServer, b64 string, timeout time.Duration, maxConns int) ([]byte, error) {
+	// 使用缓存的 transport，复用连接
+	transport := getDoHTransport(dnsServer, maxConns)
+
 	client := &http.Client{
 		Timeout:   timeout,
 		Transport: transport,
@@ -887,20 +938,29 @@ func sendDoHQuery(ctx context.Context, dnsServer, b64 string, timeout time.Durat
 	return body, nil
 }
 
-func sendH3Query(ctx context.Context, dnsServer, b64 string, timeout time.Duration, maxConns int) ([]byte, error) {
-	tlsConfig := &tls.Config{InsecureSkipVerify: *config.Cfg.HTTP.InsecureSkipVerify}
+// H3 transport 缓存
+var h3TransportCache sync.Map
 
+func getH3Transport(dnsServer string) *http3.Transport {
+	key := *config.Cfg.HTTP.InsecureSkipVerify
+	if cached, ok := h3TransportCache.Load(key); ok {
+		return cached.(*http3.Transport)
+	}
+	transport := &http3.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: key},
+	}
+	h3TransportCache.Store(key, transport)
+	return transport
+}
+
+func sendH3Query(ctx context.Context, dnsServer, b64 string, timeout time.Duration, maxConns int) ([]byte, error) {
 	if strings.HasPrefix(dnsServer, "h3://") {
 		dnsServer = "https://" + dnsServer[5:]
 	}
 
-	// HTTP/3 客户端
-	http3Transport := &http3.Transport{
-		TLSClientConfig: tlsConfig,
-	}
-	
-	// 注意：http3.Transport不直接支持MaxConnsPerHost，但可以通过其他方式限制
-	
+	// 使用缓存的 HTTP/3 transport，复用连接
+	http3Transport := getH3Transport(dnsServer)
+
 	client := &http.Client{
 		Timeout:   timeout,
 		Transport: http3Transport,

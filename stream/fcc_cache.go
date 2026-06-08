@@ -8,6 +8,14 @@ import (
 	"github.com/qist/tvgate/logger"
 )
 
+// TS 包缓冲池，减少 TsRingBuffer.Write 中的频繁分配
+var tsPacketPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 188) // 标准 TS 包大小
+		return &buf
+	},
+}
+
 /*
 ===========================
 TS Ring Buffer
@@ -48,14 +56,27 @@ func (rb *TsRingBuffer) Write(pkt []byte) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
-	cp := make([]byte, len(pkt))
-	copy(cp, pkt)
+	// 从池中获取缓冲区，减少分配
+	var cp []byte
+	if len(pkt) == 188 {
+		bufPtr := tsPacketPool.Get().(*[]byte)
+		cp = *bufPtr
+		copy(cp, pkt)
+	} else {
+		cp = make([]byte, len(pkt))
+		copy(cp, pkt)
+	}
 
 	if rb.count < rb.size {
 		pos := (rb.head + rb.count) % rb.size
 		rb.buffer[pos] = cp
 		rb.count++
 	} else {
+		// 归还旧缓冲区到池
+		oldPkt := rb.buffer[rb.head]
+		if len(oldPkt) == 188 {
+			tsPacketPool.Put(&oldPkt)
+		}
 		rb.buffer[rb.head] = cp
 		rb.head = (rb.head + 1) % rb.size
 		rb.baseSeq++

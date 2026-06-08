@@ -15,17 +15,37 @@ jobs:
     strategy:
       matrix:
         platform:
+          # ==================== 新命名 规范====================
+          - linux-64
+          - linux-arm64-v8a
+          - linux-arm32-v7a
+          - linux-arm32-v6
+          - linux-arm32-v5
+          - linux-32
+          - linux-loong64
+          - linux-mips32
+          - linux-mips32le
+          - linux-mips64
+          - linux-mips64le
+          - linux-ppc64
+          - linux-ppc64le
+          - linux-riscv64
+          - linux-s390x
+          - windows-64
+          - windows-32
+          - windows-arm64-v8a
+          - macos-64
+          - macos-arm64-v8a
+          - android-arm64-v8a
+          # ==================== 旧命名 (兼容旧版本升级) ====================
           - linux-amd64
           - linux-arm64
           - linux-armv7
           - linux-armv6
           - linux-386
-          - linux-ppc64
-          - linux-ppc64le
-          - linux-s390x
           - windows-amd64
-          - windows-arm64
           - windows-386
+          - windows-arm64
           - darwin-amd64
           - darwin-arm64
           - android-arm64
@@ -43,24 +63,45 @@ jobs:
         run: |
           VERSION=$(cat config/version 2>/dev/null || echo "latest")
           case "${{ matrix.platform }}" in
-            linux-amd64)   GOOS=linux; GOARCH=amd64;   PACKAGE_ARCH=amd64 ;;
-            linux-arm64)   GOOS=linux; GOARCH=arm64;   PACKAGE_ARCH=arm64 ;;
-            linux-armv7)   GOOS=linux; GOARCH=arm; GOARM=7; PACKAGE_ARCH=armv7 ;;
-            linux-armv6)   GOOS=linux; GOARCH=arm; GOARM=6; PACKAGE_ARCH=armv6 ;;
-            linux-386)     GOOS=linux; GOARCH=386;     PACKAGE_ARCH=386 ;;
-            linux-ppc64)   GOOS=linux; GOARCH=ppc64;   PACKAGE_ARCH=ppc64 ;;
-            linux-ppc64le) GOOS=linux; GOARCH=ppc64le; PACKAGE_ARCH=ppc64le ;;
-            linux-s390x)   GOOS=linux; GOARCH=s390x;   PACKAGE_ARCH=s390x ;;
-            windows-amd64) GOOS=windows; GOARCH=amd64; PACKAGE_ARCH=amd64 ;;
-            windows-arm64) GOOS=windows; GOARCH=arm64; PACKAGE_ARCH=arm64 ;;
-            windows-386)   GOOS=windows; GOARCH=386;   PACKAGE_ARCH=386 ;;
-            darwin-amd64)  GOOS=darwin; GOARCH=amd64;  PACKAGE_ARCH=amd64 ;;
-            darwin-arm64)  GOOS=darwin; GOARCH=arm64;  PACKAGE_ARCH=arm64 ;;
-            android-arm64) GOOS=android; GOARCH=arm64; PACKAGE_ARCH=arm64 ;;
+            # ==================== 新命名 ====================
+            linux-64)          GOOS=linux; GOARCH=amd64;     PACKAGE_OS=linux;   PACKAGE_ARCH=64 ;;
+            linux-arm64-v8a)   GOOS=linux; GOARCH=arm64;     PACKAGE_OS=linux;   PACKAGE_ARCH=arm64-v8a ;;
+            linux-arm32-v7a)   GOOS=linux; GOARCH=arm; GOARM=7; PACKAGE_OS=linux; PACKAGE_ARCH=arm32-v7a ;;
+            linux-arm32-v6)    GOOS=linux; GOARCH=arm; GOARM=6; PACKAGE_OS=linux; PACKAGE_ARCH=arm32-v6 ;;
+            linux-arm32-v5)    GOOS=linux; GOARCH=arm; GOARM=5; PACKAGE_OS=linux; PACKAGE_ARCH=arm32-v5 ;;
+            linux-32)          GOOS=linux; GOARCH=386;       PACKAGE_OS=linux;   PACKAGE_ARCH=32 ;;
+            linux-loong64)     GOOS=linux; GOARCH=loong64;   PACKAGE_OS=linux;   PACKAGE_ARCH=loong64 ;;
+            linux-mips32)      GOOS=linux; GOARCH=mips;      PACKAGE_OS=linux;   PACKAGE_ARCH=mips32 ;;
+            linux-mips32le)    GOOS=linux; GOARCH=mipsle;    PACKAGE_OS=linux;   PACKAGE_ARCH=mips32le ;;
+            linux-mips64)      GOOS=linux; GOARCH=mips64;    PACKAGE_OS=linux;   PACKAGE_ARCH=mips64 ;;
+            linux-mips64le)    GOOS=linux; GOARCH=mips64le;  PACKAGE_OS=linux;   PACKAGE_ARCH=mips64le ;;
+            linux-ppc64)       GOOS=linux; GOARCH=ppc64;     PACKAGE_OS=linux;   PACKAGE_ARCH=ppc64 ;;
+            linux-ppc64le)     GOOS=linux; GOARCH=ppc64le;   PACKAGE_OS=linux;   PACKAGE_ARCH=ppc64le ;;
+            linux-riscv64)     GOOS=linux; GOARCH=riscv64;   PACKAGE_OS=linux;   PACKAGE_ARCH=riscv64 ;;
+            linux-s390x)       GOOS=linux; GOARCH=s390x;     PACKAGE_OS=linux;   PACKAGE_ARCH=s390x ;;
+            windows-64)        GOOS=windows; GOARCH=amd64;   PACKAGE_OS=windows; PACKAGE_ARCH=64 ;;
+            windows-32)        GOOS=windows; GOARCH=386;     PACKAGE_OS=windows; PACKAGE_ARCH=32 ;;
+            windows-arm64-v8a) GOOS=windows; GOARCH=arm64;   PACKAGE_OS=windows; PACKAGE_ARCH=arm64-v8a ;;
+            macos-64)          GOOS=darwin; GOARCH=amd64;    PACKAGE_OS=macos;   PACKAGE_ARCH=64 ;;
+            macos-arm64-v8a)   GOOS=darwin; GOARCH=arm64;    PACKAGE_OS=macos;   PACKAGE_ARCH=arm64-v8a ;;
+            android-arm64-v8a) GOOS=android; GOARCH=arm64;   PACKAGE_OS=android; PACKAGE_ARCH=arm64-v8a ;;
+            # ==================== 旧命名 ====================
+            linux-amd64)       GOOS=linux; GOARCH=amd64;     PACKAGE_OS=linux;   PACKAGE_ARCH=amd64 ;;
+            linux-arm64)       GOOS=linux; GOARCH=arm64;     PACKAGE_OS=linux;   PACKAGE_ARCH=arm64 ;;
+            linux-armv7)       GOOS=linux; GOARCH=arm; GOARM=7; PACKAGE_OS=linux; PACKAGE_ARCH=armv7 ;;
+            linux-armv6)       GOOS=linux; GOARCH=arm; GOARM=6; PACKAGE_OS=linux; PACKAGE_ARCH=armv6 ;;
+            linux-386)         GOOS=linux; GOARCH=386;       PACKAGE_OS=linux;   PACKAGE_ARCH=386 ;;
+            windows-amd64)     GOOS=windows; GOARCH=amd64;   PACKAGE_OS=windows; PACKAGE_ARCH=amd64 ;;
+            windows-386)       GOOS=windows; GOARCH=386;     PACKAGE_OS=windows; PACKAGE_ARCH=386 ;;
+            windows-arm64)     GOOS=windows; GOARCH=arm64;   PACKAGE_OS=windows; PACKAGE_ARCH=arm64 ;;
+            darwin-amd64)      GOOS=darwin; GOARCH=amd64;    PACKAGE_OS=darwin;  PACKAGE_ARCH=amd64 ;;
+            darwin-arm64)      GOOS=darwin; GOARCH=arm64;    PACKAGE_OS=darwin;  PACKAGE_ARCH=arm64 ;;
+            android-arm64)     GOOS=android; GOARCH=arm64;   PACKAGE_OS=android; PACKAGE_ARCH=arm64 ;;
           esac
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "GOOS=$GOOS" >> $GITHUB_ENV
           echo "GOARCH=$GOARCH" >> $GITHUB_ENV
+          echo "PACKAGE_OS=$PACKAGE_OS" >> $GITHUB_ENV
           echo "PACKAGE_ARCH=$PACKAGE_ARCH" >> $GITHUB_ENV
           [ -n "$GOARM" ] && echo "GOARM=$GOARM" >> $GITHUB_ENV
           echo "CGO_ENABLED=0" >> $GITHUB_ENV
@@ -68,21 +109,10 @@ jobs:
       - name: Build TVGate
         run: |
           mkdir -p build
-          OUTPUT="build/TVGate-${GOOS}-${PACKAGE_ARCH}"
+          OUTPUT="build/TVGate-${PACKAGE_OS}-${PACKAGE_ARCH}"
           [ "$GOOS" = "windows" ] && OUTPUT="$OUTPUT.exe"
           go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'" -o $OUTPUT .
           echo "OUTPUT=$OUTPUT" >> $GITHUB_ENV
-
-      - name: Install UPX (optional)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y upx-ucl || sudo apt-get install -y upx || true
-
-      - name: UPX compress (optional)
-        run: |
-          if command -v upx >/dev/null 2>&1; then
-            upx -9 "$OUTPUT" >/dev/null 2>&1 || true
-          fi
 
       - name: Prepare packaging
         run: |
@@ -101,7 +131,7 @@ jobs:
       - name: Package into zip
         run: |
           mkdir -p build
-          ZIP_FILE="build/TVGate-${GOOS}-${PACKAGE_ARCH}.zip"
+          ZIP_FILE="build/TVGate-${PACKAGE_OS}-${PACKAGE_ARCH}.zip"
           cd package
           zip -r "../$ZIP_FILE" *
           cd ..

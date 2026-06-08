@@ -517,6 +517,7 @@ func (tm *TokenManager) CleanupExpiredSessions() {
 		if isSessionExpired(sess) {
 			// logger.LogPrintf("清理过期静态token: %s", token)
 			delete(tm.StaticTokens, token)
+			delete(tm.tokenTypes, token)
 			// 从全局状态中也删除
 			staticTokenStatesMutex.Lock()
 			delete(staticTokenStates, token)
@@ -531,6 +532,7 @@ func (tm *TokenManager) CleanupExpiredSessions() {
 			// logger.LogPrintf("清理过期会话: token=%s, originalURL=%s, ip=%s, expireDuration=%s",
 				// sess.Token, sess.OriginalURL, sess.IP, sess.ExpireDuration)
 			delete(tm.DynamicTokens, token)
+			delete(tm.tokenTypes, token)
 		}
 	}
 }

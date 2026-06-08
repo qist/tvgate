@@ -10,94 +10,131 @@ OUT_DIR := build
 # 如果没有指定 VERSION，就从 config/version 文件读取
 VERSION ?= $(shell cat config/version 2>/dev/null || echo latest)
 
-LDFLAGS := -s -w  -extldflags '-static' -X '$(MODULE)/config.Version=$(VERSION)'
+LDFLAGS := -s -w -extldflags '-static' -X '$(MODULE)/config.Version=$(VERSION)'
 GCFLAGS := -trimpath
 ASMFLAGS := -trimpath
 
-# 目标列表
+# 目标列表（命名规范与 Xray-core 一致）
+# 64 = amd64, 32 = 386, arm64-v8a, arm32-v7a, macos = darwin
 TARGETS := \
-	$(OUT_DIR)/TVGate-linux-amd64 \
-	$(OUT_DIR)/TVGate-linux-arm64 \
-	$(OUT_DIR)/TVGate-linux-armv7 \
-	$(OUT_DIR)/TVGate-linux-386 \
+	$(OUT_DIR)/TVGate-linux-64 \
+	$(OUT_DIR)/TVGate-linux-arm64-v8a \
+	$(OUT_DIR)/TVGate-linux-arm32-v7a \
+	$(OUT_DIR)/TVGate-linux-arm32-v6 \
+	$(OUT_DIR)/TVGate-linux-arm32-v5 \
+	$(OUT_DIR)/TVGate-linux-32 \
+	$(OUT_DIR)/TVGate-linux-loong64 \
+	$(OUT_DIR)/TVGate-linux-mips32 \
+	$(OUT_DIR)/TVGate-linux-mips32le \
+	$(OUT_DIR)/TVGate-linux-mips64 \
+	$(OUT_DIR)/TVGate-linux-mips64le \
 	$(OUT_DIR)/TVGate-linux-ppc64 \
 	$(OUT_DIR)/TVGate-linux-ppc64le \
+	$(OUT_DIR)/TVGate-linux-riscv64 \
 	$(OUT_DIR)/TVGate-linux-s390x \
-	$(OUT_DIR)/TVGate-windows-amd64.exe \
-	$(OUT_DIR)/TVGate-windows-arm64.exe \
-	$(OUT_DIR)/TVGate-windows-386.exe \
-	$(OUT_DIR)/TVGate-darwin-amd64 \
-	$(OUT_DIR)/TVGate-darwin-arm64 \
-	$(OUT_DIR)/TVGate-android-arm64 
+	$(OUT_DIR)/TVGate-windows-64.exe \
+	$(OUT_DIR)/TVGate-windows-32.exe \
+	$(OUT_DIR)/TVGate-windows-arm64-v8a.exe \
+	$(OUT_DIR)/TVGate-macos-64 \
+	$(OUT_DIR)/TVGate-macos-arm64-v8a \
+	$(OUT_DIR)/TVGate-android-arm64-v8a
 
 all: $(TARGETS)
 	@echo "全部编译完成，版本号: $(VERSION)，文件在 $(OUT_DIR)/"
 
-# Linux amd64
-$(OUT_DIR)/TVGate-linux-amd64:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+# ==================== Linux ====================
 
-# Linux arm64
-$(OUT_DIR)/TVGate-linux-arm64:
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+# Linux 64 (amd64)
+$(OUT_DIR)/TVGate-linux-64:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
 
-# Linux armv7
-$(OUT_DIR)/TVGate-linux-armv7:
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+# Linux arm64-v8a
+$(OUT_DIR)/TVGate-linux-arm64-v8a:
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
 
-# Linux 386
-$(OUT_DIR)/TVGate-linux-386:
-	CGO_ENABLED=0 GOOS=linux GOARCH=386 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+# Linux arm32-v7a
+$(OUT_DIR)/TVGate-linux-arm32-v7a:
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
+
+# Linux arm32-v6
+$(OUT_DIR)/TVGate-linux-arm32-v6:
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
+
+# Linux arm32-v5
+$(OUT_DIR)/TVGate-linux-arm32-v5:
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
+
+# Linux 32 (386)
+$(OUT_DIR)/TVGate-linux-32:
+	CGO_ENABLED=0 GOOS=linux GOARCH=386 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
+
+# Linux loong64
+$(OUT_DIR)/TVGate-linux-loong64:
+	CGO_ENABLED=0 GOOS=linux GOARCH=loong64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
+
+# Linux mips32
+$(OUT_DIR)/TVGate-linux-mips32:
+	CGO_ENABLED=0 GOOS=linux GOARCH=mips go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
+
+# Linux mips32le
+$(OUT_DIR)/TVGate-linux-mips32le:
+	CGO_ENABLED=0 GOOS=linux GOARCH=mipsle go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
+
+# Linux mips64
+$(OUT_DIR)/TVGate-linux-mips64:
+	CGO_ENABLED=0 GOOS=linux GOARCH=mips64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
+
+# Linux mips64le
+$(OUT_DIR)/TVGate-linux-mips64le:
+	CGO_ENABLED=0 GOOS=linux GOARCH=mips64le go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
 
 # Linux ppc64
 $(OUT_DIR)/TVGate-linux-ppc64:
-	CGO_ENABLED=0 GOOS=linux GOARCH=ppc64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+	CGO_ENABLED=0 GOOS=linux GOARCH=ppc64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
 
 # Linux ppc64le
 $(OUT_DIR)/TVGate-linux-ppc64le:
-	CGO_ENABLED=0 GOOS=linux GOARCH=ppc64le go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+	CGO_ENABLED=0 GOOS=linux GOARCH=ppc64le go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
+
+# Linux riscv64
+$(OUT_DIR)/TVGate-linux-riscv64:
+	CGO_ENABLED=0 GOOS=linux GOARCH=riscv64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
 
 # Linux s390x
 $(OUT_DIR)/TVGate-linux-s390x:
-	CGO_ENABLED=0 GOOS=linux GOARCH=s390x go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+	CGO_ENABLED=0 GOOS=linux GOARCH=s390x go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
 
-# Windows amd64
-$(OUT_DIR)/TVGate-windows-amd64.exe:
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+# ==================== Windows ====================
 
-# Windows arm64
-$(OUT_DIR)/TVGate-windows-arm64.exe:
-	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+# Windows 64 (amd64)
+$(OUT_DIR)/TVGate-windows-64.exe:
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
 
+# Windows 32 (386)
+$(OUT_DIR)/TVGate-windows-32.exe:
+	CGO_ENABLED=0 GOOS=windows GOARCH=386 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
 
-# Windows 386
-$(OUT_DIR)/TVGate-windows-386.exe:
-	CGO_ENABLED=0 GOOS=windows GOARCH=386 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+# Windows arm64-v8a
+$(OUT_DIR)/TVGate-windows-arm64-v8a.exe:
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
 
-# macOS amd64
-$(OUT_DIR)/TVGate-darwin-amd64:
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+# ==================== macOS ====================
 
-# macOS arm64
-$(OUT_DIR)/TVGate-darwin-arm64:
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+# macOS 64 (amd64)
+$(OUT_DIR)/TVGate-macos-64:
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
 
-# Android arm64
-$(OUT_DIR)/TVGate-android-arm64:
-	CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)"  -asmflags="$(ASMFLAGS)" -o $@ .
-	@if command -v upx >/dev/null 2>&1; then upx -9 $@ >/dev/null 2>&1 || true; fi
+# macOS arm64-v8a
+$(OUT_DIR)/TVGate-macos-arm64-v8a:
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
+
+# ==================== Android ====================
+
+# Android arm64-v8a
+$(OUT_DIR)/TVGate-android-arm64-v8a:
+	CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
 
 clean:
-	rm -rf $(OUT_DIR)/TVGate-*-*
+	rm -rf $(OUT_DIR)/TVGate-*
+
+.PHONY: all clean

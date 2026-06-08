@@ -170,8 +170,18 @@ func (r *RingBuffer) PullWithContext(ctx context.Context) (interface{}, bool) {
 		return nil, false
 	}
 
+	// 启动 goroutine 监听 context 取消，确保 Wait() 不会永久阻塞
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			r.cond.Broadcast()
+		case <-done:
+		}
+	}()
+	defer close(done)
+
 	for r.buffer[r.readIndex] == nil && !r.closed {
-		// 注意：这里无法在 Wait 过程中响应 Context 取消
 		r.cond.Wait()
 
 		// 唤醒后立即检查 Context 和 Closed 状态

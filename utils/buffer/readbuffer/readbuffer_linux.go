@@ -10,7 +10,7 @@ import (
 func ReadBuffer(pc PacketConn) (int, error) {
 	rawConn, err := pc.SyscallConn()
 	if err != nil {
-		panic(err)
+		return 0, err
 	}
 
 	var v int

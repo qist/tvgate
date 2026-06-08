@@ -4,18 +4,16 @@ import (
 	tsync "github.com/qist/tvgate/utils/sync"
 )
 
-// Pool 是一个工作池结构
+// Pool 是一个工作池结构（有界并发模式）
 type Pool struct {
-	work chan func()
-	sem  chan struct{}
-	wg   tsync.WaitGroup
+	sem chan struct{}
+	wg  tsync.WaitGroup
 }
 
 // NewPool 创建一个新的工作池
 func NewPool(size int) *Pool {
 	return &Pool{
-		work: make(chan func()),
-		sem:  make(chan struct{}, size),
+		sem: make(chan struct{}, size),
 	}
 }
 
@@ -30,6 +28,5 @@ func (p *Pool) Submit(job func()) {
 
 // Close 关闭工作池并等待所有任务完成
 func (p *Pool) Close() {
-	close(p.work)
 	p.wg.Wait()
 }

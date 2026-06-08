@@ -13,6 +13,14 @@ import (
 	"github.com/qist/tvgate/logger"
 )
 
+// FCC 本地 IP 缓存，避免每次 FCC 请求都创建 UDP 连接
+var (
+	cachedFCCLocalIP   net.IP
+	cachedFCCLocalIPAt time.Time
+	cachedFCCLocalIPMu sync.RWMutex
+	fccLocalIPCacheTTL = 5 * time.Minute
+)
+
 func isRTCP205(data []byte) bool {
 	if len(data) < 8 {
 		return false
@@ -268,6 +276,19 @@ func (h *StreamHub) handleMcastDataDuringTransition(bufRef *BufferRef) {
 	// 更新FCC活动时间
 	now := time.Now().UnixNano() / 1e6
 	h.fccLastActivityTime = now
+}
+
+// fccMcastActiveNotifier 监听 MCAST_ACTIVE 通知通道，统一处理待发送数据
+// 避免在 broadcastRef 中为每个包都创建 goroutine
+func (h *StreamHub) fccMcastActiveNotifier() {
+	for {
+		select {
+		case <-h.ctx.Done():
+			return
+		case <-h.fccMcastActiveCh:
+			h.fccHandleMcastActive()
+		}
+	}
 }
 
 // fccHandleMcastActive 处理多播激活状态的数据
@@ -890,7 +911,11 @@ func (h *StreamHub) fccSetStateLocked(state int) int {
 // fccLogStateChange 记录状态转换日志并处理副作用（如启动 MCAST_ACTIVE 处理）
 func (h *StreamHub) fccLogStateChange(prevState, state int, reason string) {
 	if state == FCC_STATE_MCAST_ACTIVE && prevState != FCC_STATE_MCAST_ACTIVE {
-		h.Wg.Go(h.fccHandleMcastActive)
+		// 使用通知通道触发处理，而不是每包创建 goroutine
+		select {
+		case h.fccMcastActiveCh <- struct{}{}:
+		default:
+		}
 	}
 
 	// 记录状态转换日志
@@ -1591,8 +1616,26 @@ func (h *StreamHub) getLocalIPForFCC() net.IP {
 	return h.getDefaultLocalIP()
 }
 
-// getDefaultLocalIP 默认获取本地IP的方法
+// getDefaultLocalIP 默认获取本地IP的方法（带缓存）
 func (h *StreamHub) getDefaultLocalIP() net.IP {
+	// 先检查缓存
+	cachedFCCLocalIPMu.RLock()
+	if cachedFCCLocalIP != nil && time.Since(cachedFCCLocalIPAt) < fccLocalIPCacheTTL {
+		ip := cachedFCCLocalIP
+		cachedFCCLocalIPMu.RUnlock()
+		return ip
+	}
+	cachedFCCLocalIPMu.RUnlock()
+
+	// 缓存过期，重新获取
+	cachedFCCLocalIPMu.Lock()
+	defer cachedFCCLocalIPMu.Unlock()
+
+	// 双重检查
+	if cachedFCCLocalIP != nil && time.Since(cachedFCCLocalIPAt) < fccLocalIPCacheTTL {
+		return cachedFCCLocalIP
+	}
+
 	// 准备多个备选地址，提高获取本地IP的成功率
 	dnsServers := []string{"8.8.8.8:80", "8.8.4.4:80", "223.5.5.5:80", "223.6.6.6:80"}
 
@@ -1603,6 +1646,9 @@ func (h *StreamHub) getDefaultLocalIP() net.IP {
 		}
 		conn.Close() // 使用完后立即关闭连接
 		localAddr := conn.LocalAddr().(*net.UDPAddr)
+		// 更新缓存
+		cachedFCCLocalIP = localAddr.IP
+		cachedFCCLocalIPAt = time.Now()
 		return localAddr.IP
 	}
 

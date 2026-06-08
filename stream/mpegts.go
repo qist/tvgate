@@ -124,10 +124,8 @@ func HandleMpegtsStream(
 	flusher, _ := w.(http.Flusher)
 	rc := http.NewResponseController(w)
 
-	go func() {
-		<-ctx.Done()
-		cleanup()
-	}()
+	// 确保 cleanup 始终被调用
+	defer cleanup()
 
 	// 使用时间戳替代定时器，减少 CPU 开销
 	const (

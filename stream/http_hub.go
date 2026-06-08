@@ -19,6 +19,14 @@ import (
 	tsync "github.com/qist/tvgate/utils/sync"
 )
 
+// HTTPHubClient 快照 slice 池，减少 Broadcast 中的频繁分配
+var httpClientSlicePool = sync.Pool{
+	New: func() any {
+		s := make([]*HTTPHubClient, 0, 16)
+		return &s
+	},
+}
+
 type HTTPHubClient struct {
 	ch       *ringbuffer.RingBuffer
 	w        http.ResponseWriter
@@ -225,7 +233,9 @@ func (h *HTTPHub) RemoveClient(c *HTTPHubClient) {
 
 func (h *HTTPHub) Broadcast(data []byte) {
 	h.mu.Lock()
-	clients := make([]*HTTPHubClient, 0, len(h.clients))
+	// 从池中获取快照 slice，减少分配
+	clientsPtr := httpClientSlicePool.Get().(*[]*HTTPHubClient)
+	clients := (*clientsPtr)[:0]
 	for c := range h.clients {
 		clients = append(clients, c)
 	}
@@ -240,6 +250,9 @@ func (h *HTTPHub) Broadcast(data []byte) {
 			h.removeClientIfNotExist(c)
 		}
 	}
+	// 归还快照 slice 到池
+	*clientsPtr = clients
+	httpClientSlicePool.Put(clientsPtr)
 }
 
 // removeClientIfNotExist 从客户端列表中移除已不存在的客户端
@@ -563,10 +576,16 @@ func (h *HTTPHub) WaitForPlaying(ctx context.Context) bool {
 	}
 
 	// 使用 condvar 等待状态变化，避免 100ms 轮询浪费 CPU
+	// 使用 done 通道确保 goroutine 在函数返回时被清理
+	done := make(chan struct{})
 	go func() {
-		<-ctx.Done()
-		h.stateCond.Broadcast()
+		select {
+		case <-ctx.Done():
+			h.stateCond.Broadcast()
+		case <-done:
+		}
 	}()
+	defer close(done)
 
 	for h.state == StateStopped && !h.closed {
 		if ctx.Err() != nil {

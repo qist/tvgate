@@ -20,6 +20,14 @@ const (
 	StateError
 )
 
+// 客户端快照 slice 池，减少 Broadcast 中的频繁分配
+var clientSlicePool = sync.Pool{
+	New: func() any {
+		s := make([]*ringbuffer.RingBuffer, 0, 16)
+		return &s
+	},
+}
+
 type StreamHubs struct {
 	mu        sync.RWMutex // 使用读写锁提高并发性能
 	clients   map[*ringbuffer.RingBuffer]struct{}
@@ -99,7 +107,9 @@ func (hub *StreamHubs) Broadcast(data []byte) {
 		hub.mu.RUnlock()
 		return
 	}
-	clients := make([]*ringbuffer.RingBuffer, 0, clientCount)
+	// 从池中获取快照 slice，减少分配
+	clientsPtr := clientSlicePool.Get().(*[]*ringbuffer.RingBuffer)
+	clients := (*clientsPtr)[:0]
 	for ch := range hub.clients {
 		clients = append(clients, ch)
 	}
@@ -126,6 +136,9 @@ func (hub *StreamHubs) Broadcast(data []byte) {
 			// 非关键帧：直接丢弃，不通知客户端，避免不必要的剔除
 		}
 	}
+	// 归还快照 slice 到池
+	*clientsPtr = clients
+	clientSlicePool.Put(clientsPtr)
 }
 
 // removeClientIfNotExist 从客户端列表中移除已不存在的客户端
@@ -319,6 +332,17 @@ func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
 	if hub.state == StatePlaying {
 		return true
 	}
+
+	// 启动一个 goroutine 监听 context 取消，确保 Wait() 不会永久阻塞
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			hub.stateCond.Broadcast()
+		case <-done:
+		}
+	}()
+	defer close(done)
 
 	// 使用带超时的条件变量等待，支持 context 取消
 	for {

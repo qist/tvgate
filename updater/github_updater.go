@@ -124,7 +124,8 @@ type ArchInfo struct {
 	GOOS        string
 	GOARCH      string
 	GOARM       string
-	PackageArch string
+	PackageOS   string // 发布文件使用的 OS 名称 (darwin → macos)
+	PackageArch string // 命名规范
 }
 
 func GetArchInfo() (*ArchInfo, error) {
@@ -133,26 +134,52 @@ func GetArchInfo() (*ArchInfo, error) {
 	var arch ArchInfo
 
 	switch fmt.Sprintf("%s-%s", goos, goarch) {
+	// Linux
 	case "linux-amd64":
-		arch = ArchInfo{"linux", "amd64", "", "amd64"}
+		arch = ArchInfo{"linux", "amd64", "", "linux", "64"}
 	case "linux-arm64":
-		arch = ArchInfo{"linux", "arm64", "", "arm64"}
+		arch = ArchInfo{"linux", "arm64", "", "linux", "arm64-v8a"}
 	case "linux-arm":
 		goarm := os.Getenv("GOARM")
 		if goarm == "" {
 			goarm = "7"
 		}
-		arch = ArchInfo{"linux", "arm", goarm, "armv" + goarm}
+		arch = ArchInfo{"linux", "arm", goarm, "linux", "arm32-v" + goarm}
 	case "linux-386":
-		arch = ArchInfo{"linux", "386", "", "386"}
+		arch = ArchInfo{"linux", "386", "", "linux", "32"}
+	case "linux-loong64":
+		arch = ArchInfo{"linux", "loong64", "", "linux", "loong64"}
+	case "linux-mips":
+		arch = ArchInfo{"linux", "mips", "", "linux", "mips32"}
+	case "linux-mipsle":
+		arch = ArchInfo{"linux", "mipsle", "", "linux", "mips32le"}
+	case "linux-mips64":
+		arch = ArchInfo{"linux", "mips64", "", "linux", "mips64"}
+	case "linux-mips64le":
+		arch = ArchInfo{"linux", "mips64le", "", "linux", "mips64le"}
+	case "linux-ppc64":
+		arch = ArchInfo{"linux", "ppc64", "", "linux", "ppc64"}
+	case "linux-ppc64le":
+		arch = ArchInfo{"linux", "ppc64le", "", "linux", "ppc64le"}
+	case "linux-riscv64":
+		arch = ArchInfo{"linux", "riscv64", "", "linux", "riscv64"}
+	case "linux-s390x":
+		arch = ArchInfo{"linux", "s390x", "", "linux", "s390x"}
+	// Windows
 	case "windows-amd64":
-		arch = ArchInfo{"windows", "amd64", "", "amd64"}
+		arch = ArchInfo{"windows", "amd64", "", "windows", "64"}
 	case "windows-386":
-		arch = ArchInfo{"windows", "386", "", "386"}
+		arch = ArchInfo{"windows", "386", "", "windows", "32"}
+	case "windows-arm64":
+		arch = ArchInfo{"windows", "arm64", "", "windows", "arm64-v8a"}
+	// macOS (darwin → macos)
 	case "darwin-amd64":
-		arch = ArchInfo{"darwin", "amd64", "", "amd64"}
+		arch = ArchInfo{"darwin", "amd64", "", "macos", "64"}
 	case "darwin-arm64":
-		arch = ArchInfo{"darwin", "arm64", "", "arm64"}
+		arch = ArchInfo{"darwin", "arm64", "", "macos", "arm64-v8a"}
+	// Android
+	case "android-arm64":
+		arch = ArchInfo{"android", "arm64", "", "android", "arm64-v8a"}
 	default:
 		return nil, fmt.Errorf("unsupported OS/ARCH: %s-%s", goos, goarch)
 	}
@@ -189,7 +216,7 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 		return err
 	}
 
-	zipFileName := fmt.Sprintf("TVGate-%s-%s.zip", arch.GOOS, arch.PackageArch)
+	zipFileName := fmt.Sprintf("TVGate-%s-%s.zip", arch.PackageOS, arch.PackageArch)
 	urls := getDownloadURLs(cfg, version, zipFileName)
 	tmpFile := filepath.Join(os.TempDir(), zipFileName)
 
@@ -204,6 +231,7 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 		success = true
 		break
 	}
+
 	if !success {
 		SetStatus("error", fmt.Sprintf("所有下载源失败: %v", lastErr))
 		return lastErr
@@ -223,7 +251,7 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	if err := unzip(tmpFile, tmpDestDir); err != nil {
 		return err
 	}
-	newapp := fmt.Sprintf("TVGate-%s-%s", arch.GOOS, arch.PackageArch)
+	newapp := fmt.Sprintf("TVGate-%s-%s", arch.PackageOS, arch.PackageArch)
 	newExecPath := filepath.Join(tmpDestDir, filepath.Base(newapp))
 	if runtime.GOOS != "windows" {
 		_ = os.Chmod(newExecPath, 0755)

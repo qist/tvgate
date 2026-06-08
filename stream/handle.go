@@ -25,6 +25,9 @@ import (
 	tsync "github.com/qist/tvgate/utils/sync"
 )
 
+// 预编译的正则表达式，避免在热路径中重复编译
+var uriRegex = regexp.MustCompile(`URI="([^"]+)"`)
+
 // 定义任务结构体用于sync.Pool
 type handleTask struct {
 	f func()
@@ -245,7 +248,7 @@ func getRequestScheme(r *http.Request) string {
 	return "http"
 }
 
-// 支持的内容类型列表
+// 支持的内容类型列表（已预转小写，避免每次比较时重复转换）
 var supportedContentTypes = []string{
 	"application/vnd.apple.mpegurl",
 	"application/x-mpegurl",
@@ -258,7 +261,7 @@ var supportedContentTypes = []string{
 func IsSupportedContentType(contentType string) bool {
 	contentType = strings.ToLower(contentType)
 	for _, t := range supportedContentTypes {
-		if strings.HasPrefix(contentType, strings.ToLower(t)) {
+		if strings.HasPrefix(contentType, t) {
 			return true
 		}
 	}
@@ -551,9 +554,8 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 		// --- 处理 EXT 标签 ---
 		if strings.HasPrefix(line, "#") {
 			if strings.Contains(line, "URI=\"") {
-				re := regexp.MustCompile(`URI="([^"]+)"`)
-				line = re.ReplaceAllStringFunc(line, func(match string) string {
-					uri := re.FindStringSubmatch(match)[1]
+				line = uriRegex.ReplaceAllStringFunc(line, func(match string) string {
+					uri := uriRegex.FindStringSubmatch(match)[1]
 					newURI := uri
 					token := ""
 					if tm != nil && tm.Enabled {

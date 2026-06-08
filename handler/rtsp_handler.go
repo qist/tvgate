@@ -132,8 +132,10 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 			selectedProxyChan <- lb.SelectProxy(proxyCtx, pg, rtspURL, false)
 		})
 
+		proxyTimer := time.NewTimer(config.DefaultDialTimeout)
 		select {
 		case selectedProxy := <-selectedProxyChan:
+			proxyTimer.Stop() // 停止 timer 避免泄漏
 			if selectedProxy != nil {
 				proxyDialer, err := proxy.CreateProxyDialer(*selectedProxy)
 				if err == nil {
@@ -143,7 +145,7 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 					logger.LogPrintf("RTSP 通过代理 %s://%s:%d", selectedProxy.Type, selectedProxy.Server, selectedProxy.Port)
 				}
 			}
-		case <-time.After(config.DefaultDialTimeout):
+		case <-proxyTimer.C:
 			proxyCancel() // 超时立即取消后台任务
 			logger.LogPrintf("选择代理超时，降级直连")
 		}

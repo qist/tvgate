@@ -209,6 +209,30 @@ var (
 	cpuUsageCache      float64
 	cpuCountCache      int
 	lastCPUCountUpdate time.Time
+
+	// 磁盘缓存
+	lastDiskScan    time.Time
+	diskPartitions  []DiskPartitionInfo
+	diskUsage       uint64
+	diskTotal       uint64
+	diskUsedPercent float64
+
+	// 网络流量缓存
+	lastNetSample     time.Time
+	networkInterfaces []NetworkInterfaceInfo
+	totalIn           uint64
+	totalOut          uint64
+
+	// 主机信息缓存（静态信息，只需获取一次）
+	cachedHostOS           string
+	cachedHostPlatform     string
+	cachedHostKernelArch   string
+	cachedHostKernelVersion string
+	hostInfoCached         bool
+
+	// 温度缓存
+	lastTemperatureSample time.Time
+	cachedTemperature     float64
 )
 
 // 获取CPU温度（如果支持）
@@ -264,14 +288,15 @@ func getTemperature() float64 {
 }
 
 func updateSystemStats() {
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-
 	// CPU - 使用缓存减少频繁采样
 	now := time.Now()
 
-	// 获取CPU温度
-	cpuTemperature := getTemperature()
+	// 获取CPU温度（每30秒更新一次，避免频繁读取传感器）
+	if now.Sub(lastTemperatureSample) > 30*time.Second {
+		cachedTemperature = getTemperature()
+		lastTemperatureSample = now
+	}
+	cpuTemperature := cachedTemperature
 	// fmt.Printf("DEBUG: CPU Temperature = %.2f°C\n", cpuTemperature)
 
 	// 更新CPU核心数缓存(每小时更新一次)
@@ -318,13 +343,6 @@ func updateSystemStats() {
 	}
 
 	// 磁盘 - 使用缓存减少频繁扫描
-	var (
-		lastDiskScan    = time.Now().Add(-time.Hour) // 初始化为一小时前
-		diskPartitions  []DiskPartitionInfo
-		diskUsage       uint64
-		diskTotal       uint64
-		diskUsedPercent float64
-	)
 
 	if now.Sub(lastDiskScan) > 30*time.Second {
 		parts, _ := disk.Partitions(true)
@@ -387,22 +405,24 @@ func updateSystemStats() {
 		loadAverage.Load15 = loadAvg.Load15
 	}
 
-	// 主机信息
-	hostInfo, _ := host.Info()
-	hostDetails := HostInfo{}
-	if hostInfo != nil {
-		hostDetails.OS = hostInfo.OS
-		hostDetails.Platform = hostInfo.Platform
-		hostDetails.KernelArch = hostInfo.KernelArch
-		hostDetails.KernelVersion = hostInfo.KernelVersion
+	// 主机信息（静态信息，只需获取一次）
+	if !hostInfoCached {
+		if hostInfo, err := host.Info(); err == nil && hostInfo != nil {
+			cachedHostOS = hostInfo.OS
+			cachedHostPlatform = hostInfo.Platform
+			cachedHostKernelArch = hostInfo.KernelArch
+			cachedHostKernelVersion = hostInfo.KernelVersion
+			hostInfoCached = true
+		}
+	}
+	hostDetails := HostInfo{
+		OS:           cachedHostOS,
+		Platform:     cachedHostPlatform,
+		KernelArch:   cachedHostKernelArch,
+		KernelVersion: cachedHostKernelVersion,
 	}
 
 	// 网络流量 - 使用缓存减少频繁采样
-	var (
-		lastNetSample     = time.Now().Add(-time.Hour) // 初始化为一小时前
-		networkInterfaces []NetworkInterfaceInfo
-		totalIn, totalOut uint64
-	)
 
 	if now.Sub(lastNetSample) > 1*time.Second {
 		counters, _ := net.IOCounters(true)

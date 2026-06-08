@@ -8,9 +8,16 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qist/tvgate/config"
+)
+
+// 缓存解析后的 HTML 模板，避免每次请求重新解析
+var (
+	statusTemplate     *template.Template
+	statusTemplateOnce sync.Once
 )
 
 // 页面数据结构
@@ -479,50 +486,53 @@ toggleThemeBtn.addEventListener('click', () => {
 </body>
 </html>`
 
-	t, err := template.New("status").Funcs(template.FuncMap{
-		"divInt64": func(a int64, b ...int64) float64 {
-			result := float64(a)
-			for _, v := range b {
-				if v != 0 {
-					result /= float64(v)
+	// 使用 sync.Once 缓存解析后的模板，避免每次请求重新解析
+	statusTemplateOnce.Do(func() {
+		statusTemplate, _ = template.New("status").Funcs(template.FuncMap{
+			"divInt64": func(a int64, b ...int64) float64 {
+				result := float64(a)
+				for _, v := range b {
+					if v != 0 {
+						result /= float64(v)
+					}
 				}
-			}
-			return result
-		},
-		"modInt64": func(a int64, b int64) int64 {
-			if b != 0 {
-				return a % b
-			}
-			return 0
-		},
-		"divFloat64": func(a float64, b ...float64) float64 {
-			result := a
-			for _, v := range b {
-				if v != 0 {
-					result /= v
+				return result
+			},
+			"modInt64": func(a int64, b int64) int64 {
+				if b != 0 {
+					return a % b
 				}
-			}
-			return result
-		},
-		"modFloat64": func(a, b float64) float64 {
-			if b != 0 {
-				return float64(int64(a) % int64(b))
-			}
-			return 0
-		},
-		"float64ToInt64":         func(a float64) int64 { return int64(a) },
-		"FormatBytes":            FormatBytes,
-		"FormatBytesPerSec":      FormatBytesPerSec,
-		"FormatNetworkBandwidth": FormatNetworkBandwidth,
-		"ge": func(a, b float64) bool { return a >= b }, // 添加ge函数用于温度比较
-	}).Parse(tmpl)
+				return 0
+			},
+			"divFloat64": func(a float64, b ...float64) float64 {
+				result := a
+				for _, v := range b {
+					if v != 0 {
+						result /= v
+					}
+				}
+				return result
+			},
+			"modFloat64": func(a, b float64) float64 {
+				if b != 0 {
+					return float64(int64(a) % int64(b))
+				}
+				return 0
+			},
+			"float64ToInt64":         func(a float64) int64 { return int64(a) },
+			"FormatBytes":            FormatBytes,
+			"FormatBytesPerSec":      FormatBytesPerSec,
+			"FormatNetworkBandwidth": FormatNetworkBandwidth,
+			"ge": func(a, b float64) bool { return a >= b }, // 添加ge函数用于温度比较
+		}).Parse(tmpl)
+	})
 
-	if err != nil {
-		http.Error(w, "模板解析错误: "+err.Error(), http.StatusInternalServerError)
+	if statusTemplate == nil {
+		http.Error(w, "模板解析错误", http.StatusInternalServerError)
 		return
 	}
 
-	if err := t.Execute(w, data); err != nil {
+	if err := statusTemplate.Execute(w, data); err != nil {
 		http.Error(w, "模板执行错误: "+err.Error(), http.StatusInternalServerError)
 	}
 }

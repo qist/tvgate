@@ -234,6 +234,7 @@ func (m *Manager) startExpirationChecker() {
 			select {
 			case <-m.expirationChecker.C:
 				m.checkStreamKeyExpiration()
+				m.CleanupFFmpegStats() // 同时清理过期的 FFmpeg 统计信息
 			case <-m.done:
 				return
 			}
@@ -1635,6 +1636,20 @@ func (m *Manager) GetFFmpegStats(streamName string, receiverIndex int) *FFmpegPr
 	}
 
 	return nil
+}
+
+// CleanupFFmpegStats 清理过期的 FFmpeg 统计信息
+// 移除超过 10 分钟未更新且不在运行状态的条目
+func (m *Manager) CleanupFFmpegStats() {
+	m.statsMutex.Lock()
+	defer m.statsMutex.Unlock()
+
+	now := time.Now()
+	for key, stat := range m.ffmpegStats {
+		if !stat.Running && now.Sub(stat.LastUpdate) > 10*time.Minute {
+			delete(m.ffmpegStats, key)
+		}
+	}
 }
 
 // updateFFmpegProcessInfo 更新FFmpeg进程信息
