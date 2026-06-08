@@ -3,7 +3,6 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 )
@@ -11,13 +10,6 @@ import (
 var (
 	cipherSuiteMap     map[string]uint16
 	buildCipherMapOnce sync.Once
-
-	// 缓存 TLS 证书，避免每次握手都从磁盘加载
-	cachedCert   *tls.Certificate
-	cachedCertMu sync.RWMutex
-	certFile     string
-	keyFile      string
-	certModTime  int64
 )
 
 // ==================== TLS 配置解析 ====================
@@ -117,10 +109,8 @@ func parseCurvePreferences(curveStr string) []tls.CurveID {
 
 // ==================== 启动 HTTP 服务器 ====================
 
-// 动态证书加载（带缓存，避免每次握手都从磁盘读取）
-func makeTLSConfig(cFile, kFile string, minVersion, maxVersion uint16, cipherSuites []uint16, curves []tls.CurveID) *tls.Config {
-	certFile = cFile
-	keyFile = kFile
+// 动态证书加载
+func makeTLSConfig(certFile, keyFile string, minVersion, maxVersion uint16, cipherSuites []uint16, curves []tls.CurveID) *tls.Config {
 	return &tls.Config{
 		MinVersion:       minVersion,
 		MaxVersion:       maxVersion,
@@ -128,48 +118,11 @@ func makeTLSConfig(cFile, kFile string, minVersion, maxVersion uint16, cipherSui
 		CurvePreferences: curves,
 		NextProtos:       []string{"h3", "h2", "http/1.1"},
 		GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			return getCachedCert()
+			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+			if err != nil {
+				return nil, fmt.Errorf("加载证书失败: %w", err)
+			}
+			return &cert, nil
 		},
 	}
-}
-
-// getCachedCert 获取缓存的证书，文件修改时自动重新加载
-func getCachedCert() (*tls.Certificate, error) {
-	// 先尝试读锁快速路径
-	cachedCertMu.RLock()
-	if cachedCert != nil {
-		// 检查文件是否修改
-		info, err := os.Stat(certFile)
-		if err == nil && info.ModTime().Unix() == certModTime {
-			cert := cachedCert
-			cachedCertMu.RUnlock()
-			return cert, nil
-		}
-		cachedCertMu.RUnlock()
-	}
-
-	// 需要重新加载，获取写锁
-	cachedCertMu.Lock()
-	defer cachedCertMu.Unlock()
-
-	// 双重检查：可能其他 goroutine 已经加载了
-	if cachedCert != nil {
-		info, err := os.Stat(certFile)
-		if err == nil && info.ModTime().Unix() == certModTime {
-			return cachedCert, nil
-		}
-	}
-
-	// 加载证书
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		return nil, fmt.Errorf("加载证书失败: %w", err)
-	}
-
-	// 更新缓存
-	if info, err := os.Stat(certFile); err == nil {
-		certModTime = info.ModTime().Unix()
-	}
-	cachedCert = &cert
-	return &cert, nil
 }
