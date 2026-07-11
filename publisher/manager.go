@@ -1598,8 +1598,9 @@ func (m *Manager) updateFFmpegStats(streamName string, receiverIndex int, pid in
 		stat.Restarts++
 	}
 
-	// 获取进程的CPU和内存使用情况
-	if stat.PID > 0 {
+	// 获取进程的CPU和内存使用情况（采样间隔 30 秒，避免频繁系统调用）
+	if stat.PID > 0 && currentTime.Sub(stat.lastSysSample) >= 30*time.Second {
+		stat.lastSysSample = currentTime
 		proc, err := process.NewProcess(stat.PID)
 		if err == nil {
 			// 获取CPU使用率

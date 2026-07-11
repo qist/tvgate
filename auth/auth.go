@@ -269,7 +269,7 @@ func (tm *TokenManager) ValidateToken(token, urlPath, connID string) bool {
 
 	// 打印所有可用的静态token用于调试
 	// for t := range tm.StaticTokens {
-		// logger.LogPrintf("可用静态token: %s", t)
+	// logger.LogPrintf("可用静态token: %s", t)
 	// }
 
 	if !tm.Enabled {
@@ -325,12 +325,12 @@ func (tm *TokenManager) ValidateToken(token, urlPath, connID string) bool {
 		// 判断过期逻辑：从最后活跃时间到现在超过了ExpireDuration
 		if sess.ExpireDuration > 0 && now.Sub(lastActiveAt) > sess.ExpireDuration {
 			// logger.LogPrintf("会话已过期: ExpireDuration=%v, LastActiveAt=%s, Now=%s",
-				// sess.ExpireDuration, lastActiveAt.Format("2006-01-02 15:04:05"), now.Format("2006-01-02 15:04:05"))
+			// sess.ExpireDuration, lastActiveAt.Format("2006-01-02 15:04:05"), now.Format("2006-01-02 15:04:05"))
 			return false // 已过期
 		}
 
 		// logger.LogPrintf("会话未过期: ExpireDuration=%v, LastActiveAt=%s, Now=%s",
-			// sess.ExpireDuration, lastActiveAt.Format("2006-01-02 15:04:05"), now.Format("2006-01-02 15:04:05"))
+		// sess.ExpireDuration, lastActiveAt.Format("2006-01-02 15:04:05"), now.Format("2006-01-02 15:04:05"))
 		return true // 未过期
 	}
 
@@ -356,32 +356,34 @@ func (tm *TokenManager) ValidateToken(token, urlPath, connID string) bool {
 
 				expired := !checkSession(sess)
 				// 从monitor获取实际的最后活跃时间用于日志输出
-				lastActiveAt := sess.LastActiveAt
-				if lastActiveAt.IsZero() {
-					lastActiveAt = sess.FirstAccessAt
-				}
-				if conn := monitor.ActiveClients.GetConnectionByID(sess.ConnID); conn != nil {
-					lastActiveAt = conn.LastActive
-				}
+				if logger.IsEnabled() {
+					lastActiveAt := sess.LastActiveAt
+					if lastActiveAt.IsZero() {
+						lastActiveAt = sess.FirstAccessAt
+					}
+					if conn := monitor.ActiveClients.GetConnectionByID(sess.ConnID); conn != nil {
+						lastActiveAt = conn.LastActive
+					}
 
-				logger.LogPrintf(
-					"静态token验证结果: %s, url: %s, originalURL: %s, ip: %s, connID: %s, ExpireDuration: %s, FirstAccessAt: %s, LastActiveAt: %s, expired: %v",
-					token,
-					urlPath,
-					sess.OriginalURL,
-					sess.IP,
-					connID,
-					sess.ExpireDuration,
-					sess.FirstAccessAt.Format("2006-01-02 15:04:05"),
-					lastActiveAt.Format("2006-01-02 15:04:05"),
-					expired,
-				)
+					logger.LogPrintf(
+						"静态token验证结果: %s, url: %s, originalURL: %s, ip: %s, connID: %s, ExpireDuration: %s, FirstAccessAt: %s, LastActiveAt: %s, expired: %v",
+						token,
+						urlPath,
+						sess.OriginalURL,
+						sess.IP,
+						connID,
+						sess.ExpireDuration,
+						sess.FirstAccessAt.Format("2006-01-02 15:04:05"),
+						lastActiveAt.Format("2006-01-02 15:04:05"),
+						expired,
+					)
+				}
 				return !expired
 			} else {
 				// logger.LogPrintf("静态token未找到: %s", token)
 				// 打印所有可用的静态token用于调试
 				// for t := range tm.StaticTokens {
-					// logger.LogPrintf("可用静态token: %s", t)
+				// logger.LogPrintf("可用静态token: %s", t)
 				// }
 			}
 		}
@@ -425,7 +427,7 @@ func (tm *TokenManager) ValidateToken(token, urlPath, connID string) bool {
 						if err == nil {
 							if tm.DynamicConfig.TTL <= 0 || time.Since(time.Unix(tsUnix, 0)) <= tm.DynamicConfig.TTL {
 								// logger.LogPrintf("动态token未过期: TTL=%v, 创建时间=%s",
-									// tm.DynamicConfig.TTL, time.Unix(tsUnix, 0).Format("2006-01-02 15:04:05"))
+								// tm.DynamicConfig.TTL, time.Unix(tsUnix, 0).Format("2006-01-02 15:04:05"))
 								// 动态token验证成功，存入动态 token 会话
 								if !typeRecorded {
 									tm.tokenTypes[token] = "dynamic"
@@ -530,7 +532,7 @@ func (tm *TokenManager) CleanupExpiredSessions() {
 		if isSessionExpired(sess) {
 			// 在删除前记录被清理的会话信息
 			// logger.LogPrintf("清理过期会话: token=%s, originalURL=%s, ip=%s, expireDuration=%s",
-				// sess.Token, sess.OriginalURL, sess.IP, sess.ExpireDuration)
+			// sess.Token, sess.OriginalURL, sess.IP, sess.ExpireDuration)
 			delete(tm.DynamicTokens, token)
 			delete(tm.tokenTypes, token)
 		}

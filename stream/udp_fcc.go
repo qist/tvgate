@@ -59,6 +59,14 @@ type BufferRef struct {
 	Source   int // 数据来源: 0=未知, 1=多播, 2=单播(FCC)
 }
 
+// bufferRefPool 池化 BufferRef 结构体，避免每包堆分配
+// 8 路 40Mbps 流 ≈ 30000 包/秒，每包少一次 malloc
+var bufferRefPool = sync.Pool{
+	New: func() interface{} {
+		return &BufferRef{}
+	},
+}
+
 const (
 	SourceUnknown = iota
 	SourceMulticast
@@ -70,37 +78,45 @@ func (b *BufferRef) Get() {
 	atomic.AddInt32(&b.refCount, 1)
 }
 
-// Put 减少引用数，当引用数为0时可以回收内存
+// Put 减少引用数，当引用数为0时回收内存和 BufferRef 结构体
 func (b *BufferRef) Put() {
 	if atomic.AddInt32(&b.refCount, -1) == 0 {
+		// 归还底层数据缓冲区到 pool
 		if b.pool != nil && b.backing != nil {
 			b.pool.Put(b.backing)
 		}
+		// 清理字段，防止悬空引用
 		b.data = nil
 		b.backing = nil
 		b.pool = nil
 		b.next = nil
+		b.Source = SourceUnknown
+		// 归还 BufferRef 结构体到 pool
+		bufferRefPool.Put(b)
 	}
 }
 
-// NewBufferRef 创建新的BufferRef实例
+// NewBufferRef 创建新的BufferRef实例（不绑定 pool，用于 patBuffer/pmtBuffer 等共享数据）
 func NewBufferRef(data []byte) *BufferRef {
-	return &BufferRef{
-		data:     data,
-		next:     nil,
-		refCount: 1,
-	}
+	b := bufferRefPool.Get().(*BufferRef)
+	b.data = data
+	b.next = nil
+	b.refCount = 1
+	b.Source = SourceUnknown
+	return b
 }
 
 // NewPooledBufferRef 创建绑定池的BufferRef实例（用于真零拷贝）
+// 从 bufferRefPool 获取结构体，避免堆分配
 func NewPooledBufferRef(backing []byte, view []byte, pool *sync.Pool) *BufferRef {
-	return &BufferRef{
-		data:     view,
-		backing:  backing,
-		pool:     pool,
-		next:     nil,
-		refCount: 1,
-	}
+	b := bufferRefPool.Get().(*BufferRef)
+	b.data = view
+	b.backing = backing
+	b.pool = pool
+	b.next = nil
+	b.refCount = 1
+	b.Source = SourceUnknown
+	return b
 }
 
 // processFCCPacket 处理FCC相关数据包

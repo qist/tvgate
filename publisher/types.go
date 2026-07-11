@@ -71,6 +71,8 @@ type FFmpegProcessStats struct {
 	CurrentBitrate   uint64  `json:"current_bitrate"`   // 当前码率 (bps)
 	AvgBitrate       uint64  `json:"avg_bitrate"`       // 平均码率 (bps)
 	Duration         float64 `json:"duration"`          // 运行时长 (秒)
+
+	lastSysSample time.Time // CPU/内存采样时间，内部使用，不序列化
 }
 
 // FilterOptions represents video and audio filter configurations

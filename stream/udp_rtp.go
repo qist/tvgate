@@ -43,6 +43,14 @@ var (
 			return make([]byte, 188)
 		},
 	}
+
+	// hubClientSlicePool 池化 broadcastRef 中的客户端切片，避免每包 make([])
+	hubClientSlicePool = sync.Pool{
+		New: func() interface{} {
+			s := make([]*hubClient, 0, 16)
+			return &s
+		},
+	}
 )
 
 type rtpSeqEntry struct {
@@ -174,7 +182,7 @@ type StreamHub struct {
 	AddrList       []string
 	state          int
 	stateCond      *sync.Cond
-	lastCCMap      map[int]byte
+	lastCCArr      [8192]byte // 固定数组替代 map，0xFF 表示未见过
 	rtpSequenceMap map[uint32]*rtpSeqEntry
 	rtpLastCleanup time.Time
 	ifaces         []string
@@ -281,7 +289,7 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		BufPool:        &sync.Pool{New: func() any { return make([]byte, 2048) }},
 		AddrList:       addrs,
 		state:          StateStopped,
-		lastCCMap:      make(map[int]byte),
+		// lastCCArr 初始化为 0xFF（表示未见过该 PID）
 		rtpSequenceMap: make(map[uint32]*rtpSeqEntry),
 		ifaces:         ifaces,
 
@@ -293,9 +301,14 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		fccPortMax:        fccPortMax,
 		fccState:          FCC_STATE_INIT,
 		fccUnicastBufPool: &sync.Pool{New: func() any { return make([]byte, 2048) }},
-		fccMcastActiveCh:  make(chan struct{}, 1), // 带缓冲的通知通道
+		fccMcastActiveCh:  make(chan struct{}, 1),      // 带缓冲的通知通道
 		lastFccDataTime:   time.Now().UnixNano() / 1e6, // 初始化为当前时间
 		createdAt:         time.Now(),
+	}
+
+	// 初始化 lastCCArr 为 0xFF（表示未见过该 PID）
+	for i := range hub.lastCCArr {
+		hub.lastCCArr[i] = 0xFF
 	}
 
 	hub.ctx, hub.cancel = context.WithCancel(config.ServerCtx) // 使用全局上下文作为父上下文
@@ -357,6 +370,10 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 			hub.rejoinMulticastGroups()
 		})
 	}
+
+	// 预分配 rtpBuffer，避免 append 扩容引发 GC 卡顿
+	// 64KB ≈ 340 个 TS 包，足够缓冲 1-2 个 RTP 包组
+	hub.rtpBuffer = make([]byte, 0, 64*1024)
 
 	// 注意：不再初始化 fccPendingBuf，统一使用 fccPendingListHead/Tail 链表
 	hub.Wg.Go(hub.run)
@@ -451,7 +468,7 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 	}
 
 	udpAddr, _ := net.ResolveUDPAddr("udp", hubAddr)
-	dstIP := udpAddr.IP.String()
+	dstIP := udpAddr.IP // 直接使用 net.IP 比较，避免 String() 每包分配字符串
 	pconn := ipv4.NewPacketConn(conn)
 	_ = pconn.SetControlMessage(ipv4.FlagDst, true)
 
@@ -475,7 +492,8 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 		default:
 		}
 
-		if cm != nil && cm.Dst.String() != dstIP {
+		// 直接比较 IP 字节，避免 cm.Dst.String() 每包创建字符串
+		if cm != nil && !cm.Dst.Equal(dstIP) {
 			h.BufPool.Put(buf)
 			continue
 		}
@@ -483,12 +501,12 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 		inRef := NewPooledBufferRef(buf, buf[:n], h.BufPool)
 		inRef.Source = SourceMulticast
 
-		h.Mu.RLock()
-		isStopped := h.state == StateError
-		h.Mu.RUnlock()
-		if isStopped {
+		// 用 Closed channel 非阻塞检查，避免每包 RLock/RUnlock
+		select {
+		case <-h.Closed:
 			inRef.Put()
 			return
+		default:
 		}
 
 		// 处理RTP包（零拷贝引用）
@@ -513,7 +531,7 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	data := inRef.data
 
-	// 快速路径：直接是TS包
+	// 快速路径：直接是TS包（非RTP封装）
 	if len(data) >= 188 && data[0] == 0x47 {
 		return inRef
 	}
@@ -537,8 +555,28 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	sequence := binary.BigEndian.Uint16(data[2:4])
 	ssrc := binary.BigEndian.Uint32(data[8:12])
 
-	// 重复检测（减少锁持有时间）
+	// 提取RTP负载（锁外计算，无需加锁）
+	startOff, endOff, err := rtpPayloadGet(data)
+	if err != nil || startOff >= len(data)-endOff {
+		return inRef
+	}
+
+	payloadType := data[1] & 0x7F
+	if payloadType == P_MPGA || payloadType == P_MPGV {
+		if startOff+4 < len(data)-endOff {
+			startOff += 4
+		}
+	}
+
+	payload := data[startOff : len(data)-endOff]
+	if len(payload) < 188 || payload[0] != 0x47 || len(payload)%188 != 0 {
+		return inRef
+	}
+
+	// ===== 单次锁完成全部操作：RTP去重 + rtpBuffer + CC检查 + TS拷贝 =====
 	h.Mu.Lock()
+
+	// --- RTP 重复检测 ---
 	if h.rtpSequenceMap == nil {
 		h.rtpSequenceMap = make(map[uint32]*rtpSeqEntry)
 	}
@@ -551,7 +589,7 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	// 快速检查重复（只检查最近的几个序列号）
 	duplicate := false
 	checkCount := entry.seqCount
-	if checkCount > 8 { // 只检查最近8个
+	if checkCount > 8 {
 		checkCount = 8
 	}
 	startPos := entry.seqPos - checkCount
@@ -583,33 +621,10 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		h.rtpLastCleanup = time.Now()
 		h.cleanupOldSSRCsLocked(h.rtpLastCleanup)
 	}
-	h.Mu.Unlock()
 
-	// 提取RTP负载
-	startOff, endOff, err := rtpPayloadGet(data)
-	if err != nil || startOff >= len(data)-endOff {
-		return inRef
-	}
-
-	payloadType := data[1] & 0x7F
-	if payloadType == P_MPGA || payloadType == P_MPGV {
-		if startOff+4 < len(data)-endOff {
-			startOff += 4
-		}
-	}
-
-	payload := data[startOff : len(data)-endOff]
-	if len(payload) < 188 || payload[0] != 0x47 || len(payload)%188 != 0 {
-		return inRef
-	}
-
-	// 累积RTP数据到缓冲区
-	h.Mu.Lock()
+	// --- rtpBuffer 累积 ---
 	h.rtpBuffer = append(h.rtpBuffer, payload...)
 
-	// 防止 rtpBuffer 无限增长：超过 128KB 时重置
-	// 正常 TS 包 188 字节，RTP 负载通常 7 个包约 1.3KB
-	// 128KB 足够处理高码率流（如 4K）的临时累积，同时防止畸形数据导致内存泄漏
 	const maxRTPBufferSize = 128 * 1024
 	if len(h.rtpBuffer) > maxRTPBufferSize {
 		h.rtpBuffer = h.rtpBuffer[:0]
@@ -646,56 +661,22 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	} else {
 		h.rtpBuffer = h.rtpBuffer[:0]
 	}
-	h.Mu.Unlock()
 
-	// 使用内存池缓冲区，按需扩展
-	poolBuf := h.BufPool.Get().([]byte)
-	backing := poolBuf
-	pool := h.BufPool
-	out := backing[:0]
-
-	// 确保缓冲区有足够空间
-	ensure := func(add int) {
-		if len(out)+add <= cap(out) {
-			return
-		}
-		// 扩展缓冲区，最多扩展到2倍原始大小（限制内存使用）
-		newCap := cap(out) * 2
-		if newCap < len(out)+add {
-			newCap = len(out) + add
-		}
-		// 限制最大缓冲区大小为64KB，避免内存暴涨
-		if newCap > 64*1024 {
-			newCap = 64 * 1024
-		}
-		newBacking := make([]byte, newCap)
-		copy(newBacking, out)
-		if pool != nil && backing != nil {
-			pool.Put(backing)
-		}
-		backing = newBacking
-		pool = nil
-		out = backing[:len(out)]
-	}
-
-	// 写入null包
-	appendNullTS := func() {
-		ensure(188)
-		start := len(out)
-		out = out[:start+188]
-		out[start] = 0x47
-		out[start+1] = 0x1F
-		out[start+2] = 0xFF
-		out[start+3] = 0x10
-		for i := start + 4; i < start+188; i++ {
-			out[i] = 0xFF
-		}
-	}
-
-	h.Mu.RLock()
+	// --- CC检查 + TS拷贝（在同一锁内完成） ---
 	fccEnabled := h.fccEnabled
-	lastCCMap := h.lastCCMap
-	h.Mu.RUnlock()
+	ccArr := &h.lastCCArr
+
+	// 预分配输出缓冲区：最坏情况每个TS包后插3个null包
+	maxOutSize := alignedSize + (alignedSize/188)*3*188
+	poolBuf := h.BufPool.Get().([]byte)
+	if cap(poolBuf) < maxOutSize {
+		// 池缓冲区不够大，直接用 chunk 作为输出（零拷贝）
+		h.Mu.Unlock()
+		outRef := NewBufferRef(chunk)
+		outRef.Source = inRef.Source
+		return outRef
+	}
+	out := poolBuf[:0]
 
 	for i := 0; i < len(chunk); i += 188 {
 		ts := chunk[i : i+188]
@@ -705,51 +686,56 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		pid := ((int(ts[1]) & 0x1F) << 8) | int(ts[2])
 		tsCC := ts[3] & 0x0F
 
-		// FCC PAT/PMT缓存（独立锁）
+		// FCC PAT/PMT缓存
 		if fccEnabled {
 			if pid == PAT_PID && (ts[1]&0x40) != 0 {
-				h.Mu.Lock()
 				if h.patBuffer == nil {
 					h.patBuffer = patBufferPool.Get().([]byte)
 				}
 				copy(h.patBuffer, ts)
-				h.Mu.Unlock()
 			} else if pid == PMT_PID && (ts[1]&0x40) != 0 {
-				h.Mu.Lock()
 				if h.pmtBuffer == nil {
 					h.pmtBuffer = pmtBufferPool.Get().([]byte)
 				}
 				copy(h.pmtBuffer, ts)
-				h.Mu.Unlock()
 			}
 		}
 
 		// CC连续性检查
 		if pid != NULL_PID {
-			h.Mu.Lock()
-			if last, ok := lastCCMap[pid]; ok {
+			last := ccArr[pid]
+			if last != 0xFF {
 				diff := (int(tsCC) - int(last) + 16) & 0x0F
 				if diff > 1 {
-					// 插入null包（限制最多插入3个，避免内存暴涨）
 					nullCount := diff - 1
 					if nullCount > 3 {
 						nullCount = 3
 					}
 					for j := 0; j < nullCount; j++ {
-						appendNullTS()
+						// 内联 appendNullTS 避免函数调用开销
+						pos := len(out)
+						out = out[:pos+188]
+						out[pos] = 0x47
+						out[pos+1] = 0x1F
+						out[pos+2] = 0xFF
+						out[pos+3] = 0x10
+						for k := pos + 4; k < pos+188; k++ {
+							out[k] = 0xFF
+						}
 					}
 				}
 			}
-			lastCCMap[pid] = tsCC
-			h.Mu.Unlock()
+			ccArr[pid] = tsCC
 		}
 
-		// 复制TS包
-		ensure(len(ts))
-		out = append(out, ts...)
+		// 直接 copy 替代 append，减少边界检查
+		pos := len(out)
+		out = out[:pos+188]
+		copy(out[pos:pos+188], ts)
 	}
+	h.Mu.Unlock()
 
-	outRef := NewPooledBufferRef(backing, out, pool)
+	outRef := NewPooledBufferRef(poolBuf, out, h.BufPool)
 	outRef.Source = inRef.Source
 	return outRef
 }
@@ -879,9 +865,9 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 		return
 	}
 
-	// 懒分配 CacheBuffer
+	// 懒分配 CacheBuffer（1024 条目 ≈ 1.3MB，足够客户端重连缓存）
 	if h.CacheBuffer == nil {
-		h.CacheBuffer = NewRingBuffer(4096)
+		h.CacheBuffer = NewRingBuffer(1024)
 	}
 
 	// 更新状态和缓存
@@ -900,10 +886,10 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 
 	// 获取客户端列表和全局FCC状态
 	fccEnabled := h.fccEnabled
-	clientCount := len(h.Clients)
 
-	// 预分配足够的客户端切片，避免动态扩容
-	clients := make([]*hubClient, 0, clientCount)
+	// 从 sync.Pool 获取客户端切片，避免每包 make([])
+	clientsPtr := hubClientSlicePool.Get().(*[]*hubClient)
+	clients := (*clientsPtr)[:0]
 	for _, v := range h.Clients {
 		clients = append(clients, v)
 	}
@@ -973,11 +959,24 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 			select {
 			case client.ch <- bufRef:
 			default:
-				bufRef.Put()
+				// channel 满：丢弃最旧的包（已过期），放入新包（可能含关键帧）
+				select {
+				case old := <-client.ch:
+					old.Put()
+					client.dropCount++
+					client.ch <- bufRef
+				default:
+					// 极端情况：channel 在取出和放入之间又被填满
+					bufRef.Put()
+				}
 			}
 		}
 		client.mu.Unlock()
 	}
+
+	// 归还 client slice 到 pool
+	*clientsPtr = clients
+	hubClientSlicePool.Put(clientsPtr)
 
 	bufRef.Put()
 }
@@ -1281,8 +1280,8 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 		}
 	}
 
-	// 创建响应式通道，缓冲区大小适中
-	ch := make(chan *BufferRef, 4096)
+	// 创建响应式通道，8192 缓冲 ≈ 2 秒 4K 数据，给慢客户端足够缓冲
+	ch := make(chan *BufferRef, 8192)
 
 	// 创建客户端结构体
 	client := &hubClient{
@@ -1389,7 +1388,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 
 	ctx := r.Context()
 	bufferedBytes := 0
-	const maxBufferSize = 128 * 1024 // 128KB缓冲区
+	const maxBufferSize = 256 * 1024 // 256KB缓冲区，减少高频 flush
 
 	flushTicker := time.NewTicker(50 * time.Millisecond)
 	defer flushTicker.Stop()
@@ -1422,15 +1421,45 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 				continue
 			}
 
+			// 写入第一个包
 			n, err := w.Write(ref.data)
 			ref.Put()
 			if err != nil {
 				logger.LogPrintf("写入响应失败: %v", err)
 				return
 			}
-
 			bufferedBytes += n
-			if bufferedBytes >= maxBufferSize {
+
+			// 批量非阻塞读取：尽量多读多写，减少系统调用
+			// 限制每批最多读 64 个包，防止长时间不检查 ctx
+			batchCount := 0
+			for bufferedBytes < maxBufferSize && batchCount < 64 {
+				select {
+				case ref2, ok := <-ch:
+					if !ok {
+						return
+					}
+					if ref2 == nil {
+						continue
+					}
+					n2, err := w.Write(ref2.data)
+					ref2.Put()
+					if err != nil {
+						logger.LogPrintf("写入响应失败: %v", err)
+						return
+					}
+					bufferedBytes += n2
+					batchCount++
+				default:
+					// 没有更多数据了
+					goto batchDone
+				}
+			}
+
+		batchDone:
+			// 有数据就 flush，不要等 128KB 才发
+			// 批量 Write 只是减少 select 次数，flush 必须及时
+			if bufferedBytes > 0 {
 				flusher.Flush()
 				bufferedBytes = 0
 			}
@@ -1447,8 +1476,12 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 			// 客户端断开连接，立即标记为关闭，停止接收数据
 			client.mu.Lock()
 			client.closed = true
+			dropCount := client.dropCount
 			client.mu.Unlock()
 			removed = true
+			if dropCount > 0 {
+				logger.LogPrintf("客户端 %s 断开，期间丢弃 %d 个旧包（慢客户端缓冲追赶）", connID, dropCount)
+			}
 			// 从hub中移除客户端
 			h.RemoveCh <- connID
 			return
@@ -1491,7 +1524,23 @@ func (h *StreamHub) Close() {
 		h.CacheBuffer.Reset()
 		h.CacheBuffer = nil
 	}
-	h.rtpBuffer = nil
+	// 归还 PAT/PMT 缓冲区到 pool
+	if h.patBuffer != nil {
+		patBufferPool.Put(h.patBuffer)
+		h.patBuffer = nil
+	}
+	if h.pmtBuffer != nil {
+		pmtBufferPool.Put(h.pmtBuffer)
+		h.pmtBuffer = nil
+	}
+	// 清理 RTP 序列号 map，释放内存
+	if h.rtpSequenceMap != nil {
+		for ssrc := range h.rtpSequenceMap {
+			delete(h.rtpSequenceMap, ssrc)
+		}
+		h.rtpSequenceMap = nil
+	}
+	h.rtpBuffer = nil // 彻底释放内存
 
 	// 状态更新
 	h.state = StateError

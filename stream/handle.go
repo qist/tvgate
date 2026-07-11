@@ -533,8 +533,10 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 		tokenParam = tm.TokenParamName
 	}
 
+	const maxM3U8Lines = 10000
 	seen := make(map[string]struct{})
 	var resultLines []string
+	lineCount := 0
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -550,6 +552,7 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 			}
 			continue
 		}
+		lineCount++
 
 		// --- 处理 EXT 标签 ---
 		if strings.HasPrefix(line, "#") {
@@ -592,14 +595,16 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 			}
 		}
 
-		// 去重
-		if _, exists := seen[newLine]; exists {
-			if err == io.EOF {
-				break
+		// 去重（超过限制后停止去重，防止 seen map 无限增长）
+		if lineCount <= maxM3U8Lines {
+			if _, exists := seen[newLine]; exists {
+				if err == io.EOF {
+					break
+				}
+				continue
 			}
-			continue
+			seen[newLine] = struct{}{}
 		}
-		seen[newLine] = struct{}{}
 
 		// ✅ 只有 http/https 时才拼接 baseURL
 		if strings.HasPrefix(newLine, "http://") || strings.HasPrefix(newLine, "https://") {

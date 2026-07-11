@@ -28,6 +28,7 @@ var httpClientSlicePool = sync.Pool{
 }
 
 type HTTPHubClient struct {
+	hub      *HTTPHub // 直接引用所属 Hub，O(1) 查找
 	ch       *ringbuffer.RingBuffer
 	w        http.ResponseWriter
 	flusher  http.Flusher
@@ -179,8 +180,9 @@ func (h *HTTPHub) AddClient(w http.ResponseWriter, bufSize int) *HTTPHubClient {
 	rb := createRingBuffer(bufSize) // 为每个客户端创建独立的ringbuffer
 
 	c := &HTTPHubClient{
-		ch: rb,
-		w:  w,
+		hub: h, // 设置 Hub 引用，支持 O(1) 查找
+		ch:  rb,
+		w:   w,
 	}
 	if f, ok := w.(http.Flusher); ok {
 		c.flusher = f
@@ -241,11 +243,13 @@ func (h *HTTPHub) Broadcast(data []byte) {
 	}
 	h.mu.Unlock()
 
-	for _, c := range clients {
-		buf := make([]byte, len(data))
-		copy(buf, data) // 复制数据以避免引用问题
+	// 只复制一次，所有客户端共享同一份只读副本
+	// data 来自 EnsureProducer 中 src.Read(buf) 的 buf[:n]，buf 是调用方传入的共享 buffer，下次 Read 会覆盖
+	shared := make([]byte, len(data))
+	copy(shared, data)
 
-		if !c.ch.Push(buf) {
+	for _, c := range clients {
+		if !c.ch.Push(shared) {
 			// 如果推送失败，可能是通道已关闭，从客户端列表中移除
 			h.removeClientIfNotExist(c)
 		}
@@ -389,8 +393,8 @@ func (c *HTTPHubClient) safeClose() {
 
 func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) error {
 	const (
-		maxFlushBytes = 32 * 1024
-		maxFlushDelay = 200 * time.Millisecond
+		maxFlushBytes  = 32 * 1024
+		maxFlushDelay  = 200 * time.Millisecond
 		activeInterval = 5 * time.Second
 	)
 	var (
@@ -506,19 +510,9 @@ func (c *HTTPHubClient) waitForPlaying(ctx context.Context) bool {
 }
 
 // getHubByClient 通过客户端查找对应的Hub
+// 优化：直接返回 client.hub 引用，O(1) 查找，无需遍历所有 Hub
 func (c *HTTPHubClient) getHubByClient() *HTTPHub {
-	httpHubsMu.RLock()
-	defer httpHubsMu.RUnlock()
-
-	for _, hub := range httpHubs {
-		hub.mu.Lock()
-		_, exists := hub.clients[c]
-		hub.mu.Unlock()
-		if exists {
-			return hub
-		}
-	}
-	return nil
+	return c.hub
 }
 
 // 新增方法：设置流为播放状态

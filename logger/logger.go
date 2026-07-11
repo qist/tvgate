@@ -105,6 +105,13 @@ func LogPrintf(format string, v ...interface{}) {
 	broker.append(line)
 }
 
+// IsEnabled 返回日志是否启用，用于热路径避免不必要的参数求值
+func IsEnabled() bool {
+	logger.RLock()
+	defer logger.RUnlock()
+	return logger.enabled
+}
+
 func SetupLogger(cfg LogConfig) {
 	logger.Lock()
 	defer logger.Unlock()

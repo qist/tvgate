@@ -243,10 +243,9 @@ func HandleH264AacStream(
 					buf.Write([]byte{0x00, 0x00, 0x00, 0x01})
 					buf.Write(nalu)
 				}
-				// 复制数据，因为 buf 归还后内容会被覆盖
-				data := make([]byte, buf.Len())
-				copy(data, buf.Bytes())
-				videoBufPool.Put(buf)
+				// 直接使用 buf.Bytes()，无需额外 copy
+				// mux.WriteData 是同步调用，数据在调用期间被消费，调用完成后可安全归还 Pool
+				data := buf.Bytes()
 				mux.WriteData(&astits.MuxerData{
 					PID: videoPID,
 					PES: &astits.PESData{
@@ -261,6 +260,7 @@ func HandleH264AacStream(
 						Data: data,
 					},
 				})
+				videoBufPool.Put(buf)
 				// 更新活跃时间
 				// if updateActive != nil {
 				// 	updateActive()
@@ -310,7 +310,9 @@ func HandleH264AacStream(
 							continue
 						}
 						adts := buildADTSHeader(audioFormat.Config, len(au))
-						data := append(adts, au...)
+						data := make([]byte, len(adts)+len(au))
+						copy(data, adts)
+						copy(data[len(adts):], au)
 						if !audioInit {
 							audioPTS = float64(videoPTS)
 							audioInit = true
@@ -374,14 +376,14 @@ func HandleH264AacStream(
 
 	// 使用时间戳替代定时器，减少 CPU 开销
 	const (
-		maxFlushBytes   = 32 * 1024
-		maxFlushDelay   = 200 * time.Millisecond
-		activeInterval  = 5 * time.Second
+		maxFlushBytes  = 32 * 1024
+		maxFlushDelay  = 200 * time.Millisecond
+		activeInterval = 5 * time.Second
 	)
 	var (
-		bufferedBytes     = 0
-		lastFlush         = time.Now()
-		lastActiveUpdate  = time.Now()
+		bufferedBytes    = 0
+		lastFlush        = time.Now()
+		lastActiveUpdate = time.Now()
 	)
 
 	for {

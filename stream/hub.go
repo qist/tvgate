@@ -121,14 +121,17 @@ func (hub *StreamHubs) Broadcast(data []byte) {
 		data[2] == 0x00 && data[3] == 0x01 &&
 		(data[4]&0x1F) == 5 // NAL type 5 = IDR frame
 
+	// 只复制一次，所有客户端共享同一份只读副本
+	// data 来自 astits muxer 的内部 buffer，下次 WriteTables 会覆盖，所以必须复制
+	shared := make([]byte, len(data))
+	copy(shared, data)
+
 	for _, ch := range clients {
-		buf := make([]byte, len(data))
-		copy(buf, data)
-		if !ch.Push(buf) {
+		if !ch.Push(shared) {
 			if isKeyFrame {
 				// 关键帧：等待一小段时间重试一次
 				time.Sleep(30 * time.Millisecond)
-				if !ch.Push(buf) {
+				if !ch.Push(shared) {
 					// 重试失败，记录日志但不移除客户端
 					logger.LogPrintf("Key frame dropped for slow client")
 				}
