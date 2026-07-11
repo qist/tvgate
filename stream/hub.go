@@ -82,6 +82,8 @@ func (hub *StreamHubs) RemoveClient(ch *ringbuffer.RingBuffer) {
 	// 检查channel是否还在clients映射中
 	if _, exists := hub.clients[ch]; exists {
 		delete(hub.clients, ch)
+		// 先 Clear 主动排空数据引用，再 Close
+		ch.Clear()
 		ch.Close()
 	}
 	if !hub.isClosed && len(hub.clients) == 0 {
@@ -126,22 +128,48 @@ func (hub *StreamHubs) Broadcast(data []byte) {
 	shared := make([]byte, len(data))
 	copy(shared, data)
 
-	for _, ch := range clients {
-		if !ch.Push(shared) {
-			if isKeyFrame {
-				// 关键帧：等待一小段时间重试一次
-				time.Sleep(30 * time.Millisecond)
-				if !ch.Push(shared) {
-					// 重试失败，记录日志但不移除客户端
-					logger.LogPrintf("Key frame dropped for slow client")
-				}
-			}
-			// 非关键帧：直接丢弃，不通知客户端，避免不必要的剔除
-		}
-	}
+	hub.pushToClients(clients, shared, isKeyFrame)
+
 	// 归还快照 slice 到池
 	*clientsPtr = clients
 	clientSlicePool.Put(clientsPtr)
+}
+
+// BroadcastNoCopy 直接转发数据，不复制
+// 用于 mpegts 直通模式：pkt.Payload 来自 gortsplib，每包独立分配，不会被复用
+func (hub *StreamHubs) BroadcastNoCopy(data []byte) {
+	hub.mu.RLock()
+	clientCount := len(hub.clients)
+	if clientCount == 0 {
+		hub.mu.RUnlock()
+		return
+	}
+	clientsPtr := clientSlicePool.Get().(*[]*ringbuffer.RingBuffer)
+	clients := (*clientsPtr)[:0]
+	for ch := range hub.clients {
+		clients = append(clients, ch)
+	}
+	hub.mu.RUnlock()
+
+	// mpegts 直通模式不需要关键帧检测
+	hub.pushToClients(clients, data, false)
+
+	*clientsPtr = clients
+	clientSlicePool.Put(clientsPtr)
+}
+
+// pushToClients 将数据推送到所有客户端
+func (hub *StreamHubs) pushToClients(clients []*ringbuffer.RingBuffer, data []byte, isKeyFrame bool) {
+	for _, ch := range clients {
+		if !ch.Push(data) {
+			if isKeyFrame {
+				time.Sleep(30 * time.Millisecond)
+				if !ch.Push(data) {
+					logger.LogPrintf("Key frame dropped for slow client")
+				}
+			}
+		}
+	}
 }
 
 // removeClientIfNotExist 从客户端列表中移除已不存在的客户端
@@ -152,6 +180,7 @@ func (hub *StreamHubs) removeClientIfNotExist(ch *ringbuffer.RingBuffer) {
 	// 再次确认客户端是否还在列表中
 	if _, exists := hub.clients[ch]; exists {
 		delete(hub.clients, ch)
+		ch.Clear()
 		ch.Close()
 	}
 	if !hub.isClosed && len(hub.clients) == 0 {
@@ -191,6 +220,7 @@ func (hub *StreamHubs) Close() {
 	hub.videoFormat = nil
 	hub.audioMedia = nil
 	hub.audioFormat = nil
+	hub.lastError = nil
 
 	// 关闭RTSP客户端
 	if hub.rtspClient != nil {
@@ -199,9 +229,16 @@ func (hub *StreamHubs) Close() {
 	}
 
 	for ch := range hub.clients {
+		ch.Clear()
 		ch.Close()
 	}
 	hub.clients = nil
+
+	// 清理 idle timer 引用
+	if hub.idleTimer != nil {
+		hub.idleTimer.Stop()
+		hub.idleTimer = nil
+	}
 
 	// 取消上下文并等待 goroutine
 	if hub.cancel != nil {
@@ -304,6 +341,7 @@ func (hub *StreamHubs) SetError(err error) {
 
 	// 关闭所有现有客户端通道，让他们重新连接
 	for ch := range hub.clients {
+		ch.Clear()
 		ch.Close()
 	}
 	hub.clients = make(map[*ringbuffer.RingBuffer]struct{})

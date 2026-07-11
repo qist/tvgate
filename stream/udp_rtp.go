@@ -1353,20 +1353,17 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	h.AddCh <- client
 
 	// 设置响应头
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("ContentFeatures.DLNA.ORG", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
-	w.Header().Set("TransferMode.DLNA.ORG", "Streaming")
-	w.Header().Set("Content-Type", contentType)
+	hdr := w.Header()
+	hdr.Set("Pragma", "no-cache")
+	hdr.Set("Cache-Control", "no-cache, no-store")
+	hdr.Set("ContentFeatures.DLNA.ORG", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
+	hdr.Set("TransferMode.DLNA.ORG", "Streaming")
+	hdr.Set("Content-Type", contentType)
+	hdr.Set("Accept-Ranges", "none")
+	// 不设置 Transfer-Encoding
+	// Go 自动根据 HTTP/1.1 / HTTP2 选择传输方式
 
-	userAgent := r.Header.Get("User-Agent")
-	switch {
-	case strings.Contains(userAgent, "VLC"):
-		w.Header().Del("Transfer-Encoding")
-		w.Header().Set("Accept-Ranges", "none")
-	default:
-		w.Header().Set("Transfer-Encoding", "chunked")
-		w.Header().Set("Accept-Ranges", "none")
-	}
+	w.WriteHeader(http.StatusOK)
 
 	// 等待Hub进入播放状态，使用请求上下文，这样当客户端断开时可以及时返回
 	if !h.WaitForPlaying(r.Context()) {

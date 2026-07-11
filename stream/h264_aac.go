@@ -310,9 +310,12 @@ func HandleH264AacStream(
 							continue
 						}
 						adts := buildADTSHeader(audioFormat.Config, len(au))
-						data := make([]byte, len(adts)+len(au))
-						copy(data, adts)
-						copy(data[len(adts):], au)
+						// 用 Buffer 池避免每帧 make
+						auBuf := videoBufPool.Get().(*bytes.Buffer)
+						auBuf.Reset()
+						auBuf.Write(adts)
+						auBuf.Write(au)
+						data := auBuf.Bytes()
 						if !audioInit {
 							audioPTS = float64(videoPTS)
 							audioInit = true
@@ -331,6 +334,7 @@ func HandleH264AacStream(
 								Data: data,
 							},
 						})
+						videoBufPool.Put(auBuf)
 						if err == nil {
 							audioPTS += float64(1024*90000) / float64(audioFormat.Config.SampleRate)
 						}
@@ -374,7 +378,9 @@ func HandleH264AacStream(
 	flusher, _ := w.(http.Flusher)
 	rc := http.NewResponseController(w)
 
-	// 使用时间戳替代定时器，减少 CPU 开销
+	// 直接使用 ringbuffer 的 channel，避免 PullWithContext 每包创建 goroutine
+	dataChan := clientChan.Chan()
+
 	const (
 		maxFlushBytes  = 32 * 1024
 		maxFlushDelay  = 200 * time.Millisecond
@@ -387,47 +393,62 @@ func HandleH264AacStream(
 	)
 
 	for {
-		// 先尝试获取数据，阻塞直到有数据或 context 取消
-		data, ok := clientChan.PullWithContext(ctx)
-		if !ok {
-			return nil
-		}
-
-		// 检查上下文取消
 		select {
+		case data, ok := <-dataChan:
+			if !ok {
+				return nil
+			}
+			payload, ok := data.([]byte)
+			if !ok || len(payload) == 0 {
+				continue
+			}
+
+			_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			n, err := w.Write(payload)
+			if err != nil {
+				return err
+			}
+
+			bufferedBytes += n
+
+			// 批量非阻塞读取
+			for bufferedBytes < maxFlushBytes {
+				select {
+				case data2, ok := <-dataChan:
+					if !ok {
+						return nil
+					}
+					payload2, ok := data2.([]byte)
+					if !ok || len(payload2) == 0 {
+						continue
+					}
+					n2, err := w.Write(payload2)
+					if err != nil {
+						return err
+					}
+					bufferedBytes += n2
+				default:
+					goto flush
+				}
+			}
+
+		flush:
+			now := time.Now()
+			if flusher != nil && bufferedBytes > 0 {
+				if bufferedBytes >= maxFlushBytes || now.Sub(lastFlush) >= maxFlushDelay {
+					flusher.Flush()
+					bufferedBytes = 0
+					lastFlush = now
+				}
+			}
+
+			if updateActive != nil && now.Sub(lastActiveUpdate) >= activeInterval {
+				updateActive()
+				lastActiveUpdate = now
+			}
+
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
-		}
-
-		payload, ok := data.([]byte)
-		if !ok || len(payload) == 0 {
-			continue
-		}
-
-		_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		n, err := w.Write(payload)
-
-		if err != nil {
-			return err
-		}
-
-		bufferedBytes += n
-
-		// 基于时间和数据量的 flush（避免定时器开销）
-		now := time.Now()
-		if flusher != nil && bufferedBytes > 0 {
-			if bufferedBytes >= maxFlushBytes || now.Sub(lastFlush) >= maxFlushDelay {
-				flusher.Flush()
-				bufferedBytes = 0
-				lastFlush = now
-			}
-		}
-
-		// 基于时间的活跃更新（避免定时器开销）
-		if updateActive != nil && now.Sub(lastActiveUpdate) >= activeInterval {
-			updateActive()
-			lastActiveUpdate = now
 		}
 	}
 }

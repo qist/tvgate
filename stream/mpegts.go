@@ -91,7 +91,7 @@ func HandleMpegtsStream(
 					packetLossCount++
 				}
 
-				hub.Broadcast(pkt.Payload)
+				hub.BroadcastNoCopy(pkt.Payload)
 				// ⚡ 每次收到 RTP 包时更新活跃时间
 				// if updateActive != nil {
 				// 	updateActive()
@@ -127,7 +127,9 @@ func HandleMpegtsStream(
 	// 确保 cleanup 始终被调用
 	defer cleanup()
 
-	// 使用时间戳替代定时器，减少 CPU 开销
+	// 直接使用 ringbuffer 的 channel，避免 PullWithContext 每包创建 goroutine
+	dataChan := clientChan.Chan()
+
 	const (
 		maxFlushBytes   = 32 * 1024
 		maxFlushDelay   = 200 * time.Millisecond
@@ -140,47 +142,63 @@ func HandleMpegtsStream(
 	)
 
 	for {
-		// 先尝试获取数据，阻塞直到有数据或 context 取消
-		data, ok := clientChan.PullWithContext(ctx)
-		if !ok {
-			return nil
-		}
-
-		// 检查上下文取消
 		select {
+		case data, ok := <-dataChan:
+			if !ok {
+				return nil
+			}
+			payload, ok := data.([]byte)
+			if !ok || len(payload) == 0 {
+				continue
+			}
+
+			_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			n, err := w.Write(payload)
+			if err != nil {
+				logger.LogPrintf("Write error: %v", err)
+				return err
+			}
+			bufferedBytes += n
+
+			// 批量非阻塞读取，减少系统调用
+			for bufferedBytes < maxFlushBytes {
+				select {
+				case data2, ok := <-dataChan:
+					if !ok {
+						return nil
+					}
+					payload2, ok := data2.([]byte)
+					if !ok || len(payload2) == 0 {
+						continue
+					}
+					n2, err := w.Write(payload2)
+					if err != nil {
+						logger.LogPrintf("Write error: %v", err)
+						return err
+					}
+					bufferedBytes += n2
+				default:
+					goto flush
+				}
+			}
+
+		flush:
+			now := time.Now()
+			if flusher != nil && bufferedBytes > 0 {
+				if bufferedBytes >= maxFlushBytes || now.Sub(lastFlush) >= maxFlushDelay {
+					flusher.Flush()
+					bufferedBytes = 0
+					lastFlush = now
+				}
+			}
+
+			if updateActive != nil && now.Sub(lastActiveUpdate) >= activeInterval {
+				updateActive()
+				lastActiveUpdate = now
+			}
+
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
-		}
-
-		payload, ok := data.([]byte)
-		if !ok || len(payload) == 0 {
-			continue
-		}
-
-		// 设置写入超时
-		_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		n, err := w.Write(payload)
-		if err != nil {
-			logger.LogPrintf("Write error: %v", err)
-			return err
-		}
-		bufferedBytes += n
-
-		// 基于时间和数据量的 flush（避免定时器开销）
-		now := time.Now()
-		if flusher != nil && bufferedBytes > 0 {
-			if bufferedBytes >= maxFlushBytes || now.Sub(lastFlush) >= maxFlushDelay {
-				flusher.Flush()
-				bufferedBytes = 0
-				lastFlush = now
-			}
-		}
-
-		// 基于时间的活跃更新（避免定时器开销）
-		if updateActive != nil && now.Sub(lastActiveUpdate) >= activeInterval {
-			updateActive()
-			lastActiveUpdate = now
 		}
 	}
 }

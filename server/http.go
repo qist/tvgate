@@ -128,13 +128,16 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 			Addr:        addr,
 			Handler:     mux,
 			TLSConfig:   tlsConfig,
-			IdleTimeout: 60 * time.Second,
+			IdleTimeout: 120 * time.Second,
 			QUICConfig: &quic.Config{
-				Allow0RTT:          true,
-				MaxIdleTimeout:     60 * time.Second,
+				Allow0RTT:          false, // 禁用 0-RTT 防止重放攻击
+				MaxIdleTimeout:     120 * time.Second,
 				KeepAlivePeriod:    20 * time.Second,
-				MaxIncomingStreams: 10000,
+				MaxIncomingStreams: 65535,  // 最大并发流
+				MaxIncomingUniStreams: 65535,
 				EnableDatagrams:    true,
+				InitialStreamReceiveWindow:     512 * 1024, // 512KB 初始流接收窗口
+				InitialConnectionReceiveWindow: 2 * 1024 * 1024, // 2MB 初始连接接收窗口
 			},
 		}
 
@@ -157,7 +160,11 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 	// ==================== 启动 HTTP/1.x + HTTP/2 ====================
 	serverWg.Go(func() {
 		if tlsConfig != nil {
-			_ = http2.ConfigureServer(srv, &http2.Server{})
+			_ = http2.ConfigureServer(srv, &http2.Server{
+				MaxConcurrentStreams: 256,
+				MaxReadFrameSize:     1 << 14, // 16KB，匹配 TS/FLV 包大小
+				IdleTimeout:         60 * time.Second,
+			})
 			logger.LogPrintf("🚀 启动 HTTPS H1/H2 %s", addr)
 			if err := srv.ServeTLS(ln, certFile, keyFile); err != nil && err != http.ErrServerClosed {
 				logger.LogPrintf("❌ HTTPS 错误: %v", err)

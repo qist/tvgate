@@ -3,14 +3,104 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/qist/tvgate/logger"
 )
 
 var (
 	cipherSuiteMap     map[string]uint16
 	buildCipherMapOnce sync.Once
 )
+
+// certEntry 缓存单个证书及其文件修改时间
+type certEntry struct {
+	cert     *tls.Certificate
+	certMod  time.Time // certFile 的 mtime
+	keyMod   time.Time // keyFile 的 mtime
+	lastStat time.Time // 上次 stat 检查时间
+}
+
+var (
+	certCacheMu  sync.RWMutex
+	certCache    = make(map[string]*certEntry)
+	certStatTTL  = 10 * time.Second // stat 检查间隔，stat 本身非常轻量
+)
+
+// getCachedCertificate 获取缓存的 TLS 证书，通过 mtime 检测文件变更
+// 策略：
+//   - 缓存命中时，每隔 statTTL 做一次 os.Stat 检查 mtime
+//   - mtime 未变 → 直接返回缓存（零磁盘读取）
+//   - mtime 变了 → 重新 LoadX509KeyPair 并更新缓存
+//   - stat 失败 → 返回旧缓存（容错）
+func getCachedCertificate(certFile, keyFile string) (*tls.Certificate, error) {
+	cacheKey := certFile + "|" + keyFile
+	now := time.Now()
+
+	// 快速路径：读锁检查是否需要 stat
+	certCacheMu.RLock()
+	entry, ok := certCache[cacheKey]
+	certCacheMu.RUnlock()
+
+	if ok && now.Sub(entry.lastStat) < certStatTTL {
+		// 还没到 stat 检查时间，直接返回缓存
+		return entry.cert, nil
+	}
+
+	// 需要检查文件是否变更
+	certStat, certErr := os.Stat(certFile)
+	keyStat, keyErr := os.Stat(keyFile)
+
+	if certErr != nil || keyErr != nil {
+		// stat 失败，如果有旧缓存就用旧的
+		if ok {
+			return entry.cert, nil
+		}
+		return nil, fmt.Errorf("证书文件不存在: cert=%v key=%v", certErr, keyErr)
+	}
+
+	certMod := certStat.ModTime()
+	keyMod := keyStat.ModTime()
+
+	// 如果缓存存在且 mtime 未变，只更新 lastStat
+	if ok && certMod.Equal(entry.certMod) && keyMod.Equal(entry.keyMod) {
+		certCacheMu.Lock()
+		entry.lastStat = now
+		certCacheMu.Unlock()
+		return entry.cert, nil
+	}
+
+	// 文件变更或首次加载，重新读取证书
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		// 加载失败，如果有旧缓存就用旧的（容错）
+		if ok {
+			logger.LogPrintf("⚠️ 证书加载失败，使用旧缓存: %v", err)
+			return entry.cert, nil
+		}
+		return nil, fmt.Errorf("加载证书失败: %w", err)
+	}
+
+	newEntry := &certEntry{
+		cert:     &cert,
+		certMod:  certMod,
+		keyMod:   keyMod,
+		lastStat: now,
+	}
+
+	certCacheMu.Lock()
+	certCache[cacheKey] = newEntry
+	certCacheMu.Unlock()
+
+	if ok {
+		logger.LogPrintf("🔄 证书已更新: %s", certFile)
+	}
+
+	return &cert, nil
+}
 
 // ==================== TLS 配置解析 ====================
 func parseProtocols(protoStr string) (minVersion, maxVersion uint16) {
@@ -118,11 +208,7 @@ func makeTLSConfig(certFile, keyFile string, minVersion, maxVersion uint16, ciph
 		CurvePreferences: curves,
 		NextProtos:       []string{"h3", "h2", "http/1.1"},
 		GetCertificate: func(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-			if err != nil {
-				return nil, fmt.Errorf("加载证书失败: %w", err)
-			}
-			return &cert, nil
+			return getCachedCertificate(certFile, keyFile)
 		},
 	}
 }

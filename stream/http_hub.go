@@ -161,12 +161,19 @@ func (h *HTTPHub) Close() {
 
 	if h.producerCancelFn != nil {
 		h.producerCancelFn()
+		h.producerCancelFn = nil
 	}
 	clients := make([]*HTTPHubClient, 0, len(h.clients))
 	for c := range h.clients {
 		clients = append(clients, c)
 	}
 	h.clients = nil
+
+	// 释放 FLV 头部缓存，避免内存泄漏
+	h.flvHeader = nil
+	h.videoConfig = nil
+	h.audioConfig = nil
+	h.lastError = nil
 
 	for _, c := range clients {
 		c.safeClose()
@@ -235,6 +242,11 @@ func (h *HTTPHub) RemoveClient(c *HTTPHubClient) {
 
 func (h *HTTPHub) Broadcast(data []byte) {
 	h.mu.Lock()
+	// 无客户端时直接返回，不分配 shared
+	if len(h.clients) == 0 {
+		h.mu.Unlock()
+		return
+	}
 	// 从池中获取快照 slice，减少分配
 	clientsPtr := httpClientSlicePool.Get().(*[]*HTTPHubClient)
 	clients := (*clientsPtr)[:0]
@@ -242,6 +254,12 @@ func (h *HTTPHub) Broadcast(data []byte) {
 		clients = append(clients, c)
 	}
 	h.mu.Unlock()
+
+	if len(clients) == 0 {
+		*clientsPtr = clients
+		httpClientSlicePool.Put(clientsPtr)
+		return
+	}
 
 	// 只复制一次，所有客户端共享同一份只读副本
 	// data 来自 EnsureProducer 中 src.Read(buf) 的 buf[:n]，buf 是调用方传入的共享 buffer，下次 Read 会覆盖
@@ -387,7 +405,13 @@ func (c *HTTPHubClient) safeClose() {
 		return
 	}
 	c.closed = true
+	// 先 Clear 主动排空 buffer + dataChan 中的数据引用
+	c.ch.Clear()
 	c.ch.Close()
+	// 清理引用，帮助 GC 回收 ResponseWriter 和 Hub
+	c.w = nil
+	c.flusher = nil
+	c.hub = nil
 	c.mu.Unlock()
 }
 
@@ -396,12 +420,16 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 		maxFlushBytes  = 32 * 1024
 		maxFlushDelay  = 200 * time.Millisecond
 		activeInterval = 5 * time.Second
+		writeTimeout   = 10 * time.Second // 单次写超时，防止慢客户端阻塞 goroutine
 	)
 	var (
 		lastFlush        = time.Now()
 		bytesWritten     = 0
 		lastActiveUpdate = time.Now()
 	)
+
+	// 使用 ResponseController 设置写超时（兼容 HTTP/1.1 和 HTTP/2）
+	rc := http.NewResponseController(c.w)
 
 	// 等待Hub进入播放状态
 	if !c.waitForPlaying(ctx) {
@@ -451,6 +479,9 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 		if !ok {
 			continue // 如果类型断言失败，跳过此次循环
 		}
+
+		// 设置写超时，防止慢客户端阻塞
+		_ = rc.SetWriteDeadline(time.Now().Add(writeTimeout))
 
 		written := 0
 		for written < len(byteData) {

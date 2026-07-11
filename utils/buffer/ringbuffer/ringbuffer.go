@@ -56,7 +56,7 @@ func New(size uint64) (*RingBuffer, error) {
 		buffer:   make([]interface{}, size),
 		size:     size,
 		mask:     size - 1,
-		dataChan: make(chan interface{}, 8192), // 大幅增加channel缓冲区大小
+		dataChan: make(chan interface{}, size), // channel 容量与 ring buffer 一致
 	}
 	rb.cond = sync.NewCond(&rb.mutex)
 	return rb, nil
@@ -74,6 +74,11 @@ func (r *RingBuffer) Close() {
 		r.buffer[i] = nil
 	}
 	if !r.chanClosed {
+		// 排空 dataChan 中残留的数据引用，避免内存泄漏
+		// close 后消费者会收到零值并退出，但 channel 中已缓冲的 interface{} 引用不会被 GC
+		for len(r.dataChan) > 0 {
+			<-r.dataChan
+		}
 		close(r.dataChan)
 		r.chanClosed = true
 	}
@@ -92,7 +97,7 @@ func (r *RingBuffer) Reset() {
 	if r.chanClosed {
 		chanCap := cap(r.dataChan)
 		if chanCap == 0 {
-			chanCap = 8192
+			chanCap = int(r.size)
 		}
 		r.dataChan = make(chan interface{}, chanCap)
 		r.chanClosed = false
@@ -119,26 +124,48 @@ func (r *RingBuffer) Push(data interface{}) bool {
 	r.buffer[r.writeIndex] = data
 	r.writeIndex = (r.writeIndex + 1) % r.size
 
-	// 发送到内部channel，使用非阻塞方式，但增加缓冲区大小来减少丢包
+	// 发送到内部channel，使用非阻塞方式
 	if !r.chanClosed {
 		func() {
 			defer func() {
 				if recover() != nil {
-					// channel 已关闭，避免后续重复 panic
 					r.chanClosed = true
 				}
 			}()
 			select {
 			case r.dataChan <- data:
 			default:
-				// 如果channel满了，跳过，但ring buffer本身仍保存数据
-				// 这种情况应该很少发生，因为缓冲区已经增大
+				// channel满了，丢弃最旧的数据腾出空间，避免旧引用堆积
+				select {
+				case <-r.dataChan:
+					r.dataChan <- data
+				default:
+				}
 			}
 		}()
 	}
 
 	r.cond.Signal()
 	return true
+}
+
+// Clear 排空 buffer 和 dataChan 中的所有数据引用，不关闭 RingBuffer。
+// 用于客户端断开连接后立即释放内存。
+func (r *RingBuffer) Clear() {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	for i := uint64(0); i < r.size; i++ {
+		r.buffer[i] = nil
+	}
+	r.readIndex = 0
+	r.writeIndex = 0
+
+	if !r.chanClosed {
+		for len(r.dataChan) > 0 {
+			<-r.dataChan
+		}
+	}
 }
 
 // Pull blocks until data is available or buffer is closed.
