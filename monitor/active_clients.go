@@ -139,3 +139,10 @@ func (m *ActiveConnectionsManager) GetConnectionByID(connID string) *ClientConne
 	}
 	return nil
 }
+
+// Count 返回当前活跃客户端数量
+func (m *ActiveConnectionsManager) Count() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.conns)
+}

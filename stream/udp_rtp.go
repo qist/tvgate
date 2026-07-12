@@ -19,6 +19,7 @@ import (
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
+	"github.com/qist/tvgate/utils/mem"
 	tsync "github.com/qist/tvgate/utils/sync"
 )
 
@@ -1560,6 +1561,9 @@ func (h *StreamHub) Close() {
 	// 清理FCC相关资源
 	h.cleanupFCC()
 
+	// 等待所有后台 goroutine 结束，确保不会有残留引用
+	h.Wg.Wait()
+
 	// 广播状态变更（在所有资源清理后）
 	if stateCond != nil {
 		stateCond.Broadcast()
@@ -1570,6 +1574,9 @@ func (h *StreamHub) Close() {
 	} else {
 		logger.LogPrintf("UDP监听已关闭")
 	}
+
+	// 组播 Hub 关闭后释放内存归还 OS
+	mem.FreeMemory()
 }
 
 // WaitClosed 等待 Hub 完全关闭并释放所有资源

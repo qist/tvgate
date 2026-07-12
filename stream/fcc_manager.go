@@ -30,22 +30,27 @@ type ChannelManager struct {
 
 // NewChannelManager 创建新的频道管理器
 func NewChannelManager() *ChannelManager {
-	// 从配置中获取FCC缓存大小
-	config.CfgMu.RLock()
-	fccCacheSize := config.Cfg.Multicast.FccCacheSize
-	config.CfgMu.RUnlock()
-
-	// 如果配置中没有设置或设置为0，默认使用16384
-	if fccCacheSize <= 0 {
-		fccCacheSize = 16384
-	}
-
 	return &ChannelManager{
 		channels:    make(map[string]*MulticastChannel),
-		cacheSize:   fccCacheSize,
+		cacheSize:   0, // 延迟从配置读取
 		sessionTTL:  10 * time.Second,
 		stopCleaner: make(chan struct{}),
 	}
+}
+
+// getCacheSize 延迟从配置读取FCC缓存大小，避免包初始化时配置未加载
+func (cm *ChannelManager) getCacheSize() int {
+	if cm.cacheSize > 0 {
+		return cm.cacheSize
+	}
+	config.CfgMu.RLock()
+	fccCacheSize := config.Cfg.Multicast.FccCacheSize
+	config.CfgMu.RUnlock()
+	if fccCacheSize <= 0 {
+		fccCacheSize = 16384
+	}
+	cm.cacheSize = fccCacheSize
+	return fccCacheSize
 }
 
 var GlobalChannelManager = NewChannelManager()
@@ -70,7 +75,7 @@ func (cm *ChannelManager) GetOrCreate(channel string) *MulticastChannel {
 	defer cm.mu.Unlock()
 
 	if ch = cm.channels[channel]; ch == nil {
-		ch = NewMulticastChannel(channel, cm.cacheSize)
+		ch = NewMulticastChannel(channel, cm.getCacheSize())
 		cm.channels[channel] = ch
 		logger.LogPrintf("[FCC] 创建频道 channel=%s", channel)
 

@@ -11,6 +11,7 @@ import (
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
+	"github.com/qist/tvgate/utils/mem"
 	tsync "github.com/qist/tvgate/utils/sync"
 )
 
@@ -247,6 +248,9 @@ func (hub *StreamHubs) Close() {
 	hub.mu.Unlock()
 
 	hub.wg.Wait()
+
+	// RTSP Hub 关闭后释放内存归还 OS
+	mem.FreeMemory()
 }
 
 func (hub *StreamHubs) scheduleIdleCloseLocked() {

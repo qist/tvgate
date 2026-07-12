@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -13,7 +14,7 @@ import (
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/load"
-	"github.com/shirou/gopsutil/v3/mem"
+	gopsutilmem "github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 	"github.com/shirou/gopsutil/v3/process"
 )
@@ -194,10 +195,22 @@ func (ts *TrafficStats) GetTrafficStats() *TrafficStats {
 func StartSystemStatsUpdater(interval time.Duration, stopChan chan struct{}) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	// 内存回收检查间隔：每 60 秒检查一次
+	memCheckTicker := time.NewTicker(60 * time.Second)
+	defer memCheckTicker.Stop()
 	for {
 		select {
 		case <-ticker.C:
 			updateSystemStats()
+		case <-memCheckTicker.C:
+			// 周期性内存回收：堆内存超过 32MB 时触发 GC + FreeOSMemory
+			// 两次 GC 清空 sync.Pool victim，FreeOSMemory 归还内存给 OS
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			if m.HeapAlloc > 32*1024*1024 {
+				runtime.GC()
+				debug.FreeOSMemory()
+			}
 		case <-stopChan:
 			return
 		}
@@ -335,7 +348,7 @@ func updateSystemStats() {
 	GlobalTrafficStats.CPUCount = cpuCountCache // 更新全局CPU核心数
 
 	// 内存
-	vmem, _ := mem.VirtualMemory()
+	vmem, _ := gopsutilmem.VirtualMemory()
 	memUsage, memTotal := uint64(0), uint64(0)
 	if vmem != nil {
 		memUsage = vmem.Used

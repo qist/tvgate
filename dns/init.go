@@ -4,7 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
-	// "strings"
+	"time"
 	"sync"
 )
 
@@ -23,7 +23,12 @@ func SetupGlobalDNSResolver() {
 		// 1️⃣ 替换全局 net.Resolver
 		net.DefaultResolver = resolver.GetNetResolver()
 
-		// 2️⃣ 替换全局 HTTP / TCP Dial
+		// 2️⃣ 关闭旧的 DefaultTransport 连接池，避免内存泄漏
+		if oldTransport, ok := http.DefaultTransport.(*http.Transport); ok {
+			oldTransport.CloseIdleConnections()
+		}
+
+		// 3️⃣ 替换全局 HTTP / TCP Dial
 		http.DefaultTransport = &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -41,7 +46,9 @@ func SetupGlobalDNSResolver() {
 				// 取第一个 IP 连接
 				return net.Dial(network, net.JoinHostPort(ips[0].String(), port))
 			},
-			// 可选：TLS 和其他配置保持默认
+			MaxIdleConns:        20,
+			MaxIdleConnsPerHost: 2,
+			IdleConnTimeout:     30 * time.Second,
 		}
 	})
 }
