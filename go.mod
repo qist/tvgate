@@ -5,14 +5,14 @@ go 1.25.6
 require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
 	github.com/asticode/go-astits v1.15.0
-	github.com/bluenviron/gortsplib/v5 v5.6.1
-	github.com/bluenviron/mediacommon/v2 v2.9.1
+	github.com/bluenviron/gortsplib/v5 v5.6.2
+	github.com/bluenviron/mediacommon/v2 v2.9.2
 	github.com/cloudflare/tableflip v1.2.3
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jedisct1/go-dnsstamps v0.0.0-20240423203910-07a0735c7774
 	github.com/libp2p/go-reuseport v0.4.0
 	github.com/miekg/dns v1.1.72
-	github.com/pion/rtp v1.10.4
+	github.com/pion/rtp v1.10.5
 	github.com/quic-go/quic-go v0.60.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.57.0
@@ -33,7 +33,7 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/pion/logging v0.2.4 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
-	github.com/pion/rtcp v1.2.16 // indirect
+	github.com/pion/rtcp v1.2.17 // indirect
 	github.com/pion/sdp/v3 v3.0.19 // indirect
 	github.com/pion/srtp/v3 v3.0.12 // indirect
 	github.com/pion/transport/v4 v4.0.2 // indirect
