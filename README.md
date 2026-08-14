@@ -750,4 +750,4 @@ server {
 
 ### Star
 
-[![Star History Chart](https://api.star-history.com/svg?repos=qist/tvgate&type=Date)](https://www.star-history.com/#qist/tvgate&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=qist/tvgate&type=Date)](https://star-history.dera.page/#qist/tvgate&Date)
