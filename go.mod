@@ -4,7 +4,7 @@ go 1.25.6
 
 require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
-	github.com/asticode/go-astits v1.15.0
+	github.com/asticode/go-astits v1.16.0
 	github.com/bluenviron/gortsplib/v5 v5.6.3
 	github.com/bluenviron/mediacommon/v2 v2.9.2
 	github.com/cloudflare/tableflip v1.2.3
