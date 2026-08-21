@@ -4,7 +4,6 @@ import (
 	"math"
 	"os"
 	"runtime"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -203,13 +202,13 @@ func StartSystemStatsUpdater(interval time.Duration, stopChan chan struct{}) {
 		case <-ticker.C:
 			updateSystemStats()
 		case <-memCheckTicker.C:
-			// 周期性内存回收：堆内存超过 32MB 时触发 GC + FreeOSMemory
-			// 两次 GC 清空 sync.Pool victim，FreeOSMemory 归还内存给 OS
+			// 仅在堆内存显著偏高时做一次常规 GC。
+			// 注意：不要调用 debug.FreeOSMemory()，它会把空闲内存归还 OS
+			// 并清空 sync.Pool victim 缓存，反而导致后续分配变慢、GC 更频繁。
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
-			if m.HeapAlloc > 32*1024*1024 {
+			if m.HeapAlloc > 256*1024*1024 {
 				runtime.GC()
-				debug.FreeOSMemory()
 			}
 		case <-stopChan:
 			return
@@ -222,6 +221,18 @@ var (
 	cpuUsageCache      float64
 	cpuCountCache      int
 	lastCPUCountUpdate time.Time
+	prevCPUTimes       cpu.TimesStat // 非阻塞 CPU 使用率差分计算的上一拍快照
+	havePrevCPUTimes   bool
+
+	// 内存/负载缓存，避免每次 tick 都做 syscalls
+	lastMemSample time.Time
+	memUsageCache uint64
+	memTotalCache uint64
+
+	lastLoadSample time.Time
+	loadCache      LoadAverageInfo
+
+	lastHostSample time.Time // 已用 hostInfoCached 控制，保留兼容
 
 	// 磁盘缓存
 	lastDiskScan    time.Time
@@ -320,40 +331,49 @@ func updateSystemStats() {
 		lastCPUCountUpdate = now
 	}
 
-	// CPU使用率采样(5秒间隔)
+	// CPU使用率采样：使用非阻塞的 cpu.Times() 差分计算，
+	// 避免 cpu.Percent() 内部阻塞 300ms 拖慢整个监控 goroutine。
 	var cpuUsage float64
 	if now.Sub(lastCPUSample) > 5*time.Second {
-		// 使用更短的采样时间(300ms)降低开销
-		cpuPercent, _ := cpu.Percent(300*time.Millisecond, false)
-		if len(cpuPercent) > 0 {
-			rawUsage := cpuPercent[0]
-			// 简化计算逻辑
-			if cpuCountCache > 0 {
-				rawUsage = rawUsage / float64(cpuCountCache)
-			}
-			// 限制范围并平滑变化
-			if rawUsage > 0 {
-				cpuUsageCache = math.Min(rawUsage, 100)
-				// 如果变化小于1%，保持原值减少抖动
-				if math.Abs(cpuUsageCache-rawUsage) < 1.0 {
-					cpuUsageCache = rawUsage
+		times, err := cpu.Times(false) // 整体，不阻塞
+		if err == nil && len(times) > 0 {
+			t := times[0]
+			if havePrevCPUTimes {
+				prevTotal := prevCPUTimes.User + prevCPUTimes.System + prevCPUTimes.Idle +
+					prevCPUTimes.Nice + prevCPUTimes.Iowait + prevCPUTimes.Irq +
+					prevCPUTimes.Softirq + prevCPUTimes.Steal
+				curTotal := t.User + t.System + t.Idle + t.Nice + t.Iowait +
+					t.Irq + t.Softirq + t.Steal
+				dt := curTotal - prevTotal
+				if dt > 0 {
+					dBusy := (curTotal - prevTotal) - (t.Idle - prevCPUTimes.Idle)
+					rawUsage := dBusy / dt * 100
+					if rawUsage > 0 {
+						cpuUsageCache = math.Min(rawUsage, 100)
+					} else {
+						cpuUsageCache = 0
+					}
 				}
-			} else {
-				cpuUsageCache = 0
 			}
+			prevCPUTimes = t
+			havePrevCPUTimes = true
 			lastCPUSample = now
 		}
 	}
 	cpuUsage = cpuUsageCache
 	GlobalTrafficStats.CPUCount = cpuCountCache // 更新全局CPU核心数
 
-	// 内存
-	vmem, _ := gopsutilmem.VirtualMemory()
-	memUsage, memTotal := uint64(0), uint64(0)
-	if vmem != nil {
-		memUsage = vmem.Used
-		memTotal = vmem.Total
+	// 内存：30秒采样一次，避免每次 tick 都做 syscalls
+	var memUsage, memTotal uint64
+	if now.Sub(lastMemSample) > 30*time.Second {
+		if vmem, err := gopsutilmem.VirtualMemory(); err == nil && vmem != nil {
+			memUsageCache = vmem.Used
+			memTotalCache = vmem.Total
+		}
+		lastMemSample = now
 	}
+	memUsage = memUsageCache
+	memTotal = memTotalCache
 
 	// 磁盘 - 使用缓存减少频繁扫描
 
@@ -409,14 +429,17 @@ func updateSystemStats() {
 		lastDiskScan = now
 	}
 
-	// 系统负载
-	loadAvg, _ := load.Avg()
-	loadAverage := LoadAverageInfo{}
-	if loadAvg != nil {
-		loadAverage.Load1 = loadAvg.Load1
-		loadAverage.Load5 = loadAvg.Load5
-		loadAverage.Load15 = loadAvg.Load15
+	// 系统负载：30秒采样一次
+	var loadAverage LoadAverageInfo
+	if now.Sub(lastLoadSample) > 30*time.Second {
+		if loadAvg, err := load.Avg(); err == nil && loadAvg != nil {
+			loadCache.Load1 = loadAvg.Load1
+			loadCache.Load5 = loadAvg.Load5
+			loadCache.Load15 = loadAvg.Load15
+		}
+		lastLoadSample = now
 	}
+	loadAverage = loadCache
 
 	// 主机信息（静态信息，只需获取一次）
 	if !hostInfoCached {

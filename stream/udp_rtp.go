@@ -1575,8 +1575,8 @@ func (h *StreamHub) Close() {
 		logger.LogPrintf("UDP监听已关闭")
 	}
 
-	// 组播 Hub 关闭后释放内存归还 OS
-	mem.FreeMemory()
+	// 仅在堆显著偏高时才做一次普通 GC（理由同 hub.go）。
+	mem.FreeMemoryIfHigh(256)
 }
 
 // WaitClosed 等待 Hub 完全关闭并释放所有资源

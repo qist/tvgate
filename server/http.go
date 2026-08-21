@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"strings"
 	"sync"
 	"time"
@@ -283,7 +284,25 @@ func RegisterMux(addr string, cfg *config.Config) *http.ServeMux {
 		RegisterMonitorWebMux(mux, cfg)
 	}
 
+	// 在所有端口上挂载 /debug/pprof 性能分析端点
+	registerPprof(mux)
+
 	return mux
+}
+
+// registerPprof 将 net/http/pprof 的调试端点挂到自建的 mux 上。
+// 不依赖 import _ "net/http/pprof"（那只注册到 DefaultServeMux），显式注册以支持多端口。
+// 访问示例（生产环境请配合防火墙/反向代理限制访问）：
+//
+//	go tool pprof http://127.0.0.1:8888/debug/pprof/heap
+//	go tool pprof http://127.0.0.1:8888/debug/pprof/profile?seconds=30
+//	curl http://127.0.0.1:8888/debug/pprof/goroutine?debug=1
+func registerPprof(mux *http.ServeMux) {
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 }
 
 // monitor + web

@@ -249,8 +249,11 @@ func (hub *StreamHubs) Close() {
 
 	hub.wg.Wait()
 
-	// RTSP Hub 关闭后释放内存归还 OS
-	mem.FreeMemory()
+	// 仅在堆显著偏高时才做一次普通 GC。
+	// 注意：不调用 debug.FreeOSMemory()，它会清空 sync.Pool 并归还内存给 OS，
+	// 反而导致后续分配变慢、GC 更频繁；也不要每次关闭都强制 GC，否则高频
+	// 频道启停会反复触发 GC 抬高 CPU。交由运行时自适应 GC 处理常态回收。
+	mem.FreeMemoryIfHigh(256)
 }
 
 func (hub *StreamHubs) scheduleIdleCloseLocked() {
