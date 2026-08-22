@@ -448,8 +448,32 @@ func updateSystemStats() {
 			cachedHostPlatform = hostInfo.Platform
 			cachedHostKernelArch = hostInfo.KernelArch
 			cachedHostKernelVersion = hostInfo.KernelVersion
-			hostInfoCached = true
 		}
+		// Android 等平台 gopsutil 可能获取不到系统信息，用 runtime 兜底
+		if cachedHostOS == "" {
+			cachedHostOS = runtime.GOOS
+		}
+		if cachedHostPlatform == "" {
+			if runtime.GOOS == "android" {
+				cachedHostPlatform = "Android"
+			} else {
+				cachedHostPlatform = runtime.GOOS
+			}
+		}
+		if cachedHostKernelArch == "" {
+			cachedHostKernelArch = runtime.GOARCH
+		}
+		if cachedHostKernelVersion == "" {
+			// 尝试从 /proc/version 读取内核版本（Linux/Android）
+			if data, err := os.ReadFile("/proc/version"); err == nil {
+				// 格式: Linux version 5.10.101 (gcc...) #1 SMP ...
+				fields := strings.Fields(string(data))
+				if len(fields) >= 3 {
+					cachedHostKernelVersion = fields[2]
+				}
+			}
+		}
+		hostInfoCached = true
 	}
 	hostDetails := HostInfo{
 		OS:           cachedHostOS,
