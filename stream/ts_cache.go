@@ -298,7 +298,10 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 		select {
 		case _, ok := <-c.waitCh:
 			if !ok {
-				continue
+				// waitCh 已关闭，缓存可能已 Seal/Close
+				// 刷出残留数据后退出，避免无限空转
+				_ = flush()
+				return nil
 			}
 		case <-done:
 			if err := flush(); err != nil {

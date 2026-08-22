@@ -482,6 +482,13 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 		// 读取成功后检查上下文
 		select {
 		case <-ctx.Done():
+			// 连接取消前把 bw 中残留的数据刷出，避免丢末尾数据
+			if bytesWritten > 0 {
+				_ = bw.Flush()
+				if c.canFlush {
+					c.flusher.Flush()
+				}
+			}
 			return ctx.Err()
 		default:
 		}
@@ -515,12 +522,15 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 		// 基于时间和数据量的flush（避免定时器开销）
 		// 先刷 bufio 把攒批的数据交给底层，再刷 http.Flusher 推到客户端，
 		// 保证直播流的实时性，同时把多次小包合并成一次 TLS 记录 + 一次 write()。
-		if c.canFlush && bytesWritten > 0 {
-			if bytesWritten >= maxFlushBytes || now.Sub(lastFlush) >= maxFlushDelay {
+		// 即使不支持 http.Flusher，也要在攒够阈值或超时时刷 bw，避免数据积压。
+		if bytesWritten > 0 {
+			if !c.canFlush || bytesWritten >= maxFlushBytes || now.Sub(lastFlush) >= maxFlushDelay {
 				if ferr := bw.Flush(); ferr != nil {
 					return ferr
 				}
-				c.flusher.Flush()
+				if c.canFlush {
+					c.flusher.Flush()
+				}
 				bytesWritten = 0
 				lastFlush = now
 			}

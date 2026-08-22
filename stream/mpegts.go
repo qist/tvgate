@@ -192,8 +192,8 @@ func HandleMpegtsStream(
 
 		flush:
 			now := time.Now()
-			if flusher != nil && bufferedBytes > 0 {
-				if bufferedBytes >= maxFlushBytes || now.Sub(lastFlush) >= maxFlushDelay {
+			if bufferedBytes > 0 {
+				if flusher == nil || bufferedBytes >= maxFlushBytes || now.Sub(lastFlush) >= maxFlushDelay {
 					if ferr := bw.Flush(); ferr != nil {
 						logger.LogPrintf("Flush error: %v", ferr)
 						return ferr
@@ -210,6 +210,13 @@ func HandleMpegtsStream(
 			}
 
 		case <-ctx.Done():
+			// 连接取消前把 bw 中残留的数据刷出，避免丢末尾数据
+			if bufferedBytes > 0 {
+				_ = bw.Flush()
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
 			return ctx.Err()
 		}
 	}

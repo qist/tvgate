@@ -215,6 +215,11 @@ func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, upd
 		// 检查上下文取消（非阻塞）
 		select {
 		case <-ctx.Done():
+			// 连接取消前把 bw 中残留的数据刷出，避免丢末尾数据
+			if canFlush && bytesWritten > 0 {
+				_ = bw.Flush()
+				flusher.Flush()
+			}
 			return ctx.Err()
 		default:
 		}

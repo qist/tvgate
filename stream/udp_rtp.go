@@ -1499,6 +1499,11 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 			h.RemoveCh <- connID
 			return
 		case <-h.ctx.Done():
+			// Hub 关闭，客户端可能还连着，刷出 bw 残留数据
+			if bufferedBytes > 0 {
+				_ = bw.Flush()
+				flusher.Flush()
+			}
 			return
 		}
 	}
