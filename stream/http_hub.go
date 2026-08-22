@@ -451,23 +451,21 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 	defer bw.Flush()
 
 	// 获取客户端所属的Hub并发送缓存的头部信息（仅对FLV流）
+	// 注意：头部数据必须通过 bw 写入，避免绕过 bufio 导致数据乱序
 	hub := c.getHubByClient()
 	if hub != nil {
 		// 检查是否为FLV流
 		if isFLVStream(hub.key) {
 			hub.mu.Lock()
-			// 发送缓存的头部信息（如果存在）
+			// 发送缓存的头部信息（如果存在），通过 bw 写入并立即 flush
 			if hub.flvHeader != nil {
-				// 发送FLV头部
-				c.sendToClient(hub.flvHeader)
+				c.sendToClientViaWriter(bw, hub.flvHeader)
 			}
 			if hub.videoConfig != nil {
-				// 发送视频配置信息
-				c.sendToClient(hub.videoConfig)
+				c.sendToClientViaWriter(bw, hub.videoConfig)
 			}
 			if hub.audioConfig != nil {
-				// 发送音频配置信息
-				c.sendToClient(hub.audioConfig)
+				c.sendToClientViaWriter(bw, hub.audioConfig)
 			}
 			hub.mu.Unlock()
 		}
@@ -530,7 +528,8 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 	}
 }
 
-// sendToClient 发送数据到客户端
+// sendToClient 发送数据到客户端（直接写底层 ResponseWriter）
+// 注意：仅在 bufio.Writer 为空时使用，否则会绕过缓冲导致数据乱序
 func (c *HTTPHubClient) sendToClient(data []byte) {
 	if len(data) == 0 {
 		return
@@ -544,6 +543,30 @@ func (c *HTTPHubClient) sendToClient(data []byte) {
 	}
 
 	// 如果支持flush，立即发送
+	if c.canFlush {
+		c.flusher.Flush()
+	}
+}
+
+// sendToClientViaWriter 通过指定的 bufio.Writer 发送数据到客户端
+// 确保头部数据经过 bufio 缓冲层，避免与后续数据乱序
+func (c *HTTPHubClient) sendToClientViaWriter(bw *bufio.Writer, data []byte) {
+	if len(data) == 0 {
+		return
+	}
+
+	_, err := bw.Write(data)
+	if err != nil {
+		logger.LogPrintf("发送缓存头部数据到客户端失败: %v", err)
+		return
+	}
+
+	// 先刷 bufio 把数据交给底层，再刷 http.Flusher 推到客户端
+	if ferr := bw.Flush(); ferr != nil {
+		logger.LogPrintf("刷写缓存头部数据失败: %v", ferr)
+		return
+	}
+
 	if c.canFlush {
 		c.flusher.Flush()
 	}

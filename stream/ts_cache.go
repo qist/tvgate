@@ -220,13 +220,8 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 	// 批量写出缓冲：将多个 chunk 攒成一块再交给底层 Writer，
 	// 避免每个 chunk 都单独触发一次 TLS 记录边界与一次 write() 系统调用。
 	// 针对 CPU 热点 crypto/tls.writeRecordLocked / Syscall6 的关键优化。
-	var bw *bufio.Writer
-	if b, ok := dst.(*bufio.Writer); ok {
-		bw = b
-	} else {
-		bw = bufio.NewWriterSize(dst, 256*1024)
-		defer bw.Flush()
-	}
+	bw := bufio.NewWriterSize(dst, 256*1024)
+	defer bw.Flush()
 	flusher, _ := dst.(http.Flusher)
 
 	seq := 1
