@@ -14,6 +14,7 @@
 - [jx 视频解析接口](#-jx-视频解析接口)
 - [配置示例](#配置configyaml示例)
 - [Nginx 反向代理](#nginx-反向代理配置参考)
+- [Linux 内核优化](#linux-内核优化建议)
 - [注意事项](#注意事项--常见问题)
 
 ---
@@ -519,6 +520,117 @@ server {
 - **版权合规**：请确保你有权限分发和访问被转发的内容。
 - **端口冲突**：如果 `8888` 被占用，请在配置或启动参数中修改监听端口。
 - **自动重载配置**：修改 `config.yaml` 后观察日志，确认程序已加载新配置。
+
+---
+
+## Linux 内核优化建议
+
+TVGate 作为流媒体转发代理，高并发场景下需要对 Linux 内核参数做适当调优。以下配置写入 `/etc/sysctl.d/99-tvgate.conf` 后执行 `sysctl -p` 生效。
+
+### 文件描述符
+
+```bash
+# 查看当前值
+ulimit -n
+cat /proc/sys/fs/file-max
+
+# 临时生效
+ulimit -n 1048576
+
+# 永久生效 /etc/security/limits.conf
+*  soft  nofile  1048576
+*  hard  nofile  1048576
+```
+
+systemd 用户在 `TVGate.service` 中已配置 `LimitNOFILE=100000`，可根据需要调大。
+
+### 网络缓冲区
+
+```ini
+# /etc/sysctl.d/99-tvgate.conf
+
+# TCP 读写缓冲区（流媒体大流量场景）
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.core.rmem_default = 262144
+net.core.wmem_default = 262144
+
+# TCP 缓冲区自动调节下限/上限
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+
+# UDP 缓冲区（组播/RTP 转发关键）
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+```
+
+### 连接与保活
+
+```ini
+# SYN 队列与积压
+net.ipv4.tcp_max_syn_backlog = 65535
+net.core.somaxconn = 65535
+
+# TCP KeepAlive（快速回收死连接）
+net.ipv4.tcp_keepalive_time = 600
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 3
+
+# FIN 超时与回收
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+
+# 本地端口范围（高并发连接数）
+net.ipv4.ip_local_port_range = 1024 65535
+```
+
+### conntrack（连接跟踪）
+
+```ini
+# 连接跟踪表大小（高并发必须调大，否则日志出现 nf_conntrack: table full）
+net.netfilter.nf_conntrack_max = 1048576
+net.netfilter.nf_conntrack_tcp_timeout_established = 3600
+net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
+```
+
+### 交换与内存
+
+```ini
+# 降低 swap 倾向（流媒体服务优先用物理内存）
+vm.swappiness = 1
+
+# 内存过量提交策略（避免 OOM killer 误杀）
+vm.overcommit_memory = 1
+```
+
+### 网卡队列与多核
+
+```ini
+# 网卡接收队列长度
+net.core.netdev_max_backlog = 65535
+
+# 开启 RPS/RFS（多核负载均衡，小设备可不配）
+net.core.rps_sock_flow_entries = 32768
+```
+
+### OpenWrt / 小设备精简版
+
+资源有限的设备（路由器等）建议只调以下几项：
+
+```ini
+net.core.rmem_max = 4194304
+net.core.wmem_max = 4194304
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+vm.swappiness = 0
+```
+
+同时确保服务启动脚本中配置了合理的 ulimit：
+
+```bash
+# /etc/init.d/tvgate 或 procd 脚本中
+ulimit -n 65535
+```
 
 ---
 
