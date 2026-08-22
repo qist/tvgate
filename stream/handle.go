@@ -134,6 +134,12 @@ func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, upd
 	// 是否支持 http flush
 	flusher, canFlush := dst.(http.Flusher)
 
+	// 批量写出缓冲：将多次 Read 的数据攒成一块再交给底层 dst，
+	// 避免每次 Write 都单独触发一次 TLS 记录边界与一次 write() 系统调用。
+	// 针对 CPU 热点 crypto/tls.writeRecordLocked / Syscall6 的关键优化。
+	bw := bufio.NewWriterSize(dst, 64*1024)
+	defer bw.Flush()
+
 	// 统计写入字节数
 	bytesWritten := 0
 
@@ -169,7 +175,7 @@ func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, upd
 			// monitor.AddAppInboundBytes(uint64(n))
 			written := 0
 			for written < n {
-				wn, writeErr := dst.Write(buf[written:n])
+				wn, writeErr := bw.Write(buf[written:n])
 				if writeErr != nil {
 					return fmt.Errorf("写入错误: %w", writeErr)
 				}
@@ -182,6 +188,9 @@ func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, upd
 			if canFlush && bytesWritten >= 32*1024 {
 				// 再次检查 ctx，避免无效 flush
 				if ctx.Err() == nil {
+					if ferr := bw.Flush(); ferr != nil {
+						return fmt.Errorf("写入错误: %w", ferr)
+					}
 					flusher.Flush()
 				}
 				bytesWritten = 0
@@ -192,6 +201,9 @@ func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, upd
 		// 错误处理
 		if readErr != nil {
 			if canFlush && bytesWritten > 0 && ctx.Err() == nil {
+				if ferr := bw.Flush(); ferr != nil {
+					return fmt.Errorf("写入错误: %w", ferr)
+				}
 				flusher.Flush()
 			}
 			if errors.Is(readErr, io.EOF) {
@@ -210,6 +222,10 @@ func Copytext(ctx context.Context, dst io.Writer, src io.Reader, buf []byte, upd
 		// 基于时间的 flush（避免忙等待）
 		now := time.Now()
 		if canFlush && bytesWritten > 0 && now.Sub(lastFlushTime) >= flushInterval {
+			// 先刷 bufio 把攒批的数据交给底层，再刷 http.Flusher 推到客户端
+			if ferr := bw.Flush(); ferr != nil {
+				return fmt.Errorf("写入错误: %w", ferr)
+			}
 			flusher.Flush()
 			bytesWritten = 0
 			lastFlushTime = now

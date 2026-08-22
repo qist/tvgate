@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bufio"
 	"context"
 	"net/http"
 	"sync"
@@ -135,6 +136,13 @@ func HandleMpegtsStream(
 		maxFlushDelay   = 200 * time.Millisecond
 		activeInterval  = 5 * time.Second
 	)
+
+	// 批量写出缓冲：将多个 RTP 包攒成一块再交给底层 ResponseWriter，
+	// 避免每个包都单独触发一次 TLS 记录边界与一次 write() 系统调用。
+	// 针对 CPU 热点 crypto/tls.writeRecordLocked(26%) / Syscall6(30%) 的关键优化。
+	bw := bufio.NewWriterSize(w, maxFlushBytes)
+	defer bw.Flush()
+
 	var (
 		bufferedBytes     = 0
 		lastFlush         = time.Now()
@@ -153,7 +161,7 @@ func HandleMpegtsStream(
 			}
 
 			_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			n, err := w.Write(payload)
+			n, err := bw.Write(payload)
 			if err != nil {
 				logger.LogPrintf("Write error: %v", err)
 				return err
@@ -171,7 +179,7 @@ func HandleMpegtsStream(
 					if !ok || len(payload2) == 0 {
 						continue
 					}
-					n2, err := w.Write(payload2)
+					n2, err := bw.Write(payload2)
 					if err != nil {
 						logger.LogPrintf("Write error: %v", err)
 						return err
@@ -186,6 +194,10 @@ func HandleMpegtsStream(
 			now := time.Now()
 			if flusher != nil && bufferedBytes > 0 {
 				if bufferedBytes >= maxFlushBytes || now.Sub(lastFlush) >= maxFlushDelay {
+					if ferr := bw.Flush(); ferr != nil {
+						logger.LogPrintf("Flush error: %v", ferr)
+						return ferr
+					}
 					flusher.Flush()
 					bufferedBytes = 0
 					lastFlush = now

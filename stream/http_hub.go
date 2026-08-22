@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bufio"
 	"context"
 	"io"
 	"net/http"
@@ -441,6 +442,14 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 		return ctx.Err()
 	}
 
+	// 批量写出缓冲：将多个 TS 包攒成一块再交给底层 http.ResponseWriter，
+	// 避免每个包都单独触发一次 TLS 记录边界与一次 write() 系统调用。
+	// 这是针对 CPU 热点（crypto/tls.writeRecordLocked / Syscall6）的关键优化。
+	bw := bufio.NewWriterSize(c.w, maxFlushBytes)
+	// 退出前把 bufio 中残留的数据刷到底层，避免客户端丢失末尾数据。
+	// 连接已不可写时 Flush 会报错，这里忽略（defer 中无法也无需处理）。
+	defer bw.Flush()
+
 	// 获取客户端所属的Hub并发送缓存的头部信息（仅对FLV流）
 	hub := c.getHubByClient()
 	if hub != nil {
@@ -490,7 +499,7 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 
 		written := 0
 		for written < len(byteData) {
-			n, err := c.w.Write(byteData[written:])
+			n, err := bw.Write(byteData[written:])
 			if err != nil {
 				return err
 			}
@@ -506,8 +515,13 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 		}
 
 		// 基于时间和数据量的flush（避免定时器开销）
+		// 先刷 bufio 把攒批的数据交给底层，再刷 http.Flusher 推到客户端，
+		// 保证直播流的实时性，同时把多次小包合并成一次 TLS 记录 + 一次 write()。
 		if c.canFlush && bytesWritten > 0 {
 			if bytesWritten >= maxFlushBytes || now.Sub(lastFlush) >= maxFlushDelay {
+				if ferr := bw.Flush(); ferr != nil {
+					return ferr
+				}
 				c.flusher.Flush()
 				bytesWritten = 0
 				lastFlush = now

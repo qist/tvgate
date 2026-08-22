@@ -161,7 +161,7 @@ jobs:
           tag: ${{ github.ref_name }}
           file: ${{ env.FILE }}
           asset_name: ${{ env.FILE_NAME }}
-          prerelease: true
+          prerelease: false
           overwrite: true
 
       - name: Upload Release Asset (checksum)
@@ -171,5 +171,5 @@ jobs:
           tag: ${{ github.ref_name }}
           file: ${{ env.CHECKSUM }}
           asset_name: ${{ env.CHECKSUM_NAME }}
-          prerelease: true
+          prerelease: false
           overwrite: true

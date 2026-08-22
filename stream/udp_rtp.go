@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/md5"
@@ -1394,6 +1395,12 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	activeTicker := time.NewTicker(5 * time.Second)
 	defer activeTicker.Stop()
 
+	// 批量写出缓冲：将多个 RTP 包攒成一块再交给底层 ResponseWriter，
+	// 避免每个包都单独触发一次 TLS 记录边界与一次 write() 系统调用。
+	// 针对 CPU 热点 crypto/tls.writeRecordLocked / Syscall6 的关键优化。
+	bw := bufio.NewWriterSize(w, maxBufferSize)
+	defer bw.Flush()
+
 	// 发送初始数据
 	h.sendInitialToClient(client)
 
@@ -1420,7 +1427,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 			}
 
 			// 写入第一个包
-			n, err := w.Write(ref.data)
+			n, err := bw.Write(ref.data)
 			ref.Put()
 			if err != nil {
 				logger.LogPrintf("写入响应失败: %v", err)
@@ -1440,7 +1447,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 					if ref2 == nil {
 						continue
 					}
-					n2, err := w.Write(ref2.data)
+					n2, err := bw.Write(ref2.data)
 					ref2.Put()
 					if err != nil {
 						logger.LogPrintf("写入响应失败: %v", err)
@@ -1458,11 +1465,19 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 			// 有数据就 flush，不要等 128KB 才发
 			// 批量 Write 只是减少 select 次数，flush 必须及时
 			if bufferedBytes > 0 {
+				if ferr := bw.Flush(); ferr != nil {
+					logger.LogPrintf("写入响应失败: %v", ferr)
+					return
+				}
 				flusher.Flush()
 				bufferedBytes = 0
 			}
 		case <-flushTicker.C:
 			if flusher != nil && bufferedBytes > 0 {
+				if ferr := bw.Flush(); ferr != nil {
+					logger.LogPrintf("写入响应失败: %v", ferr)
+					return
+				}
 				flusher.Flush()
 				bufferedBytes = 0
 			}

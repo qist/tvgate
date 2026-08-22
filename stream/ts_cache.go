@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bufio"
 	"container/list"
 	"errors"
 	"io"
@@ -216,33 +217,67 @@ func (c *tsCacheItem) calculateTotalBytes() int64 {
 }
 
 func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
+	// 批量写出缓冲：将多个 chunk 攒成一块再交给底层 Writer，
+	// 避免每个 chunk 都单独触发一次 TLS 记录边界与一次 write() 系统调用。
+	// 针对 CPU 热点 crypto/tls.writeRecordLocked / Syscall6 的关键优化。
+	var bw *bufio.Writer
+	if b, ok := dst.(*bufio.Writer); ok {
+		bw = b
+	} else {
+		bw = bufio.NewWriterSize(dst, 256*1024)
+		defer bw.Flush()
+	}
+	flusher, _ := dst.(http.Flusher)
+
 	seq := 1
 	waitTimer := time.NewTimer(5 * time.Second)
 	defer waitTimer.Stop()
+
+	const (
+		maxFlushBytes = 256 * 1024
+		maxFlushDelay = 200 * time.Millisecond
+	)
+	buffered := 0
+	lastFlush := time.Now()
+
+	// flush 把攒批的数据刷到底层，并触发 http.Flusher 推送到客户端
+	flush := func() error {
+		if buffered == 0 {
+			return nil
+		}
+		if err := bw.Flush(); err != nil {
+			return err
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		buffered = 0
+		lastFlush = time.Now()
+		return nil
+	}
+
 	for {
 		c.mutex.RLock()
 		if seq <= len(c.chunks) {
 			data := c.chunks[seq-1]
 			c.mutex.RUnlock()
 			if len(data) > 0 {
-				n, err := dst.Write(data)
+				n, err := bw.Write(data)
 				if err != nil {
 					return err
 				}
 				if n < len(data) {
 					return io.ErrShortWrite
 				}
-				// 检查 context 是否已取消，避免在连接关闭后调用 Flush 导致 panic
-				select {
-				case <-done:
-					return nil
-				default:
-					if f, ok := dst.(http.Flusher); ok {
-						f.Flush()
-					}
-				}
+				buffered += n
 			}
 			seq++
+			// 攒够阈值或超时再 flush，减少 TLS 记录与 syscall（直播/边下边播延迟可接受）
+			if buffered >= maxFlushBytes || time.Since(lastFlush) >= maxFlushDelay {
+				if err := flush(); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 
@@ -251,6 +286,10 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 		c.mutex.RUnlock()
 
 		if closed {
+			// 结尾把剩余数据刷出
+			if err := flush(); err != nil {
+				return err
+			}
 			return retErr
 		}
 
@@ -267,6 +306,9 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 				continue
 			}
 		case <-done:
+			if err := flush(); err != nil {
+				return err
+			}
 			return nil
 		case <-waitTimer.C:
 			continue
