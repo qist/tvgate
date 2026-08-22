@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/pprof"
+	// "net/http/pprof" // pprof 调试接口已禁用
 	"strings"
 	"sync"
 	"time"
@@ -284,8 +284,8 @@ func RegisterMux(addr string, cfg *config.Config) *http.ServeMux {
 		RegisterMonitorWebMux(mux, cfg)
 	}
 
-	// 在所有端口上挂载 /debug/pprof 性能分析端点
-	registerPprof(mux)
+	// // 在所有端口上挂载 /debug/pprof 性能分析端点（生产环境已禁用）
+	// registerPprof(mux)
 
 	return mux
 }
@@ -297,13 +297,14 @@ func RegisterMux(addr string, cfg *config.Config) *http.ServeMux {
 //	go tool pprof http://127.0.0.1:8888/debug/pprof/heap
 //	go tool pprof http://127.0.0.1:8888/debug/pprof/profile?seconds=30
 //	curl http://127.0.0.1:8888/debug/pprof/goroutine?debug=1
-func registerPprof(mux *http.ServeMux) {
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-}
+//
+// func registerPprof(mux *http.ServeMux) {
+// 	mux.HandleFunc("/debug/pprof/", pprof.Index)
+// 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+// 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+// 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+// 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+// }
 
 // monitor + web
 func RegisterMonitorWebMux(mux *http.ServeMux, cfg *config.Config) {
