@@ -884,7 +884,7 @@ func (h *ConfigHandler) validateAuthCookie(cookieValue string) bool {
 
 	// log.Printf("解析Cookie部分 - 用户名: %s, 时间戳: %s, 哈希: %s", username, timestamp, hash)
 
-	// 验证时间戳（1小时内有效）
+	// 验证时间戳（与 Cookie MaxAge 一致，30天 = 2592000秒）
 	ts, err := strconv.ParseInt(timestamp, 10, 64)
 	if err != nil {
 		// log.Printf("解析时间戳失败: %v", err)
@@ -894,7 +894,7 @@ func (h *ConfigHandler) validateAuthCookie(cookieValue string) bool {
 	timeDiff := time.Now().Unix() - ts
 	// log.Printf("时间差: %d秒", timeDiff)
 
-	if timeDiff > 3600 {
+	if timeDiff > 2592000 {
 		// log.Printf("Cookie已过期，时间差: %d秒", timeDiff)
 		return false
 	}
