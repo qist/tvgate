@@ -632,6 +632,67 @@ vm.swappiness = 0
 ulimit -n 65535
 ```
 
+### CPU 性能模式（关闭节能 / 最高性能）
+
+流媒体转发对实时性要求高，CPU 进入节能模式会导致突发负载时延迟升高（C-state 唤醒延迟可达数十微秒）。建议关闭节能、锁定最高性能：
+
+```bash
+# ==================== 1. CPU 调速器设为 performance ====================
+
+# 查看当前调速器
+cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+
+# 临时生效：全部核心设为 performance
+for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+    echo performance > "$gov"
+done
+
+# 永久生效（推荐）：
+# 安装 cpupower 工具
+apt install linux-tools-common    # Debian/Ubuntu
+yum install kernel-tools          # CentOS/RHEL
+
+# 设置全局调速器
+cpupower frequency-set -g performance
+
+# ==================== 2. 关闭 C-states（CPU 睡眠状态） ====================
+
+# 通过内核启动参数关闭（编辑 /etc/default/grub）
+# 在 GRUB_CMDLINE_LINUX_DEFAULT 中追加：
+#   processor.max_cstate=1 intel_idle.max_cstate=0 idle=poll
+# 例如：
+#   GRUB_CMDLINE_LINUX_DEFAULT="quiet processor.max_cstate=1 intel_idle.max_cstate=0 idle=poll"
+# 更新 GRUB 并重启：
+update-grub         # Debian/Ubuntu
+grub2-mkconfig -o /boot/grub2/grub.cfg   # CentOS/RHEL
+reboot
+
+# ==================== 3. 关闭 Intel Turbo Boost 降频 ====================
+
+# 查看当前 Turbo Boost 状态（Intel）
+cat /sys/devices/system/cpu/intel_pstate/no_turbo
+# 0 = Turbo Boost 开启（正常），1 = 关闭
+
+# 确保 Turbo Boost 开启（充分发挥 CPU 性能）
+echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo
+
+# ==================== 4. 切换 Intel P-State 驱动为 performance 模式 ====================
+
+# 如果使用 intel_pstate 驱动
+echo performance > /sys/devices/system/cpu/intel_pstate/status
+
+# ==================== 5. BIOS 设置（手动操作） ====================
+
+# 在 BIOS 中关闭以下选项（不同主板名称略有差异）：
+#   - C-States Control / CPU C-States → Disable
+#   - Enhanced Halt State (C1E) → Disable
+#   - Intel Speed Shift Technology (HWP) → Enable（硬件快速调频）
+#   - Intel Turbo Boost Technology → Enable
+#   - Power Management → Maximum Performance
+```
+
+> **小设备 / OpenWrt**：一般 ARM/MIPS 路由器不支持 cpufreq 调速，无需此步骤。如果是 x86 软路由则按上述配置。
+
 ---
 
 ## 相关项目
