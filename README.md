@@ -691,7 +691,14 @@ echo performance > /sys/devices/system/cpu/intel_pstate/status
 #   - Power Management → Maximum Performance
 ```
 
-> **OpenWrt / ARM 设备**：ARM64 平台同样支持 cpufreq 调速，可按上述步骤 1 配置。MIPS 路由器一般不支持，无需此步骤。OpenWrt 可安装 `cpufrequtils` 包后执行 `cpufreq-set -g performance`。
+> **OpenWrt / ARM 设备**：ARM64 平台同样支持 cpufreq 调速。OpenWrt 没有 `cpufrequtils` 包，直接写 sysfs 即可，加入 `/etc/rc.local` 开机自动生效：
+> ```bash
+> # /etc/rc.local
+> for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+>     echo performance > "$cpu"
+> done
+> ```
+> MIPS 路由器一般不支持 cpufreq，无需此步骤。
 
 ---
 
