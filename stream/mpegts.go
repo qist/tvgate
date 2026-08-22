@@ -198,7 +198,9 @@ func HandleMpegtsStream(
 						logger.LogPrintf("Flush error: %v", ferr)
 						return ferr
 					}
-					flusher.Flush()
+					if flusher != nil {
+						flusher.Flush()
+					}
 					bufferedBytes = 0
 					lastFlush = now
 				}
