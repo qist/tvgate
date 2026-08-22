@@ -1,258 +1,23 @@
 # TVGate — IPTV 转发 / 代理工具
 
 > 高性能的本地内网流/网页资源转发与代理工具，将内部可访问的 `http`/`rtsp`/`rtp` 等资源安全地发布到外网，并支持通过多种上游代理跨区域访问受限资源。
----
 
 ## 目录
 
-- [TVGate — IPTV 转发 / 代理工具](#tvgate--iptv-转发--代理工具)
-  - [目录](#目录)
-  - [功能](#功能)
-    - [转发](#转发)
-    - [代理](#代理)
-  - [快速开始](#快速开始)
-    - [安装](#安装)
-    - [运行示例](#运行示例)
-  - [📦 使用 Docker 启动](#-使用-docker-启动)
-    - [方式一：使用 ghcr.io 镜像](#方式一使用-ghcrio-镜像)
-    - [方式二：使用 Docker Hub 镜像](#方式二使用-docker-hub-镜像)
-    - [udp转发：](#udp转发)
-    - [docker-compose 示例](#docker-compose-示例)
-  - [服务管理 / 启动脚本](#服务管理--启动脚本)
-    - [systemd (Linux)](#systemd-linux)
-    - [OpenWrt 安装](#openwrt-安装)
-    - [代理规则格式](#代理规则格式)
-  - [使用示例（外网访问路径）](#使用示例外网访问路径)
-  - [🔹 jx 视频解析接口](#-jx-视频解析接口)
-  - [配置（config.yaml）示例](#配置configyaml示例)
-  - [Nginx 反向代理配置参考](#nginx-反向代理配置参考)
-  - [注意事项 / 常见问题](#注意事项--常见问题)
-    - [Star](#star)
+- [功能](#功能)
+- [下载](#下载)
+- [快速开始](#快速开始)
+- [Docker 启动](#-使用-docker-启动)
+- [服务管理](#服务管理--启动脚本)
+- [代理规则格式](#代理规则格式)
+- [使用示例](#使用示例外网访问路径)
+- [jx 视频解析接口](#-jx-视频解析接口)
+- [配置示例](#配置configyaml示例)
+- [Nginx 反向代理](#nginx-反向代理配置参考)
+- [注意事项](#注意事项--常见问题)
 
 ---
-changelog
-v3.0.0
 
-```
-fix(lb): Interval 参数生效，过期测速缓存不再复用
-- fastest/round-robin 选择缓存代理时增加 LastCheck > Interval 过滤
-- 超过 Interval 自动触发原有重测流程，避免一直使用过期测速结果
-```
-
-v2.1.20
-
-```
-1、全面性能优化锁优化。
-2、组播、TS 缓存，独立节点配置。
-3、代理页面编辑优化。
-4、登陆有效时间改成30天。
-```
-
-v2.1.19
-
-```
-1、修复rtsp崩溃问题。
-2、添加前端查看时时日志功能。
-```
-
-v2.1.18
-
-```
-1、优化ts缓存修复图像卡顿问题。
-2、修复web 编辑代理组返回主页后端数据覆盖编辑数据问题。
-3、更新了一些依赖。
-```
-v2.1.17
-
-```
-修复ts开启缓存 卡死问题。
-```
-
-v2.1.16
-
-```
-1、小设备内存增大崩溃修复。
-2、备份配置文件批量删除。
-3、升级一下依赖。
-```
-v2.1.15
-
-```
-组播优化。
-```
-
-v2.1.14
-
-```
-1、修复组播转发内存暴涨，cpu 占用率过高等。
-2、修复centos7二进制升级，启动报端口被占用。
-```
-
-v2.1.13
-
-```
-1、RTSP 优化。
-2、组播优化。
-3、更新依赖。
-```
-
-v2.1.12
-
-```
-1、fcc 优化。
-2、依赖更新。
-```
-
-v2.1.11
-
-```
-使用fcc 不正常释放bug 修复。
-```
-
-v2.1.10
-
-```
-1、ts 缓存添加开关支持。 小设备建议关闭缓存。默认关闭缓存。
-2、fcc 优化。
-```
-
-v2.1.9
-
-```
-1、fcc 优化。
-2、hls 转发 优化，增加ts 文件缓存 web 界面可配置。
-3、删除web页面特征码。
-4、更新一下依赖。
-5、代理 dns 解析遵循ipv6 开关设置。
-```
-
-v2.1.8
-
-```
-1、修复转发html页面时打开一直加载问题。
-2、修复域名映射只能单客户端播放bug。
-3、修复web 界面优先项yaml没配置添加失败bug。
-4、优化rtsp 转发性能。
-5、HTTP HUB 基于路径跟状态码设计，当状态是200 跟206 的时候数据实现不一致不播放bug。200 全部资源 普通请求 206 分段下载、断点续传、视频流分片。
-```
-
-v2.1.7
-
-```
-1、http转发hub模式验证。
-2、开启yaml没配置web界面都显示相关项。
-3、一些其它优化。
-4、HTTP配置编辑器 添加 跳过TLS证书验证
-```
-
-v2.1.6
-
-```
-1、修复组播断流。添加参数 mcast_rejoin_interval 组播重连间隔时间 10s
-2、优化fcc web添加fcc 配置。 
-访问 http://server:port/rtp/239.253.64.120:5140?fcc=10.255.14.152:15970&operator=huawei operator 后端配置可以不携带operator 参数。FCC类型: telecom, huawei
-访问 http://server:port/rtp/239.253.64.120:5140?fcc=10.255.14.152:15970
-```
-
-v2.1.5
-
-```
-1、删除首页特征改成404页面，防止被抓取。
-2、更新一些依赖。
-3、组播添加fcc支持。
-http://127.0.0.1:8888/udp/239.49.1.68:8000?fcc=180.100.72.185:15970
-```
-
-v2.1.4
-
-全局认证配置（用于所有转发）
-```
-global_auth:
-    tokens_enabled: false
-    token_param_name: my_token
-    dynamic_tokens:
-        enable_dynamic: false
-        dynamic_ttl: 1h
-        secret: mysecretkey12345
-        salt: staticSaltValue
-    static_tokens:
-        enable_static: false
-        token: token123
-        expire_hours: 1h
-
-1、修复了一些bug
-```
-
-v2.1.3
-
-```
-1、组播优化，解决卡顿，播放器兼容问题。
-```
-
-v2.1.2
-
-```
-1、重写多播转发
-2、添加dns配置当远程dns不能解析退回本地dns解析，代理默认代理服务器dns解析如果不能解析配置dns进行解析没配置使用本地dns解析。 
-3、流畅性优化
-```
-
-v2.1.1
-```
-1、端口分离 支持 http https 管理端口独立配置 详细配置参考web 页面 服务器编辑.
-2、更新了一些依赖。 
-3、修复win闪退问题
-```
-
-v2.1.0
-```
-1、多播优化。
-```
-v2.0.9
-```
-1、添加Linux 版本的更新支持,win 版本需要手动更新。
-2、用systemctl 启动的脚本需要添加 Restart=always 配置。 
-3、openwrt 启动脚本需要添加  procd_set_param respawn 配置。
-4、添加github接口加速配置。
-```
-
-v2.0.8
-```
-1、不在需要自己创建配置文件，启动程序会自动生成配置文件。启动方式支持 ./TVGate-linux-arm64 -config=/usr/local/TVGate/config.yaml 也支持目录 ./TVGate-linux-arm64 -config=/usr/local/ 直接启动 ./TVGate-linux-arm64 当前目录生成配置文件。
-2、添加域名映射支持：
-当然一样支持代理后的映射 www.bing.com 不能直连配置代理了一样可以映射访问
-配置格式:
-domainmap:
-    - name: localhost-to-test
-      source: test.test.cc # 自己的域名或IP地址 如果是ip 映射 别人就不能用ip 做代理了 打开是映射的网页 可以解析自己的域名 使用原始代理 不配置映射
-      target: www.bing.com # 需要代理的域名 映射 80 http 443 https 其它端口记得携带上完整端口  www.bing.com:8080
-      client_headers: # 前端验证头 头验证
-        X-Forwarded-For: 192.168.100.1
-      server_headers: # 后端发送头
-        X-Forwarded-Proto: http
-      protocol: http # 可选 默认http 支持 https http rtsp
-    - name: 34444
-      source: rtsp.test.cc
-      target: 123.147.112.17:8089
-      client_headers:
-        User-Agent: okhttp/3.12.0 # 前端设置头 必须一致 okhttp 就不能访问
-      protocol: rtsp
-    - name: 99999
-      source: https.test.cc
-      target: 96336.ww.com
-      protocol: https
-    - name: other # 默认后端是http
-      source: other.test.cc
-      target: 96336.ww.com
-访问：
-http: http://test.test.cc:8888/PLTV/88888888/224/3221236260/index.m3u8
-https: http://https.test.cc:8888/PLTV/88888888/224/3221236260/index.m3u8
-rtsp: http://rtsp.test.cc:8888/04000001/01000000004000000000000000000231?
-3、配置可以完全web 编辑可见所得 配置保存后等待后端重新加载后在点击前端的重新加载配置。
-4、配置文件没有对应的主节点 打开 YAML编辑器 添加主节点 web 就会自动显示跟相关配置
-5、添加在线配置还原删除备份，每次修改配置会自动备份。文件名字 config.yaml.backup.20250917171446 config.yaml 这个名字是你指定的配置文件名字 不一定是config.yaml aaa.yaml 等
-6、还有一些影藏技能自己去发现了。
-```
 ## 功能
 
 ### 转发
@@ -263,13 +28,72 @@ rtsp: http://rtsp.test.cc:8888/04000001/01000000004000000000000000000231?
 - 将运营商提供的 RTSP / HTTP 单播转发并通过外网访问
 - 将局域网内的 PHP 动态脚本通过外网访问（如 `huya.php`）
 
----
-
 ### 代理
 支持上游代理（`socks5`、`socks4`、`http`），可为不同域名 / IP / 子网 指定不同上游代理，实现跨区域、跨运营商访问受限内容。
 
-- **动态重载配置**：修改 `config.yaml` 后程序会自动重载配置（无需重启）。
-- **规则类型**：单 IP、CIDR 子网、域名通配符、IPv6 等。
+- **动态重载配置**：修改 `config.yaml` 后程序会自动重载配置（无需重启）
+- **规则类型**：单 IP、CIDR 子网、域名通配符、IPv6 等
+
+---
+
+## 下载
+
+### 服务端（本仓库）
+
+前往 [Releases](https://github.com/qist/tvgate/releases) 下载对应平台的二进制文件。
+
+支持的平台：
+
+| 平台 | 文件名示例 |
+|------|-----------|
+| Linux 64-bit | `TVGate-linux-64.zip` |
+| Linux ARM64 | `TVGate-linux-arm64-v8a.zip` |
+| Linux ARM32 v7 | `TVGate-linux-arm32-v7a.zip` |
+| Linux 32-bit | `TVGate-linux-32.zip` |
+| Linux MIPS | `TVGate-linux-mips32.zip` |
+| Linux LoongArch | `TVGate-linux-loong64.zip` |
+| Linux RISC-V | `TVGate-linux-riscv64.zip` |
+| Windows 64-bit | `TVGate-windows-64.zip` |
+| Windows ARM64 | `TVGate-windows-arm64-v8a.zip` |
+| macOS 64-bit | `TVGate-macos-64.zip` |
+| macOS ARM64 | `TVGate-macos-arm64-v8a.zip` |
+| Android ARM64 | `TVGate-android-arm64-v8a.zip` |
+
+<details>
+<summary>查看全部支持的平台</summary>
+
+- linux-64 / linux-amd64
+- linux-arm64-v8a / linux-arm64
+- linux-arm32-v7a / linux-armv7
+- linux-arm32-v6 / linux-armv6
+- linux-arm32-v5
+- linux-32 / linux-386
+- linux-loong64
+- linux-mips32 / linux-mips32le
+- linux-mips64 / linux-mips64le
+- linux-ppc64 / linux-ppc64le
+- linux-riscv64
+- linux-s390x
+- windows-64 / windows-amd64
+- windows-32 / windows-386
+- windows-arm64-v8a / windows-arm64
+- macos-64 / darwin-amd64
+- macos-arm64-v8a / darwin-arm64
+- android-arm64-v8a / android-arm64
+
+</details>
+
+### 安卓客户端
+
+> [tvgate-android](https://github.com/qist/tvgate-android) — Android 平台 IPTV 播放客户端，配合 TVGate 服务端使用。
+
+前往 [tvgate-android Releases](https://github.com/qist/tvgate-android/releases) 下载 APK。
+
+### OpenWrt 插件
+
+> [luci-app-tvgate](https://github.com/qist/luci-app-tvgate) — OpenWrt LuCI 管理界面插件，可在路由器上直接管理 TVGate。
+
+前往 [luci-app-tvgate Releases](https://github.com/qist/luci-app-tvgate/releases) 下载 ipk/apk 安装包。
 
 ---
 
@@ -314,7 +138,7 @@ docker run -d  --net=host  --name=tvgate --restart=unless-stopped -v /usr/local/
 version: "3"
 services:
   tvgate:
-    image: ghcr.io/qist/tvgate:latest   # 或 juestnow/tvgate:latest  #不能下载 可以换成 67686372.boown.com/qist/tvgate:latest
+    image: ghcr.io/qist/tvgate:latest   # 或 juestnow/tvgate:latest
     container_name: tvgate
     restart: always
     ports:
@@ -360,9 +184,9 @@ systemctl enable --now TVGate
 ---
 
 ### OpenWrt 安装
-下载 `https://github.com/qist/luci-app-tvgate`
+下载地址：[luci-app-tvgate Releases](https://github.com/qist/luci-app-tvgate/releases)
 
-1. Install the generated ipk package:
+1. 安装 ipk 包（OpenWrt 24 及以下）：
    ```bash
    opkg update
    opkg install curl ca-certificates unzip luci-compat luci luci-base
@@ -371,34 +195,39 @@ systemctl enable --now TVGate
    opkg install /tmp/luci-i18n-tvgate-en_1.0.0-1_all.ipk
    ```
 
-2. Uninstall package:
+2. 卸载 ipk 包：
    ```bash
    opkg remove luci-app-tvgate
    opkg remove luci-i18n-tvgate-en
    opkg remove luci-i18n-tvgate-zh-cn
    ```
-3. openwrt 25 Install the generated apk package:
- ```bash
-apk update
-apk add curl ca-certificates unzip luci-compat luci luci-base
-apk add --allow-untrusted luci-app-tvgate-1.0.0-r1.apk
-apk add --allow-untrusted luci-i18n-tvgate-en-1.0.0-r1.apk
-apk add --allow-untrusted luci-i18n-tvgate-zh-cn-1.0.0-r1.apk
-```
-4. openwrt 25 Uninstall package:
- ```bash
-apk del luci-app-tvgate
-apk del luci-i18n-tvgate-en
-apk del luci-i18n-tvgate-zh-cn
-```
+
+3. 安装 apk 包（OpenWrt 25+）：
+   ```bash
+   apk update
+   apk add curl ca-certificates unzip luci-compat luci luci-base
+   apk add --allow-untrusted luci-app-tvgate-1.0.0-r1.apk
+   apk add --allow-untrusted luci-i18n-tvgate-en-1.0.0-r1.apk
+   apk add --allow-untrusted luci-i18n-tvgate-zh-cn-1.0.0-r1.apk
+   ```
+
+4. 卸载 apk 包：
+   ```bash
+   apk del luci-app-tvgate
+   apk del luci-i18n-tvgate-en
+   apk del luci-i18n-tvgate-zh-cn
+   ```
+
 ---
+
 ### 代理规则格式
 - 支持 IP（例如 `192.168.1.1`）
 - 支持子网（例如 `192.168.1.0/24`）
 - 支持域名通配符（例如 `*.rrs.169ol.com`、`hki*-edge*.edgeware.tvb.com`、`www.tvb.com`）
 - 支持 IPv6（例如 `1234:5678::abcd:ef01`）
 - 支持 IPv6 子网（例如 `1234:5678::abcd:ef01/128`）
-- 需要代理的ip 域名尽量都添加，如果日志出现  dial tcp 210.13.7.109:80: i/o timeout 那就把 210.13.7.109/24 添加到代理规则中
+- 需要代理的ip 域名尽量都添加，如果日志出现  `dial tcp 210.13.7.109:80: i/o timeout` 那就把 `210.13.7.109/24` 添加到代理规则中
+
 ---
 
 ## 使用示例（外网访问路径）
@@ -432,6 +261,7 @@ apk del luci-i18n-tvgate-zh-cn
      `http://111.222.111.222:8888/192.168.1.10/huya.php?id=11342412`
 
 ---
+
 ## 🔹 jx 视频解析接口
 
 用于对接第三方视频 API，支持常见的视频解析站点（如某奇、某果、某讯、某尤、某咕等）。
@@ -441,13 +271,15 @@ apk del luci-i18n-tvgate-zh-cn
 ```bash
 http://111.222.111.222:8888/jx?jx=https://v.xx.com/x/cover/mcv8hkc8zk8lnov/z0040syxb9c.html&full=1
 http://127.0.0.1:8888/jx?jx=爱情公寓3&id=11&full=1
-
 ```
+
 tvbox 配置文件：
 ```bash
 http://111.222.111.222:8888/jx?jx=https://v.xx.com/x/cover/mcv8hkc8zk8lnov/z0040syxb9c.html
 http://127.0.0.1:8888/jx?jx=爱情公寓3&id=11
 ```
+
+---
 
 ## 配置（config.yaml）示例
 
@@ -506,6 +338,7 @@ log:
   maxage: 28
   # 是否压缩
   compress: true
+
 http:
   timeout: 0s # 整个请求超时时间 (0 表示不限制)
   connect_timeout: 10s # 建立连接的超时时间
@@ -518,42 +351,24 @@ http:
   max_idle_conns_per_host: 4 # 每个主机最大空闲连接数
   max_conns_per_host: 8 # 每个主机最大连接数（总数，含空闲和活跃）
   disable_keepalives: false # 是否禁用长连接复用 (false 表示启用 KeepAlive)
-# 10 万并发参考
-#  http:
-#   timeout: 0s                       # 整体请求超时，不限制（由上层逻辑控制超时）
-#   connect_timeout: 3s               # 建立连接的超时时间（越短越好，失败快速切换）
-#   keepalive: 30s                    # 长连接保活时间，保证高并发时连接复用
-#   response_header_timeout: 5s       # 响应头超时，避免服务端卡死
-#   idle_conn_timeout: 90s            # 空闲连接保留时间，过短会频繁建连，过长会浪费 FD
-#   tls_handshake_timeout: 5s         # TLS 握手超时，CDN/直播源一般很快
-#   expect_continue_timeout: 1s       # 基本不用，保持默认
-
-#   max_idle_conns: 200000            # 全局最大空闲连接数（10 万并发需要翻倍冗余）
-#   max_idle_conns_per_host: 10000    # 单 host 的空闲连接上限，保证热点源站可复用
-#   max_conns_per_host: 20000         # 单 host 总连接数上限（活跃+空闲），防止热点源阻塞
-
-#   disable_keepalives: false         # 必须启用长连接，否则 10 万并发会把源站打爆
-
-# 配置文件重新加载时间(秒)
 
 # jx 视频解析接口配置 支持 某奇 某果 某讯 某尤 某咕
 jx:
     path: "/jx" # jx 接口路径，可自定义，例如 /jx
     default_id: "1" # 默认集数，如果请求未传 id，则使用此值
-    # 多个视频 API 组配置，可以配置不同的视频源
     api_groups:
         other_api:
             endpoints:
-                - "http://23.224.101.30" # 主 API 地址
-                - "https://mozhuazy.com" # 备用 API 地址
-            timeout: 10s # 请求超时
-            query_template: "%s/api.php/provide/vod/?ac=detail&wd=%s" # 查询 URL 模板，%s 会被替换为 endpoint 和搜索关键词
-            primary: true # 是否主 API
-            weight: 2 # 权重，用于负载均衡
-            fallback: true # 是否可以作为备用 API
-            max_retries: 3 # 请求失败重试次数
+                - "http://23.224.101.30"
+                - "https://mozhuazy.com"
+            timeout: 10s
+            query_template: "%s/api.php/provide/vod/?ac=detail&wd=%s"
+            primary: true
+            weight: 2
+            fallback: true
+            max_retries: 3
             filters:
-                exclude: "电影解说,完美世界剧场版" # 排除包含指定关键字的视频
+                exclude: "电影解说,完美世界剧场版"
 
 domainmap:
     - name: localhost-to-test
@@ -570,7 +385,9 @@ domainmap:
       client_headers:
         ua: 1236545
       protocol: rtsp                
+
 reload: 5
+
 global_auth:
     tokens_enabled: false
     token_param_name: my_token
@@ -583,6 +400,7 @@ global_auth:
         enable_static: false
         token: token123
         expire_hours: 1h
+
 proxygroups:
   蜀小果:
     proxies:
@@ -595,52 +413,14 @@ proxygroups:
         type: https
         server: 8.8.8.8
         port: 1234
-        # headers:
-        #   Host: "1.3.236.22:443"
-        #   X-T5-Auth: "887766543"
-        #   User-Agent: "baiduboxapp"
-    #     - name: test1
-    #       type: socks5
-    #       server: 192.168.0.151
-    #       port: 7890
-    #       # username: "qist" # 账号
-    #       # password: "123456789" # 密码
-    #     - name: test2
-    #       type: socks4  #认证没实现
-    #       server: 192.168.0.151
-    #       port: 7891
-    #     - name: test2
-    #       type: socks4a  #认证没实现
-    #       server: 192.168.0.151
-    #       port: 7891
-    #     - name: test3
-    #       type: http
-    #       server: 192.168.0.151
-    #       port: 7890
-    #       # username: "qist" # 账号
-    #       # password: "123456789"  # 密码
-    #       # headers: # 代理服务器验证headers 配置
-    #       #   Host: "1.3.236.22:443"
-    #       #   X-T5-Auth: "887766543"
-    #       #   User-Agent: "baiduboxapp"
-    #     # - name: test4
-    #       # type: https
-    #       # server: 78.141.193.27
-    #       # port: 8888
-    #       # username: "qist"
-    #       # password: "123456789"
-    #       # headers: # 代理服务器验证headers 配置
-    #       #   Host: "1.3.236.22:443"
-    #       #   X-T5-Auth: "887766543"
-    #       #   User-Agent: "baiduboxapp"
-    domains: # 支持通配符号*
+    domains:
       - live2.rxip.sc96655.com
-    interval: 180s # 秒 默认60s 健康检测时间
-    ipv6: false # IPv6开关 true 开启
-    loadbalance: round-robin # 负载均衡方案：round-robin 轮询 fastest 最快的优先
-    max_retries: 3 # 最大重试3次
-    retry_delay: 1s # 重试延迟1秒
-    max_rt: 100ms # 最大响应时间 默认800ms 大于800ms 不参与轮询 如果所有测速大于800ms 参数轮询
+    interval: 180s
+    ipv6: false
+    loadbalance: round-robin
+    max_retries: 3
+    retry_delay: 1s
+    max_rt: 100ms
   四川联通:
     proxies:
       - name: sclt1
@@ -653,14 +433,14 @@ proxygroups:
         server: 4.3.2.1
         port: 1080
         udp: true
-    domains: # 支持通配符号*
-      - "*.rrs.169ol.com" # 规则支持ip 192.168.1.1 子网 192.168.1.0/24 域名 *.rrs.169ol.com live2.rxip.sc96655.com ipv6：1234:5678::abcd:ef01/128
-    interval: 180s # 秒 默认60s 健康检测时间
-    ipv6: false # IPv6开关 true 开启
-    loadbalance: round-robin # 负载均衡方案：round-robin 轮询 fastest 最快的优先
-    max_retries: 3 # 最大重试3次
-    retry_delay: 1s # 重试延迟1秒
-    max_rt: 100ms # 最大响应时间 默认800ms 大于800ms 不参与轮询 如果所有测速大于800ms 参数轮询
+    domains:
+      - "*.rrs.169ol.com"
+    interval: 180s
+    ipv6: false
+    loadbalance: round-robin
+    max_retries: 3
+    retry_delay: 1s
+    max_rt: 100ms
   浙江移动:
     proxies:
       - name: 浙江移动1
@@ -671,14 +451,11 @@ proxygroups:
     domains:
       - hwltc.tv.cdn.zj.chinamobile.com
       - 39.134.179.0/24
-      - 39.134.179.185/24
-      - 120.199.224.178/24
     interval: 180s
     loadbalance: round-robin
-    max_retries: 3 # 最大重试3次
-    retry_delay: 1s # 重试延迟1秒
+    max_retries: 3
+    retry_delay: 1s
     max_rt: 200ms
-
   mpd:
     proxies:
       - name: mpd1
@@ -692,14 +469,11 @@ proxygroups:
       - "hki*-edge*.edgeware.tvb.com"
       - 2001:::1
       - 2409:8087:0::/48
-      - 2409:8087:1::/48
-      - 2409:8087:8::/48
-      - 2409:8087:9::/48
     interval: 180s
     ipv6: true
     loadbalance: fastest
-
 ```
+
 ---
 
 ## Nginx 反向代理配置参考
@@ -745,6 +519,16 @@ server {
 - **版权合规**：请确保你有权限分发和访问被转发的内容。
 - **端口冲突**：如果 `8888` 被占用，请在配置或启动参数中修改监听端口。
 - **自动重载配置**：修改 `config.yaml` 后观察日志，确认程序已加载新配置。
+
+---
+
+## 相关项目
+
+| 项目 | 说明 | 下载 |
+|------|------|------|
+| [tvgate](https://github.com/qist/tvgate) | 服务端核心（本仓库） | [Releases](https://github.com/qist/tvgate/releases) |
+| [tvgate-android](https://github.com/qist/tvgate-android) | Android IPTV 播放客户端 | [Releases](https://github.com/qist/tvgate-android/releases) |
+| [luci-app-tvgate](https://github.com/qist/luci-app-tvgate) | OpenWrt LuCI 管理插件 | [Releases](https://github.com/qist/luci-app-tvgate/releases) |
 
 ---
 
