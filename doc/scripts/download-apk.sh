@@ -10,6 +10,19 @@
 # ============================================================
 set -euo pipefail
 
+# 检查依赖
+for cmd in curl jq zip; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "错误: 缺少依赖 '$cmd'，请先安装"
+        case "$cmd" in
+            curl) echo "  Ubuntu/Debian: apt install curl" ;;
+            jq)   echo "  Ubuntu/Debian: apt install jq" ;;
+            zip)  echo "  Ubuntu/Debian: apt install zip" ;;
+        esac
+        exit 1
+    fi
+done
+
 REPO="qist/tvgate-android"
 OUT_DIR="download"
 VERSION="${1:-}"

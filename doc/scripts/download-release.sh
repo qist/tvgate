@@ -15,6 +15,19 @@
 # ============================================================
 set -euo pipefail
 
+# 检查依赖
+for cmd in curl jq 7z; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "错误: 缺少依赖 '$cmd'，请先安装"
+        case "$cmd" in
+            curl) echo "  Ubuntu/Debian: apt install curl" ;;
+            jq)   echo "  Ubuntu/Debian: apt install jq" ;;
+            7z)   echo "  Ubuntu/Debian: apt install p7zip-full" ;;
+        esac
+        exit 1
+    fi
+done
+
 REPO="qist/tvgate"
 OUT_DIR="download"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
