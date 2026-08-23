@@ -24,7 +24,9 @@ for cmd in curl jq zip; do
 done
 
 REPO="qist/tvgate-android"
-OUT_DIR="download"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+OUT_DIR="${ROOT_DIR}/download"
 VERSION="${1:-}"
 
 # 如果没有指定版本号，获取最新 tag
@@ -43,6 +45,11 @@ echo "目标版本: ${VERSION}"
 VERSION_NUM="${VERSION#v}"
 
 mkdir -p "${OUT_DIR}"
+TMP_DIR="${OUT_DIR}/tmp_android_${VERSION_NUM}"
+mkdir -p "${TMP_DIR}"
+
+# 确保退出时清理临时目录
+trap 'rm -rf "${TMP_DIR}"' EXIT
 
 # 获取 release 中的 APK asset
 echo "正在获取 release assets..."
@@ -53,35 +60,39 @@ if [ -z "$ASSETS" ]; then
     exit 1
 fi
 
-APK_FILE=""
-APK_URL=""
-
-# 查找 APK 文件
+# 查找所有 APK 文件
+APK_FILES=()
 while IFS=$'\t' read -r name url; do
     if [[ "$name" == *.apk ]]; then
-        APK_FILE="$name"
-        APK_URL="$url"
-        break
+        APK_FILES+=("${name}|${url}")
     fi
 done <<< "$ASSETS"
 
-if [ -z "$APK_FILE" ]; then
+if [ ${#APK_FILES[@]} -eq 0 ]; then
     echo "错误: 未找到 APK 文件"
     exit 1
 fi
 
-echo "找到 APK: ${APK_FILE}"
+echo "找到 ${#APK_FILES[@]} 个 APK"
 
-# 下载 APK
+# 下载所有 APK
 echo "正在下载..."
-curl -L -o "${OUT_DIR}/${APK_FILE}" "$APK_URL"
+APK_NAMES=()
+for entry in "${APK_FILES[@]}"; do
+    APK_FILE="${entry%%|*}"
+    APK_URL="${entry#*|}"
+    echo "  下载: ${APK_FILE}"
+    curl -L -s -o "${TMP_DIR}/${APK_FILE}" "$APK_URL"
+    APK_NAMES+=("${APK_FILE}")
+done
 
 # 打包 zip
 ZIP_NAME="tvgate-android-${VERSION_NUM}.zip"
+ZIP_PATH="${OUT_DIR}/${ZIP_NAME}"
 echo "正在打包 ${ZIP_NAME}..."
-cd "${OUT_DIR}"
-zip -j "$ZIP_NAME" "$APK_FILE"
-rm -f "$APK_FILE"
-cd ..
+rm -f "${ZIP_PATH}"
+cd "${TMP_DIR}"
+zip -j "${ZIP_PATH}" "${APK_NAMES[@]}"
+cd - >/dev/null
 
 echo "完成: ${OUT_DIR}/${ZIP_NAME}"

@@ -29,9 +29,9 @@ for cmd in curl jq 7z; do
 done
 
 REPO="qist/tvgate"
-OUT_DIR="download"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+OUT_DIR="${ROOT_DIR}/download"
 
 # 解析参数
 VERSION=""
@@ -95,6 +95,9 @@ mkdir -p "${OUT_DIR}"
 TMP_DIR="${OUT_DIR}/tmp_${VERSION_NUM}"
 mkdir -p "${TMP_DIR}"
 
+# 确保退出时清理临时目录
+trap 'rm -rf "${TMP_DIR}"' EXIT
+
 # 下载每个平台的 release zip
 SUCCESS_COUNT=0
 FAIL_COUNT=0
@@ -106,19 +109,26 @@ for PLATFORM in "${PLATFORMS[@]}"; do
 
     if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
         echo "  跳过: ${PLATFORM} (未找到 ${ASSET_NAME})"
-        ((FAIL_COUNT++))
+        FAIL_COUNT=$((FAIL_COUNT + 1))
         continue
     fi
 
     echo "  下载: ${ASSET_NAME}"
-    curl -L -s -o "${TMP_DIR}/${ASSET_NAME}" "$ASSET_URL"
-
-    if [ $? -eq 0 ]; then
-        echo "  完成: ${ASSET_NAME}"
-        ((SUCCESS_COUNT++))
+    if curl -L -s -o "${TMP_DIR}/${ASSET_NAME}" "$ASSET_URL"; then
+        echo "  解压: ${ASSET_NAME}"
+        # 解压，只提取二进制文件（TVGate-*），跳过 README.md 和 TVGate.service
+        if 7z x -o"${TMP_DIR}" "${TMP_DIR}/${ASSET_NAME}" "TVGate-*" -y &>/dev/null; then
+            echo "  完成: ${PLATFORM}"
+            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+        else
+            echo "  失败: ${PLATFORM} (解压失败)"
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
+        # 删除 zip 包
+        rm -f "${TMP_DIR}/${ASSET_NAME}"
     else
         echo "  失败: ${ASSET_NAME}"
-        ((FAIL_COUNT++))
+        FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
 done
 

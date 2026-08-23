@@ -1,0 +1,145 @@
+# Changelog
+
+---
+
+## Android (tvgate-android)
+
+### v3.0.5
+
+```
+1、网络切换自动更新DNS — 网络环境切换时自动检测DNS变化并更新config.yaml重启进程
+2、手动重启内核 — 界面新增重启内核按钮，支持遥控器焦点导航
+3、TV分辨率检测与UI自适应缩放 — 重写布局为三段式weightSum结构，兼容海信等未声明TV uiMode的电视
+4、修复首次手动重启报错(退出码141) — 新增killedByUs标记区分主动杀进程和异常退出
+5、修复重启按钮文字不显示 — 用代码设置背景和padding避免Material3主题覆盖
+6、重启按钮改为垂直布局 — 避免水平溢出遮挡，遥控器提示卡片改为vertical布局
+7、启动界面美化、后台运行、局域网信息展示、遥控器支持
+8、修复process.destroy()导致consume线程InterruptedIOException崩溃
+9、APK分架构打包 — arm64-v8a / armeabi-v7a / x86_64
+10、迁移完整构建链 — 交叉编译/分架构打包脚本 + GitHub Actions CI
+```
+
+---
+
+## 服务端 (tvgate)
+
+### v3.0.5
+
+```
+1、修复 bufio 缓冲层数据乱序问题 — FLV 头部改用 sendToClientViaWriter 通过 bufio 写入，避免绕过缓冲层
+2、修复 bufio 缓冲层数据丢失与积压问题 — ctx.Done() 路径补 bw.Flush 避免丢末尾数据；flusher=nil 时仍刷 bw 避免积压
+3、修复 ts_cache waitCh 关闭后空转问题 — 刷出剩余数据后退出，避免 busy-loop
+4、修复 udp_rtp hub 关闭时数据未 flush 问题 — h.ctx.Done() 路径补 flush
+5、修复 mpegts flusher=nil 时 panic — 补 nil 检查
+6、修复 web 登录会话 1 小时失效问题 — validateAuthCookie 时间戳校验与 Cookie MaxAge 30 天一致
+7、Makefile 支持按平台单独编译 — make linux-64 / make windows-64 等，新增 make list
+8、注释掉 pprof 调试接口 — 生产环境禁用 /debug/pprof
+9、README 添加 Linux 内核优化建议和 CPU 性能模式章节
+10、Android 平台获取不到系统信息时用 runtime.GOOS/GOARCH 兜底
+11、添加下载脚本 — download-apk.sh / download-release.sh，支持依赖检查
+12、更新依赖 — golang.org/x/net 0.58.0, go-astits 1.16.0, gortsplib 5.6.3, quic-go 0.61.0, pion/rtp 1.10.4 等
+```
+
+## v3.0.0
+
+```
+fix(lb): Interval 参数生效，过期测速缓存不再复用
+- fastest/round-robin 选择缓存代理时增加 LastCheck > Interval 过滤
+- 超过 Interval 自动触发原有重测流程，避免一直使用过期测速结果
+```
+
+## v2.1.20
+
+```
+1、全面性能优化锁优化。
+2、组播、TS 缓存，独立节点配置。
+3、代理页面编辑优化。
+4、登陆有效时间改成30天。
+```
+
+## v2.1.19
+
+```
+1、修复rtsp崩溃问题。
+2、添加前端查看时时日志功能。
+```
+
+## v2.1.18
+
+```
+1、优化ts缓存修复图像卡顿问题。
+2、修复web 编辑代理组返回主页后端数据覆盖编辑数据问题。
+3、更新了一些依赖。
+```
+
+## v2.1.17
+
+```
+修复ts开启缓存 卡死问题。
+```
+
+## v2.1.16
+
+```
+1、小设备内存增大崩溃修复。
+2、备份配置文件批量删除。
+3、升级一下依赖。
+```
+
+## v2.1.15
+
+```
+组播优化。
+```
+
+## v2.1.14
+
+```
+1、修复组播转发内存暴涨，cpu 占用率过高等。
+2、修复centos7二进制升级，启动报端口被占用。
+```
+
+## v2.1.13
+
+```
+1、RTSP 优化。
+2、组播优化。
+3、更新依赖。
+```
+
+## v2.1.12
+
+```
+1、fcc 优化。
+2、依赖更新。
+```
+
+## v2.1.11
+
+```
+使用fcc 不正常释放bug 修复。
+```
+
+## v2.1.10
+
+```
+1、ts 缓存添加开关支持。小设备建议关闭缓存。默认关闭缓存。
+2、fcc 优化。
+```
+
+## v2.1.9
+
+```
+1、fcc 优化。
+2、hls 转发优化，增加ts 文件缓存 web 界面可配置。
+3、删除web页面特征码。
+4、更新一下依赖。
+5、代理 dns 解析遵循ipv6 开关设置。
+```
+
+## v2.1.8
+
+```
+1、修复转发html页面时打开一直加载问题。
+2、修复域名映射只能单客户端播放bug。
+```
