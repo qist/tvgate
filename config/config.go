@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"flag"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -98,6 +99,9 @@ type Config struct {
 
 	// Publisher配置 - 修改为直接包含streams
 	Publisher *PublisherConfig `yaml:"publisher"` // 推流配置
+
+	// PHP 模块配置（纯 Go phpgo runtime，从磁盘读取脚本解释执行）
+	PHP PHPConfig `yaml:"php"`
 }
 
 type MulticastConfig struct {
@@ -115,6 +119,16 @@ type TSConfig struct {
 	Enable    *bool         `yaml:"enable"`     // 是否启用 TS 缓存
 	CacheSize int           `yaml:"cache_size"` // TS缓存大小，默认128MB
 	CacheTTL  time.Duration `yaml:"cache_ttl"`  // TS缓存TTL，默认2分钟
+}
+
+// PHPConfig 表示纯 Go phpgo runtime 的配置
+type PHPConfig struct {
+	Enabled     bool     `yaml:"enabled"`      // 是否启用 PHP 模块
+	Path        string   `yaml:"path"`         // 访问路径前缀，如 /php/（缺省 /php/）
+	DocRoot     string   `yaml:"docroot"`      // PHP 脚本根目录，如 /www
+	Index       []string `yaml:"index"`        // 目录索引文件列表，如 [index.php, index.html]
+	WorkerMode  bool     `yaml:"worker_mode"`  // 是否启用 Worker 常驻模式
+	Workers     int      `yaml:"workers"`      // Worker 进程数（worker_mode 为 true 时生效）
 }
 
 // PublisherConfig represents the publisher configuration structure
@@ -488,6 +502,25 @@ func (c *Config) SetDefaults() {
 	}
 	if c.Github.Retry == 0 {
 		c.Github.Retry = 3
+	}
+
+	// PHP 模块默认值
+	if c.PHP.Path == "" {
+		c.PHP.Path = "/php/"
+	}
+	if c.PHP.DocRoot == "" {
+		c.PHP.DocRoot = "/www"
+	} else if !filepath.IsAbs(c.PHP.DocRoot) {
+		// 相对路径：基准为配置文件所在目录（而非进程 cwd），跨平台一致
+		if *ConfigFilePath != "" {
+			c.PHP.DocRoot = filepath.Join(filepath.Dir(*ConfigFilePath), c.PHP.DocRoot)
+		}
+	}
+	if len(c.PHP.Index) == 0 {
+		c.PHP.Index = []string{"index.php", "index.html"}
+	}
+	if c.PHP.Workers < 0 {
+		c.PHP.Workers = 0
 	}
 }
 

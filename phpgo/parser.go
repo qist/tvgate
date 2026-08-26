@@ -1,0 +1,1396 @@
+package phpgo
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Parser 递归下降解析器
+type Parser struct {
+	toks []Tok
+	pos  int
+}
+
+// NewParser ...
+func NewParser(toks []Tok) *Parser { return &Parser{toks: toks} }
+
+func (p *Parser) cur() Tok  { return p.toks[p.pos] }
+func (p *Parser) adv() Tok  { t := p.toks[p.pos]; p.pos++; return t }
+func (p *Parser) at(k tokKind) bool { return p.cur().Kind == k }
+func (p *Parser) atVal(v string) bool { return p.cur().Kind == tIdent && strings.EqualFold(p.cur().Val, v) }
+
+func (p *Parser) expect(k tokKind) (Tok, error) {
+	if p.cur().Kind != k {
+		return Tok{}, fmt.Errorf("parse: 期望 %d，实际 %q at %d", k, p.cur().Val, p.cur().Pos)
+	}
+	return p.adv(), nil
+}
+
+// skip semicolons
+func (p *Parser) skipSemis() {
+	for p.at(tSemi) {
+		p.adv()
+	}
+}
+
+// peekN 返回当前位置偏移 n 的 token（不消耗）
+func (p *Parser) peekN(n int) Tok {
+	if p.pos+n >= len(p.toks) {
+		return Tok{Kind: tEOF}
+	}
+	return p.toks[p.pos+n]
+}
+
+// Parse 解析整个程序
+func (p *Parser) Parse() (*Program, error) {
+	prog := &Program{}
+	for !p.at(tEOF) {
+		p.skipSemis()
+		if p.at(tEOF) {
+			break
+		}
+		if p.at(tFunc) {
+			fn, err := p.parseFunc()
+			if err != nil {
+				return nil, err
+			}
+			prog.Stmts = append(prog.Stmts, fn)
+			continue
+		}
+		st, err := p.parseStmt()
+		if err != nil {
+			return nil, err
+		}
+		if st != nil {
+			prog.Stmts = append(prog.Stmts, st)
+		}
+	}
+	return prog, nil
+}
+
+func (p *Parser) parseFunc() (Stmt, error) {
+	p.adv() // func
+	name, err := p.expect(tIdent)
+	if err != nil {
+		return nil, err
+	}
+	params, err := p.parseFuncParams()
+	if err != nil {
+		return nil, err
+	}
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	return &FuncDecl{Name: name.Val, Params: params, Body: body}, nil
+}
+
+func (p *Parser) parseFuncParams() ([]FuncParam, error) {
+	if _, err := p.expect(tLParen); err != nil {
+		return nil, err
+	}
+	var params []FuncParam
+	for !p.at(tRParen) && !p.at(tEOF) {
+		var param FuncParam
+		if p.at(tAmp) {
+			p.adv()
+			param.ByRef = true
+		}
+		if !p.at(tVar) {
+			return nil, fmt.Errorf("parse: 函数参数须为变量 at %d", p.cur().Pos)
+		}
+		param.Name = p.adv().Val[1:]
+		if p.at(tEquals) {
+			p.adv()
+			def, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			param.Default = def
+		}
+		params = append(params, param)
+		if p.at(tComma) {
+			p.adv()
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(tRParen); err != nil {
+		return nil, err
+	}
+	return params, nil
+}
+
+// parseBlock 解析 {...} 内的语句列表（也支持单语句块）
+func (p *Parser) parseBlock() ([]Stmt, error) {
+	if !p.at(tLBrace) {
+		st, err := p.parseStmt()
+		if err != nil {
+			return nil, err
+		}
+		if st != nil {
+			return []Stmt{st}, nil
+		}
+		return nil, nil
+	}
+	if _, err := p.expect(tLBrace); err != nil {
+		return nil, err
+	}
+	var stmts []Stmt
+	for !p.at(tRBrace) && !p.at(tEOF) {
+		p.skipSemis()
+		if p.at(tRBrace) {
+			break
+		}
+		st, err := p.parseStmt()
+		if err != nil {
+			return nil, err
+		}
+		if st != nil {
+			stmts = append(stmts, st)
+		}
+	}
+	if _, err := p.expect(tRBrace); err != nil {
+		return nil, err
+	}
+	return stmts, nil
+}
+
+// parseStmt 解析单条语句
+func (p *Parser) parseStmt() (Stmt, error) {
+	p.skipSemis()
+	switch {
+	case p.at(tEcho) || p.at(tPrint):
+		p.adv()
+		var args []Expr
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, e)
+		for p.at(tComma) {
+			p.adv()
+			e, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, e)
+		}
+		p.skipSemis()
+		if len(args) == 1 {
+			return &EchoStmt{E: args[0]}, nil
+		}
+		return &ExprStmt{E: &FuncCall{Name: "echo", Args: args}}, nil
+	case p.at(tExit) || p.at(tDie):
+		p.adv()
+		var e Expr
+		if p.at(tLParen) {
+			p.adv()
+			if !p.at(tRParen) {
+				e, _ = p.parseExpr()
+			}
+			p.expect(tRParen)
+		}
+		p.skipSemis()
+		return &ExitStmt{E: e}, nil
+	case p.at(tReturn):
+		p.adv()
+		var e Expr
+		if !p.at(tSemi) && !p.at(tRBrace) && !p.at(tEOF) {
+			e, _ = p.parseExpr()
+		}
+		p.skipSemis()
+		return &ReturnStmt{E: e}, nil
+	case p.at(tIf):
+		return p.parseIf()
+	case p.at(tForeach):
+		return p.parseForeach()
+	case p.at(tFor):
+		return p.parseFor()
+	case p.at(tWhile):
+		return p.parseWhile()
+	case p.at(tDo):
+		return p.parseDoWhile()
+	case p.at(tSwitch):
+		return p.parseSwitch()
+	case p.at(tBreak):
+		p.adv()
+		n := 1
+		if p.at(tInt) {
+			n = int(p.adv().Val[0] - '0')
+		}
+		p.skipSemis()
+		return &BreakStmt{N: n}, nil
+	case p.at(tContinue):
+		p.adv()
+		n := 1
+		if p.at(tInt) {
+			n = int(p.adv().Val[0] - '0')
+		}
+		p.skipSemis()
+		return &ContinueStmt{N: n}, nil
+	case p.at(tFunc):
+		if p.peekN(1).Kind == tIdent {
+			return p.parseFunc()
+		}
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		p.skipSemis()
+		return &ExprStmt{E: e}, nil
+	case p.at(tGlobal):
+		p.adv()
+		var names []string
+		for p.at(tVar) {
+			names = append(names, p.adv().Val[1:])
+			if p.at(tComma) {
+				p.adv()
+				continue
+			}
+			break
+		}
+		p.skipSemis()
+		return &GlobalStmt{Names: names}, nil
+	case p.at(tVar):
+		return p.parseAssignOrExpr()
+	case p.at(tList):
+		return p.parseListAssign()
+	}
+	// @ 错误抑制
+	if p.atVal("@") {
+		p.adv()
+	}
+	if isExprStart(p.cur()) {
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if p.at(tPlusPlus) || p.at(tMinusMinus) {
+			isDec := p.at(tMinusMinus)
+			p.adv()
+			p.skipSemis()
+			if v, ok := e.(*VarExpr); ok {
+				return &PostIncStmt{Name: v.Name, IsDec: isDec}, nil
+			}
+		}
+		p.skipSemis()
+		return &ExprStmt{E: e}, nil
+	}
+	if !p.at(tEOF) {
+		p.adv()
+	}
+	return nil, nil
+}
+
+func isExprStart(t Tok) bool {
+	switch t.Kind {
+	case tVar, tIdent, tInt, tFloat, tDoubleStr, tSingleStr, tConstTrue, tConstFalse, tConstNull, tArray, tLBracket, tLParen, tBang, tMinus, tStringCast, tIntCast, tFloatCast, tBoolCast, tArrayCast, tFunc:
+		return true
+	}
+	return false
+}
+
+func (p *Parser) parseAssignOrExpr() (Stmt, error) {
+	v := p.adv() // $name
+	name := v.Val[1:]
+	if p.at(tLBracket) {
+		var indices []Expr
+		for p.at(tLBracket) {
+			p.adv()
+			if p.at(tRBracket) {
+				p.adv()
+				if p.at(tEquals) {
+					p.adv()
+					val, err := p.parseExpr()
+					if err != nil {
+						return nil, err
+					}
+					p.skipSemis()
+					return &ArrayPushStmt{Arr: &VarExpr{Name: name}, Val: val}, nil
+				}
+				indices = append(indices, nil)
+				continue
+			}
+			key, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			p.expect(tRBracket)
+			indices = append(indices, key)
+		}
+		if p.at(tEquals) {
+			p.adv()
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			p.skipSemis()
+			if len(indices) == 1 {
+				return &ArrayAssignStmt{Arr: &VarExpr{Name: name}, Key: indices[0], Val: val}, nil
+			}
+			return &NestedArrayAssignStmt{
+				Base:    &VarExpr{Name: name},
+				Indices: indices,
+				Val:     val,
+			}, nil
+		}
+		if p.at(tConcatEq) || p.at(tPlusEq) || p.at(tMinusEq) || p.at(tStarEq) || p.at(tSlashEq) {
+			op := p.adv().Val
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			p.skipSemis()
+			if len(indices) == 1 {
+				return &ArrayAssignStmt{
+					Arr: &VarExpr{Name: name},
+					Key: indices[0],
+					Val: &BinaryExpr{Op: op, Left: &IndexExpr{Arr: &VarExpr{Name: name}, Key: indices[0]}, Right: val},
+				}, nil
+			}
+			return &ExprStmt{E: &VarExpr{Name: name}}, nil
+		}
+		e := Expr(&VarExpr{Name: name})
+		for _, idx := range indices {
+			if idx == nil {
+				break
+			}
+			e = &IndexExpr{Arr: e, Key: idx}
+		}
+		e2, err := p.parsePostfixFrom(e)
+		if err != nil {
+			return nil, err
+		}
+		p.skipSemis()
+		return &ExprStmt{E: e2}, nil
+	}
+	if p.at(tPlusPlus) {
+		p.adv()
+		p.skipSemis()
+		return &PostIncStmt{Name: name, IsDec: false}, nil
+	}
+	if p.at(tMinusMinus) {
+		p.adv()
+		p.skipSemis()
+		return &PostIncStmt{Name: name, IsDec: true}, nil
+	}
+	if p.at(tEquals) || p.at(tConcatEq) || p.at(tPlusEq) || p.at(tMinusEq) || p.at(tStarEq) || p.at(tSlashEq) {
+		concat := false
+		op := ""
+		switch p.cur().Kind {
+		case tConcatEq:
+			concat = true
+			p.adv()
+		case tPlusEq:
+			op = "+="
+			p.adv()
+		case tMinusEq:
+			op = "-="
+			p.adv()
+		case tStarEq:
+			op = "*="
+			p.adv()
+		case tSlashEq:
+			op = "/="
+			p.adv()
+		default:
+			p.adv()
+		}
+		val, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		p.skipSemis()
+		return &AssignStmt{Name: name, Value: val, Concat: concat, Op: op}, nil
+	}
+	e, err := p.parseExprFromVar(name)
+	if err != nil {
+		return nil, err
+	}
+	p.skipSemis()
+	return &ExprStmt{E: e}, nil
+}
+
+func (p *Parser) parseListAssign() (Stmt, error) {
+	p.adv() // list
+	p.expect(tLParen)
+	var targets []Expr
+	for !p.at(tRParen) {
+		if p.at(tComma) {
+			targets = append(targets, &ConstNull{})
+			p.adv()
+			continue
+		}
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, e)
+		if p.at(tComma) {
+			p.adv()
+			continue
+		}
+		break
+	}
+	p.expect(tRParen)
+	p.expect(tEquals)
+	val, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	p.skipSemis()
+	return &ExprStmt{E: &AssignExpr{
+		Target: &FuncCall{Name: "__list", Args: targets},
+		Val:    val,
+	}}, nil
+}
+
+func (p *Parser) parseIf() (Stmt, error) {
+	ifs := &IfStmt{}
+	p.adv() // if
+	if _, err := p.expect(tLParen); err != nil {
+		return nil, err
+	}
+	cond, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tRParen); err != nil {
+		return nil, err
+	}
+	p.skipSemis()
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	ifs.Conds = append(ifs.Conds, cond)
+	ifs.Bodies = append(ifs.Bodies, body)
+
+	for p.at(tElseIf) || (p.at(tElse) && p.peekN(1).Kind == tIf) {
+		if p.at(tElse) {
+			p.adv()
+		}
+		p.adv()
+		if _, err := p.expect(tLParen); err != nil {
+			return nil, err
+		}
+		c2, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tRParen); err != nil {
+			return nil, err
+		}
+		p.skipSemis()
+		b2, err := p.parseBlock()
+		if err != nil {
+			return nil, err
+		}
+		ifs.Conds = append(ifs.Conds, c2)
+		ifs.Bodies = append(ifs.Bodies, b2)
+	}
+	if p.at(tElse) {
+		p.adv()
+		p.skipSemis()
+		el, err := p.parseBlock()
+		if err != nil {
+			return nil, err
+		}
+		ifs.Else = el
+	}
+	return ifs, nil
+}
+
+func (p *Parser) parseForeach() (Stmt, error) {
+	p.adv() // foreach
+	if _, err := p.expect(tLParen); err != nil {
+		return nil, err
+	}
+	arrExpr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tAs); err != nil {
+		return Tok{}, fmt.Errorf("parse: foreach 期望 as at %d", p.cur().Pos)
+	}
+	v1, err := p.expect(tVar)
+	if err != nil {
+		return Tok{}, err
+	}
+	keyVar := ""
+	valVar := v1.Val[1:]
+	if p.at(tArrowFn) {
+		p.adv()
+		keyVar = valVar
+		if p.at(tAmp) {
+			p.adv()
+		}
+		v2, err := p.expect(tVar)
+		if err != nil {
+			return nil, err
+		}
+		valVar = v2.Val[1:]
+	}
+	if _, err := p.expect(tRParen); err != nil {
+		return nil, err
+	}
+	p.skipSemis()
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	return &ForeachStmt{Arr: arrExpr, KeyVar: keyVar, ValVar: valVar, Body: body}, nil
+}
+
+func (p *Parser) parseFor() (Stmt, error) {
+	p.adv() // for
+	if _, err := p.expect(tLParen); err != nil {
+		return nil, err
+	}
+	var initStmts []Stmt
+	for !p.at(tSemi) && !p.at(tEOF) {
+		st, err := p.parseStmt()
+		if err != nil {
+			e, err2 := p.parseExpr()
+			if err2 != nil {
+				return nil, err
+			}
+			initStmts = append(initStmts, &ExprStmt{E: e})
+		} else if st != nil {
+			initStmts = append(initStmts, st)
+		}
+		if p.at(tComma) {
+			p.adv()
+			continue
+		}
+		break
+	}
+	p.expect(tSemi)
+	var cond Expr
+	if !p.at(tSemi) {
+		c, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		cond = c
+	}
+	p.expect(tSemi)
+	var postStmts []Stmt
+	for !p.at(tRParen) && !p.at(tEOF) {
+		st, err := p.parseStmt()
+		if err != nil {
+			e, err2 := p.parseExpr()
+			if err2 != nil {
+				return nil, err
+			}
+			postStmts = append(postStmts, &ExprStmt{E: e})
+		} else if st != nil {
+			postStmts = append(postStmts, st)
+		}
+		if p.at(tComma) {
+			p.adv()
+			continue
+		}
+		break
+	}
+	p.expect(tRParen)
+	p.skipSemis()
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	return &ForStmt{Init: initStmts, Cond: cond, Post: postStmts, Body: body}, nil
+}
+
+func (p *Parser) parseWhile() (Stmt, error) {
+	p.adv() // while
+	if _, err := p.expect(tLParen); err != nil {
+		return nil, err
+	}
+	cond, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tRParen); err != nil {
+		return nil, err
+	}
+	p.skipSemis()
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	return &WhileStmt{Cond: cond, Body: body}, nil
+}
+
+func (p *Parser) parseDoWhile() (Stmt, error) {
+	p.adv() // do
+	p.skipSemis()
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tWhile); err != nil {
+		return nil, fmt.Errorf("parse: do-while 期望 while at %d", p.cur().Pos)
+	}
+	if _, err := p.expect(tLParen); err != nil {
+		return nil, err
+	}
+	cond, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tRParen); err != nil {
+		return nil, err
+	}
+	p.skipSemis()
+	return &DoWhileStmt{Cond: cond, Body: body}, nil
+}
+
+func (p *Parser) parseSwitch() (Stmt, error) {
+	p.adv() // switch
+	if _, err := p.expect(tLParen); err != nil {
+		return nil, err
+	}
+	subj, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tRParen); err != nil {
+		return nil, err
+	}
+	p.skipSemis()
+	if p.at(tLBrace) {
+		p.adv()
+	}
+	sw := &SwitchStmt{Subject: subj}
+	for !p.at(tRBrace) && !p.at(tEOF) {
+		p.skipSemis()
+		if p.at(tCase) {
+			p.adv()
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			if p.at(tColon) {
+				p.adv()
+			} else {
+				p.skipSemis()
+			}
+			var body []Stmt
+			for !p.at(tCase) && !p.at(tDefault) && !p.at(tRBrace) && !p.at(tEOF) {
+				st, err := p.parseStmt()
+				if err != nil {
+					return nil, err
+				}
+				if st != nil {
+					body = append(body, st)
+				}
+				p.skipSemis()
+			}
+			sw.Cases = append(sw.Cases, SwitchCase{Value: val, Body: body})
+		} else if p.at(tDefault) {
+			p.adv()
+			if p.at(tColon) {
+				p.adv()
+			} else {
+				p.skipSemis()
+			}
+			var body []Stmt
+			for !p.at(tCase) && !p.at(tDefault) && !p.at(tRBrace) && !p.at(tEOF) {
+				st, err := p.parseStmt()
+				if err != nil {
+					return nil, err
+				}
+				if st != nil {
+					body = append(body, st)
+				}
+				p.skipSemis()
+			}
+			sw.Cases = append(sw.Cases, SwitchCase{IsDefault: true, Body: body})
+		} else {
+			break
+		}
+	}
+	if p.at(tRBrace) {
+		p.adv()
+	}
+	return sw, nil
+}
+
+// parseExpr 解析表达式（入口）
+func (p *Parser) parseExpr() (Expr, error) {
+	return p.parseAssignExpr()
+}
+
+func (p *Parser) parseAssignExpr() (Expr, error) {
+	left, err := p.parseTernary()
+	if err != nil {
+		return nil, err
+	}
+	if p.at(tEquals) {
+		p.adv()
+		right, err := p.parseAssignExpr()
+		if err != nil {
+			return nil, err
+		}
+		return &AssignExpr{Target: left, Val: right}, nil
+	}
+	if p.at(tConcatEq) || p.at(tPlusEq) || p.at(tMinusEq) || p.at(tStarEq) || p.at(tSlashEq) {
+		op := p.adv().Val
+		right, err := p.parseAssignExpr()
+		if err != nil {
+			return nil, err
+		}
+		return &AssignExpr{
+			Target: left,
+			Val:    &BinaryExpr{Op: op, Left: left, Right: right},
+		}, nil
+	}
+	return left, nil
+}
+
+func (p *Parser) parseTernary() (Expr, error) {
+	left, err := p.parseNullCoalesce()
+	if err != nil {
+		return nil, err
+	}
+	if p.at(tQuestion) {
+		p.adv()
+		if p.at(tColon) {
+			p.adv()
+			elseExpr, err := p.parseAssignExpr()
+			if err != nil {
+				return nil, err
+			}
+			return &TernaryExpr{Cond: left, Then: nil, Else: elseExpr}, nil
+		}
+		thenExpr, err := p.parseAssignExpr()
+		if err != nil {
+			return nil, err
+		}
+		if p.at(tColon) {
+			p.adv()
+			elseExpr, err := p.parseAssignExpr()
+			if err != nil {
+				return nil, err
+			}
+			return &TernaryExpr{Cond: left, Then: thenExpr, Else: elseExpr}, nil
+		}
+		return &TernaryExpr{Cond: left, Then: thenExpr, Else: nil}, nil
+	}
+	return left, nil
+}
+
+func (p *Parser) parseNullCoalesce() (Expr, error) {
+	left, err := p.parseLogicalOr()
+	if err != nil {
+		return nil, err
+	}
+	if p.at(tNullCoalesce) {
+		p.adv()
+		right, err := p.parseNullCoalesce()
+		if err != nil {
+			return nil, err
+		}
+		return &NullCoalesceExpr{Left: left, Right: right}, nil
+	}
+	return left, nil
+}
+
+func (p *Parser) parseLogicalOr() (Expr, error) {
+	left, err := p.parseLogicalAnd()
+	if err != nil {
+		return nil, err
+	}
+	for p.at(tPipePipe) {
+		p.adv()
+		right, err := p.parseLogicalAnd()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Op: "||", Left: left, Right: right}
+	}
+	return left, nil
+}
+
+func (p *Parser) parseLogicalAnd() (Expr, error) {
+	left, err := p.parseCompare()
+	if err != nil {
+		return nil, err
+	}
+	for p.at(tAmpAmp) {
+		p.adv()
+		right, err := p.parseCompare()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Op: "&&", Left: left, Right: right}
+	}
+	return left, nil
+}
+
+func (p *Parser) parseCompare() (Expr, error) {
+	left, err := p.parseAdd()
+	if err != nil {
+		return nil, err
+	}
+	for p.at(tEqEq) || p.at(tEqEqEq) || p.at(tNotEq) || p.at(tNotEqEq) || p.at(tLT) || p.at(tGT) || p.at(tLE) || p.at(tGE) {
+		op := p.adv().Val
+		right, err := p.parseAdd()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Op: op, Left: left, Right: right}
+	}
+	return left, nil
+}
+
+func (p *Parser) parseAdd() (Expr, error) {
+	left, err := p.parseMul()
+	if err != nil {
+		return nil, err
+	}
+	for p.at(tPlus) || p.at(tMinus) || p.at(tConcat) {
+		op := p.adv().Val
+		right, err := p.parseMul()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Op: op, Left: left, Right: right}
+	}
+	return left, nil
+}
+
+func (p *Parser) parseMul() (Expr, error) {
+	left, err := p.parseUnary()
+	if err != nil {
+		return nil, err
+	}
+	for p.at(tStar) || p.at(tSlash) || p.at(tPercent) {
+		op := p.adv().Val
+		right, err := p.parseUnary()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Op: op, Left: left, Right: right}
+	}
+	return left, nil
+}
+
+func (p *Parser) parseUnary() (Expr, error) {
+	if p.at(tBang) {
+		p.adv()
+		e, err := p.parseUnary()
+		if err != nil {
+			return nil, err
+		}
+		return &UnaryExpr{Op: "!", Expr: e}, nil
+	}
+	if p.at(tMinus) {
+		p.adv()
+		e, err := p.parseUnary()
+		if err != nil {
+			return nil, err
+		}
+		return &UnaryExpr{Op: "-", Expr: e}, nil
+	}
+	if p.at(tPlusPlus) {
+		p.adv()
+		v, err := p.expect(tVar)
+		if err != nil {
+			return nil, err
+		}
+		return &AssignExpr{
+			Target: &VarExpr{Name: v.Val[1:]},
+			Val:    &BinaryExpr{Op: "+", Left: &VarExpr{Name: v.Val[1:]}, Right: &ScalarInt{Val: 1}},
+		}, nil
+	}
+	if p.at(tMinusMinus) {
+		p.adv()
+		v, err := p.expect(tVar)
+		if err != nil {
+			return nil, err
+		}
+		return &AssignExpr{
+			Target: &VarExpr{Name: v.Val[1:]},
+			Val:    &BinaryExpr{Op: "-", Left: &VarExpr{Name: v.Val[1:]}, Right: &ScalarInt{Val: 1}},
+		}, nil
+	}
+	if p.at(tStringCast) || p.at(tIntCast) || p.at(tFloatCast) || p.at(tBoolCast) || p.at(tArrayCast) {
+		var kind string
+		switch p.adv().Kind {
+		case tStringCast:
+			kind = "string"
+		case tIntCast:
+			kind = "int"
+		case tFloatCast:
+			kind = "float"
+		case tBoolCast:
+			kind = "bool"
+		case tArrayCast:
+			kind = "array"
+		}
+		e, err := p.parseUnary()
+		if err != nil {
+			return nil, err
+		}
+		return &CastExpr{Kind: kind, Expr: e}, nil
+	}
+	return p.parsePostfix()
+}
+
+func (p *Parser) parsePostfix() (Expr, error) {
+	e, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+	return p.parsePostfixFrom(e)
+}
+
+func (p *Parser) parsePostfixFrom(e Expr) (Expr, error) {
+	for {
+		if p.at(tLBracket) {
+			p.adv()
+			if p.at(tRBracket) {
+				p.adv()
+				e = &IndexExpr{Arr: e, Key: &ConstNull{}}
+				continue
+			}
+			key, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			p.expect(tRBracket)
+			e = &IndexExpr{Arr: e, Key: key}
+			continue
+		}
+		if p.at(tLParen) {
+			name := ""
+			switch v := e.(type) {
+			case *VarExpr:
+				name = v.Name
+			case *ScalarStr:
+				name = v.Val
+			default:
+				return nil, fmt.Errorf("parse: 不可调用的表达式 at %d", p.cur().Pos)
+			}
+			args, err := p.parseArgs()
+			if err != nil {
+				return nil, err
+			}
+			e = &FuncCall{Name: name, Args: args}
+			continue
+		}
+		if p.at(tArrow) {
+			p.adv()
+			m, err := p.expect(tIdent)
+			if err != nil {
+				return nil, err
+			}
+			if p.at(tLParen) {
+				args, err := p.parseArgs()
+				if err != nil {
+					return nil, err
+				}
+				e = &MethodCall{Receiver: e, Method: m.Val, Args: args}
+			} else {
+				e = &PropertyAccess{Receiver: e, Prop: m.Val}
+			}
+			continue
+		}
+		if p.at(tDoubleColon) {
+			p.adv()
+			m, err := p.expect(tIdent)
+			if err != nil {
+				return nil, err
+			}
+			args, err := p.parseArgs()
+			if err != nil {
+				return nil, err
+			}
+			class := ""
+			if s, ok := e.(*ScalarStr); ok {
+				class = s.Val
+			} else if v, ok := e.(*VarExpr); ok {
+				class = v.Name
+			}
+			e = &StaticCall{Class: class, Method: m.Val, Args: args}
+			continue
+		}
+		break
+	}
+	return e, nil
+}
+
+func (p *Parser) parseArgs() ([]Expr, error) {
+	p.adv() // (
+	var args []Expr
+	for !p.at(tRParen) && !p.at(tEOF) {
+		if p.at(tAmp) {
+			p.adv()
+			v, err := p.expect(tVar)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, &varRef{name: v.Val[1:]})
+			if p.at(tComma) {
+				p.adv()
+				continue
+			}
+			break
+		}
+		a, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, a)
+		if p.at(tComma) {
+			p.adv()
+			continue
+		}
+		break
+	}
+	p.expect(tRParen)
+	return args, nil
+}
+
+func (p *Parser) parsePrimary() (Expr, error) {
+	t := p.cur()
+	switch t.Kind {
+	case tVar:
+		p.adv()
+		return p.parseExprFromVar(t.Val[1:])
+	case tInt:
+		p.adv()
+		var n int64
+		fmt.Sscan(t.Val, &n)
+		return &ScalarInt{Val: n}, nil
+	case tFloat:
+		p.adv()
+		var f float64
+		fmt.Sscan(t.Val, &f)
+		return &ScalarFloat{Val: f}, nil
+	case tDoubleStr:
+		p.adv()
+		// 检查是否含变量插值
+		if containsInterp(t.Val) {
+			return parseInterpolatedStr(t.Val), nil
+		}
+		return &ScalarStr{Val: unescapeStr(t.Val, true)}, nil
+	case tSingleStr:
+		p.adv()
+		return &ScalarStr{Val: unescapeStr(t.Val, false)}, nil
+	case tConstTrue:
+		p.adv()
+		return &ConstBool{Val: true}, nil
+	case tConstFalse:
+		p.adv()
+		return &ConstBool{Val: false}, nil
+	case tConstNull:
+		p.adv()
+		return &ConstNull{}, nil
+	case tArray:
+		return p.parseArray()
+	case tLBracket:
+		return p.parseShortArray()
+	case tLParen:
+		p.adv()
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		p.expect(tRParen)
+		return e, nil
+	case tIdent:
+		// 未定义常量：PHP 中当作字符串名使用
+		p.adv()
+		return &ScalarStr{Val: t.Val}, nil
+	case tFunc:
+		// 闭包 function($a) use($b) { ... }
+		return p.parseClosure()
+	}
+	return nil, fmt.Errorf("parse: 无法解析的表达式 at %d (%q)", t.Pos, t.Val)
+}
+
+func (p *Parser) parseClosure() (Expr, error) {
+	p.adv() // function
+	params, err := p.parseFuncParams()
+	if err != nil {
+		return nil, err
+	}
+	var uses []string
+	var byRef []bool
+	if p.at(tUse) {
+		p.adv()
+		p.expect(tLParen)
+		for !p.at(tRParen) && !p.at(tEOF) {
+			ref := false
+			if p.at(tAmp) {
+				p.adv()
+				ref = true
+			}
+			v, err := p.expect(tVar)
+			if err != nil {
+				return nil, err
+			}
+			uses = append(uses, v.Val[1:])
+			byRef = append(byRef, ref)
+			if p.at(tComma) {
+				p.adv()
+				continue
+			}
+			break
+		}
+		p.expect(tRParen)
+	}
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	return &ClosureExpr{Params: params, Uses: uses, ByRef: byRef, Body: body}, nil
+}
+
+// parseArray array( k => v, ... )
+func (p *Parser) parseArray() (Expr, error) {
+	p.adv() // array
+	p.expect(tLParen)
+	arr := &ArrayExpr{}
+	for !p.at(tRParen) && !p.at(tEOF) {
+		v, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if p.at(tArrowFn) {
+			p.adv()
+			key := v
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			arr.Keys = append(arr.Keys, key)
+			arr.Values = append(arr.Values, val)
+		} else {
+			arr.Values = append(arr.Values, v)
+		}
+		if p.at(tComma) {
+			p.adv()
+			continue
+		}
+		break
+	}
+	p.expect(tRParen)
+	return arr, nil
+}
+
+// parseShortArray 短数组语法 [ k => v, ... ] 或 [ v, ... ]
+func (p *Parser) parseShortArray() (Expr, error) {
+	p.adv() // [
+	arr := &ArrayExpr{}
+	for !p.at(tRBracket) && !p.at(tEOF) {
+		v, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if p.at(tArrowFn) {
+			p.adv()
+			key := v
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			arr.Keys = append(arr.Keys, key)
+			arr.Values = append(arr.Values, val)
+		} else {
+			arr.Values = append(arr.Values, v)
+		}
+		if p.at(tComma) {
+			p.adv()
+			continue
+		}
+		break
+	}
+	p.expect(tRBracket)
+	return arr, nil
+}
+
+// parseExprFromVar 处理 $var 后续的下标链
+func (p *Parser) parseExprFromVar(name string) (Expr, error) {
+	e := Expr(&VarExpr{Name: name})
+	for {
+		if p.at(tLBracket) {
+			p.adv()
+			if p.at(tRBracket) {
+				p.adv()
+				e = &IndexExpr{Arr: e, Key: &ConstNull{}}
+				continue
+			}
+			key, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			p.expect(tRBracket)
+			e = &IndexExpr{Arr: e, Key: key}
+			continue
+		}
+		break
+	}
+	return p.parsePostfixFrom(e)
+}
+
+// ---------------------------------------------------------------------------
+// 双引号字符串变量插值
+// ---------------------------------------------------------------------------
+
+// containsInterp 检查双引号字符串是否含 $var 或 {$var}
+func containsInterp(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' {
+			i++
+			continue
+		}
+		if s[i] == '$' && i+1 < len(s) && isIdentStart(s[i+1]) {
+			return true
+		}
+		if s[i] == '{' && i+1 < len(s) && s[i+1] == '$' {
+			return true
+		}
+	}
+	return false
+}
+
+// parseInterpolatedStr 把双引号字符串解析为 InterpolatedStr
+func parseInterpolatedStr(s string) Expr {
+	var parts []interface{}
+	var buf []byte
+	i := 0
+	for i < len(s) {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 'n':
+				buf = append(buf, '\n')
+			case 't':
+				buf = append(buf, '\t')
+			case 'r':
+				buf = append(buf, '\r')
+			case '\\':
+				buf = append(buf, '\\')
+			case '"':
+				buf = append(buf, '"')
+			case '$':
+				buf = append(buf, '$')
+			default:
+				buf = append(buf, '\\', s[i+1])
+			}
+			i += 2
+			continue
+		}
+		// {$var...} 复杂插值
+		if s[i] == '{' && i+1 < len(s) && s[i+1] == '$' {
+			if len(buf) > 0 {
+				parts = append(parts, string(buf))
+				buf = buf[:0]
+			}
+			// 找到匹配的 }
+			depth := 1
+			j := i + 1
+			for j < len(s) && depth > 0 {
+				if s[j] == '{' {
+					depth++
+				}
+				if s[j] == '}' {
+					depth--
+				}
+				if depth > 0 {
+					j++
+				}
+			}
+			inner := s[i+1 : j] // $var 或 $arr[$key]
+			// 解析内部为表达式
+			toks, err := NewLexer("<?php " + inner + ";?>").Tokenize()
+			if err == nil {
+				p := NewParser(toks)
+				e, err := p.parseExpr()
+				if err == nil {
+					parts = append(parts, e)
+				}
+			}
+			i = j + 1
+			continue
+		}
+		// $var 简单插值
+		if s[i] == '$' && i+1 < len(s) && isIdentStart(s[i+1]) {
+			if len(buf) > 0 {
+				parts = append(parts, string(buf))
+				buf = buf[:0]
+			}
+			j := i + 1
+			for j < len(s) && isIdentRune(s[j]) {
+				j++
+			}
+			name := s[i+1 : j]
+			// 支持 $arr[$key] 形式
+			if j < len(s) && s[j] == '[' {
+				k := j + 1
+				for k < len(s) && s[k] != ']' {
+					k++
+				}
+				key := s[j+1 : k]
+				parts = append(parts, &IndexExpr{Arr: &VarExpr{Name: name}, Key: &ScalarStr{Val: key}})
+				j = k + 1
+			} else {
+				parts = append(parts, &VarExpr{Name: name})
+			}
+			i = j
+			continue
+		}
+		buf = append(buf, s[i])
+		i++
+	}
+	if len(buf) > 0 {
+		parts = append(parts, string(buf))
+	}
+	if len(parts) == 0 {
+		return &ScalarStr{Val: ""}
+	}
+	if len(parts) == 1 {
+		if s, ok := parts[0].(string); ok {
+			return &ScalarStr{Val: s}
+		}
+	}
+	return &InterpolatedStr{Parts: parts}
+}
+
+// unescapeStr 处理转义
+func unescapeStr(s string, double bool) string {
+	if !double {
+		out := strings.NewReplacer(`\'`, "'", `\\`, `\`).Replace(s)
+		return out
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 'n':
+				b.WriteByte('\n')
+			case 't':
+				b.WriteByte('\t')
+			case 'r':
+				b.WriteByte('\r')
+			case '\\':
+				b.WriteByte('\\')
+			case '"':
+				b.WriteByte('"')
+			case '$':
+				b.WriteByte('$')
+			default:
+				b.WriteByte('\\')
+				b.WriteByte(s[i+1])
+			}
+			i++
+		} else {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}

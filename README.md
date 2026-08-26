@@ -12,9 +12,11 @@
 - [代理规则格式](#代理规则格式)
 - [使用示例](#使用示例外网访问路径)
 - [jx 视频解析接口](#-jx-视频解析接口)
+- [PHP 模块（纯 Go phpgo runtime）](#php-模块纯-go-phpgo-runtime)
 - [配置示例](#配置configyaml示例)
 - [Nginx 反向代理](#nginx-反向代理配置参考)
 - [Linux 内核优化](#linux-内核优化建议)
+- [Web 代码文件管理（编辑/上传/下载/语法检测）](#web-代码文件管理编辑上传下载语法检测)
 - [注意事项](#注意事项--常见问题)
 
 ---
@@ -279,6 +281,88 @@ tvbox 配置文件：
 http://111.222.111.222:8888/jx?jx=https://v.xx.com/x/cover/mcv8hkc8zk8lnov/z0040syxb9c.html
 http://127.0.0.1:8888/jx?jx=爱情公寓3&id=11
 ```
+
+---
+
+## PHP 模块（纯 Go phpgo runtime）
+
+Tvgate 内置一个**纯 Go 实现的 PHP 运行时（phpgo）**，无需 PHP-FPM、无需 CGO、无外部 `.so`/`.dll`，编译进单一静态二进制。启用后，Go HTTP Server 可通过指定路径前缀解释执行磁盘上的 PHP 脚本。
+
+### 配置段
+
+```yaml
+php:
+  enabled: false          # 是否启用 PHP 模块（独立模块，可单独开关）
+  path: /php/             # 访问路径前缀。对外访问 URL 为 http://<IP>:<port>/php/<脚本>
+  docroot: /www           # PHP 脚本根目录（从磁盘读取，不打包进二进制）。默认 /www；写相对路径（如 www）则相对配置文件所在目录解析
+  index:                  # 目录索引文件列表（访问 /php/ 时按序尝试）
+    - index.php
+    - index.html
+  worker_mode: false      # 是否启用 Worker 常驻模式（复用解释器实例，降低冷启动开销）
+  workers: 4              # Worker 进程数（worker_mode 为 true 时生效）
+```
+
+> **docroot 说明**：脚本一律从 `docroot` 指定的磁盘目录读取（默认 `/www`）。部署时把 PHP 代码放到该目录即可，例如 `/www/index.php`、`/www/huya.php`。该路径可在配置中自由修改，无需重新编译。
+>
+> **路径写法（跨平台）**：
+> - 绝对路径：`/www`、`C:/www`、`/data/data/com.termux/files/home/www` 直接使用。
+> - 相对路径（如 `www`、`php`）：基准为**配置文件所在目录**（不是进程 cwd），跨平台一致。例如配置在 `/etc/tvgate/config.yaml`、写 `docroot: www`，实际解析为 `/etc/tvgate/www`。
+>
+> **安卓 / 移动端部署**：安卓上 `/www` 这类绝对路径通常不存在或不可写，推荐将 `config.yaml` 与脚本目录一起放置，并改用相对路径：
+> ```yaml
+> php:
+>   docroot: www     # 实际 = <config.yaml 所在目录>/www
+> ```
+> 例如 Termux 中配置在 `~/tvgate/config.yaml`、脚本在 `~/tvgate/www/`，即可正常访问。
+>
+> 不依赖任何 PHP 扩展（如 `iconv` / `session` / `xml` 等），常见字符串、数组、日期、curl、文件、加解密等内置函数均以 Go 原生实现。
+
+### 访问方式
+
+假设服务监听 `8888`，机器 IP 为 `192.168.1.10`，脚本放在 `/www/huya.php`：
+
+- 本机：`http://127.0.0.1:8888/php/huya.php?id=11342412`
+- 局域网/外网：`http://192.168.1.10:8888/php/huya.php?id=11342412`
+
+服务监听地址为 `:端口`（绑定所有网卡 `0.0.0.0`），外部访问需确保防火墙/安全组放行该端口。
+
+> **静态文件支持**：`/php/` 前缀下既支持 PHP 解释执行，也直接服务静态资源。判断规则：扩展名为 `.php/.php3/.php4/.phtml/.inc`，或内容含 `<?php` / `<?=` / `<?` 标签的文件由 phpgo 解释；其余（`.html` / `.css` / `.js` / 无扩展名等）按原文件以正确的 MIME 类型直接返回，无需 PHP 标签。例如 `http://<IP>:<port>/php/index.html` 会直接返回静态 HTML（phpgo 不会丢弃标签外内容）。
+
+---
+
+## Web 代码文件管理（编辑/上传/下载/语法检测）
+
+Web 管理后台内置**代码文件管理器**，可直接在浏览器中对 `docroot`（默认 `/www`，即 PHP 脚本目录）下的文件进行可视化操作，无需 SSH 登录服务器。
+
+### 入口
+
+登录 Web 后台后访问：
+
+```
+http://<IP>:<port>/web/code
+```
+
+### 支持的操作
+
+| 操作 | 说明 |
+|---|---|
+| 列目录 | 递归列出 `docroot` 下所有文件与子目录 |
+| 新建 | 新建文件或目录（相对路径，如 `sub/test.php`） |
+| 编辑/保存 | 在线编辑并保存到磁盘（保存前自动备份为 `.bak.<时间戳>`） |
+| 上传 | 多选上传文件到指定子目录，自动防路径穿越 |
+| 下载 | 以附件形式下载文件 |
+| 删除 | 删除文件或整个目录 |
+| 语法检测 | 对 PHP 源码做纯文本级简单检测（无需 PHP 运行时） |
+
+### 简单语法检测说明
+
+后端 `simplePHPCheck` 在**纯 Go、无 PHP 二进制**的前提下做文本级检查，可识别：
+
+- 未以 `<?php` / `<?` 开始标签开头（warning）
+- 括号 `()` `{}` `[]` 不匹配或未闭合（error）
+- 单/双引号字符串未闭合、块注释 `/*` 未闭合（error）
+
+> 该检测为轻量级静态检查，不能替代完整 PHP 解释器；真正执行仍由 phpgo 运行时完成。所有写操作限制在 `docroot` 内，防止 `../` 目录穿越。
 
 ---
 

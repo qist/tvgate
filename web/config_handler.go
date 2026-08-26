@@ -249,6 +249,17 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	// mux.HandleFunc(webPath+"api/globalauth/config", h.handleGlobalAuthConfig)
 	// mux.HandleFunc(webPath+"api/globalauth/config/save", h.handleGlobalAuthConfigSave)
 
+	// 代码文件管理（针对 docroot /www 等 PHP 脚本目录）
+	mux.HandleFunc(webPath+"code", h.cookieAuth(h.handleCodeEditor))
+	mux.HandleFunc(webPath+"api/code/list", h.cookieAuth(h.handleCodeList))
+	mux.HandleFunc(webPath+"api/code/read", h.cookieAuth(h.handleCodeRead))
+	mux.HandleFunc(webPath+"api/code/save", h.cookieAuth(h.handleCodeSave))
+	mux.HandleFunc(webPath+"api/code/new", h.cookieAuth(h.handleCodeNew))
+	mux.HandleFunc(webPath+"api/code/delete", h.cookieAuth(h.handleCodeDelete))
+	mux.HandleFunc(webPath+"api/code/upload", h.cookieAuth(h.handleCodeUpload))
+	mux.HandleFunc(webPath+"api/code/download", h.cookieAuth(h.handleCodeDownload))
+	mux.HandleFunc(webPath+"api/code/check", h.cookieAuth(h.handleCodeCheck))
+
 }
 
 // handleHome 处理功能面板页面

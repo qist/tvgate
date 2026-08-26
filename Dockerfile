@@ -1,20 +1,25 @@
 # ========================================================
-# Stage: build
+# TVGate 纯 Go 构建（含自研 PHP runtime）
+# 支持平台: Linux ✅ / Windows ✅ / macOS ✅ / Android ✅
+# 特性: 无 CGO ✅ / 无 FrankenPHP ✅ / 无外部 .so/.dll ✅
+#       ★ 单一静态二进制：PHP 解释器(phpgo)静态编入，运行时无外部依赖
+#       PHP 脚本从磁盘读取，默认目录 /www（部署时把 PHP 代码放该路径）。
 # ========================================================
-FROM --platform=$BUILDPLATFORM golang:alpine AS build
+# Stage: build —— 纯 Go 编译，无需 CGO
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
 WORKDIR /app
 
-# 复制源码
-COPY . .
-
-# 接收 buildx 注入的参数
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
 ARG VERSION=latest
 
-# 禁用 CGO，纯 Go 静态编译
 ENV CGO_ENABLED=0
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
 
 # 针对 ARM 处理 GOARM
 RUN if [ "$TARGETARCH" = "arm" ]; then \
@@ -29,18 +34,16 @@ RUN if [ "$TARGETARCH" = "arm" ]; then \
 # ========================================================
 # Stage: final image
 # ========================================================
-FROM alpine:latest
+FROM debian:bookworm-slim
 WORKDIR /app
 ENV TZ=Asia/Shanghai
 
-# 安装必要依赖
-RUN apk add --no-cache ca-certificates tzdata bash fail2ban
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates tzdata bash fail2ban \
+    && rm -rf /var/lib/apt/lists/*
 
-# 复制可执行文件
+# 复制可执行文件（单一二进制，含纯 Go PHP runtime）
 COPY --from=build /app/build/TVGate /app/TVGate
-
-# 复制配置文件
-# COPY --from=build /app/doc/config.yaml /etc/tvgate/config.yaml
 
 # 配置 fail2ban
 RUN rm -f /etc/fail2ban/jail.d/alpine-ssh.conf \
@@ -52,3 +55,4 @@ RUN rm -f /etc/fail2ban/jail.d/alpine-ssh.conf \
 RUN chmod +x /app/TVGate
 
 CMD [ "./TVGate", "-config=/etc/tvgate/config.yaml" ]
+

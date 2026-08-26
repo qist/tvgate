@@ -20,6 +20,7 @@ import (
 	"github.com/qist/tvgate/jx"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
+	"github.com/qist/tvgate/php"
 	"github.com/qist/tvgate/publisher"
 	httpclient "github.com/qist/tvgate/utils/http"
 	tsync "github.com/qist/tvgate/utils/sync"
@@ -323,6 +324,12 @@ func RegisterMonitorWebMux(mux *http.ServeMux, cfg *config.Config) {
 		}
 		configHandler := web.NewConfigHandler(webConfig)
 		configHandler.RegisterRoutes(mux)
+	}
+
+	// PHP 模块（纯 Go phpgo runtime，从磁盘读取 cfg.PHP.DocRoot 脚本）
+	if cfg.PHP.Enabled && cfg.PHP.Path != "" {
+		mux.Handle(cfg.PHP.Path, SecurityHeaders(php.Handler()))
+		logger.LogPrintf("已挂载 PHP 模块路由: %s -> %s", cfg.PHP.Path, cfg.PHP.DocRoot)
 	}
 }
 

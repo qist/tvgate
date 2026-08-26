@@ -22,6 +22,7 @@ import (
 	"github.com/qist/tvgate/groupstats"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
+	"github.com/qist/tvgate/php"
 	"github.com/qist/tvgate/publisher"
 	"github.com/qist/tvgate/server"
 	"github.com/qist/tvgate/stream"
@@ -124,6 +125,13 @@ func main() {
 	// -------------------------
 	if err := publisher.Init(); err != nil {
 		log.Printf("初始化 publisher 模块失败: %v", err)
+	}
+
+	// -------------------------
+	// 初始化 PHP 模块（纯 Go phpgo runtime）
+	// -------------------------
+	if err := php.Init(&config.Cfg); err != nil {
+		log.Printf("初始化 PHP 模块失败: %v", err)
 	}
 
 	// -------------------------
@@ -303,6 +311,9 @@ func gracefulShutdown(stopCleaner, stopAccessCleaner, stopProxyStats, stopActive
 
 		// Stop stream module
 		stream.Close()
+
+		// Stop PHP module (纯 Go phpgo runtime)
+		php.Shutdown()
 
 		close(stopCleaner)
 		close(stopAccessCleaner)
