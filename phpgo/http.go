@@ -104,7 +104,14 @@ func defaultProxy(client *http.Client) ProxyFunc {
 		if opts != nil {
 			for _, h := range opts.Headers {
 				if i := strings.IndexByte(h, ':'); i > 0 {
-					req.Header.Set(strings.TrimSpace(h[:i]), strings.TrimSpace(h[i+1:]))
+					key := strings.TrimSpace(h[:i])
+					val := strings.TrimSpace(h[i+1:])
+					// Go http 中 Host 头需设置 req.Host，而非 req.Header.Set("Host", ...)
+					if strings.EqualFold(key, "Host") {
+						req.Host = val
+						continue
+					}
+					req.Header.Set(key, val)
 				}
 			}
 			if opts.UserAgent != "" {

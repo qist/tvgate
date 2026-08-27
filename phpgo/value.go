@@ -6,6 +6,7 @@ package phpgo
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -160,7 +161,11 @@ func (v Value) ToString() string {
 	case KindInt:
 		return fmt.Sprintf("%d", v.Int)
 	case KindFloat:
-		return fmt.Sprintf("%v", v.Float)
+		// 对齐 PHP float → string：整数值不显示小数点，非整数用普通格式（不用科学记数法）
+		if v.Float == math.Trunc(v.Float) && v.Float >= -1e15 && v.Float <= 1e15 {
+			return fmt.Sprintf("%d", int64(v.Float))
+		}
+		return strconv.FormatFloat(v.Float, 'f', -1, 64)
 	case KindString:
 		return v.Str
 	case KindRef:
