@@ -146,18 +146,19 @@ func Handler() http.HandlerFunc {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		if err := phpgo.ServePHP(env, rec, src); err != nil {
 			// 错误已在 ServePHP 写入响应
-			logger.LogPHPRequest(r, rel, rec.status)
-			return
-		}
-		logger.LogPHPRequest(r, rel, rec.status)
+		logger.LogPHPRequest(r, rel, rec.status, rec.bytesSent)
+		return
+	}
+	logger.LogPHPRequest(r, rel, rec.status, rec.bytesSent)
 	}
 }
 
-// statusRecorder 包装 http.ResponseWriter，记录最终写入的状态码。
+// statusRecorder 包装 http.ResponseWriter，记录最终写入的状态码和响应大小。
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
-	wrote  bool
+	status   int
+	wrote    bool
+	bytesSent int64
 }
 
 func (sr *statusRecorder) WriteHeader(code int) {
@@ -166,6 +167,12 @@ func (sr *statusRecorder) WriteHeader(code int) {
 		sr.wrote = true
 	}
 	sr.ResponseWriter.WriteHeader(code)
+}
+
+func (sr *statusRecorder) Write(p []byte) (int, error) {
+	n, err := sr.ResponseWriter.Write(p)
+	sr.bytesSent += int64(n)
+	return n, err
 }
 
 func fileExists(p string) bool {
