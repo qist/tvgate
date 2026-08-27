@@ -24,7 +24,10 @@ var (
 // 由 phpgo 解释器执行。复用 TVGate 的 HTTP client（含 DNS/代理能力）。
 func Init(c *config.Config) error {
 	cfg = &c.PHP
-	client = utilshttp.NewHTTPClient(c, nil)
+	// 仅在 client 未初始化时创建（首次调用）；热加载时复用已有 client
+	if client == nil {
+		client = utilshttp.NewHTTPClient(c, nil)
+	}
 	docRoot = cfg.DocRoot
 	if docRoot == "" {
 		docRoot = "/www"

@@ -17,6 +17,7 @@ import (
 	"github.com/qist/tvgate/config/update"
 	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/php"
 	"github.com/qist/tvgate/server"
 	"github.com/qist/tvgate/stream"
 	tsync "github.com/qist/tvgate/utils/sync"
@@ -103,6 +104,8 @@ func WatchConfigFile(ctx context.Context, configPath string, upgrader *tableflip
 			return
 		}
 		logger.LogPrintf("✅ 配置文件重新加载完成")
+		// 🔹 重新初始化 PHP 模块（刷新 docroot、path 等配置）
+		php.Init(&config.Cfg)
 		// 🔹 这里刷新 DNS 实例
 		dns.HandleConfigUpdate(&config.Config{}, &config.Cfg)
 		config.CfgMu.RLock()
