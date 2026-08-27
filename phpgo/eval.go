@@ -26,7 +26,10 @@ type CurlOptions struct {
 	ProxyType   string // CURLOPT_PROXYTYPE
 	Headers     []string
 	PostData    string
-	Timeout     int
+	HasPostData bool   // 是否设置了 CURLOPT_POSTFIELDS
+	Timeout     int               // CURLOPT_TIMEOUT（整数秒，兼容旧逻辑）
+	TimeoutFloat  float64         // CURLOPT_TIMEOUT（浮点秒，优先于 Timeout）
+	ConnectTimeoutFloat float64 // CURLOPT_CONNECTTIMEOUT（浮点秒）
 	UserAgent   string
 	Method      string
 	FollowRedirect bool

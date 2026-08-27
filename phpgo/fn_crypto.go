@@ -338,20 +338,6 @@ func init() {
 		}
 		return result, nil
 	}
-	// md5：返回小写十六进制
-	builtins["md5"] = func(e *Env, a []Value) (Value, error) {
-		if len(a) == 0 {
-			return NewString(""), nil
-		}
-		sum := md5.Sum([]byte(a[0].ToString()))
-		return NewString(hex.EncodeToString(sum[:])), nil
-	}
-	// sha1：返回小写十六进制
-	builtins["sha1"] = func(e *Env, a []Value) (Value, error) {
-		if len(a) == 0 {
-			return NewString(""), nil
-		}
-		sum := sha1.Sum([]byte(a[0].ToString()))
-		return NewString(hex.EncodeToString(sum[:])), nil
-	}
+	// 注意：md5 和 sha1 的完整实现（含 raw 参数）已在 fn_crypto.go init() 前半部分注册
+	// 这里不再重复注册，避免覆盖支持 raw 参数的版本
 }

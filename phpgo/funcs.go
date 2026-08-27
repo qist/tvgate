@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -320,6 +321,8 @@ func opensslCipher(a []Value, encrypt bool) (Value, error) {
 	switch method {
 	case "AES-256-CBC", "AES-128-CBC":
 		return opensslCBC(a, data, key, iv, encrypt)
+	case "AES-256-ECB", "AES-128-ECB", "aes-128-ecb", "aes-256-ecb":
+		return opensslAESECB(a, data, key, encrypt)
 	case "aes-256-gcm", "AES-256-GCM", "aes-128-gcm", "AES-128-GCM":
 		return opensslGCM(a, data, key, iv, encrypt)
 	case "des-ede3", "DES-EDE3", "des-ede3-ecb", "DES-EDE3-ECB":
@@ -487,15 +490,23 @@ func (e *Env) curlExec(h Value) (Value, error) {
 		}
 		if pd, ok := h.Arr["CURLOPT_POSTFIELDS"]; ok {
 			opts.PostData = pd.ToString()
+			opts.HasPostData = true
 		}
 		if to, ok := h.Arr["CURLOPT_TIMEOUT"]; ok {
-			opts.Timeout = int(to.ToInt())
-			// PHP 中 CURLOPT_TIMEOUT=0 表示不限超时，保持 0 不改
+			// PHP 中 timeout 可以是浮点数（如 0.1 秒），用 ToFloat 而非 ToInt
+			timeoutSec := to.ToFloat()
+			if timeoutSec > 0 {
+				opts.TimeoutFloat = timeoutSec
+			} else {
+				opts.Timeout = 30
+			}
+		} else {
+			opts.Timeout = 30
 		}
 		if ct, ok := h.Arr["CURLOPT_CONNECTTIMEOUT"]; ok {
-			ctv := int(ct.ToInt())
-			if ctv > opts.Timeout {
-				opts.Timeout = ctv
+			ctv := ct.ToFloat()
+			if ctv > 0 {
+				opts.ConnectTimeoutFloat = ctv
 			}
 		}
 		if ua, ok := h.Arr["CURLOPT_USERAGENT"]; ok {
@@ -584,24 +595,20 @@ func phpToGo(v Value) interface{} {
 		return v.Str
 	case KindArray:
 		// 判断是索引还是关联
+		// PHP json_encode 规则：只有当 key 恰好是 0,1,2,...,N-1 的连续整数时，
+		// 才输出 JSON 数组 []；否则输出 JSON 对象 {}。
+		// phpgo 中所有 key 都以字符串存储，所以需要检查 keys 是否依次为 "0","1",...
 		if len(v.Keys) > 0 {
-			allInt := true
-			for _, k := range v.Keys {
-				if _, err := fmt.Sscanf(k, "%d", new(int64)); err != nil {
-					allInt = false
+			isSequential := true
+			for i, k := range v.Keys {
+				if k != strconv.FormatInt(int64(i), 10) {
+					isSequential = false
 					break
 				}
 			}
-			if allInt {
+			if isSequential {
 				arr := make([]interface{}, 0, len(v.Keys))
 				for _, k := range v.Keys {
-					idx, _ := fmt.Sscanf(k, "%d", new(int64))
-					_ = idx
-				}
-				// 按 key 数值排序
-				keys := append([]string{}, v.Keys...)
-				sortStrings(keys)
-				for _, k := range keys {
 					arr = append(arr, phpToGo(v.Arr[k]))
 				}
 				return arr

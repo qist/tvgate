@@ -76,16 +76,24 @@ func defaultProxy(client *http.Client) ProxyFunc {
 			c = http.DefaultClient
 		}
 		// 如果需要跳过 SSL 验证或控制重定向，创建自定义 client
-		if opts != nil && (opts.SkipSSL || opts.FollowRedirect) {
+		if opts != nil && (opts.SkipSSL || opts.FollowRedirect || opts.TimeoutFloat > 0 || opts.ConnectTimeoutFloat > 0) {
 			transport := &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipSSL},
 			}
 			c = &http.Client{
 				Transport: transport,
 			}
-			// Timeout=0 表示不限超时（对齐 PHP CURLOPT_TIMEOUT=0 语义）
-			if opts.Timeout > 0 {
+			// 浮点超时优先
+			if opts.TimeoutFloat > 0 {
+				c.Timeout = time.Duration(opts.TimeoutFloat * float64(time.Second))
+			} else if opts.Timeout > 0 {
 				c.Timeout = time.Duration(opts.Timeout) * time.Second
+			}
+			// 连接超时
+			if opts.ConnectTimeoutFloat > 0 {
+				transport.DialContext = nil // 使用默认拨号
+				transport.TLSHandshakeTimeout = time.Duration(opts.ConnectTimeoutFloat * float64(time.Second))
+				transport.ResponseHeaderTimeout = time.Duration(opts.ConnectTimeoutFloat * float64(time.Second))
 			}
 			if !opts.FollowRedirect {
 				c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
@@ -116,6 +124,22 @@ func defaultProxy(client *http.Client) ProxyFunc {
 			}
 			if opts.UserAgent != "" {
 				req.Header.Set("User-Agent", opts.UserAgent)
+			}
+			// PHP curl: 当 CURLOPT_POSTFIELDS 为字符串且未显式设置 Content-Type 时，
+			// 自动设为 application/x-www-form-urlencoded
+			if opts.HasPostData && opts.PostData != "" {
+				hasCT := false
+				for _, h := range opts.Headers {
+					if i := strings.IndexByte(h, ':'); i > 0 {
+						if strings.EqualFold(strings.TrimSpace(h[:i]), "Content-Type") {
+							hasCT = true
+							break
+						}
+					}
+				}
+				if !hasCT {
+					req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				}
 			}
 		}
 		resp, err := c.Do(req)
@@ -422,22 +446,42 @@ func os_ReadFile(path string) ([]byte, error) {
 // lookbehind (?<= 在 preg_replace 路径已特例处理，这里返回原样交由调用方判断。
 func compilePHPRegex(pat string) (*regexp.Regexp, error) {
 	// 去定界符：首字符为定界符，尾字符为同一定界符，可选修饰符
+	mods := ""
 	if len(pat) >= 2 {
 		delim := pat[0]
 		if delim == '/' || delim == '#' || delim == '~' || delim == '!' {
 			inner := pat[1:]
 			// 找最后一个定界符的位置（尾部可能有修饰符如 /pattern/i）
 			if i := strings.LastIndexByte(inner, delim); i >= 0 {
-				inner = inner[:i] // 只保留定界符之间的部分
+				mods = inner[i+1:] // 提取修饰符
+				inner = inner[:i]  // 只保留定界符之间的部分
 			}
 			pat = inner
 		}
 	}
-	// PCRE 修饰符 i（不区分大小写）转 Go 内联 (?i)
-	pat = strings.TrimPrefix(pat, "(?i)")
-	re, err := regexp.Compile("(?i)" + pat)
+	// 构建 Go 内联修饰符前缀
+	// PCRE 修饰符 → Go RE2 内联标志:
+	// i → (?i) 不区分大小写
+	// m → (?m) 多行模式 (^/$ 匹配每行)
+	// s → (?s) . 匹配换行符
+	// x → (?x) 忽略空白和 # 注释
+	prefix := ""
+	for _, ch := range mods {
+		switch ch {
+		case 'i', 's', 'm', 'x':
+			prefix += string(ch)
+		}
+	}
+	if prefix != "" {
+		pat = "(?" + prefix + ")" + pat
+	}
+	// 无修饰符时不添加前缀，与 PHP PCRE 默认行为一致（区分大小写）
+	re, err := regexp.Compile(pat)
 	if err != nil {
-		// 失败则尝试原样
+		// 失败则尝试去掉内联修饰符前缀
+		if prefix != "" {
+			return regexp.Compile(strings.TrimPrefix(pat, "(?"+prefix+")"))
+		}
 		return regexp.Compile(pat)
 	}
 	return re, nil

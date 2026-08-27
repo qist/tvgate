@@ -81,11 +81,24 @@ func init() {
 		if err != nil {
 			return NewBool(false), nil
 		}
+		// PHP flags: FILE_IGNORE_NEW_LINES=2, FILE_SKIP_EMPTY_LINES=4
+		skipEmptyLines := false
+		if len(a) >= 2 {
+			flags := int(a[1].ToInt())
+			// FILE_IGNORE_NEW_LINES=2: 行末无换行符（phpgo 已默认去除 \r，此标志无需额外处理）
+			// FILE_SKIP_EMPTY_LINES=4: 跳过空行
+			if flags&4 != 0 {
+				skipEmptyLines = true
+			}
+		}
 		lines := strings.Split(string(data), "\n")
 		arr := NewArray()
-		for i, l := range lines {
+		for _, l := range lines {
 			l = strings.TrimRight(l, "\r")
-			arr.ArraySet(NewInt(int64(i)), NewString(l))
+			if skipEmptyLines && l == "" {
+				continue
+			}
+			arr.ArraySet(NewInt(int64(len(arr.Keys))), NewString(l))
 		}
 		return arr, nil
 	}
