@@ -328,6 +328,32 @@ php:
 
 > **静态文件支持**：`/php/` 前缀下既支持 PHP 解释执行，也直接服务静态资源。判断规则：扩展名为 `.php/.php3/.php4/.phtml/.inc`，或内容含 `<?php` / `<?=` / `<?` 标签的文件由 phpgo 解释；其余（`.html` / `.css` / `.js` / 无扩展名等）按原文件以正确的 MIME 类型直接返回，无需 PHP 标签。例如 `http://<IP>:<port>/php/index.html` 会直接返回静态 HTML（phpgo 不会丢弃标签外内容）。
 
+### 全局 Token 验证
+
+PHP 模块已集成 `global_auth` 全局 token 验证，与 HTTP / UDP / RTSP handler 行为一致。当 `config.yaml` 中 `global_auth.tokens_enabled: true` 时，访问 `/php/` 下的任何脚本都需要在 URL 参数中携带有效的 token。
+
+示例（假设 `token_param_name: juieieiri`，`static_tokens.token: tertwertw`）：
+
+```
+http://<IP>:<port>/php/huya.php?id=12345&juieieiri=tertwertw
+```
+
+- 验证通过后，token 参数会从 URL 中**自动删除**，不会传到 PHP 脚本的 `$_GET` / `$_POST` / `QUERY_STRING` 中，避免 token 泄露给脚本逻辑。
+- 未携带 token 或 token 无效时返回 `403 Forbidden`。
+- `global_auth` 配置修改后由配置热加载自动刷新，无需重启。
+
+### 备份文件管理
+
+每次在 Web 编辑器中保存 PHP 文件时，系统会自动将旧内容备份为 `.bak.<时间戳>` 文件。Web 后台提供**备份文件管理中心**（入口在代码编辑页面），支持：
+
+| 操作 | 说明 |
+|---|---|
+| 列表 | 列出 `docroot` 下所有 `.bak` 备份文件 |
+| 回滚 | 将备份文件内容恢复为当前文件 |
+| 下载 | 下载备份文件 |
+| 删除 | 删除单个或批量删除备份文件 |
+| 自动清理 | 按设定保留天数自动清理过期备份 |
+
 ---
 
 ## Web 代码文件管理（编辑/上传/下载/语法检测）
