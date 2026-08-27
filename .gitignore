@@ -9,3 +9,4 @@ test_start_time
 ffmpeg/
 src/
 .codebuddy/
+tvgate.pid
