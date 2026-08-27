@@ -226,6 +226,7 @@ func phpPregMatchAll(env *Env, vs []Value) (Value, error) {
 
 // phpPregReplace 实现 preg_replace($pattern, $repl, $subject[, $limit])
 // 支持 fj.php 那种 lookbehind 特例（Go RE2 不支持 (?<=)，用字符串级 workaround）。
+// 支持 bjydott.php 那种纯 lookahead 特例（Go RE2 不支持 (?=)，用字符串级 workaround）。
 func phpPregReplace(env *Env, vs []Value) (Value, error) {
 	if len(vs) < 3 {
 		return NewNull(), nil
@@ -236,6 +237,11 @@ func phpPregReplace(env *Env, vs []Value) (Value, error) {
 	// lookbehind 特例：(?<=\/)[^\/.]+(?=\.m3u8)
 	if strings.Contains(pattern, "(?<=") {
 		return NewString(lookbehindWorkaround(pattern, repl, subj)), nil
+	}
+	// lookahead 特例：/zoneoffset.*?(?=accountinfo)/
+	// Go RE2 不支持 (?=...)，需要用 lookaheadWorkaround 处理
+	if strings.Contains(pattern, "(?=") {
+		return NewString(lookaheadWorkaround(pattern, repl, subj)), nil
 	}
 	re, err := compilePHPRegex(pattern)
 	if err != nil {
@@ -308,6 +314,51 @@ func lookbehindWorkaround(pattern, repl, subj string) string {
 		return subj
 	}
 	return re.ReplaceAllString(subj, "${1}"+repl+"${3}")
+}
+
+// lookaheadWorkaround 处理 MAIN(?=TAIL) 形式的纯先行断言：
+// Go RE2 不支持 (?=...) lookahead，所以把断言改写为捕获组：
+//   原 pattern = [prefix] MAIN (?=TAIL) [suffix]
+//   改写为     = [prefix] (MAIN) (TAIL) [suffix]
+// 匹配后只替换 MAIN 部分（第 1 个捕获组），保留 TAIL（第 2 个捕获组）。
+// 例如 /zoneoffset.*?(?=accountinfo)/ → (zoneoffset.*?)(accountinfo)
+// 替换时用 ${2} 保留 TAIL 部分。
+func lookaheadWorkaround(pattern, repl, subj string) string {
+	p := pattern
+
+	// 0. 剥离 PCRE 定界符（如 /.../、#...#、~...~、!...!）
+	if len(p) >= 2 {
+		if d := p[0]; (d == '/' || d == '#' || d == '~' || d == '!') {
+			inner := p[1:]
+			if i := strings.LastIndexByte(inner, d); i >= 0 {
+				p = inner[:i]
+			}
+		}
+	}
+
+	// 1. 提取 lookahead 字面量并从 pattern 中移除断言组
+	tail := ""
+	if idx := strings.Index(p, "(?="); idx >= 0 {
+		rest := p[idx+3:] // 跳过 "(?="
+		end := strings.Index(rest, ")")
+		if end < 0 {
+			return subj
+		}
+		tail = rest[:end]
+		p = p[:idx] + p[idx+3+end+1:] // 移除 (?=...) 整个组
+	}
+
+	// 2. tail 是正则模式（lookahead 内容本身就是正则），直接使用
+	//    但要清理掉 PCRE 转义的反斜杠（\/ -> / 等）以兼容 RE2
+	tailClean := unescapeRegexLit(tail)
+
+	// 3. 编译 (MAIN)(TAIL)，替换时保留 TAIL，只换 MAIN
+	full := "(" + p + ")(" + tailClean + ")"
+	re, err := regexp.Compile(full)
+	if err != nil {
+		return subj
+	}
+	return re.ReplaceAllString(subj, repl+"${2}")
 }
 
 // unescapeRegexLit 去除正则字面量中的转义反斜杠（\. -> .、\/ -> / 等），
