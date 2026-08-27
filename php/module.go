@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/phpgo"
@@ -43,6 +44,30 @@ func Shutdown() {}
 // 执行磁盘脚本并将 echo/header/exit 映射为 HTTP 响应。
 func Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		clientIP := r.RemoteAddr
+		if h, _, err := net.SplitHostPort(clientIP); err == nil {
+			clientIP = h
+		}
+		connID := clientIP + "_" + r.URL.Path
+
+		// 全局 token 验证（与 HTTP/UDP/RTSP handler 一致）
+		if gt := auth.GetGlobalTokenManager(); gt != nil {
+			tokenParam := "my_token"
+			if gt.TokenParamName != "" {
+				tokenParam = gt.TokenParamName
+			}
+			token := r.URL.Query().Get(tokenParam)
+			if !gt.ValidateToken(token, r.URL.Path, connID) {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+			gt.KeepAlive(token, connID, clientIP, r.URL.Path)
+			// 删除 token 参数，避免传到 PHP 脚本的 $_GET / $_POST / QUERY_STRING
+			query := r.URL.Query()
+			query.Del(tokenParam)
+			r.URL.RawQuery = query.Encode()
+		}
+
 		// 解析脚本路径（防目录穿越）。先剥掉路由前缀（如 /php/）
 		p := r.URL.Path
 		if cfg.Path != "" {
