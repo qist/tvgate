@@ -322,6 +322,10 @@ func opensslCipher(a []Value, encrypt bool) (Value, error) {
 		return opensslCBC(a, data, key, iv, encrypt)
 	case "aes-256-gcm", "AES-256-GCM", "aes-128-gcm", "AES-128-GCM":
 		return opensslGCM(a, data, key, iv, encrypt)
+	case "des-ede3", "DES-EDE3", "des-ede3-ecb", "DES-EDE3-ECB":
+		return opensslTripleDESECB(a, data, key, encrypt)
+	case "des-ede3-cbc", "DES-EDE3-CBC":
+		return opensslTripleDESCBC(a, data, key, iv, encrypt)
 	default:
 		return NewString(""), fmt.Errorf("openssl: 不支持的方法 %s", method)
 	}
