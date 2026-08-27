@@ -39,6 +39,8 @@ type Value struct {
 	Keys []string
 	// Ref 用于 &$var 引用参数
 	Ref assignable
+	// RefVal 缓存引用的当前值（在 callFunc 中填充，供 ToString 等无 Env 方法使用）
+	RefVal *Value
 	// Resource 用于资源类型（文件/流/秘钥等 opaque Go 对象）
 	Resource interface{}
 }
@@ -83,9 +85,14 @@ func (v Value) ToBool() bool {
 		return v.Int != 0
 	case KindFloat:
 		return v.Float != 0
-	case KindString:
-		return v.Str != "" && v.Str != "0"
-	case KindArray:
+case KindString:
+return v.Str != "" && v.Str != "0"
+case KindRef:
+if v.RefVal != nil {
+return v.RefVal.ToBool()
+}
+return false
+case KindArray:
 		return len(v.Keys) > 0
 	}
 	return false
@@ -103,10 +110,15 @@ func (v Value) ToFloat() float64 {
 		return float64(v.Int)
 	case KindFloat:
 		return v.Float
-	case KindString:
-		f, _ := strconv.ParseFloat(strings.TrimSpace(v.Str), 64)
-		return f
-	}
+case KindString:
+f, _ := strconv.ParseFloat(strings.TrimSpace(v.Str), 64)
+return f
+case KindRef:
+if v.RefVal != nil {
+return v.RefVal.ToFloat()
+}
+return 0
+}
 	return 0
 }
 
@@ -122,11 +134,16 @@ func (v Value) ToInt() int64 {
 		return v.Int
 	case KindFloat:
 		return int64(v.Float)
-	case KindString:
-		var n int64
-		fmt.Sscanf(v.Str, "%d", &n)
-		return n
-	}
+case KindString:
+var n int64
+fmt.Sscanf(v.Str, "%d", &n)
+return n
+case KindRef:
+if v.RefVal != nil {
+return v.RefVal.ToInt()
+}
+return 0
+}
 	return 0
 }
 
@@ -146,6 +163,11 @@ func (v Value) ToString() string {
 		return fmt.Sprintf("%v", v.Float)
 	case KindString:
 		return v.Str
+	case KindRef:
+		if v.RefVal != nil {
+			return v.RefVal.ToString()
+		}
+		return ""
 	case KindArray:
 		return "Array"
 	}
@@ -154,6 +176,14 @@ func (v Value) ToString() string {
 
 // ArrayGet 按 key 取数组元素（自动字符串化 key）
 func (v Value) ArrayGet(key Value) Value {
+	// 字符串索引：$str[$i] 返回第 i 个字符
+	if v.Kind == KindString {
+		idx := key.ToInt()
+		if idx < 0 || idx >= int64(len(v.Str)) {
+			return NewString("")
+		}
+		return NewString(string(v.Str[idx]))
+	}
 	if v.Kind != KindArray {
 		return NewNull()
 	}

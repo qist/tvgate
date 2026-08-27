@@ -93,6 +93,7 @@ const (
 	tUse
 	tList
 	tPrint
+	tConst
 	tConstTrue
 	tConstFalse
 	tConstNull
@@ -270,6 +271,8 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 				toks = append(toks, Tok{tList, word, start})
 			case "print":
 				toks = append(toks, Tok{tPrint, word, start})
+			case "const":
+				toks = append(toks, Tok{tConst, word, start})
 			default:
 				toks = append(toks, Tok{tIdent, word, start})
 			}

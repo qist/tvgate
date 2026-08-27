@@ -108,6 +108,7 @@ func Handler() http.HandlerFunc {
 			body = string(buf)
 		}
 		env.SetPHPInput(body)
+		env.SetScriptPath(scriptPath)
 
 		if err := phpgo.ServePHP(env, w, src); err != nil {
 			// 错误已在 ServePHP 写入响应

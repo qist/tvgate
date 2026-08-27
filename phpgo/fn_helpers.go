@@ -32,38 +32,99 @@ func parsePort(s string) int64 {
 	return n
 }
 
-// phpSprintf 实现 PHP sprintf 格式化（简化版，用 Go fmt.Sprintf 代理）
+// phpSprintf 实现 PHP sprintf 格式化（支持 %1$s 位置参数、%02X 等）
 func phpSprintf(format string, args []interface{}) string {
 	var b strings.Builder
 	argIdx := 0
-	for i := 0; i < len(format); i++ {
+	i := 0
+	for i < len(format) {
 		if format[i] != '%' || i+1 >= len(format) {
 			b.WriteByte(format[i])
+			i++
 			continue
 		}
-		i++
+		// 记录 % 位置
+		pctStart := i
+		i++ // 跳过 %
+
+		// %% 转义
 		if format[i] == '%' {
 			b.WriteByte('%')
+			i++
 			continue
 		}
-		// 收集格式说明符： %[flags][width][.precision]specifier
-		start := i - 1 // 包含 %
+
+		// 检查 PHP 位置参数： %1$s, %2$d 等
+		posArg := -1
+		if i < len(format) && format[i] >= '0' && format[i] <= '9' {
+			// 先保存位置，尝试解析 位置$ 格式
+			savedI := i
+			num := 0
+			for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+				num = num*10 + int(format[i]-'0')
+				i++
+			}
+			if i < len(format) && format[i] == '$' {
+				posArg = num // 1-based
+				i++          // 跳过 $
+			} else {
+				// 不是位置参数，回退
+				i = savedI
+			}
+		}
+
+		// 收集格式说明符： [flags][width][.precision]specifier
 		for i < len(format) && !isPrintfSpec(format[i]) {
 			i++
 		}
 		if i >= len(format) {
-			b.WriteString(format[start:])
+			// 没有找到 spec 字符，原样输出
+			b.WriteString(format[pctStart:])
 			break
 		}
-		fmtStr := format[start : i+1]
-		if argIdx < len(args) {
-			b.WriteString(goSprintf(fmtStr, args[argIdx]))
+
+		// 完整的格式串（从 % 到 spec 字符）
+		fmtStr := format[pctStart : i+1]
+		// 去掉位置参数前缀（如 %1$s → %s）
+		goFmt := convertPhpFormat(fmtStr)
+
+		var arg interface{}
+		if posArg > 0 && posArg <= len(args) {
+			arg = args[posArg-1]
+		} else if argIdx < len(args) {
+			arg = args[argIdx]
 			argIdx++
 		} else {
 			b.WriteString(fmtStr)
+			i++
+			continue
 		}
+		b.WriteString(goSprintf(goFmt, arg))
+		i++ // 跳过 spec 字符
 	}
 	return b.String()
+}
+
+// convertPhpFormat 去掉 PHP 位置参数前缀（如 %1$s → %s, %2$d → %d）
+func convertPhpFormat(s string) string {
+	if len(s) < 2 || s[0] != '%' {
+		return s
+	}
+	// 找到 $ 的位置
+	dollarIdx := -1
+	for i := 1; i < len(s); i++ {
+		if s[i] == '$' {
+			dollarIdx = i
+			break
+		}
+		if s[i] < '0' || s[i] > '9' {
+			break
+		}
+	}
+	if dollarIdx > 0 {
+		return "%" + s[dollarIdx+1:]
+	}
+	return s
 }
 
 func isPrintfSpec(c byte) bool {

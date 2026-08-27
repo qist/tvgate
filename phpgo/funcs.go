@@ -1,6 +1,7 @@
 package phpgo
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
@@ -104,20 +105,44 @@ func init() {
 	}
 	// json_encode/decode
 	builtins["json_encode"] = func(e *Env, a []Value) (Value, error) {
-		b, err := json.Marshal(phpToGo(a[0]))
+		goVal := phpToGo(a[0])
+		// 默认行为：json.Marshal
+		b, err := json.Marshal(goVal)
 		if err != nil {
 			return NewString(""), err
 		}
-		return NewString(string(b)), nil
+		s := string(b)
+		// 处理 JSON flags
+		if len(a) >= 2 {
+			flags := a[1].ToInt()
+			if flags&256 != 0 { // JSON_UNESCAPED_UNICODE
+				// Go 的 json.Marshal 默认会转义非 ASCII，需要反转义
+				s = unescapeUnicode(s)
+			}
+			if flags&64 != 0 { // JSON_UNESCAPED_SLASHES
+				s = strings.ReplaceAll(s, "\\/", "/")
+			}
+			if flags&128 != 0 { // JSON_PRETTY_PRINT
+				var buf bytes.Buffer
+				if err := json.Indent(&buf, b, "  ", "  "); err == nil {
+					s = buf.String()
+				}
+			}
+		}
+		return NewString(s), nil
 	}
 	builtins["json_decode"] = func(e *Env, a []Value) (Value, error) {
 		assoc := false
 		if len(a) >= 2 {
 			assoc = a[1].ToBool()
 		}
+		s := a[0].ToString()
+		if s == "" {
+			return NewNull(), nil
+		}
 		var raw interface{}
-		if err := json.Unmarshal([]byte(a[0].ToString()), &raw); err != nil {
-			return NewNull(), err
+		if err := json.Unmarshal([]byte(s), &raw); err != nil {
+			return NewNull(), nil
 		}
 		return goToPHP(raw, assoc), nil
 	}
@@ -131,7 +156,16 @@ func init() {
 	// header（捕获到 env.headers）
 	builtins["header"] = func(e *Env, a []Value) (Value, error) {
 		if len(a) > 0 {
-			e.headers = append(e.headers, a[0].ToString())
+			h := a[0].ToString()
+			// 显式状态码：header("HTTP/1.1 404 Not Found") 或
+			// header("HTTP/1.0 301 Moved Permanently")。解析出数字状态码，
+			// 不放入普通 header 列表（避免被当作响应头写出）。
+			if code, ok := parseHTTPStatusHeader(h); ok {
+				e.statusCode = code
+				e.statusCodeSet = true
+				return NewNull(), nil
+			}
+			e.headers = append(e.headers, h)
 		}
 		return NewNull(), nil
 	}
@@ -151,23 +185,66 @@ func init() {
 		if len(a) < 3 {
 			return NewBool(false), nil
 		}
-		h := a[0]
-		optName := a[1].ToString() // 如 "CURLOPT_URL"
+		h := deref(a[0])
+		optName := curlOptKey(a[1]) // 兼容整数常量和字符串
 		val := a[2]
 		h.ArraySet(NewString(optName), val)
 		return NewBool(true), nil
 	}
 	builtins["curl_setopt_array"] = func(e *Env, a []Value) (Value, error) {
+		h := deref(a[0])
+		arr := deref(a[1])
+		if len(a) < 2 || h.Kind != KindArray || arr.Kind != KindArray {
+			return NewBool(false), nil
+		}
+		for _, k := range arr.Keys {
+			// k 是原始 key（整数常量值转成的字符串），需要映射
+			optName := k
+			if n, ok := tryParseInt64(k); ok {
+				if name := curlOptIntToName(n); name != "" {
+				optName = name
+			}
+			}
+			h.ArraySet(NewString(optName), arr.Arr[k])
+		}
 		return NewBool(true), nil
 	}
 	builtins["curl_exec"] = func(e *Env, a []Value) (Value, error) {
-		return e.curlExec(a[0])
+		return e.curlExec(deref(a[0]))
 	}
 	builtins["curl_error"] = func(e *Env, a []Value) (Value, error) {
-		return NewString(""), nil
+		h := deref(a[0])
+		if len(a) < 1 || h.Kind != KindArray {
+			return NewString(""), nil
+		}
+		return h.ArrayGet(NewString("__error")), nil
 	}
 	builtins["curl_getinfo"] = func(e *Env, a []Value) (Value, error) {
-		return NewArray(), nil
+		h := deref(a[0])
+		if len(a) < 1 || h.Kind != KindArray {
+			return NewArray(), nil
+		}
+		info := NewArray()
+		info.ArraySet(NewString("http_code"), h.ArrayGet(NewString("__http_code")))
+		info.ArraySet(NewString("effective_url"), h.ArrayGet(NewString("__effective_url")))
+		info.ArraySet(NewString("content_type"), h.ArrayGet(NewString("__content_type")))
+		info.ArraySet(NewString("redirect_url"), h.ArrayGet(NewString("__redirect_url")))
+		// 单一选项模式: curl_getinfo($ch, CURLINFO_HTTP_CODE)
+		if len(a) >= 2 {
+			opt := a[1].ToString()
+			switch opt {
+			case "2097154": // CURLINFO_HTTP_CODE / CURLINFO_RESPONSE_CODE
+				return info.ArrayGet(NewString("http_code")), nil
+			case "1048577": // CURLINFO_EFFECTIVE_URL
+				return info.ArrayGet(NewString("effective_url")), nil
+			case "1048593": // CURLINFO_CONTENT_TYPE
+				return info.ArrayGet(NewString("content_type")), nil
+			case "3145744": // CURLINFO_REDIRECT_URL
+				return info.ArrayGet(NewString("redirect_url")), nil
+			}
+			return info.ArrayGet(a[1]), nil
+		}
+		return info, nil
 	}
 	builtins["curl_close"] = func(e *Env, a []Value) (Value, error) {
 		return NewNull(), nil
@@ -178,6 +255,44 @@ func init() {
 	builtins["preg_match"] = phpPregMatch
 	builtins["preg_match_all"] = phpPregMatchAll
 	builtins["preg_replace"] = phpPregReplace
+}
+
+// unescapeUnicode 将 Go json.Marshal 产生的 \uXXXX 转义还原为 UTF-8 字符
+func unescapeUnicode(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if i+5 < len(s) && s[i] == '\\' && s[i+1] == 'u' {
+			var code int
+			fmt.Sscanf(s[i+2:i+6], "%x", &code)
+			b.WriteRune(rune(code))
+			i += 6
+		} else {
+			b.WriteByte(s[i])
+			i++
+		}
+	}
+	return b.String()
+}
+
+// parseHTTPStatusHeader 解析 header("HTTP/1.1 404 Not Found") 之类的显式状态码行。
+// 命中返回 (code, true)，否则 (0, false)。命中时不作为普通响应头写出。
+func parseHTTPStatusHeader(h string) (int, bool) {
+	h = strings.TrimSpace(h)
+	up := strings.ToUpper(h)
+	if !strings.HasPrefix(up, "HTTP/") {
+		return 0, false
+	}
+	// HTTP/1.1 404 ... 或 HTTP/1.1 404
+	fields := strings.Fields(h)
+	if len(fields) < 2 {
+		return 0, false
+	}
+	// 第二段应为数字状态码
+	var code int
+	if _, err := fmt.Sscanf(fields[1], "%d", &code); err != nil || code < 100 || code > 599 {
+		return 0, false
+	}
+	return code, true
 }
 
 // ---------------------------------------------------------------------------
@@ -191,28 +306,30 @@ func opensslCipher(a []Value, encrypt bool) (Value, error) {
 		return NewString(""), fmt.Errorf("openssl: 参数不足")
 	}
 	data := []byte(a[0].ToString())
-	method := a[1].ToString() // "AES-256-CBC"
+	method := a[1].ToString() // "AES-256-CBC" / "aes-256-gcm"
 	key := []byte(a[2].ToString())
 	var iv []byte
 	if len(a) >= 5 {
 		iv = []byte(a[4].ToString())
 	}
 	// 解析方法
-	var blockSize int
 	switch method {
-	case "AES-256-CBC":
-		blockSize = 16
-	case "AES-128-CBC":
-		blockSize = 16
+	case "AES-256-CBC", "AES-128-CBC":
+		return opensslCBC(a, data, key, iv, encrypt)
+	case "aes-256-gcm", "AES-256-GCM", "aes-128-gcm", "AES-128-GCM":
+		return opensslGCM(a, data, key, iv, encrypt)
 	default:
 		return NewString(""), fmt.Errorf("openssl: 不支持的方法 %s", method)
 	}
+}
+
+// opensslCBC 实现 AES-CBC 加解密
+func opensslCBC(a []Value, data, key, iv []byte, encrypt bool) (Value, error) {
+	blockSize := 16
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return NewString(""), err
 	}
-	mode := cipher.NewCBCDecrypter(block, iv) // 占位，下面按方向选
-	_ = mode
 	if encrypt {
 		// PKCS7 填充
 		pad := blockSize - len(data)%blockSize
@@ -223,7 +340,6 @@ func opensslCipher(a []Value, encrypt bool) (Value, error) {
 		data = append(data, padtext...)
 		enc := make([]byte, len(data))
 		cipher.NewCBCEncrypter(block, iv).CryptBlocks(enc, data)
-		// OPENSSL_RAW_DATA(=1) 返回原始字节；否则 base64（由调用方处理）
 		raw := false
 		if len(a) >= 4 {
 			raw = a[3].ToInt() == 1
@@ -256,11 +372,89 @@ func opensslCipher(a []Value, encrypt bool) (Value, error) {
 	return NewString(base64.StdEncoding.EncodeToString(dec)), nil
 }
 
+// opensslGCM 实现 AES-GCM 加解密
+// PHP: openssl_encrypt($data, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, $aad)
+//      openssl_decrypt($data, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, $aad)
+func opensslGCM(a []Value, data, key, iv []byte, encrypt bool) (Value, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return NewString(""), err
+	}
+	// GCM 标准 nonce 是 12 字节，但 PHP/OpenSSL 允许任意长度 IV。
+	// 使用 NewGCMWithNonceSize 支持 IV 长度。
+	nonceSize := len(iv)
+	if nonceSize == 0 {
+		nonceSize = 12 // 默认
+	}
+	gcm, err := cipher.NewGCMWithNonceSize(block, nonceSize)
+	if err != nil {
+		return NewString(""), err
+	}
+	if len(iv) == 0 {
+		iv = make([]byte, gcm.NonceSize())
+	}
+	raw := false
+	if len(a) >= 4 {
+		raw = a[3].ToInt() == 1
+	}
+	// 第6个参数是 tag，第7个参数是 aad
+	var tag []byte
+	var aad []byte
+	if len(a) >= 6 {
+		tag = []byte(a[5].ToString())
+	}
+	if len(a) >= 7 {
+		aad = []byte(a[6].ToString())
+	}
+	if encrypt {
+		enc := gcm.Seal(nil, iv, data, aad)
+		// GCM 返回: ciphertext + tag（tag 是最后 gcm.Overhead() 字节）
+		tagLen := gcm.Overhead()
+		ct := enc[:len(enc)-tagLen]
+		tagBytes := enc[len(enc)-tagLen:]
+		_ = tagBytes // PHP 中 $tag 是引用参数，简化不写回
+		if raw {
+			return NewString(string(ct)), nil
+		}
+		return NewString(base64.StdEncoding.EncodeToString(ct)), nil
+	}
+	// decrypt
+	// GCM: 需要把 ciphertext + tag 拼接起来
+	ct := data
+	if len(tag) > 0 {
+		ct = append(ct, tag...)
+	}
+	dec, err := gcm.Open(nil, iv, ct, aad)
+	if err != nil {
+		return NewBool(false), fmt.Errorf("openssl: GCM 解密失败: %v", err)
+	}
+	if raw {
+		return NewString(string(dec)), nil
+	}
+	return NewString(base64.StdEncoding.EncodeToString(dec)), nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // ---------------------------------------------------------------------------
+// deref 解引用 KindRef 为实际值（用于内置函数接收 VarExpr 参数时）
+func deref(v Value) Value {
+	if v.Kind == KindRef && v.RefVal != nil {
+		return *v.RefVal
+	}
+	return v
+}
+
 // curl 执行：统一路由到 Env.proxy（Go 实现 HTTP + 代理）
 // ---------------------------------------------------------------------------
 
 func (e *Env) curlExec(h Value) (Value, error) {
+	h = deref(h)
 	opts := &CurlOptions{Timeout: 30}
 	if h.Kind == KindArray {
 		// 取出 URL
@@ -299,6 +493,10 @@ func (e *Env) curlExec(h Value) (Value, error) {
 		if fl, ok := h.Arr["CURLOPT_FOLLOWLOCATION"]; ok {
 			opts.FollowRedirect = fl.ToBool()
 		}
+		// SSL VERIFYPEER
+		if ssl, ok := h.Arr["CURLOPT_SSL_VERIFYPEER"]; ok {
+			opts.SkipSSL = !ssl.ToBool()
+		}
 		method := "GET"
 		if _, ok := h.Arr["CURLOPT_POST"]; ok {
 			method = "POST"
@@ -312,17 +510,24 @@ func (e *Env) curlExec(h Value) (Value, error) {
 			method = "HEAD"
 		}
 		if e.proxy == nil {
-			return NewString(""), fmt.Errorf("curl: 未配置 proxy 后端")
+			return NewBool(false), nil
 		}
-		body, err := e.proxy(method, finalURL, opts)
+		result, err := e.proxy(method, finalURL, opts)
 		if err != nil {
-			return NewString("Error: " + err.Error()), nil
+			// 记录错误信息到 handle，供 curl_error 使用
+			h.ArraySet(NewString("__error"), NewString(err.Error()))
+			return NewBool(false), nil
 		}
-		// 记录 info
-		h.ArraySet(NewString("__http_code"), NewInt(200))
+		// 记录 info（真实 HTTP 状态码和重定向 URL）
+		httpCode := 200
+		if result.StatusCode > 0 {
+			httpCode = result.StatusCode
+		}
+		h.ArraySet(NewString("__http_code"), NewInt(int64(httpCode)))
 		h.ArraySet(NewString("__effective_url"), NewString(finalURL))
-		h.ArraySet(NewString("__content_type"), NewString("text/html; charset=utf-8"))
-		h.ArraySet(NewString("__response"), NewString(body))
+		h.ArraySet(NewString("__content_type"), NewString(result.ContentType))
+		h.ArraySet(NewString("__redirect_url"), NewString(result.Location))
+		h.ArraySet(NewString("__response"), NewString(result.Body))
 
 		// CURLOPT_RETURNTRANSFER: true 时返回内容，false 时直接输出
 		returnRaw := true
@@ -330,10 +535,10 @@ func (e *Env) curlExec(h Value) (Value, error) {
 			returnRaw = rt.ToBool()
 		}
 		if !returnRaw {
-			e.writeOutput(body)
+			e.writeOutput(result.Body)
 			return NewBool(true), nil
 		}
-		return NewString(body), nil
+		return NewString(result.Body), nil
 	}
 	return NewString(""), nil
 }

@@ -11,8 +11,11 @@ func init() {
 		if len(a) < 2 {
 			return NewBool(false), nil
 		}
-		path := a[0].ToString()
+		path := e.ResolvePath(a[0].ToString())
 		data := a[1].ToString()
+		// 确保目录存在
+		dir := filepath.Dir(path)
+		os.MkdirAll(dir, 0755)
 		err := os.WriteFile(path, []byte(data), 0644)
 		if err != nil {
 			return NewBool(false), nil
@@ -20,25 +23,25 @@ func init() {
 		return NewInt(int64(len(data))), nil
 	}
 	builtins["file_exists"] = func(e *Env, a []Value) (Value, error) {
-		_, err := os.Stat(a[0].ToString())
+		_, err := os.Stat(e.ResolvePath(a[0].ToString()))
 		return NewBool(err == nil), nil
 	}
 	builtins["is_dir"] = func(e *Env, a []Value) (Value, error) {
-		fi, err := os.Stat(a[0].ToString())
+		fi, err := os.Stat(e.ResolvePath(a[0].ToString()))
 		if err != nil {
 			return NewBool(false), nil
 		}
 		return NewBool(fi.IsDir()), nil
 	}
 	builtins["is_file"] = func(e *Env, a []Value) (Value, error) {
-		fi, err := os.Stat(a[0].ToString())
+		fi, err := os.Stat(e.ResolvePath(a[0].ToString()))
 		if err != nil {
 			return NewBool(false), nil
 		}
 		return NewBool(!fi.IsDir()), nil
 	}
 	builtins["is_writable"] = func(e *Env, a []Value) (Value, error) {
-		fi, err := os.Stat(a[0].ToString())
+		fi, err := os.Stat(e.ResolvePath(a[0].ToString()))
 		if err != nil {
 			return NewBool(false), nil
 		}
@@ -46,7 +49,7 @@ func init() {
 		return NewBool(true), nil
 	}
 	builtins["unlink"] = func(e *Env, a []Value) (Value, error) {
-		err := os.Remove(a[0].ToString())
+		err := os.Remove(e.ResolvePath(a[0].ToString()))
 		if err != nil {
 			return NewBool(false), nil
 		}
@@ -57,14 +60,24 @@ func init() {
 		if len(a) >= 2 {
 			mode = os.FileMode(a[1].ToInt())
 		}
-		err := os.Mkdir(a[0].ToString(), mode)
+		recursive := false
+		if len(a) >= 3 {
+			recursive = a[2].ToBool()
+		}
+		path := e.ResolvePath(a[0].ToString())
+		var err error
+		if recursive {
+			err = os.MkdirAll(path, mode)
+		} else {
+			err = os.Mkdir(path, mode)
+		}
 		if err != nil {
 			return NewBool(false), nil
 		}
 		return NewBool(true), nil
 	}
 	builtins["file"] = func(e *Env, a []Value) (Value, error) {
-		data, err := os.ReadFile(a[0].ToString())
+		data, err := os.ReadFile(e.ResolvePath(a[0].ToString()))
 		if err != nil {
 			return NewBool(false), nil
 		}
@@ -103,7 +116,7 @@ func init() {
 		return NewString(path), nil
 	}
 	builtins["realpath"] = func(e *Env, a []Value) (Value, error) {
-		p, err := filepath.Abs(a[0].ToString())
+		p, err := filepath.Abs(e.ResolvePath(a[0].ToString()))
 		if err != nil {
 			return NewBool(false), nil
 		}
@@ -139,14 +152,14 @@ func init() {
 		return result, nil
 	}
 	builtins["filesize"] = func(e *Env, a []Value) (Value, error) {
-		fi, err := os.Stat(a[0].ToString())
+		fi, err := os.Stat(e.ResolvePath(a[0].ToString()))
 		if err != nil {
 			return NewBool(false), nil
 		}
 		return NewInt(fi.Size()), nil
 	}
 	builtins["filemtime"] = func(e *Env, a []Value) (Value, error) {
-		fi, err := os.Stat(a[0].ToString())
+		fi, err := os.Stat(e.ResolvePath(a[0].ToString()))
 		if err != nil {
 			return NewBool(false), nil
 		}
@@ -157,7 +170,7 @@ func init() {
 		if len(a) == 0 {
 			return NewArray(), nil
 		}
-		entries, err := os.ReadDir(a[0].ToString())
+		entries, err := os.ReadDir(e.ResolvePath(a[0].ToString()))
 		if err != nil {
 			return NewBool(false), nil
 		}
@@ -172,7 +185,7 @@ func init() {
 		if len(a) == 0 {
 			return NewArray(), nil
 		}
-		matches, err := filepath.Glob(a[0].ToString())
+		matches, err := filepath.Glob(e.ResolvePath(a[0].ToString()))
 		if err != nil {
 			return NewArray(), nil
 		}
@@ -187,7 +200,7 @@ func init() {
 		if len(a) == 0 {
 			return NewBool(false), nil
 		}
-		err := os.Remove(a[0].ToString())
+		err := os.Remove(e.ResolvePath(a[0].ToString()))
 		if err != nil {
 			return NewBool(false), nil
 		}

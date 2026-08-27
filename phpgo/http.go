@@ -1,12 +1,14 @@
 package phpgo
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // ServePHP 执行 PHP 源码并写入 HTTP 响应。
@@ -16,6 +18,8 @@ func ServePHP(env *Env, w http.ResponseWriter, src string) error {
 	env.echoOut.Reset()
 	env.headers = nil
 	env.exitLoc = false
+	env.statusCode = 0
+	env.statusCodeSet = false
 
 	prog, err := ParseProgram(src)
 	if err != nil {
@@ -47,7 +51,17 @@ func ServePHP(env *Env, w http.ResponseWriter, src string) error {
 	if w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	}
-	w.WriteHeader(http.StatusOK)
+	// 决定最终状态码：
+	//  - 脚本显式 header("HTTP/1.x NNN ...") 优先；
+	//  - 否则若设置了 Location 头（PHP 约定），自动转为 302 Found；
+	//  - 否则 200 OK。
+	status := http.StatusOK
+	if env.statusCodeSet {
+		status = env.statusCode
+	} else if w.Header().Get("Location") != "" {
+		status = http.StatusFound // 302
+	}
+	w.WriteHeader(status)
 	io.WriteString(w, env.echoOut.String())
 	return nil
 }
@@ -55,9 +69,26 @@ func ServePHP(env *Env, w http.ResponseWriter, src string) error {
 // defaultProxy 是 ProxyFunc 的默认实现：用 Go 标准库发请求（支持代理）。
 // 由外部注入 *http.Client（含代理 transport）。
 func defaultProxy(client *http.Client) ProxyFunc {
-	return func(method, u string, opts *CurlOptions) (string, error) {
-		if client == nil {
-			client = http.DefaultClient
+	return func(method, u string, opts *CurlOptions) (*ProxyResult, error) {
+		// 根据选项动态构建 client
+		c := client
+		if c == nil {
+			c = http.DefaultClient
+		}
+		// 如果需要跳过 SSL 验证或控制重定向，创建自定义 client
+		if opts != nil && (opts.SkipSSL || opts.FollowRedirect) {
+			transport := &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipSSL},
+			}
+			c = &http.Client{
+				Transport: transport,
+				Timeout:   time.Duration(opts.Timeout) * time.Second,
+			}
+			if !opts.FollowRedirect {
+				c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+					return http.ErrUseLastResponse
+				}
+			}
 		}
 		var body io.Reader
 		if opts != nil && opts.PostData != "" {
@@ -65,7 +96,7 @@ func defaultProxy(client *http.Client) ProxyFunc {
 		}
 		req, err := http.NewRequest(method, u, body)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if opts != nil {
 			for _, h := range opts.Headers {
@@ -77,16 +108,21 @@ func defaultProxy(client *http.Client) ProxyFunc {
 				req.Header.Set("User-Agent", opts.UserAgent)
 			}
 		}
-		resp, err := client.Do(req)
+		resp, err := c.Do(req)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		defer resp.Body.Close()
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		return string(data), nil
+		return &ProxyResult{
+			Body:        string(data),
+			StatusCode:  resp.StatusCode,
+			Location:    resp.Header.Get("Location"),
+			ContentType: resp.Header.Get("Content-Type"),
+		}, nil
 	}
 }
 
@@ -106,15 +142,17 @@ func fileGetContents(env *Env, vs []Value) (Value, error) {
 	}
 	path := vs[0].ToString()
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-		body, err := env.proxy("GET", path, &CurlOptions{})
+		result, err := env.proxy("GET", path, &CurlOptions{})
 		if err != nil {
 			return NewBool(false), err
 		}
-		return NewString(body), nil
+		return NewString(result.Body), nil
 	}
 	if path == "php://input" {
 		return NewString(env.phpInput), nil
 	}
+	// 相对路径相对于脚本目录解析
+	path = env.ResolvePath(path)
 	data, err := os_ReadFile(path)
 	if err != nil {
 		return NewBool(false), err
@@ -282,6 +320,7 @@ func unescapeRegexLit(s string) string {
 
 type assignable interface {
 	assign(env *Env, v Value)
+	value(env *Env) Value
 }
 
 // varRef 表示一个变量引用（用于 preg_match 的引用参数）
@@ -292,6 +331,10 @@ type varRef struct {
 func (r *varRef) assign(env *Env, v Value) {
 	env.vars[r.name] = v
 	env.globals[r.name] = v
+}
+
+func (r *varRef) value(env *Env) Value {
+	return env.vars[r.name]
 }
 
 // ---------------------------------------------------------------------------

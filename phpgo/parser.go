@@ -7,12 +7,15 @@ import (
 
 // Parser 递归下降解析器
 type Parser struct {
-	toks []Tok
-	pos  int
+	toks  []Tok
+	pos   int
+	constsMap map[string]Value // 预定义常量
 }
 
 // NewParser ...
-func NewParser(toks []Tok) *Parser { return &Parser{toks: toks} }
+func NewParser(toks []Tok) *Parser {
+	return &Parser{toks: toks, constsMap: defaultPHPConsts()}
+}
 
 func (p *Parser) cur() Tok  { return p.toks[p.pos] }
 func (p *Parser) adv() Tok  { t := p.toks[p.pos]; p.pos++; return t }
@@ -78,6 +81,18 @@ func (p *Parser) parseFunc() (Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 跳过返回类型声明：function foo(): string { ... }
+	if p.at(tColon) {
+		p.adv() // 跳过 :
+		// 跳过返回类型（可能是 int, string, array, void, bool, float, ?type 等）
+		if p.at(tQuestion) {
+			p.adv()
+		}
+		// 跳过类型标识符（可能含命名空间 \NS\Class）
+		for p.at(tIdent) || p.atVal("\\") {
+			p.adv()
+		}
+	}
 	body, err := p.parseBlock()
 	if err != nil {
 		return nil, err
@@ -95,6 +110,27 @@ func (p *Parser) parseFuncParams() ([]FuncParam, error) {
 		if p.at(tAmp) {
 			p.adv()
 			param.ByRef = true
+		}
+		// 跳过类型提示：int, string, array, bool, float, ?type, \Name\Class 等
+		if p.at(tQuestion) {
+			p.adv()
+		}
+		for p.at(tIdent) && !p.atVal("true") && !p.atVal("false") && !p.atVal("null") {
+			// 检查下一个 token 是否是 $var，如果是则当前 tIdent 是类型提示
+			if p.peekN(1).Kind == tVar {
+				p.adv() // 跳过类型提示
+				break
+			}
+			// 可能是可变参数 ... $var
+			if p.peekN(1).Kind == tIdent && p.peekN(1).Val == "..." {
+				break
+			}
+			p.adv() // 跳过命名空间前缀等
+		}
+		// 跳过可变参数标记 ...
+		if p.atVal("...") {
+			p.adv()
+			param.Variadic = true
 		}
 		if !p.at(tVar) {
 			return nil, fmt.Errorf("parse: 函数参数须为变量 at %d", p.cur().Pos)
@@ -256,6 +292,8 @@ func (p *Parser) parseStmt() (Stmt, error) {
 		return p.parseAssignOrExpr()
 	case p.at(tList):
 		return p.parseListAssign()
+	case p.at(tConst):
+		return p.parseConstStmt()
 	}
 	// @ 错误抑制
 	if p.atVal("@") {
@@ -285,7 +323,7 @@ func (p *Parser) parseStmt() (Stmt, error) {
 
 func isExprStart(t Tok) bool {
 	switch t.Kind {
-	case tVar, tIdent, tInt, tFloat, tDoubleStr, tSingleStr, tConstTrue, tConstFalse, tConstNull, tArray, tLBracket, tLParen, tBang, tMinus, tStringCast, tIntCast, tFloatCast, tBoolCast, tArrayCast, tFunc:
+	case tVar, tIdent, tInt, tFloat, tDoubleStr, tSingleStr, tConstTrue, tConstFalse, tConstNull, tArray, tLBracket, tLParen, tBang, tMinus, tStringCast, tIntCast, tFloatCast, tBoolCast, tArrayCast, tFunc, tConst:
 		return true
 	}
 	return false
@@ -444,6 +482,24 @@ func (p *Parser) parseListAssign() (Stmt, error) {
 		Target: &FuncCall{Name: "__list", Args: targets},
 		Val:    val,
 	}}, nil
+}
+
+// parseConstStmt 解析 const NAME = value;
+func (p *Parser) parseConstStmt() (Stmt, error) {
+	p.adv() // const
+	name, err := p.expect(tIdent)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(tEquals); err != nil {
+		return nil, err
+	}
+	val, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	p.skipSemis()
+	return &ConstStmt{Name: name.Val, Val: val}, nil
 }
 
 func (p *Parser) parseIf() (Stmt, error) {
@@ -965,15 +1021,17 @@ func (p *Parser) parsePostfixFrom(e Expr) (Expr, error) {
 			e = &IndexExpr{Arr: e, Key: key}
 			continue
 		}
-		if p.at(tLParen) {
-			name := ""
-			switch v := e.(type) {
-			case *VarExpr:
-				name = v.Name
-			case *ScalarStr:
-				name = v.Val
-			default:
-				return nil, fmt.Errorf("parse: 不可调用的表达式 at %d", p.cur().Pos)
+	if p.at(tLParen) {
+		name := ""
+		switch v := e.(type) {
+		case *VarExpr:
+			name = v.Name
+		case *ScalarStr:
+			name = v.Val
+		case *ConstExpr:
+			name = v.Name
+		default:
+			return nil, fmt.Errorf("parse: 不可调用的表达式 at %d", p.cur().Pos)
 			}
 			args, err := p.parseArgs()
 			if err != nil {
@@ -1103,9 +1161,29 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		p.expect(tRParen)
 		return e, nil
 	case tIdent:
-		// 未定义常量：PHP 中当作字符串名使用
+		// 先查预定义常量
+		if cv, ok := p.constsMap[t.Val]; ok {
+			p.adv()
+			switch cv.Kind {
+			case KindInt:
+				return &ScalarInt{Val: cv.Int}, nil
+			case KindFloat:
+				return &ScalarFloat{Val: cv.Float}, nil
+			case KindString:
+				return &ScalarStr{Val: cv.Str}, nil
+			case KindBool:
+				return &ConstBool{Val: cv.Bool}, nil
+			}
+		}
+		// 特殊处理 __DIR__ 等魔术常量
+		switch t.Val {
+		case "__DIR__", "__FILE__", "__LINE__", "__FUNCTION__", "__CLASS__", "__METHOD__", "__NAMESPACE__":
+			p.adv()
+			return &MagicConstExpr{Name: t.Val}, nil
+		}
+		// 未定义常量：运行时查 e.consts（define 注册的），找不到则当字符串名
 		p.adv()
-		return &ScalarStr{Val: t.Val}, nil
+		return &ConstExpr{Name: t.Val}, nil
 	case tFunc:
 		// 闭包 function($a) use($b) { ... }
 		return p.parseClosure()
@@ -1335,8 +1413,13 @@ func parseInterpolatedStr(s string) Expr {
 				for k < len(s) && s[k] != ']' {
 					k++
 				}
-				key := s[j+1 : k]
-				parts = append(parts, &IndexExpr{Arr: &VarExpr{Name: name}, Key: &ScalarStr{Val: key}})
+				keyStr := s[j+1 : k]
+				// 如果 key 以 $ 开头，解析为变量
+				if len(keyStr) > 0 && keyStr[0] == '$' {
+					parts = append(parts, &IndexExpr{Arr: &VarExpr{Name: name}, Key: &VarExpr{Name: keyStr[1:]}})
+				} else {
+					parts = append(parts, &IndexExpr{Arr: &VarExpr{Name: name}, Key: &ScalarStr{Val: keyStr}})
+				}
 				j = k + 1
 			} else {
 				parts = append(parts, &VarExpr{Name: name})

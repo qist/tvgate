@@ -3,12 +3,21 @@ package phpgo
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"sort"
 	"strings"
 )
 
 // ProxyFunc 是 Go 实现的 HTTP 请求能力（替代 curl + 代理）。
-type ProxyFunc func(method, url string, opts *CurlOptions) (body string, err error)
+type ProxyFunc func(method, url string, opts *CurlOptions) (*ProxyResult, error)
+
+// ProxyResult 是 proxy 请求的结果
+type ProxyResult struct {
+	Body        string
+	StatusCode  int
+	Location    string // 重定向 URL（如果有）
+	ContentType string
+}
 
 // CurlOptions 对应 PHP curl_setopt 的关键选项
 type CurlOptions struct {
@@ -20,6 +29,7 @@ type CurlOptions struct {
 	UserAgent   string
 	Method      string
 	FollowRedirect bool
+	SkipSSL     bool   // CURLOPT_SSL_VERIFYPEER=false
 }
 
 // Env 执行环境
@@ -37,9 +47,11 @@ type Env struct {
 	ufiles    map[string]Value  // $_FILES
 	reqURI    string            // $_SERVER["REQUEST_URI"]
 	phpInput  string            // php://input 原始请求体
-	headers   []string          // 捕获的 header() 输出
-	exitLoc   bool              // 触发 exit
-	exitVal   Value             // exit() 参数值
+	headers        []string          // 捕获的 header() 输出
+	statusCode     int               // 显式设置的状态码（如 header("HTTP/1.1 404")）
+	statusCodeSet  bool              // 是否显式设置过状态码
+	exitLoc        bool              // 触发 exit
+	exitVal        Value             // exit() 参数值
 	proxy     ProxyFunc
 	echoOut   *strings.Builder
 	obStack   []*strings.Builder // output buffer stack
@@ -47,15 +59,16 @@ type Env struct {
 	continueN int                // 待处理的 continue 层数
 	files    map[int]io.ReadWriteCloser // 文件/流句柄表（fd -> 资源）
 	nextFd   int                        // 下一个可用 fd
+	scriptPath string                     // 当前脚本路径（用于 __DIR__/__FILE__）
 }
 
 // NewEnv 创建执行环境
 func NewEnv(proxy ProxyFunc) *Env {
-	return &Env{
+	ev := &Env{
 		vars:     map[string]Value{},
 		funcs:    map[string]*FuncDecl{},
 		globals:  map[string]Value{},
-		consts:   map[string]Value{},
+		consts:   defaultPHPConsts(),
 		server:   map[string]string{},
 		get:      map[string]string{},
 		post:     map[string]string{},
@@ -68,6 +81,117 @@ func NewEnv(proxy ProxyFunc) *Env {
 		files:    map[int]io.ReadWriteCloser{},
 		nextFd:   1,
 	}
+	return ev
+}
+
+// defaultPHPConsts 返回 PHP 预定义常量
+func defaultPHPConsts() map[string]Value {
+	c := map[string]Value{}
+	// JSON
+	c["JSON_UNESCAPED_UNICODE"] = NewInt(256)
+	c["JSON_UNESCAPED_SLASHES"] = NewInt(64)
+	c["JSON_PRETTY_PRINT"] = NewInt(128)
+	c["JSON_THROW_ON_ERROR"] = NewInt(4194304)
+	c["JSON_HEX_TAG"] = NewInt(1)
+	c["JSON_HEX_AMP"] = NewInt(2)
+	c["JSON_HEX_APOS"] = NewInt(4)
+	c["JSON_HEX_QUOT"] = NewInt(8)
+	c["JSON_FORCE_OBJECT"] = NewInt(16)
+	c["JSON_NUMERIC_CHECK"] = NewInt(32)
+	c["JSON_BIGINT_AS_STRING"] = NewInt(2)
+	c["JSON_UNESCAPED_LINE_TERMINATORS"] = NewInt(2048)
+	// CURL
+	c["CURLOPT_URL"] = NewInt(1)
+	c["CURLOPT_RETURNTRANSFER"] = NewInt(19913)
+	c["CURLOPT_POST"] = NewInt(47)
+	c["CURLOPT_POSTFIELDS"] = NewInt(10015)
+	c["CURLOPT_HTTPHEADER"] = NewInt(10023)
+	c["CURLOPT_TIMEOUT"] = NewInt(13)
+	c["CURLOPT_CONNECTTIMEOUT"] = NewInt(78)
+	c["CURLOPT_USERAGENT"] = NewInt(10018)
+	c["CURLOPT_FOLLOWLOCATION"] = NewInt(52)
+	c["CURLOPT_CUSTOMREQUEST"] = NewInt(10036)
+	c["CURLOPT_NOBODY"] = NewInt(44)
+	c["CURLOPT_PROXY"] = NewInt(10004)
+	c["CURLOPT_PROXYTYPE"] = NewInt(10100)
+	c["CURLOPT_SSL_VERIFYPEER"] = NewInt(64)
+	c["CURLOPT_SSL_VERIFYHOST"] = NewInt(81)
+	c["CURLOPT_ENCODING"] = NewInt(10102)
+	c["CURLOPT_REFERER"] = NewInt(10016)
+	c["CURLOPT_COOKIE"] = NewInt(10022)
+	c["CURLOPT_COOKIEFILE"] = NewInt(10031)
+	c["CURLOPT_COOKIEJAR"] = NewInt(10082)
+	c["CURLOPT_HEADER"] = NewInt(42)
+	c["CURLOPT_VERBOSE"] = NewInt(41)
+	c["CURLOPT_FAILONERROR"] = NewInt(45)
+	c["CURLOPT_FORBID_REUSE"] = NewInt(75)
+	c["CURLOPT_FRESH_CONNECT"] = NewInt(74)
+	c["CURLOPT_MAXREDIRS"] = NewInt(68)
+	c["CURLOPT_SSLVERSION"] = NewInt(32)
+	c["CURLOPT_CAINFO"] = NewInt(10065)
+	c["CURLOPT_CAPATH"] = NewInt(10097)
+	c["CURLOPT_SSLCERT"] = NewInt(10025)
+	c["CURLOPT_SSLKEY"] = NewInt(10026)
+	c["CURLOPT_HTTPGET"] = NewInt(80)
+	c["CURLOPT_PORT"] = NewInt(3)
+	c["CURLOPT_FILE"] = NewInt(10001)
+	c["CURLOPT_WRITEFUNCTION"] = NewInt(20011)
+	c["CURLOPT_HEADERFUNCTION"] = NewInt(20079)
+	// CURLINFO
+	c["CURLINFO_HTTP_CODE"] = NewInt(2097154)
+	c["CURLINFO_RESPONSE_CODE"] = NewInt(2097154)
+	c["CURLINFO_EFFECTIVE_URL"] = NewInt(1048577)
+	c["CURLINFO_CONTENT_TYPE"] = NewInt(1048593)
+	c["CURLINFO_TOTAL_TIME"] = NewInt(3145731)
+	c["CURLINFO_URL"] = NewInt(1048577)
+	c["CURLINFO_REDIRECT_URL"] = NewInt(3145744)
+	// PHP 常量
+	c["PHP_EOL"] = NewString("\n")
+	c["PHP_INT_MAX"] = NewInt(9223372036854775807)
+	c["PHP_INT_MIN"] = NewInt(-9223372036854775808)
+	c["DIRECTORY_SEPARATOR"] = NewString("/")
+	c["PATH_SEPARATOR"] = NewString(":")
+	// SORT
+	c["SORT_ASC"] = NewInt(4)
+	c["SORT_DESC"] = NewInt(3)
+	c["SORT_REGULAR"] = NewInt(0)
+	c["SORT_NUMERIC"] = NewInt(1)
+	c["SORT_STRING"] = NewInt(2)
+	// STR_PAD
+	c["STR_PAD_LEFT"] = NewInt(0)
+	c["STR_PAD_RIGHT"] = NewInt(1)
+	c["STR_PAD_BOTH"] = NewInt(2)
+	// JSON 常量别名
+	c["JSON_ERROR_NONE"] = NewInt(0)
+	// COUNT
+	c["COUNT_NORMAL"] = NewInt(0)
+	c["COUNT_RECURSIVE"] = NewInt(1)
+	// FILE
+	c["FILE_APPEND"] = NewInt(8)
+	c["FILE_USE_INCLUDE_PATH"] = NewInt(1)
+	c["LOCK_EX"] = NewInt(2)
+	// MCRYPT / OPENSSL
+	c["OPENSSL_RAW_DATA"] = NewInt(1)
+	c["OPENSSL_ZERO_PADDING"] = NewInt(3)
+	c["OPENSSL_DONT_ZERO_PAD_KEY"] = NewInt(4)
+	// MATH
+	c["M_PI"] = NewFloat(3.141592653589793)
+	c["PHP_FLOAT_MAX"] = NewFloat(1.7976931348623157e+308)
+	c["PHP_FLOAT_MIN"] = NewFloat(2.2250738585072014e-308)
+	// E_* error levels
+	c["E_ERROR"] = NewInt(1)
+	c["E_WARNING"] = NewInt(2)
+	c["E_NOTICE"] = NewInt(8)
+	c["E_CORE_ERROR"] = NewInt(16)
+	c["E_CORE_WARNING"] = NewInt(32)
+	c["E_ALL"] = NewInt(32767)
+	c["E_STRICT"] = NewInt(2048)
+	c["E_DEPRECATED"] = NewInt(8192)
+	c["E_USER_ERROR"] = NewInt(256)
+	c["E_USER_WARNING"] = NewInt(512)
+	c["E_USER_NOTICE"] = NewInt(1024)
+	c["E_USER_DEPRECATED"] = NewInt(16384)
+	return c
 }
 
 // SetGet 设置 $_GET
@@ -103,6 +227,38 @@ func (e *Env) SetRequestURI(u string) { e.reqURI = u; e.server["REQUEST_URI"] = 
 
 // SetPHPInput 设置 php://input 原始请求体
 func (e *Env) SetPHPInput(body string) { e.phpInput = body }
+
+// SetScriptPath 设置当前脚本路径（用于 __DIR__/__FILE__）
+func (e *Env) SetScriptPath(p string) { e.scriptPath = p }
+
+// ScriptDir 返回当前脚本所在目录
+func (e *Env) ScriptDir() string {
+	if e.scriptPath != "" {
+		return filepath.Dir(e.scriptPath)
+	}
+	return "."
+}
+
+// ResolvePath 将相对路径解析为相对于脚本目录的路径（对齐 PHP 行为）
+func (e *Env) ResolvePath(p string) string {
+	if p == "" {
+		return p
+	}
+	// php:// input 不处理
+	if strings.HasPrefix(p, "php://") {
+		return p
+	}
+	// http(s):// URL 不处理
+	if strings.HasPrefix(p, "http://") || strings.HasPrefix(p, "https://") {
+		return p
+	}
+	// 绝对路径不处理
+	if filepath.IsAbs(p) {
+		return p
+	}
+	// 相对路径：相对于脚本目录
+	return filepath.Join(e.ScriptDir(), p)
+}
 
 // ExitValue 返回 exit() 的参数值
 func (e *Env) ExitValue() Value { return e.exitVal }
@@ -300,6 +456,13 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 			}
 			e.vars[name] = e.globals[name]
 		}
+		return execResult{}, nil
+	case *ConstStmt:
+		v, err := e.evalExpr(s.Val)
+		if err != nil {
+			return execResult{}, err
+		}
+		e.consts[s.Name] = v
 		return execResult{}, nil
 	case *PostIncStmt:
 		old, ok := e.vars[s.Name]
@@ -682,14 +845,19 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 	case *FuncCall:
 		return e.callFunc(n.Name, n.Args)
 	case *MethodCall:
-		// PoC：不实现对象方法调用
-		return NewNull(), fmt.Errorf("runtime: 暂不支持对象方法调用 ->%s", n.Method)
+		// 不实现对象方法调用，返回 null 不报错
+		return NewNull(), nil
 	case *StaticCall:
 		// Class::method() 暂不实现对象系统
 		// 特殊处理：DateTime::createFromFormat 等返回 null
 		return NewNull(), nil
 	case *PropertyAccess:
-		return NewNull(), nil
+		// PHP $obj->prop 在无对象系统时，当作关联数组的 key 访问
+		recv, err := e.evalExpr(n.Receiver)
+		if err != nil {
+			return recv, err
+		}
+		return recv.ArrayGet(NewString(n.Prop)), nil
 	case *TernaryExpr:
 		c, err := e.evalExpr(n.Cond)
 		if err != nil {
@@ -775,6 +943,26 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 			}
 		}
 		return NewBool(true), nil
+	case *MagicConstExpr:
+		switch n.Name {
+		case "__DIR__":
+			if e.scriptPath != "" {
+				return NewString(filepath.Dir(e.scriptPath)), nil
+			}
+			return NewString("."), nil
+		case "__FILE__":
+			return NewString(e.scriptPath), nil
+		case "__LINE__":
+			return NewInt(0), nil
+		}
+		return NewString(""), nil
+	case *ConstExpr:
+		// 运行时常量：查 e.consts（define 注册的）
+		if v, ok := e.consts[n.Name]; ok {
+			return v, nil
+		}
+		// 找不到则当字符串名（PHP 行为）
+		return NewString(n.Name), nil
 	}
 	return NewNull(), fmt.Errorf("runtime: 未知表达式节点 %T", x)
 }
@@ -934,13 +1122,25 @@ func (e *Env) evalBinary(n *BinaryExpr) (Value, error) {
 		}
 		return NewBool(l.ToString() != r.ToString()), nil
 	case "<":
-		return NewBool(l.ToString() < r.ToString()), nil
+		if l.Kind == KindString || r.Kind == KindString {
+			return NewBool(l.ToString() < r.ToString()), nil
+		}
+		return NewBool(l.ToInt() < r.ToInt()), nil
 	case ">":
-		return NewBool(l.ToString() > r.ToString()), nil
+		if l.Kind == KindString || r.Kind == KindString {
+			return NewBool(l.ToString() > r.ToString()), nil
+		}
+		return NewBool(l.ToInt() > r.ToInt()), nil
 	case "<=":
-		return NewBool(l.ToString() <= r.ToString()), nil
+		if l.Kind == KindString || r.Kind == KindString {
+			return NewBool(l.ToString() <= r.ToString()), nil
+		}
+		return NewBool(l.ToInt() <= r.ToInt()), nil
 	case ">=":
-		return NewBool(l.ToString() >= r.ToString()), nil
+		if l.Kind == KindString || r.Kind == KindString {
+			return NewBool(l.ToString() >= r.ToString()), nil
+		}
+		return NewBool(l.ToInt() >= r.ToInt()), nil
 	}
 	return NewNull(), fmt.Errorf("runtime: 未知运算符 %s", n.Op)
 }
@@ -996,17 +1196,28 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 	// 先试内置
 	if bf, ok := builtins[name]; ok {
 		var vs []Value
-		for _, a := range args {
-			// 引用参数（&$var）：不求值，直接包成引用值
-			if ar, ok := a.(assignable); ok {
-				vs = append(vs, NewRef(ar))
-				continue
+		// 需要引用参数的内置函数：第 N 个参数（0-based）需要按引用传递
+		refParams := map[string]map[int]bool{
+			"preg_match":         {2: true},
+			"preg_match_all":     {2: true},
+			"preg_replace_callback": {3: true},
+		}
+		for i, a := range args {
+			// 特定函数的特定参数按引用传递（供 writeRef 写回）
+			if refIdxs, ok := refParams[name]; ok && refIdxs[i] {
+				if v, ok := a.(*VarExpr); ok {
+					cur := e.vars[v.Name]
+					rv := NewRef(&varRef{name: v.Name})
+					rv.RefVal = &cur
+					vs = append(vs, rv)
+					continue
+				}
 			}
-			v, err := e.evalExpr(a)
+			val, err := e.evalExpr(a)
 			if err != nil {
-				return v, err
+				return val, err
 			}
-			vs = append(vs, v)
+			vs = append(vs, val)
 		}
 		return bf(e, vs)
 	}

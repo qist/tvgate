@@ -132,6 +132,12 @@ type FuncParam struct {
 // GlobalStmt global $a, $b, ...
 type GlobalStmt struct{ Names []string }
 
+// ConstStmt const NAME = value;
+type ConstStmt struct {
+	Name string
+	Val  Expr
+}
+
 // UnsetStmt unset($var) / unset($arr[$key])
 type UnsetStmt struct{ Args []Expr }
 
@@ -268,3 +274,9 @@ type EmptyExpr struct{ E Expr }
 
 // IssetExpr isset($a, $b, ...)
 type IssetExpr struct{ Args []Expr }
+
+// MagicConstExpr 魔术常量 __DIR__/__FILE__/__LINE__
+type MagicConstExpr struct{ Name string }
+
+// ConstExpr 未定义常量引用（运行时查 e.consts，找不到则当字符串名）
+type ConstExpr struct{ Name string }

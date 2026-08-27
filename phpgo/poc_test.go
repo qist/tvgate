@@ -38,17 +38,17 @@ func aesCBC(data, key, iv []byte, encrypt bool) ([]byte, error) {
 }
 
 // stubProxy 模拟 4gtv API，验证 PHP 完整逻辑链路（openssl + curl + json）。
-func stubProxy(method, url string, opts *CurlOptions) (string, error) {
+func stubProxy(method, url string, opts *CurlOptions) (*ProxyResult, error) {
 	key := []byte("ilyB29ZdruuQjC45JhBBR7o2Z8WJ26Vg")
 	iv := []byte("JUMxvVMmszqUTeKn")
 	if strings.Contains(url, "/Channel/GetChannel/") {
-		return `{"Data":{"fnID":31,"fs4GTV_ID":"litv-ftv13"}}`, nil
+		return &ProxyResult{Body: `{"Data":{"fnID":31,"fs4GTV_ID":"litv-ftv13"}}`}, nil
 	}
 	if strings.Contains(url, "GetChannelUrl3") {
 		inner := `{"flstURLs":["https://cdn.example.com/live/stream.m3u8"]}`
 		enc, _ := aesCBC([]byte(inner), key, iv, true)
 		b64 := base64.StdEncoding.EncodeToString(enc)
-		return `{"Data":"` + b64 + `"}`, nil
+		return &ProxyResult{Body: `{"Data":"` + b64 + `"}`}, nil
 	}
 	if strings.Contains(url, "GetURL.ashx") {
 		// 模拟服务端：VideoURL = hexiv(16) + base64(aes_cbc(plaintext))
@@ -58,9 +58,9 @@ func stubProxy(method, url string, opts *CurlOptions) (string, error) {
 		enc, _ := aesCBC([]byte(plaintext), hexkey, hexiv, true)
 		b64 := base64.StdEncoding.EncodeToString(enc)
 		vUrl := string(hexiv) + b64
-		return `{"VideoURL":"` + vUrl + `"}`, nil
+		return &ProxyResult{Body: `{"VideoURL":"` + vUrl + `"}`}, nil
 	}
-	return ``, nil
+	return &ProxyResult{Body: ``}, nil
 }
 
 func Test4gtvPoC(t *testing.T) {
