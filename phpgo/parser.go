@@ -89,7 +89,8 @@ func (p *Parser) parseFunc() (Stmt, error) {
 			p.adv()
 		}
 		// 跳过类型标识符（可能含命名空间 \NS\Class）
-		for p.at(tIdent) || p.atVal("\\") {
+		// tArray 也是合法的返回类型
+		for p.at(tIdent) || p.at(tArray) || p.atVal("\\") {
 			p.adv()
 		}
 	}
@@ -115,8 +116,9 @@ func (p *Parser) parseFuncParams() ([]FuncParam, error) {
 		if p.at(tQuestion) {
 			p.adv()
 		}
-		for p.at(tIdent) && !p.atVal("true") && !p.atVal("false") && !p.atVal("null") {
-			// 检查下一个 token 是否是 $var，如果是则当前 tIdent 是类型提示
+		// tArray 也可能作为类型提示（如 array $params）
+		for (p.at(tIdent) || p.at(tArray)) && !p.atVal("true") && !p.atVal("false") && !p.atVal("null") {
+			// 检查下一个 token 是否是 $var，如果是则当前 token 是类型提示
 			if p.peekN(1).Kind == tVar {
 				p.adv() // 跳过类型提示
 				break
