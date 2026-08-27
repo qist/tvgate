@@ -135,13 +135,17 @@ async function loadList() {
 async function openFile(path) {
   const r = await fetch(webPath + "api/code/read?path=" + encodeURIComponent(path));
   if (r.ok) {
-    const text = await r.text();
-    currentPath = path;
-    editor.value = text;
-    document.getElementById("curPath").textContent = path;
-    updateGutter();
-    setStatus("已加载：" + path);
-    loadList();
+    const res = await r.json();
+    if (res.status === "success") {
+      currentPath = path;
+      editor.value = res.content;
+      document.getElementById("curPath").textContent = path;
+      updateGutter();
+      setStatus("已加载：" + path);
+      loadList();
+    } else {
+      setStatus("读取失败：" + (res.message || ""), "err");
+    }
   } else {
     const res = await r.json().catch(()=>({}));
     setStatus("读取失败：" + (res.message || r.statusText), "err");

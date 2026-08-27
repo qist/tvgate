@@ -145,7 +145,7 @@ func (h *ConfigHandler) handleCodeList(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"status": "success", "items": items})
 }
 
-// handleCodeRead 读取文件内容（文本）
+// handleCodeRead 读取文件内容（文本，以 JSON 返回避免 Edge DevTools hex 预览）
 func (h *ConfigHandler) handleCodeRead(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -166,8 +166,11 @@ func (h *ConfigHandler) handleCodeRead(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "读取失败: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(data)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"content": string(data),
+	})
 }
 
 // handleCodeSave 保存文件内容（POST body 为文本，?path= 指定相对路径）
