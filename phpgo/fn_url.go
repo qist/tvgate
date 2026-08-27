@@ -71,6 +71,40 @@ func init() {
 		if err != nil {
 			return NewBool(false), nil
 		}
+		// 第二个参数：component（PHP_URL_SCHEME=0, HOST=1, PORT=2, USER=3, PASS=4, PATH=5, QUERY=6, FRAGMENT=7）
+		if len(a) >= 2 {
+			comp := int(a[1].ToInt())
+			switch comp {
+			case 0: // PHP_URL_SCHEME
+				return NewString(u.Scheme), nil
+			case 1: // PHP_URL_HOST
+				return NewString(u.Hostname()), nil
+			case 2: // PHP_URL_PORT
+				p := u.Port()
+				if p == "" {
+					return NewNull(), nil
+				}
+				return NewInt(int64(parsePort(p))), nil
+			case 3: // PHP_URL_USER
+				if u.User != nil {
+					return NewString(u.User.Username()), nil
+				}
+				return NewNull(), nil
+			case 4: // PHP_URL_PASS
+				if u.User != nil {
+					if p, ok := u.User.Password(); ok {
+						return NewString(p), nil
+					}
+				}
+				return NewNull(), nil
+			case 5: // PHP_URL_PATH
+				return NewString(u.Path), nil
+			case 6: // PHP_URL_QUERY
+				return NewString(u.RawQuery), nil
+			case 7: // PHP_URL_FRAGMENT
+				return NewString(u.Fragment), nil
+			}
+		}
 		result := NewArray()
 		result.ArraySet(NewString("scheme"), NewString(u.Scheme))
 		result.ArraySet(NewString("host"), NewString(u.Hostname()))

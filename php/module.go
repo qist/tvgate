@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/phpgo"
 	utilshttp "github.com/qist/tvgate/utils/http"
 )
@@ -141,11 +142,30 @@ func Handler() http.HandlerFunc {
 		env.SetPHPInput(body)
 		env.SetScriptPath(scriptPath)
 
-		if err := phpgo.ServePHP(env, w, src); err != nil {
+		// 用 statusRecorder 包装 ResponseWriter 以捕获最终状态码
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		if err := phpgo.ServePHP(env, rec, src); err != nil {
 			// 错误已在 ServePHP 写入响应
+			logger.LogPHPRequest(r, rel, rec.status)
 			return
 		}
+		logger.LogPHPRequest(r, rel, rec.status)
 	}
+}
+
+// statusRecorder 包装 http.ResponseWriter，记录最终写入的状态码。
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	wrote  bool
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	if !sr.wrote {
+		sr.status = code
+		sr.wrote = true
+	}
+	sr.ResponseWriter.WriteHeader(code)
 }
 
 func fileExists(p string) bool {

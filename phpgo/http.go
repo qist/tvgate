@@ -82,7 +82,10 @@ func defaultProxy(client *http.Client) ProxyFunc {
 			}
 			c = &http.Client{
 				Transport: transport,
-				Timeout:   time.Duration(opts.Timeout) * time.Second,
+			}
+			// Timeout=0 表示不限超时（对齐 PHP CURLOPT_TIMEOUT=0 语义）
+			if opts.Timeout > 0 {
+				c.Timeout = time.Duration(opts.Timeout) * time.Second
 			}
 			if !opts.FollowRedirect {
 				c.CheckRedirect = func(req *http.Request, via []*http.Request) error {

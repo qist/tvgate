@@ -161,6 +161,15 @@ func defaultPHPConsts() map[string]Value {
 	// PHP_QUERY
 	c["PHP_QUERY_RFC1738"] = NewInt(1)
 	c["PHP_QUERY_RFC3986"] = NewInt(2)
+	// PHP_URL_* 常量（parse_url 的 component 参数）
+	c["PHP_URL_SCHEME"] = NewInt(0)
+	c["PHP_URL_HOST"] = NewInt(1)
+	c["PHP_URL_PORT"] = NewInt(2)
+	c["PHP_URL_USER"] = NewInt(3)
+	c["PHP_URL_PASS"] = NewInt(4)
+	c["PHP_URL_PATH"] = NewInt(5)
+	c["PHP_URL_QUERY"] = NewInt(6)
+	c["PHP_URL_FRAGMENT"] = NewInt(7)
 	// STR_PAD
 	c["STR_PAD_LEFT"] = NewInt(0)
 	c["STR_PAD_RIGHT"] = NewInt(1)
@@ -1252,9 +1261,10 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 		var vs []Value
 		// 需要引用参数的内置函数：第 N 个参数（0-based）需要按引用传递
 		refParams := map[string]map[int]bool{
-			"preg_match":         {2: true},
-			"preg_match_all":     {2: true},
+			"preg_match":            {2: true},
+			"preg_match_all":        {2: true},
 			"preg_replace_callback": {3: true},
+			"parse_str":             {1: true},
 		}
 		for i, a := range args {
 			// 特定函数的特定参数按引用传递（供 writeRef 写回）

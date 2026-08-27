@@ -486,9 +486,7 @@ func (e *Env) curlExec(h Value) (Value, error) {
 		}
 		if to, ok := h.Arr["CURLOPT_TIMEOUT"]; ok {
 			opts.Timeout = int(to.ToInt())
-			if opts.Timeout < 1 {
-				opts.Timeout = 1 // 最小1秒
-			}
+			// PHP 中 CURLOPT_TIMEOUT=0 表示不限超时，保持 0 不改
 		}
 		if ct, ok := h.Arr["CURLOPT_CONNECTTIMEOUT"]; ok {
 			ctv := int(ct.ToInt())
