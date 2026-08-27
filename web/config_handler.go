@@ -181,6 +181,7 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"log-editor", h.cookieAuth(http.HandlerFunc(h.handleLogEditor)))
 	mux.HandleFunc(webPath+"logs", h.cookieAuth(h.handleLogViewer))
 	mux.HandleFunc(webPath+"github-editor", h.cookieAuth(h.handleGithubEditor))
+	mux.HandleFunc(webPath+"php-editor", h.cookieAuth(h.handlePHPEditor))
 
 	// 配置查看与保存路由
 	mux.HandleFunc(webPath+"config", h.cookieAuth(h.handleConfig))
@@ -217,6 +218,8 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/save-web", h.cookieAuth(h.handleWebConfigSave))
 	mux.HandleFunc(webPath+"config/reload", h.cookieAuth(h.handleReloadConfig))
 	mux.HandleFunc(webPath+"config/save-reload", h.cookieAuth(h.handleReloadConfigSave))
+	mux.HandleFunc(webPath+"config/php", h.cookieAuth(h.handlePHPConfig))
+	mux.HandleFunc(webPath+"config/save-php", h.cookieAuth(h.handlePHPConfigSave))
 	mux.HandleFunc(webPath+"config/http", h.cookieAuth(h.handleHTTPConfig))
 	mux.HandleFunc(webPath+"config/save-http", h.cookieAuth(h.handleHTTPConfigSave))
 	mux.HandleFunc(webPath+"config/log", h.cookieAuth(http.HandlerFunc(h.handleGetLogConfig)))
