@@ -1,76 +1,132 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>代码文件管理 - TVGate</title>
+<link rel="stylesheet" href="{{.webPath}}static/common.css">
+<link rel="stylesheet" href="{{.webPath}}static/js/codemirror/codemirror.min.css">
+<link rel="stylesheet" href="{{.webPath}}static/js/codemirror/material-darker.min.css">
+<style>
+  /* 浅色主题时覆盖 CodeMirror 背景 */
+  html[data-theme="light"] .CodeMirror { background: #fff !important; color: #333 !important; }
+  html[data-theme="light"] .CodeMirror-gutters { background: #f5f5f5 !important; border-right: 1px solid #ddd !important; }
+  html[data-theme="light"] .CodeMirror-cursor { border-left-color: #333 !important; }
+  html[data-theme="light"] .CodeMirror-selected { background: #d0d4e8 !important; }
+  html[data-theme="light"] .CodeMirror-line::selection,
+  html[data-theme="light"] .CodeMirror-line > span::selection,
+  html[data-theme="light"] .CodeMirror-line > span > span::selection { background: #d0d4e8 !important; }
+</style>
+<script src="{{.webPath}}static/js/codemirror/codemirror.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/xml.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/javascript.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/css.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/htmlmixed.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/clike.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/php.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/matchbrackets.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/closebrackets.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/comment.min.js"></script>
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #f4f6f8; color: #222; }
-  header { background: #1f2937; color: #fff; padding: 10px 18px; display: flex; align-items: center; gap: 14px; }
-  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
-  header a.back { font-size: 12px; color: #c7d2fe; text-decoration: none; border: 1px solid #4f46e5; padding: 4px 10px; border-radius: 5px; }
-  header a.back:hover { background: #4f46e5; color: #fff; }
-  .hint { font-size: 12px; opacity: .65; }
-  .container { display: flex; height: calc(100vh - 46px); }
-  .sidebar { width: 290px; background: #fff; border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; }
-  .sidebar .tools { padding: 10px; border-bottom: 1px solid #e5e7eb; display: flex; flex-wrap: wrap; gap: 6px; }
-  .sidebar .tools button, .sidebar .tools label.btn { font-size: 12px; padding: 5px 9px; border: 1px solid #d1d5db; background: #f9fafb; border-radius: 5px; cursor: pointer; }
-  .sidebar .tools button:hover { background: #eef2ff; }
-  .filelist { flex: 1; overflow-y: auto; padding: 6px; }
-  .filelist .item { padding: 6px 8px; border-radius: 5px; cursor: pointer; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .filelist .item:hover { background: #eef2ff; }
-  .filelist .item.dir { color: #6366f1; font-weight: 600; }
-  .filelist .item.active { background: #c7d2fe; }
-  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .editor-bar { padding: 8px 12px; background: #fff; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .editor-bar .path { font-size: 13px; color: #374151; font-family: monospace; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .editor-bar button { font-size: 13px; padding: 6px 12px; border: none; border-radius: 5px; cursor: pointer; background: #4f46e5; color: #fff; }
-  .editor-bar button.sec { background: #6b7280; }
-  .editor-bar button.danger { background: #dc2626; }
-  .editor-bar button:hover { opacity: .9; }
-  .editor-wrap { flex: 1; display: flex; overflow: hidden; background: #fff; }
-  .gutter { padding: 14px 8px 14px 12px; text-align: right; color: #9ca3af; background: #fafafa; border-right: 1px solid #eee; font-family: Consolas, Menlo, monospace; font-size: 13px; line-height: 1.5; overflow: hidden; user-select: none; min-width: 44px; }
-  textarea#editor { flex: 1; width: 100%; border: none; padding: 14px; font-family: Consolas, "Liberation Mono", Menlo, monospace; font-size: 13px; line-height: 1.5; resize: none; outline: none; background: #fff; white-space: pre; overflow: auto; }
-  #status { padding: 8px 14px; font-size: 13px; background: #fff; border-top: 1px solid #e5e7eb; min-height: 26px; max-height: 160px; overflow-y: auto; white-space: pre-wrap; }
-  #status .err { color: #dc2626; }
-  #status .warn { color: #d97706; }
-  #status .ok { color: #16a34a; }
-  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; align-items: center; justify-content: center; z-index: 50; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: var(--win11-bg); color: var(--win11-text-primary); }
+  .main-container { display: flex; height: calc(100vh - 42px); }
+
+  /* 左侧文件树 */
+  .sidebar { width: 280px; background: var(--win11-surface); border-right: 1px solid var(--win11-border); display: flex; flex-direction: column; flex-shrink: 0; }
+  .sidebar-header { padding: 12px 14px; border-bottom: 1px solid var(--win11-border); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .sidebar-header h2 { font-size: 14px; margin: 0; flex: 1; color: var(--win11-text-primary); }
+  .breadcrumb { padding: 6px 14px; font-size: 12px; color: var(--win11-text-tertiary); border-bottom: 1px solid var(--win11-border); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .breadcrumb span { cursor: pointer; }
+  .breadcrumb span:hover { color: var(--win11-accent); }
+  .breadcrumb .sep { opacity: 0.4; cursor: default; }
+  .breadcrumb .cur { color: var(--win11-text-primary); font-weight: 500; }
+
+  .toolbar { padding: 8px 10px; border-bottom: 1px solid var(--win11-border); display: flex; gap: 6px; flex-wrap: wrap; }
+  .toolbar button, .toolbar label.btn { font-size: 12px; padding: 5px 10px; border: 1px solid var(--win11-border); background: var(--win11-card); color: var(--win11-text-secondary); border-radius: 5px; cursor: pointer; transition: all 0.2s; }
+  .toolbar button:hover, .toolbar label.btn:hover { background: var(--win11-accent); color: #fff; border-color: var(--win11-accent); }
+
+  .filelist { flex: 1; overflow-y: auto; padding: 4px 0; }
+  .file-item { padding: 5px 14px; cursor: pointer; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; color: var(--win11-text-secondary); }
+  .file-item:hover { background: rgba(0,120,212,0.15); }
+  .file-item.active { background: rgba(0,120,212,0.25); color: var(--win11-text-primary); }
+  .file-item .icon { font-size: 14px; flex-shrink: 0; }
+  .file-item .name { overflow: hidden; text-overflow: ellipsis; }
+  .file-item .size { font-size: 11px; opacity: 0.5; flex-shrink: 0; }
+  .file-item.dir { color: var(--win11-accent); font-weight: 500; }
+
+  /* 右侧编辑区 */
+  .content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .editor-bar { padding: 8px 14px; background: var(--win11-surface); border-bottom: 1px solid var(--win11-border); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .editor-bar .path { font-size: 13px; color: var(--win11-text-secondary); font-family: Consolas, Menlo, monospace; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .editor-bar button { font-size: 13px; padding: 5px 14px; border: none; border-radius: 5px; cursor: pointer; background: var(--win11-accent); color: #fff; transition: opacity 0.2s; }
+  .editor-bar button:hover { opacity: 0.85; }
+  .editor-bar button.sec { background: var(--win11-card); color: var(--win11-text-secondary); border: 1px solid var(--win11-border); }
+  .editor-bar button.danger { background: var(--win11-danger); }
+
+  .editor-container { flex: 1; overflow: hidden; }
+  .CodeMirror { height: 100%; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 14px; }
+  .CodeMirror-gutters { background: var(--win11-card) !important; border-right: 1px solid var(--win11-border) !important; }
+
+  #status { padding: 6px 14px; font-size: 13px; background: var(--win11-surface); border-top: 1px solid var(--win11-border); min-height: 28px; max-height: 120px; overflow-y: auto; white-space: pre-wrap; color: var(--win11-text-tertiary); }
+  #status .err { color: var(--win11-danger); }
+  #status .warn { color: var(--win11-warning); }
+  #status .ok { color: var(--win11-success); }
+
+  /* 弹窗 */
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 50; }
   .modal.show { display: flex; }
-  .modal .box { background: #fff; padding: 20px; border-radius: 8px; width: 340px; }
-  .modal .box input { width: 100%; padding: 8px; margin: 8px 0; border: 1px solid #d1d5db; border-radius: 5px; }
+  .modal .box { background: var(--win11-surface); padding: 20px; border-radius: 8px; width: 360px; border: 1px solid var(--win11-border); }
+  .modal .box input { width: 100%; padding: 8px; margin: 8px 0; border: 1px solid var(--win11-border); border-radius: 5px; background: var(--win11-card); color: var(--win11-text-primary); }
   .modal .box .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
-  .modal .box button { padding: 6px 14px; border: none; border-radius: 5px; cursor: pointer; background: #4f46e5; color: #fff; }
-  .modal .box button.cancel { background: #9ca3af; }
+  .modal .box button { padding: 6px 16px; border: none; border-radius: 5px; cursor: pointer; background: var(--win11-accent); color: #fff; }
+  .modal .box button.cancel { background: var(--win11-card); color: var(--win11-text-secondary); border: 1px solid var(--win11-border); }
+
+  /* 顶部导航栏 */
+  .topbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--win11-surface); border-bottom: 1px solid var(--win11-border); }
+  .topbar h1 { font-size: 15px; margin: 0; flex: 1; color: var(--win11-text-primary); }
+  .topbar a { font-size: 12px; color: var(--win11-accent); text-decoration: none; border: 1px solid var(--win11-border); padding: 4px 12px; border-radius: 5px; }
+  .topbar a:hover { background: var(--win11-accent); color: #fff; }
+  .topbar .theme-btn { cursor: pointer; font-size: 12px; border: 1px solid var(--win11-border); padding: 4px 10px; border-radius: 5px; background: var(--win11-card); color: var(--win11-text-secondary); }
+  .topbar .theme-btn:hover { opacity: 0.8; }
+
+  @media (max-width: 768px) {
+    .sidebar { width: 200px; }
+    .editor-bar button { padding: 4px 8px; font-size: 12px; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>代码文件管理</h1>
-  <a class="back" href="{{.webPath}}">← 返回管理后台</a>
-  <span class="hint">目录：docroot（PHP 脚本目录）· Ctrl+S 保存 · Ctrl+Enter 语法检测</span>
-</header>
-<div class="container">
+<div class="topbar">
+  <h1>📁 代码文件管理</h1>
+  <a href="{{.webPath}}backup" style="font-size:12px;color:var(--win11-accent);text-decoration:none;border:1px solid var(--win11-border);padding:4px 12px;border-radius:5px;">🗂 备份中心</a>
+  <span class="theme-btn" id="themeBtn" title="切换主题">🌙 深色</span>
+  <a href="{{.webPath}}">← 返回管理后台</a>
+</div>
+<div class="main-container">
   <div class="sidebar">
-    <div class="tools">
-      <button id="btnNewFile">新建文件</button>
-      <button id="btnNewDir">新建目录</button>
-      <label class="btn">上传<input id="fileUpload" type="file" multiple style="display:none"></label>
-      <button id="btnRefresh">刷新</button>
+    <div class="sidebar-header">
+      <h2>📁 PHP 脚本目录</h2>
+    </div>
+    <div class="breadcrumb" id="breadcrumb"></div>
+    <div class="toolbar">
+      <button id="btnNewFile" title="新建文件">📄 新建</button>
+      <button id="btnNewDir" title="新建目录">📁 新目录</button>
+      <label class="btn" title="上传文件">⬆ 上传<input id="fileUpload" type="file" multiple style="display:none"></label>
+      <button id="btnUp" title="返回上级目录">⬆ 上级</button>
+      <button id="btnRefresh" title="刷新">🔄 刷新</button>
     </div>
     <div class="filelist" id="filelist"></div>
   </div>
-  <div class="main">
+  <div class="content">
     <div class="editor-bar">
       <span class="path" id="curPath">未选择文件</span>
-      <button id="btnSave">保存</button>
+      <button id="btnSave">💾 保存</button>
       <button class="sec" id="btnCheck">语法检测</button>
       <button class="sec" id="btnDownload">下载</button>
       <button class="danger" id="btnDelete">删除</button>
     </div>
-    <div class="editor-wrap">
-      <div class="gutter" id="gutter">1</div>
+    <div class="editor-container">
       <textarea id="editor" placeholder="选择左侧文件进行编辑，或新建文件后在此输入代码…" spellcheck="false"></textarea>
     </div>
     <div id="status"></div>
@@ -80,7 +136,7 @@
 <div class="modal" id="modal">
   <div class="box">
     <div id="modalTitle">新建</div>
-    <input id="modalInput" placeholder="相对路径，例如 test.php 或 sub/dir.php">
+    <input id="modalInput" placeholder="文件名，例如 test.php">
     <div class="row">
       <button class="cancel" id="modalCancel">取消</button>
       <button id="modalOk">确定</button>
@@ -90,58 +146,144 @@
 
 <script>
 const webPath = "{{.webPath}}";
-let currentPath = "";
-const editor = document.getElementById("editor");
-const gutter = document.getElementById("gutter");
+let currentPath = "";       // 当前打开的文件完整相对路径
+let currentDir = "";        // 当前浏览的目录（相对 docroot）
+const docRoot = "docroot";   // 显示名称
 
+// ========== CodeMirror 初始化 ==========
+const editor = CodeMirror.fromTextArea(document.getElementById("editor"), {
+  mode: "application/x-httpd-php",
+  theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'material-darker' : 'default',
+  lineNumbers: true,
+  matchBrackets: true,
+  autoCloseBrackets: true,
+  tabSize: 2,
+  indentUnit: 2,
+  indentWithTabs: false,
+  lineWrapping: true,
+  extraKeys: {
+    "Ctrl-S": function() { saveFile(); },
+    "Cmd-S": function() { saveFile(); },
+    "Ctrl-/": function() { editor.toggleComment(); },
+    "Tab": function(cm) { cm.replaceSelection("  ", "end"); }
+  }
+});
+
+function updateEditorTheme() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  editor.setOption('theme', isDark ? 'material-darker' : 'default');
+}
+document.addEventListener('themeChanged', updateEditorTheme);
+
+// 主题切换按钮（唯一入口，不加载全局 theme.js）
+document.getElementById('themeBtn').onclick = function() {
+  const html = document.documentElement;
+  const isDark = html.getAttribute('data-theme') === 'dark';
+  const newTheme = isDark ? 'light' : 'dark';
+  html.setAttribute('data-theme', newTheme);
+  localStorage.setItem('theme', newTheme);
+  updateEditorTheme();
+  // 更新按钮文字
+  this.textContent = newTheme === 'dark' ? '🌙 深色' : '☀ 浅色';
+};
+// 应用保存的主题
+(function(){
+  const saved = localStorage.getItem('theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+  const btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = saved === 'dark' ? '🌙 深色' : '☀ 浅色';
+})();
+
+// ========== 工具函数 ==========
 function setStatus(html, cls) {
   const s = document.getElementById("status");
   s.innerHTML = cls ? `<span class="${cls}">${html}</span>` : html;
 }
+
 function api(path, opts) {
   return fetch(webPath + path, opts).then(r => r.json()).catch(e => ({status:"error", message: e.message}));
 }
-function updateGutter() {
-  const lines = editor.value.split("\n").length || 1;
-  let g = "";
-  for (let i = 1; i <= lines; i++) g += i + "\n";
-  gutter.textContent = g;
-}
-editor.addEventListener("input", updateGutter);
-editor.addEventListener("scroll", () => { gutter.scrollTop = editor.scrollTop; });
-editor.addEventListener("keydown", (e) => {
-  if (e.key === "Tab") { e.preventDefault(); const s=editor.selectionStart,en=editor.selectionEnd; editor.value=editor.value.slice(0,s)+"  "+editor.value.slice(en); editor.selectionStart=editor.selectionEnd=s+2; updateGutter(); }
-  if ((e.ctrlKey||e.metaKey) && e.key === "s") { e.preventDefault(); saveFile(); }
-  if ((e.ctrlKey||e.metaKey) && e.key === "Enter") { e.preventDefault(); checkSyntax(); }
-});
 
+function fmtSize(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n/1024).toFixed(1) + " KB";
+  return (n/1048576).toFixed(1) + " MB";
+}
+
+// ========== 面包屑导航 ==========
+function renderBreadcrumb() {
+  const bc = document.getElementById("breadcrumb");
+  let html = `<span data-dir="">${docRoot}</span>`;
+  if (currentDir) {
+    const parts = currentDir.split("/");
+    let acc = "";
+    for (let i = 0; i < parts.length; i++) {
+      acc = acc ? acc + "/" + parts[i] : parts[i];
+      html += `<span class="sep">/</span><span data-dir="${acc}">${parts[i]}</span>`;
+    }
+  }
+  html += `<span class="sep">/</span>`;
+  bc.innerHTML = html;
+  bc.querySelectorAll("span[data-dir]").forEach(el => {
+    el.onclick = () => { currentDir = el.getAttribute("data-dir"); loadList(); };
+  });
+}
+
+// ========== 文件列表（目录浏览模式） ==========
 async function loadList() {
-  const res = await api("api/code/list");
+  const res = await api("api/code/list?dir=" + encodeURIComponent(currentDir));
+  renderBreadcrumb();
   const list = document.getElementById("filelist");
   list.innerHTML = "";
   if (res.status !== "success") { setStatus("加载失败：" + (res.message||""), "err"); return; }
-  const items = (res.items||[]).slice().sort((a,b) => (a.isDir===b.isDir) ? (a.path>b.path?1:-1) : (a.isDir?-1:1));
+
+  const items = (res.items||[]).slice().sort((a,b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    return a.name > b.name ? 1 : -1;
+  });
+
   for (const it of items) {
     const div = document.createElement("div");
-    div.className = "item" + (it.isDir ? " dir" : "");
-    div.textContent = (it.isDir ? "📁 " : "📄 ") + it.path;
-    div.title = it.path + "  (" + (it.size||0) + " B)";
-    if (!it.isDir) div.onclick = () => openFile(it.path);
-    if (it.path === currentPath) div.classList.add("active");
+    div.className = "file-item" + (it.isDir ? " dir" : "");
+    if (!it.isDir && (currentDir ? currentDir + "/" + it.name : it.name) === currentPath) div.classList.add("active");
+    div.innerHTML = `<span class="icon">${it.isDir ? "📁" : "📄"}</span><span class="name">${it.name}</span>${it.size !== undefined ? `<span class="size">${fmtSize(it.size)}</span>` : ""}`;
+
+    if (it.isDir) {
+      div.ondblclick = () => { currentDir = currentDir ? currentDir + "/" + it.name : it.name; loadList(); };
+      div.onclick = () => { currentDir = currentDir ? currentDir + "/" + it.name : it.name; loadList(); };
+    } else {
+      const fullPath = currentDir ? currentDir + "/" + it.name : it.name;
+      div.onclick = () => openFile(fullPath);
+    }
     list.appendChild(div);
+  }
+  if (items.length === 0) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--win11-text-tertiary);font-size:13px;">空目录</div>';
   }
 }
 
+// ========== 上级目录 ==========
+document.getElementById("btnUp").onclick = () => {
+  if (!currentDir) return;
+  const idx = currentDir.lastIndexOf("/");
+  currentDir = idx >= 0 ? currentDir.substring(0, idx) : "";
+  loadList();
+};
+
+// ========== 打开文件 ==========
 async function openFile(path) {
-  const r = await fetch(webPath + "api/code/read?path=" + encodeURIComponent(path));
+  const r = await fetch(webPath + "api/code/read?path=" + encodeURIComponent(path), {cache: "no-store"});
   if (r.ok) {
     const res = await r.json();
     if (res.status === "success") {
       currentPath = path;
-      editor.value = res.content;
+      editor.setValue(res.content);
+      editor.setCursor({line: 0, ch: 0});
       document.getElementById("curPath").textContent = path;
-      updateGutter();
-      setStatus("已加载：" + path);
+      setStatus("已加载：" + path, "ok");
+      // 切换到文件所在目录
+      const idx = path.lastIndexOf("/");
+      if (idx >= 0) { currentDir = path.substring(0, idx); } else { currentDir = ""; }
       loadList();
     } else {
       setStatus("读取失败：" + (res.message || ""), "err");
@@ -152,65 +294,143 @@ async function openFile(path) {
   }
 }
 
+// ========== 保存文件 ==========
+let saveTimer = null;
 async function saveFile() {
   if (!currentPath) { setStatus("请先选择或新建文件", "warn"); return; }
-  const content = editor.value;
-  const res = await api("api/code/save?path=" + encodeURIComponent(currentPath), { method: "POST", body: content });
-  setStatus(res.status === "success" ? "已保存：" + currentPath : ("保存失败：" + (res.message||"")), res.status==="success"?"ok":"err");
-  if (res.status === "success") loadList();
-}
-
-async function checkSyntax() {
-  let res;
-  if (currentPath) {
-    res = await api("api/code/check?path=" + encodeURIComponent(currentPath), {method:"POST", body:""});
-  } else {
-    const content = editor.value;
-    res = await api("api/code/check", {method:"POST", body: content});
+  const btn = document.getElementById("btnSave");
+  const origText = btn.textContent;
+  btn.textContent = "⏳ 保存中...";
+  btn.disabled = true;
+  setStatus("正在保存 " + currentPath + " ...", "warn");
+  try {
+    const content = editor.getValue();
+    const res = await api("api/code/save?path=" + encodeURIComponent(currentPath), {
+      method: "POST",
+      headers: {"Content-Type": "text/plain; charset=utf-8"},
+      body: content
+    });
+    if (res.status === "success") {
+      btn.textContent = "✅ 已保存!";
+      btn.style.background = "var(--win11-success)";
+      setStatus("✅ 已保存：" + currentPath + " (" + new Date().toLocaleTimeString() + ")", "ok");
+      loadList();
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        btn.textContent = origText;
+        btn.style.background = "";
+        btn.disabled = false;
+      }, 2000);
+    } else {
+      btn.textContent = "❌ 失败";
+      setStatus("保存失败：" + (res.message||""), "err");
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        btn.textContent = origText;
+        btn.disabled = false;
+      }, 2000);
+    }
+  } catch(e) {
+    btn.textContent = "❌ 失败";
+    setStatus("保存失败：" + e.message, "err");
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      btn.textContent = origText;
+      btn.disabled = false;
+    }, 2000);
   }
-  if (res.status !== "success") { setStatus("检测失败：" + (res.message||""), "err"); return; }
-  if (res.ok) { setStatus("✓ 语法检测通过，未发现明显错误", "ok"); return; }
-  const lines = (res.issues||[]).map(i => `[${i.level}] 行${i.line}: ${i.message}`).join("\n");
-  setStatus(lines, res.issues.some(i=>i.level==="error") ? "err" : "warn");
 }
 
+// ========== 语法检测 ==========
+let checkTimer = null;
+async function checkSyntax() {
+  const btn = document.getElementById("btnCheck");
+  const origText = btn.textContent;
+  btn.textContent = "⏳ 检测中...";
+  btn.disabled = true;
+  setStatus("正在执行语法检测 ...", "warn");
+  try {
+    let res;
+    if (currentPath) {
+      res = await api("api/code/check?path=" + encodeURIComponent(currentPath), {method:"POST", body:""});
+    } else {
+      const content = editor.getValue();
+      res = await api("api/code/check", {method:"POST", body: content});
+    }
+    if (res.status !== "success") {
+      btn.textContent = "❌ 失败";
+      setStatus("检测失败：" + (res.message||""), "err");
+    } else if (res.ok) {
+      btn.textContent = "✅ 通过";
+      btn.style.background = "var(--win11-success)";
+      setStatus("✓ 语法检测通过，未发现明显错误 (" + new Date().toLocaleTimeString() + ")", "ok");
+    } else {
+      btn.textContent = "⚠ 有问题";
+      btn.style.background = "var(--win11-warning)";
+      const lines = (res.issues||[]).map(i => `[${i.level}] 行${i.line}: ${i.message}`).join("\n");
+      setStatus(lines, res.issues.some(i=>i.level==="error") ? "err" : "warn");
+    }
+    clearTimeout(checkTimer);
+    checkTimer = setTimeout(() => {
+      btn.textContent = origText;
+      btn.style.background = "";
+      btn.disabled = false;
+    }, 3000);
+  } catch(e) {
+    btn.textContent = "❌ 失败";
+    setStatus("检测失败：" + e.message, "err");
+    clearTimeout(checkTimer);
+    checkTimer = setTimeout(() => {
+      btn.textContent = origText;
+      btn.disabled = false;
+    }, 3000);
+  }
+}
+
+// ========== 下载 ==========
 async function downloadFile() {
   if (!currentPath) { setStatus("请先选择文件", "warn"); return; }
   window.location.href = webPath + "api/code/download?path=" + encodeURIComponent(currentPath);
 }
 
+// ========== 删除 ==========
 async function deleteFile() {
   if (!currentPath) { setStatus("请先选择文件", "warn"); return; }
   if (!confirm("确定删除 " + currentPath + " ？")) return;
   const res = await api("api/code/delete?path=" + encodeURIComponent(currentPath), {method:"POST"});
   if (res.status === "success") {
-    currentPath = ""; editor.value = ""; updateGutter();
-    document.getElementById("curPath").textContent = "未选择文件";
-    setStatus("已删除"); loadList();
+    currentPath = ""; editor.setValue(""); document.getElementById("curPath").textContent = "未选择文件";
+    setStatus("已删除", "ok"); loadList();
   } else setStatus("删除失败：" + (res.message||""), "err");
 }
 
+// ========== 弹窗（新建文件/目录） ==========
 const modal = document.getElementById("modal");
 let modalMode = "file";
 function openModal(mode) {
   modalMode = mode;
-  document.getElementById("modalTitle").textContent = mode === "dir" ? "新建目录（相对路径）" : "新建文件（相对路径）";
-  document.getElementById("modalInput").value = "";
+  document.getElementById("modalTitle").textContent = mode === "dir" ? "新建目录" : "新建文件";
+  const inp = document.getElementById("modalInput");
+  inp.placeholder = mode === "dir" ? "目录名" : "文件名，例如 test.php";
+  inp.value = "";
   modal.classList.add("show");
-  document.getElementById("modalInput").focus();
+  inp.focus();
 }
 document.getElementById("modalCancel").onclick = () => modal.classList.remove("show");
 document.getElementById("modalOk").onclick = async () => {
-  const p = document.getElementById("modalInput").value.trim();
-  if (!p) return;
-  const res = await api("api/code/new?path=" + encodeURIComponent(p) + "&type=" + (modalMode==="dir"?"dir":"file"), {method:"POST"});
+  const name = document.getElementById("modalInput").value.trim();
+  if (!name) return;
+  const fullPath = currentDir ? currentDir + "/" + name : name;
+  const res = await api("api/code/new?path=" + encodeURIComponent(fullPath) + "&type=" + (modalMode==="dir"?"dir":"file"), {method:"POST"});
   modal.classList.remove("show");
   if (res.status === "success") {
-    if (modalMode !== "dir") { currentPath = p; document.getElementById("curPath").textContent = p; }
-    setStatus("已创建：" + p); loadList();
+    if (modalMode !== "dir") { currentPath = fullPath; document.getElementById("curPath").textContent = fullPath; editor.setValue(""); }
+    setStatus("已创建：" + fullPath, "ok"); loadList();
   } else setStatus("创建失败：" + (res.message||""), "err");
 };
+document.getElementById("modalInput").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("modalOk").click(); });
 
+// ========== 按钮绑定 ==========
 document.getElementById("btnNewFile").onclick = () => openModal("file");
 document.getElementById("btnNewDir").onclick = () => openModal("dir");
 document.getElementById("btnRefresh").onclick = loadList;
@@ -222,6 +442,7 @@ document.getElementById("fileUpload").onchange = async (e) => {
   const files = e.target.files;
   if (!files.length) return;
   const fd = new FormData();
+  fd.append("dir", currentDir);
   for (const f of files) fd.append("file", f);
   const res = await fetch(webPath + "api/code/upload", {method:"POST", body: fd}).then(r=>r.json());
   setStatus(res.status === "success" ? "上传完成" : ("上传失败：" + (res.message||"")), res.status==="success"?"ok":"err");
@@ -229,9 +450,10 @@ document.getElementById("fileUpload").onchange = async (e) => {
   e.target.value = "";
 };
 
-updateGutter();
-setStatus("就绪。选择左侧文件进行编辑，或点击「新建文件」。");
+// ========== 初始化 ==========
+renderBreadcrumb();
 loadList();
+setStatus("就绪。选择左侧文件进行编辑，或点击「新建文件」。");
 </script>
 </body>
 </html>

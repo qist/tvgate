@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>备份文件中心 - TVGate</title>
+<link rel="stylesheet" href="{{.webPath}}static/common.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--win11-bg); color: var(--win11-text-primary); }
+  .topbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--win11-surface); border-bottom: 1px solid var(--win11-border); }
+  .topbar h1 { font-size: 15px; margin: 0; flex: 1; }
+  .topbar .theme-btn { cursor: pointer; font-size: 12px; border: 1px solid var(--win11-border); padding: 4px 10px; border-radius: 5px; background: var(--win11-card); color: var(--win11-text-secondary); }
+  .topbar a { font-size: 12px; color: var(--win11-accent); text-decoration: none; border: 1px solid var(--win11-border); padding: 4px 12px; border-radius: 5px; }
+  .topbar a:hover { background: var(--win11-accent); color: #fff; }
+
+  .container { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 14px; align-items: center; flex-wrap: wrap; }
+  .toolbar button { font-size: 13px; padding: 6px 14px; border: none; border-radius: 5px; cursor: pointer; background: var(--win11-accent); color: #fff; }
+  .toolbar button:hover { opacity: 0.85; }
+  .toolbar button.sec { background: var(--win11-card); color: var(--win11-text-secondary); border: 1px solid var(--win11-border); }
+  .toolbar button.danger { background: var(--win11-danger); }
+  .toolbar button.warn { background: var(--win11-warning); color: #000; }
+  .toolbar .count { font-size: 13px; color: var(--win11-text-tertiary); margin-left: auto; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--win11-card); border-radius: 8px; overflow: hidden; }
+  th { text-align: left; padding: 10px 14px; font-size: 13px; color: var(--win11-text-secondary); border-bottom: 1px solid var(--win11-border); background: var(--win11-surface); }
+  td { padding: 8px 14px; font-size: 13px; border-bottom: 1px solid var(--win11-border); color: var(--win11-text-secondary); }
+  tr:hover { background: rgba(0,120,212,0.1); }
+  .cb { width: 16px; height: 16px; cursor: pointer; }
+  .btn-row { display: flex; gap: 6px; }
+  .btn-row button { font-size: 12px; padding: 3px 8px; border: none; border-radius: 4px; cursor: pointer; }
+  .btn-restore { background: var(--win11-success); color: #fff; }
+  .btn-download { background: var(--win11-accent); color: #fff; }
+  .btn-del { background: var(--win11-danger); color: #fff; }
+
+  .empty { text-align: center; padding: 40px; color: var(--win11-text-tertiary); font-size: 14px; }
+  #status { padding: 8px 14px; font-size: 13px; min-height: 28px; color: var(--win11-text-tertiary); }
+  #status .err { color: var(--win11-danger); }
+  #status .ok { color: var(--win11-success); }
+  #status .warn { color: var(--win11-warning); }
+
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 50; }
+  .modal.show { display: flex; }
+  .modal .box { background: var(--win11-surface); padding: 20px; border-radius: 8px; width: 380px; border: 1px solid var(--win11-border); }
+  .modal .box label { font-size: 13px; color: var(--win11-text-secondary); }
+  .modal .box input { width: 100%; padding: 8px; margin: 8px 0; border: 1px solid var(--win11-border); border-radius: 5px; background: var(--win11-card); color: var(--win11-text-primary); }
+  .modal .box .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+  .modal .box button { padding: 6px 16px; border: none; border-radius: 5px; cursor: pointer; background: var(--win11-accent); color: #fff; }
+  .modal .box button.cancel { background: var(--win11-card); color: var(--win11-text-secondary); border: 1px solid var(--win11-border); }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>🗂 备份文件中心</h1>
+  <span class="theme-btn" id="themeBtn">🌙 深色</span>
+  <a href="{{.webPath}}">← 返回管理后台</a>
+</div>
+<div class="container">
+  <div class="toolbar">
+    <button onclick="loadList()">🔄 刷新</button>
+    <button class="sec" onclick="selectAll()">☑ 全选</button>
+    <button class="danger" onclick="batchDelete()">批量删除</button>
+    <button class="warn" onclick="openCleanup()">🧹 清理旧备份</button>
+    <span class="count" id="count"></span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:30px;"><input type="checkbox" class="cb" id="cbAll" onclick="toggleAll()"></th>
+        <th>原始文件</th>
+        <th>备份时间</th>
+        <th>大小</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <div id="status"></div>
+</div>
+
+<div class="modal" id="cleanupModal">
+  <div class="box">
+    <div style="font-size:15px;margin-bottom:10px;">🧹 清理旧备份</div>
+    <label>每个文件保留最新几个备份（其余删除）：</label>
+    <input type="number" id="keepCount" value="3" min="0" max="99">
+    <div class="row">
+      <button class="cancel" onclick="document.getElementById('cleanupModal').classList.remove('show')">取消</button>
+      <button onclick="doCleanup()">确定清理</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const webPath = "{{.webPath}}";
+
+function setStatus(html, cls) {
+  const s = document.getElementById("status");
+  s.innerHTML = cls ? `<span class="${cls}">${html}</span>` : html;
+}
+
+function fmtSize(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n/1024).toFixed(1) + " KB";
+  return (n/1048576).toFixed(1) + " MB";
+}
+
+function api(path, opts) {
+  return fetch(webPath + path, opts).then(r => r.json()).catch(e => ({status:"error", message: e.message}));
+}
+
+let allItems = [];
+
+async function loadList() {
+  setStatus("加载中...", "warn");
+  const res = await api("api/backup/list");
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = "";
+  if (res.status !== "success") { setStatus("加载失败：" + (res.message||""), "err"); return; }
+  allItems = res.items || [];
+  document.getElementById("count").textContent = `共 ${allItems.length} 个备份`;
+  if (allItems.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无备份文件</td></tr>';
+    setStatus("暂无备份文件");
+    return;
+  }
+  for (const it of allItems) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input type="checkbox" class="cb item-cb" data-path="${it.name}"></td>
+      <td><span style="color:var(--win11-accent);">📄</span> ${it.original}</td>
+      <td>${it.time}</td>
+      <td>${fmtSize(it.size)}</td>
+      <td><div class="btn-row">
+        <button class="btn-restore" onclick="restoreOne('${it.name}')">⤴ 回滚</button>
+        <button class="btn-download" onclick="downloadOne('${it.name}')">⬇ 下载</button>
+        <button class="btn-del" onclick="deleteOne('${it.name}')">🗑 删除</button>
+      </div></td>`;
+    tbody.appendChild(tr);
+  }
+  setStatus(`已加载 ${allItems.length} 个备份文件`, "ok");
+}
+
+function toggleAll() {
+  const cb = document.getElementById("cbAll");
+  document.querySelectorAll(".item-cb").forEach(el => el.checked = cb.checked);
+}
+function selectAll() {
+  const cbs = document.querySelectorAll(".item-cb");
+  const allChecked = Array.from(cbs).every(c => c.checked);
+  cbs.forEach(el => el.checked = !allChecked);
+  document.getElementById("cbAll").checked = !allChecked;
+}
+
+async function restoreOne(path) {
+  if (!confirm("确定回滚此备份？当前文件会被覆盖（会自动产生新备份）。")) return;
+  setStatus("正在回滚...", "warn");
+  const res = await api("api/backup/restore?path=" + encodeURIComponent(path), {method:"POST"});
+  if (res.status === "success") { setStatus("✅ " + res.message, "ok"); loadList(); }
+  else setStatus("回滚失败：" + (res.message||""), "err");
+}
+
+async function deleteOne(path) {
+  if (!confirm("确定删除此备份文件？")) return;
+  const res = await api("api/backup/delete?path=" + encodeURIComponent(path), {method:"POST"});
+  if (res.status === "success") { setStatus("✅ " + res.message, "ok"); loadList(); }
+  else setStatus("删除失败：" + (res.message||""), "err");
+}
+
+async function batchDelete() {
+  const paths = Array.from(document.querySelectorAll(".item-cb:checked")).map(c => c.dataset.path);
+  if (paths.length === 0) { setStatus("请先勾选要删除的备份", "warn"); return; }
+  if (!confirm(`确定删除选中的 ${paths.length} 个备份文件？`)) return;
+  setStatus("正在批量删除...", "warn");
+  const res = await api("api/backup/batch-delete", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({paths})
+  });
+  if (res.status === "success") { setStatus("✅ " + res.message, "ok"); loadList(); }
+  else setStatus("批量删除失败：" + (res.message||""), "err");
+}
+
+function downloadOne(path) {
+  window.location.href = webPath + "api/backup/download?path=" + encodeURIComponent(path);
+}
+
+function openCleanup() {
+  document.getElementById("cleanupModal").classList.add("show");
+}
+
+async function doCleanup() {
+  const keep = parseInt(document.getElementById("keepCount").value) || 0;
+  if (!confirm(`确定清理？每个文件仅保留最新 ${keep} 个备份，其余全部删除。`)) return;
+  document.getElementById('cleanupModal').classList.remove('show');
+  setStatus("正在清理...", "warn");
+  const res = await api("api/backup/cleanup", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({keep})
+  });
+  if (res.status === "success") { setStatus("✅ " + res.message, "ok"); loadList(); }
+  else setStatus("清理失败：" + (res.message||""), "err");
+}
+
+// 主题切换
+document.getElementById('themeBtn').onclick = function() {
+  const html = document.documentElement;
+  const isDark = html.getAttribute('data-theme') === 'dark';
+  const newTheme = isDark ? 'light' : 'dark';
+  html.setAttribute('data-theme', newTheme);
+  localStorage.setItem('theme', newTheme);
+  this.textContent = newTheme === 'dark' ? '🌙 深色' : '☀ 浅色';
+};
+(function(){
+  const saved = localStorage.getItem('theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+  const btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = saved === 'dark' ? '🌙 深色' : '☀ 浅色';
+})();
+
+loadList();
+</script>
+</body>
+</html>

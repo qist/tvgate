@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -91,56 +90,55 @@ func (h *ConfigHandler) handleCodeEditor(w http.ResponseWriter, r *http.Request)
 	http.NotFound(w, r)
 }
 
-// handleCodeList 列出 docroot 下所有文件/目录（递归，扁平返回）
+// handleCodeList 列出指定目录下的文件/子目录（非递归，仅当前层级）
+// 查询参数 dir 为相对 docroot 的子目录路径（空表示根目录）
 func (h *ConfigHandler) handleCodeList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	root := h.codeRoot()
-	var items []map[string]interface{}
-	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	subDir := r.URL.Query().Get("dir")
+	targetDir := root
+	if subDir != "" {
+		abs, err := h.safeJoin(root, subDir)
 		if err != nil {
-			return nil
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
-		// 符号链接：列出条目本身，但不递归进其目录（避免跟随软链泄露外部内容）；
-		// 真正读取该软链指向的文件时，由 assertInside 做二次校验
-		if d.Type()&os.ModeSymlink != 0 {
-			rel, e := filepath.Rel(root, p)
-			if e != nil || rel == "." {
-				return nil
-			}
-			info, e := d.Info()
-			if e != nil {
-				return nil
-			}
-			items = append(items, map[string]interface{}{
-				"path":  filepath.ToSlash(rel),
-				"name":  d.Name(),
-				"isDir": d.IsDir(),
-				"size":  info.Size(),
-			})
-			if d.IsDir() {
-				return fs.SkipDir // 不递归进软链目录
-			}
-			return nil
+		if err := h.assertInside(root, abs); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
 		}
-		rel, e := filepath.Rel(root, p)
-		if e != nil || rel == "." {
-			return nil
+		targetDir = abs
+	}
+	info, err := os.Stat(targetDir)
+	if err != nil || !info.IsDir() {
+		http.Error(w, "目录不存在", http.StatusNotFound)
+		return
+	}
+	entries, err := os.ReadDir(targetDir)
+	if err != nil {
+		http.Error(w, "读取目录失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var items []map[string]interface{}
+	for _, e := range entries {
+		// 跳过隐藏文件和备份文件
+		name := e.Name()
+		if strings.HasPrefix(name, ".") || strings.Contains(name, ".bak.") {
+			continue
 		}
-		info, e := d.Info()
-		if e != nil {
-			return nil
+		fi, err := e.Info()
+		if err != nil {
+			continue
 		}
 		items = append(items, map[string]interface{}{
-			"path":  filepath.ToSlash(rel),
-			"name":  d.Name(),
-			"isDir": d.IsDir(),
-			"size":  info.Size(),
+			"name":  name,
+			"isDir": e.IsDir(),
+			"size":  fi.Size(),
 		})
-		return nil
-	})
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(map[string]interface{}{"status": "success", "items": items})
 }

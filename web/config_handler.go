@@ -260,6 +260,15 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"api/code/download", h.cookieAuth(h.handleCodeDownload))
 	mux.HandleFunc(webPath+"api/code/check", h.cookieAuth(h.handleCodeCheck))
 
+	// 备份文件中心
+	mux.HandleFunc(webPath+"backup", h.cookieAuth(h.handleBackupPage))
+	mux.HandleFunc(webPath+"api/backup/list", h.cookieAuth(h.handleBackupList))
+	mux.HandleFunc(webPath+"api/backup/restore", h.cookieAuth(h.handleBackupRestore))
+	mux.HandleFunc(webPath+"api/backup/delete", h.cookieAuth(h.handleBackupDelete))
+	mux.HandleFunc(webPath+"api/backup/batch-delete", h.cookieAuth(h.handleBackupBatchDelete))
+	mux.HandleFunc(webPath+"api/backup/download", h.cookieAuth(h.handleBackupDownload))
+	mux.HandleFunc(webPath+"api/backup/cleanup", h.cookieAuth(h.handleBackupCleanup))
+
 }
 
 // handleHome 处理功能面板页面
