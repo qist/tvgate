@@ -571,50 +571,62 @@ func (e *Env) execNestedArrayAssign(s *NestedArrayAssignStmt) (execResult, error
 			root = NewArray()
 		}
 	}
-	// 逐层下钻
-	cur := &root
+	// 解析所有下标
+	keys := make([]Value, len(s.Indices))
 	for i, idxExpr := range s.Indices {
 		if idxExpr == nil {
-			// 追加
-			key := NewInt(int64(len(cur.Keys)))
-			if i == len(s.Indices)-1 {
-				val, err := e.evalExpr(s.Val)
-				if err != nil {
-					return execResult{}, err
-				}
-				cur.ArraySet(key, val)
-			} else {
-				child := NewArray()
-				cur.ArraySet(key, child)
-				cur = &child
-			}
+			// 追加模式（下标为空）
+			// 在最终赋值时处理，这里先标记
+			keys[i] = NewNull() // 标记为追加
 		} else {
-			key, err := e.evalExpr(idxExpr)
+			k, err := e.evalExpr(idxExpr)
 			if err != nil {
 				return execResult{}, err
 			}
-			if i == len(s.Indices)-1 {
-				val, err := e.evalExpr(s.Val)
-				if err != nil {
-					return execResult{}, err
-				}
-				cur.ArraySet(key, val)
-			} else {
-				child := cur.ArrayGet(key)
-				if child.Kind != KindArray {
-					child = NewArray()
-				}
-				cur.ArraySet(key, child)
-				cur = &child
-			}
+			keys[i] = k
 		}
 	}
+	// 赋值
+	val, err := e.evalExpr(s.Val)
+	if err != nil {
+		return execResult{}, err
+	}
+	// 递归设置
+	setNestedArray(&root, keys, val)
 	// 回写根变量
 	if v, ok := s.Base.(*VarExpr); ok {
 		e.vars[v.Name] = root
 		e.globals[v.Name] = root
 	}
 	return execResult{}, nil
+}
+
+// setNestedArray 递归地在数组中设置嵌套值
+func setNestedArray(arr *Value, keys []Value, val Value) {
+	if len(keys) == 1 {
+		// 最后一级
+		if keys[0].Kind == KindNull {
+			// 追加模式
+			arr.ArraySet(NewInt(int64(len(arr.Keys))), val)
+		} else {
+			arr.ArraySet(keys[0], val)
+		}
+		return
+	}
+	// 中间级：获取或创建子数组
+	var key Value
+	if keys[0].Kind == KindNull {
+		key = NewInt(int64(len(arr.Keys)))
+	} else {
+		key = keys[0]
+	}
+	child := arr.ArrayGet(key)
+	if child.Kind != KindArray {
+		child = NewArray()
+	}
+	setNestedArray(&child, keys[1:], val)
+	// 回写子数组到父数组
+	arr.ArraySet(key, child)
 }
 
 // evalAssignTarget 处理对属性或数组元素的赋值
