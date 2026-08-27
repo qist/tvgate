@@ -24,6 +24,7 @@ const (
 	KindArray
 	KindRef // 变量引用（&$var 形参）
 	KindResource // 资源（文件句柄 / 秘钥 / 流等，存任意 Go 对象）
+	KindObject // 对象实例
 )
 
 // Value 是简化版 PHP zval：支持 null/bool/int/float/string/array。
@@ -44,6 +45,8 @@ type Value struct {
 	RefVal *Value
 	// Resource 用于资源类型（文件/流/秘钥等 opaque Go 对象）
 	Resource interface{}
+	// Object 用于对象实例（类名 -> ClassDecl + 属性 map）
+	Object *ObjectInstance
 }
 
 // NewRef 创建引用值
@@ -72,6 +75,24 @@ func NewArray() Value {
 	return Value{Kind: KindArray, Arr: map[string]Value{}, Keys: nil}
 }
 
+// Clone 深拷贝 Value（PHP 数组赋值语义：数组按值拷贝）
+func (v Value) Clone() Value {
+	switch v.Kind {
+	case KindArray:
+		c := Value{Kind: KindArray, Arr: make(map[string]Value, len(v.Arr)), Keys: make([]string, len(v.Keys))}
+		copy(c.Keys, v.Keys)
+		for k, val := range v.Arr {
+			c.Arr[k] = val.Clone()
+		}
+		return c
+	case KindObject:
+		// 对象在 PHP 中按引用传递，不克隆
+		return v
+	default:
+		return v
+	}
+}
+
 // IsNull 是否 null（含未定义变量语义）
 func (v Value) IsNull() bool { return v.Kind == KindNull }
 
@@ -95,6 +116,10 @@ return v.RefVal.ToBool()
 return false
 case KindArray:
 		return len(v.Keys) > 0
+	case KindObject:
+		return true
+	case KindResource:
+		return true
 	}
 	return false
 }
@@ -175,6 +200,10 @@ func (v Value) ToString() string {
 		return ""
 	case KindArray:
 		return "Array"
+	case KindObject:
+		return v.Object.ClassName
+	case KindResource:
+		return "Resource"
 	}
 	return ""
 }
@@ -187,7 +216,10 @@ func (v Value) ArrayGet(key Value) Value {
 		if idx < 0 || idx >= int64(len(v.Str)) {
 			return NewString("")
 		}
-		return NewString(string(v.Str[idx]))
+		// 注意：不能用 string(v.Str[idx])，因为 Go 的 string(byte) 会将 byte 当作
+		// UTF-8 码点转换，导致 > 127 的字节值被错误编码（如 0xd2 -> \xc3\x92）。
+		// 必须用 string([]byte{...}) 保留原始字节值，以正确处理二进制数据。
+		return NewString(string([]byte{v.Str[idx]}))
 	}
 	if v.Kind != KindArray {
 		return NewNull()
@@ -238,6 +270,17 @@ func (v *Value) ArrayUnset(key Value) {
 			break
 		}
 	}
+}
+
+// ObjectInstance 类实例
+type ObjectInstance struct {
+	ClassName   string
+	Properties  map[string]Value
+}
+
+// NewObject 创建对象实例
+func NewObject(className string) Value {
+	return Value{Kind: KindObject, Object: &ObjectInstance{ClassName: className, Properties: map[string]Value{}}}
 }
 
 // ArrayKeysSorted 返回排序后的 key（用于调试/遍历）

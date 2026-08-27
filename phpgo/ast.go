@@ -38,6 +38,7 @@ type AssignStmt struct {
 	Value Expr
 	Concat bool  // .=
 	Op    string // "+=", "-=", "*=", "/=" 等（非 concat 时）
+	Target Expr // 当赋值目标是属性或数组元素时（$this->prop = val, $arr[$k] = val）
 }
 
 // ArrayPushStmt $arr[] = expr
@@ -303,3 +304,30 @@ type NewExpr struct {
 	Class string
 	Args []Expr
 }
+
+// ClassDecl 类定义
+type ClassDecl struct {
+	Name       string
+	Consts     []ConstStmt      // 类常量
+	Properties []ClassProperty  // 属性
+	Methods    []*FuncDecl      // 方法
+}
+
+// ClassProperty 类属性
+type ClassProperty struct {
+	Name    string // 不含 $
+	Default Expr   // 默认值（可为 nil）
+	Visib   string // public/private/protected
+}
+
+// ThisExpr $this
+type ThisExpr struct{}
+
+// SelfConstExpr self::CONSTANT 或 ClassName::CONSTANT
+type SelfConstExpr struct {
+	Class string // "self" 或类名
+	Name  string // 常量名
+}
+
+// SplatExpr ...$var (参数展开)
+type SplatExpr struct{ Expr Expr }

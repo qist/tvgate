@@ -45,6 +45,10 @@ const (
 	tStar
 	tSlash
 	tPercent   // %
+	tCaretEq   // ^=
+	Caret      // ^
+	ShiftLeft  // <<
+	ShiftRight // >>
 	tDot       // 句点（字符串拼接），与 tConcat 同义
 	tArrowFn   // =>
 	tColon
@@ -142,6 +146,10 @@ func (l *Lexer) next() byte {
 
 func isIdentRune(r byte) bool {
 	return unicode.IsLetter(rune(r)) || unicode.IsDigit(rune(r)) || r == '_'
+}
+
+func isHexDigit(r byte) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 }
 
 func isIdentStart(r byte) bool {
@@ -298,6 +306,26 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 				toks = append(toks, Tok{tIdent, word, start})
 			}
 		case unicode.IsDigit(rune(c)) || (c == '.' && unicode.IsDigit(rune(l.peekAt(1)))):
+			// 十六进制 0x...
+			if c == '0' && (l.peekAt(1) == 'x' || l.peekAt(1) == 'X') {
+				l.pos += 2
+				for isHexDigit(l.peek()) {
+					l.pos++
+				}
+				s := l.src[start:l.pos]
+				toks = append(toks, Tok{tInt, s, start})
+				continue
+			}
+			// 八进制 0o... 或二进制 0b...
+			if c == '0' && (l.peekAt(1) == 'b' || l.peekAt(1) == 'B') {
+				l.pos += 2
+				for l.peek() == '0' || l.peek() == '1' {
+					l.pos++
+				}
+				s := l.src[start:l.pos]
+				toks = append(toks, Tok{tInt, s, start})
+				continue
+			}
 			isFloat := false
 			for unicode.IsDigit(rune(l.peek())) {
 				l.pos++
@@ -441,7 +469,12 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 				toks = append(toks, Tok{tConcatEq, ".=", start})
 			} else if l.peek() == '.' {
 				l.pos++
-				toks = append(toks, Tok{tConcat, "..", start}) // 变参函数 ...
+				if l.peek() == '.' {
+					l.pos++
+					toks = append(toks, Tok{tIdent, "...", start}) // splat 运算符 ...
+				} else {
+					toks = append(toks, Tok{tConcat, "..", start}) // 变参函数 ...
+				}
 			} else {
 				toks = append(toks, Tok{tConcat, ".", start})
 			}
@@ -497,25 +530,31 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 			} else {
 				toks = append(toks, Tok{tColon, ":", start})
 			}
-		case c == '<':
+	case c == '<':
+		l.pos++
+		if l.peek() == '=' {
 			l.pos++
-			if l.peek() == '=' {
-				l.pos++
-				toks = append(toks, Tok{tLE, "<=", start})
-			} else if l.peek() == '>' {
-				l.pos++
-				toks = append(toks, Tok{tNotEq, "<>", start}) // PHP 的 <> 也是不等
-			} else {
-				toks = append(toks, Tok{tLT, "<", start})
-			}
-		case c == '>':
+			toks = append(toks, Tok{tLE, "<=", start})
+		} else if l.peek() == '<' {
 			l.pos++
-			if l.peek() == '=' {
-				l.pos++
-				toks = append(toks, Tok{tGE, ">=", start})
-			} else {
-				toks = append(toks, Tok{tGT, ">", start})
-			}
+			toks = append(toks, Tok{ShiftLeft, "<<", start})
+		} else if l.peek() == '>' {
+			l.pos++
+			toks = append(toks, Tok{tNotEq, "<>", start}) // PHP 的 <> 也是不等
+		} else {
+			toks = append(toks, Tok{tLT, "<", start})
+		}
+	case c == '>':
+		l.pos++
+		if l.peek() == '=' {
+			l.pos++
+			toks = append(toks, Tok{tGE, ">=", start})
+		} else if l.peek() == '>' {
+			l.pos++
+			toks = append(toks, Tok{ShiftRight, ">>", start})
+		} else {
+			toks = append(toks, Tok{tGT, ">", start})
+		}
 		case c == '?':
 			l.pos++
 			if l.peek() == '?' {
@@ -540,9 +579,17 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 			} else {
 				toks = append(toks, Tok{tPipe, "|", start})
 			}
-		case c == '~':
+		case c == '^':
 			l.pos++
-			toks = append(toks, Tok{tIdent, "~", start})
+			if l.peek() == '=' {
+				l.pos++
+				toks = append(toks, Tok{tCaretEq, "^=", start})
+			} else {
+				toks = append(toks, Tok{Caret, "^", start})
+			}
+	case c == '~':
+		l.pos++
+		toks = append(toks, Tok{tIdent, "~", start})
 		case c == '@':
 			l.pos++
 			toks = append(toks, Tok{tIdent, "@", start}) // 错误抑制符，parser 跳过

@@ -37,6 +37,7 @@ type CurlOptions struct {
 type Env struct {
 	vars      map[string]Value
 	funcs     map[string]*FuncDecl
+	classes   map[string]*ClassDecl
 	globals   map[string]Value // $GLOBALS
 	consts    map[string]Value
 	server    map[string]string // $_SERVER
@@ -68,6 +69,7 @@ func NewEnv(proxy ProxyFunc) *Env {
 	ev := &Env{
 		vars:     map[string]Value{},
 		funcs:    map[string]*FuncDecl{},
+		classes:  map[string]*ClassDecl{},
 		globals:  map[string]Value{},
 		consts:   defaultPHPConsts(),
 		server:   map[string]string{},
@@ -337,6 +339,12 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 				return execResult{}, err
 			}
 			e.exitVal = v
+			// die()/exit() 带参数时输出参数（PHP 行为）
+			if v.Kind == KindInt {
+				// 整数参数作为退出码，不输出
+			} else {
+				e.writeOutput(v.ToString())
+			}
 		}
 		return execResult{flow: cfReturn}, nil
 	case *UnsetStmt:
@@ -375,6 +383,12 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 		if err != nil {
 			return execResult{}, err
 		}
+		// PHP 数组赋值是按值拷贝
+		val = val.Clone()
+		// 属性或数组元素赋值：$this->prop = val, $arr[$k] = val
+		if s.Target != nil {
+			return e.evalAssignTarget(s.Target, val, s.Concat, s.Op)
+		}
 		if s.Concat {
 			old := e.vars[s.Name]
 			val = Value{Kind: KindString, Str: old.ToString() + val.ToString()}
@@ -397,6 +411,8 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 				} else {
 					val = NewInt(0)
 				}
+			case "^=":
+				val = NewInt(old.ToInt() ^ val.ToInt())
 			}
 		}
 		e.vars[s.Name] = val
@@ -482,6 +498,17 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 			return execResult{}, err
 		}
 		e.consts[s.Name] = v
+		return execResult{}, nil
+	case *ClassDecl:
+		e.classes[s.Name] = s
+		// 类常量注册到全局 consts（以 ClassName::CONSTNAME 格式）
+		for _, c := range s.Consts {
+			cv, err := e.evalExpr(c.Val)
+			if err != nil {
+				return execResult{}, err
+			}
+			e.consts[s.Name+"::"+c.Name] = cv
+		}
 		return execResult{}, nil
 	case *PostIncStmt:
 		old, ok := e.vars[s.Name]
@@ -583,6 +610,94 @@ func (e *Env) execNestedArrayAssign(s *NestedArrayAssignStmt) (execResult, error
 	if v, ok := s.Base.(*VarExpr); ok {
 		e.vars[v.Name] = root
 		e.globals[v.Name] = root
+	}
+	return execResult{}, nil
+}
+
+// evalAssignTarget 处理对属性或数组元素的赋值
+func (e *Env) evalAssignTarget(target Expr, val Value, concat bool, op string) (execResult, error) {
+	switch t := target.(type) {
+	case *PropertyAccess:
+		recv, err := e.evalExpr(t.Receiver)
+		if err != nil {
+			return execResult{}, err
+		}
+		if recv.Kind == KindObject {
+			if concat {
+				old := recv.Object.Properties[t.Prop]
+				val = NewString(old.ToString() + val.ToString())
+			} else if op != "" {
+				old := recv.Object.Properties[t.Prop]
+				switch op {
+				case "+=":
+					if old.Kind == KindString || val.Kind == KindString {
+						val = NewString(old.ToString() + val.ToString())
+					} else {
+						val = NewInt(old.ToInt() + val.ToInt())
+					}
+				case "-=":
+					val = NewInt(old.ToInt() - val.ToInt())
+				case "*=":
+					val = NewInt(old.ToInt() * val.ToInt())
+				case "/=":
+					if val.ToInt() != 0 {
+						val = NewInt(old.ToInt() / val.ToInt())
+					} else {
+						val = NewInt(0)
+					}
+				case "^=":
+					val = NewInt(old.ToInt() ^ val.ToInt())
+				}
+			}
+			recv.Object.Properties[t.Prop] = val
+			return execResult{val: val}, nil
+		}
+		// 非对象（数组模拟）回退
+		recv.ArraySet(NewString(t.Prop), val)
+		return execResult{val: val}, nil
+	case *IndexExpr:
+		// $arr[$key] = val
+		arr, err := e.evalExpr(t.Arr)
+		if err != nil {
+			return execResult{}, err
+		}
+		key, err := e.evalExpr(t.Key)
+		if err != nil {
+			return execResult{}, err
+		}
+		if concat {
+			old := arr.ArrayGet(key)
+			val = NewString(old.ToString() + val.ToString())
+		} else if op != "" {
+			old := arr.ArrayGet(key)
+			switch op {
+			case "+=":
+				if old.Kind == KindString || val.Kind == KindString {
+					val = NewString(old.ToString() + val.ToString())
+				} else {
+					val = NewInt(old.ToInt() + val.ToInt())
+				}
+			case "-=":
+				val = NewInt(old.ToInt() - val.ToInt())
+			case "*=":
+				val = NewInt(old.ToInt() * val.ToInt())
+			case "/=":
+				if val.ToInt() != 0 {
+					val = NewInt(old.ToInt() / val.ToInt())
+				} else {
+					val = NewInt(0)
+				}
+			case "^=":
+				val = NewInt(old.ToInt() ^ val.ToInt())
+			}
+		}
+		arr.ArraySet(key, val)
+		// 回写根变量
+		if v, ok := t.Arr.(*VarExpr); ok {
+			e.vars[v.Name] = arr
+			e.globals[v.Name] = arr
+		}
+		return execResult{val: val}, nil
 	}
 	return execResult{}, nil
 }
@@ -878,11 +993,39 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 	case *FuncCall:
 		return e.callFunc(n.Name, n.Args)
 	case *MethodCall:
-		// 支持异常对象方法调用：$e->getMessage(), $e->getCode() 等
 		recv, err := e.evalExpr(n.Receiver)
 		if err != nil {
 			return recv, err
 		}
+		// 对象方法调用
+		if recv.Kind == KindObject {
+			cls := e.classes[recv.Object.ClassName]
+			if cls != nil {
+				for _, m := range cls.Methods {
+					if m.Name == n.Method {
+						// 保存/恢复 $this 和 __current_class__
+						oldThis, hadThis := e.vars["this"]
+						oldClass, hadClass := e.vars["__current_class__"]
+						e.vars["this"] = recv
+						e.vars["__current_class__"] = NewString(recv.Object.ClassName)
+						result, err := e.callMethod(m, n.Args)
+						if hadThis {
+							e.vars["this"] = oldThis
+						} else {
+							delete(e.vars, "this")
+						}
+						if hadClass {
+							e.vars["__current_class__"] = oldClass
+						} else {
+							delete(e.vars, "__current_class__")
+						}
+						return result, err
+					}
+				}
+			}
+			return NewNull(), nil
+		}
+		// 支持异常对象方法调用：$e->getMessage(), $e->getCode() 等
 		if recv.Kind == KindArray {
 			switch n.Method {
 			case "getMessage":
@@ -895,15 +1038,21 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 		}
 		return NewNull(), nil
 	case *StaticCall:
-		// Class::method() 暂不实现对象系统
 		// 特殊处理：DateTime::createFromFormat 等返回 null
 		return NewNull(), nil
 	case *PropertyAccess:
-		// PHP $obj->prop 在无对象系统时，当作关联数组的 key 访问
 		recv, err := e.evalExpr(n.Receiver)
 		if err != nil {
 			return recv, err
 		}
+		// 对象属性访问
+		if recv.Kind == KindObject {
+			if v, ok := recv.Object.Properties[n.Prop]; ok {
+				return v, nil
+			}
+			return NewNull(), nil
+		}
+		// PHP $obj->prop 在无对象系统时，当作关联数组的 key 访问
 		return recv.ArrayGet(NewString(n.Prop)), nil
 	case *TernaryExpr:
 		c, err := e.evalExpr(n.Cond)
@@ -1011,6 +1160,41 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 		// 找不到则当字符串名（PHP 行为）
 		return NewString(n.Name), nil
 	case *NewExpr:
+		// 检查是否是已注册的用户类
+		if cls, ok := e.classes[n.Class]; ok {
+			obj := NewObject(n.Class)
+			// 初始化属性
+			for _, prop := range cls.Properties {
+				if prop.Default != nil {
+					pv, err := e.evalExpr(prop.Default)
+					if err != nil {
+						return pv, err
+					}
+					obj.Object.Properties[prop.Name] = pv
+				} else {
+					obj.Object.Properties[prop.Name] = NewNull()
+				}
+			}
+			// 调用构造函数
+			for _, m := range cls.Methods {
+				if m.Name == "__construct" {
+					// 保存当前 $this，设置新的
+					oldThis, hadThis := e.vars["this"]
+					e.vars["this"] = obj
+					_, err := e.callMethod(m, n.Args)
+					if hadThis {
+						e.vars["this"] = oldThis
+					} else {
+						delete(e.vars, "this")
+					}
+					if err != nil {
+						return obj, err
+					}
+					break
+				}
+			}
+			return obj, nil
+		}
 		// new Exception/RuntimeException/Throwable
 		// 取第一个参数作为 message
 		var msg string
@@ -1026,6 +1210,35 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 		excVar.ArraySet(NewString("message"), NewString(msg))
 		excVar.ArraySet(NewString("class"), NewString(n.Class))
 		return excVar, nil
+	case *ThisExpr:
+		if v, ok := e.vars["this"]; ok {
+			return v, nil
+		}
+		return NewNull(), nil
+	case *SelfConstExpr:
+		// self::CONSTANT 或 ClassName::CONSTANT
+		className := n.Class
+		if className == "self" {
+			if curClass, ok := e.vars["__current_class__"]; ok && curClass.Kind == KindString {
+				className = curClass.Str
+			}
+		}
+		// 查找类常量
+		if cls, ok := e.classes[className]; ok {
+			for _, c := range cls.Consts {
+				if c.Name == n.Name {
+					return e.evalExpr(c.Val)
+				}
+			}
+		}
+		// 查找全局常量 ClassName::CONSTNAME
+		if v, ok := e.consts[className+"::"+n.Name]; ok {
+			return v, nil
+		}
+		return NewNull(), nil
+	case *SplatExpr:
+		// ...$var 在非调用上下文中返回数组本身
+		return e.evalExpr(n.Expr)
 	}
 	return NewNull(), fmt.Errorf("runtime: 未知表达式节点 %T", x)
 }
@@ -1136,9 +1349,9 @@ func (e *Env) evalBinary(n *BinaryExpr) (Value, error) {
 		return r, err
 	}
 	switch n.Op {
-	case ".":
+	case ".", ".=":
 		return Value{Kind: KindString, Str: l.ToString() + r.ToString()}, nil
-	case "+":
+	case "+", "+=":
 		if l.Kind == KindString || r.Kind == KindString {
 			return Value{Kind: KindString, Str: l.ToString() + r.ToString()}, nil
 		}
@@ -1156,11 +1369,11 @@ func (e *Env) evalBinary(n *BinaryExpr) (Value, error) {
 			return result, nil
 		}
 		return NewInt(l.ToInt() + r.ToInt()), nil
-	case "-":
+	case "-", "-=":
 		return NewInt(l.ToInt() - r.ToInt()), nil
-	case "*":
+	case "*", "*=":
 		return NewInt(l.ToInt() * r.ToInt()), nil
-	case "/":
+	case "/", "/=":
 		if r.ToInt() == 0 {
 			return NewInt(0), nil
 		}
@@ -1204,6 +1417,16 @@ func (e *Env) evalBinary(n *BinaryExpr) (Value, error) {
 			return NewBool(l.ToString() >= r.ToString()), nil
 		}
 		return NewBool(l.ToInt() >= r.ToInt()), nil
+	case "^", "^=":
+		return NewInt(l.ToInt() ^ r.ToInt()), nil
+	case "&":
+		return NewInt(l.ToInt() & r.ToInt()), nil
+	case "|":
+		return NewInt(l.ToInt() | r.ToInt()), nil
+	case "<<":
+		return NewInt(l.ToInt() << r.ToInt()), nil
+	case ">>":
+		return NewInt(l.ToInt() >> r.ToInt()), nil
 	}
 	return NewNull(), fmt.Errorf("runtime: 未知运算符 %s", n.Op)
 }
@@ -1235,6 +1458,19 @@ func (e *Env) evalAssignExpr(n *AssignExpr) (Value, error) {
 			e.globals[v.Name] = arr
 			return val, nil
 		}
+	case *PropertyAccess:
+		// $this->prop = val 或 $obj->prop = val
+		recv, err := e.evalExpr(t.Receiver)
+		if err != nil {
+			return val, err
+		}
+		if recv.Kind == KindObject {
+			recv.Object.Properties[t.Prop] = val
+			return val, nil
+		}
+		// 非对象（数组模拟）回退
+		recv.ArraySet(NewString(t.Prop), val)
+		return val, nil
 	case *FuncCall:
 		// __list 赋值：list($a, $b) = $arr
 		if t.Name == "__list" {
@@ -1277,6 +1513,19 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 					continue
 				}
 			}
+			// splat 展开：...$var
+			if sp, ok := a.(*SplatExpr); ok {
+				val, err := e.evalExpr(sp.Expr)
+				if err != nil {
+					return val, err
+				}
+				if val.Kind == KindArray {
+					for _, k := range val.Keys {
+						vs = append(vs, val.Arr[k])
+					}
+				}
+				continue
+			}
 			val, err := e.evalExpr(a)
 			if err != nil {
 				return val, err
@@ -1303,7 +1552,7 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 			if err != nil {
 				return v, err
 			}
-			e.vars[p.Name] = v
+			e.vars[p.Name] = v.Clone()
 		} else if p.Default != nil {
 			v, err := e.evalExpr(p.Default)
 			if err != nil {
@@ -1327,7 +1576,77 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 	return NewNull(), nil
 }
 
-// callUserFuncValues 用已求值的 Value 列表调用用户函数（供 array_map/array_filter 等使用）
+// callMethod 调用类方法（$this 已在 e.vars 中设置）
+func (e *Env) callMethod(fn *FuncDecl, args []Expr) (Value, error) {
+	// 保存当前作用域（但保留 $this 和 __current_class__）
+	saved := map[string]Value{}
+	for k, v := range e.vars {
+		if k == "this" || k == "__current_class__" {
+			continue
+		}
+		saved[k] = v
+	}
+	// 保留 this 和 curClass
+	thisVal := e.vars["this"]
+	curClass := e.vars["__current_class__"]
+
+	// 预求值参数（在旧作用域中求值，含 splat 展开）
+	var flatVals []Value
+	for _, a := range args {
+		if sp, ok := a.(*SplatExpr); ok {
+			val, err := e.evalExpr(sp.Expr)
+			if err != nil {
+				return val, err
+			}
+			if val.Kind == KindArray {
+				for _, k := range val.Keys {
+					flatVals = append(flatVals, val.Arr[k])
+				}
+			}
+			continue
+		}
+		val, err := e.evalExpr(a)
+		if err != nil {
+			return val, err
+		}
+		flatVals = append(flatVals, val)
+	}
+
+	// 清空非 this 变量，绑定参数
+	e.vars = map[string]Value{}
+	e.vars["this"] = thisVal
+	e.vars["__current_class__"] = curClass
+
+	// 绑定参数
+	for i, p := range fn.Params {
+		if i < len(flatVals) {
+			e.vars[p.Name] = flatVals[i].Clone()
+		} else if p.Default != nil {
+			v, err := e.evalExpr(p.Default)
+			if err != nil {
+				e.vars = saved
+				e.vars["this"] = thisVal
+				e.vars["__current_class__"] = curClass
+				return v, err
+			}
+			e.vars[p.Name] = v
+		} else {
+			e.vars[p.Name] = NewNull()
+		}
+	}
+	r, err := e.execBlock(fn.Body)
+	// 恢复作用域
+	e.vars = saved
+	e.vars["this"] = thisVal
+	e.vars["__current_class__"] = curClass
+	if err != nil {
+		return NewNull(), err
+	}
+	if r.flow == cfReturn {
+		return r.val, nil
+	}
+	return NewNull(), nil
+}
 func (e *Env) callUserFuncValues(fn *FuncDecl, vs []Value) (Value, error) {
 	saved := map[string]Value{}
 	for k, v := range e.vars {

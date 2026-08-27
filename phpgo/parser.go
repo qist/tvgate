@@ -302,6 +302,8 @@ func (p *Parser) parseStmt() (Stmt, error) {
 		return p.parseDeclare()
 	case p.at(tTry):
 		return p.parseTry()
+	case p.at(tClass):
+		return p.parseClass()
 	case p.at(tThrow):
 		p.adv()
 		e, err := p.parseExpr()
@@ -339,7 +341,7 @@ func (p *Parser) parseStmt() (Stmt, error) {
 
 func isExprStart(t Tok) bool {
 	switch t.Kind {
-	case tVar, tIdent, tInt, tFloat, tDoubleStr, tSingleStr, tConstTrue, tConstFalse, tConstNull, tArray, tLBracket, tLParen, tBang, tMinus, tStringCast, tIntCast, tFloatCast, tBoolCast, tArrayCast, tFunc, tConst, tNew, tThrow:
+	case tVar, tIdent, tInt, tFloat, tDoubleStr, tSingleStr, tConstTrue, tConstFalse, tConstNull, tArray, tLBracket, tLParen, tBang, tMinus, tStringCast, tIntCast, tFloatCast, tBoolCast, tArrayCast, tFunc, tConst, tNew, tThrow, Caret:
 		return true
 	}
 	return false
@@ -389,7 +391,7 @@ func (p *Parser) parseAssignOrExpr() (Stmt, error) {
 				Val:     val,
 			}, nil
 		}
-		if p.at(tConcatEq) || p.at(tPlusEq) || p.at(tMinusEq) || p.at(tStarEq) || p.at(tSlashEq) {
+		if p.at(tConcatEq) || p.at(tPlusEq) || p.at(tMinusEq) || p.at(tStarEq) || p.at(tSlashEq) || p.at(tCaretEq) {
 			op := p.adv().Val
 			val, err := p.parseExpr()
 			if err != nil {
@@ -429,7 +431,7 @@ func (p *Parser) parseAssignOrExpr() (Stmt, error) {
 		p.skipSemis()
 		return &PostIncStmt{Name: name, IsDec: true}, nil
 	}
-	if p.at(tEquals) || p.at(tConcatEq) || p.at(tPlusEq) || p.at(tMinusEq) || p.at(tStarEq) || p.at(tSlashEq) {
+	if p.at(tEquals) || p.at(tConcatEq) || p.at(tPlusEq) || p.at(tMinusEq) || p.at(tStarEq) || p.at(tSlashEq) || p.at(tCaretEq) {
 		concat := false
 		op := ""
 		switch p.cur().Kind {
@@ -448,6 +450,9 @@ func (p *Parser) parseAssignOrExpr() (Stmt, error) {
 		case tSlashEq:
 			op = "/="
 			p.adv()
+		case tCaretEq:
+			op = "^="
+			p.adv()
 		default:
 			p.adv()
 		}
@@ -461,6 +466,16 @@ func (p *Parser) parseAssignOrExpr() (Stmt, error) {
 	e, err := p.parseExprFromVar(name)
 	if err != nil {
 		return nil, err
+	}
+	// Check for assignment to property/array: $this->prop = val, $arr[$k] = val
+	if p.at(tEquals) || p.at(tPlusEq) || p.at(tMinusEq) || p.at(tStarEq) || p.at(tSlashEq) || p.at(tCaretEq) || p.at(tConcatEq) {
+		op := p.adv().Val
+		val, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		p.skipSemis()
+		return &AssignStmt{Target: e, Value: val, Op: op}, nil
 	}
 	p.skipSemis()
 	return &ExprStmt{E: e}, nil
@@ -808,7 +823,7 @@ func (p *Parser) parseAssignExpr() (Expr, error) {
 		}
 		return &AssignExpr{Target: left, Val: right}, nil
 	}
-	if p.at(tConcatEq) || p.at(tPlusEq) || p.at(tMinusEq) || p.at(tStarEq) || p.at(tSlashEq) {
+	if p.at(tConcatEq) || p.at(tPlusEq) || p.at(tMinusEq) || p.at(tStarEq) || p.at(tSlashEq) || p.at(tCaretEq) {
 		op := p.adv().Val
 		right, err := p.parseAssignExpr()
 		if err != nil {
@@ -887,13 +902,13 @@ func (p *Parser) parseLogicalOr() (Expr, error) {
 }
 
 func (p *Parser) parseLogicalAnd() (Expr, error) {
-	left, err := p.parseCompare()
+	left, err := p.parseBitwiseOr()
 	if err != nil {
 		return nil, err
 	}
 	for p.at(tAmpAmp) {
 		p.adv()
-		right, err := p.parseCompare()
+		right, err := p.parseBitwiseOr()
 		if err != nil {
 			return nil, err
 		}
@@ -902,12 +917,76 @@ func (p *Parser) parseLogicalAnd() (Expr, error) {
 	return left, nil
 }
 
+func (p *Parser) parseBitwiseOr() (Expr, error) {
+	left, err := p.parseBitwiseXor()
+	if err != nil {
+		return nil, err
+	}
+	for p.at(tPipe) {
+		p.adv()
+		right, err := p.parseBitwiseXor()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Op: "|", Left: left, Right: right}
+	}
+	return left, nil
+}
+
+func (p *Parser) parseBitwiseXor() (Expr, error) {
+	left, err := p.parseBitwiseAnd()
+	if err != nil {
+		return nil, err
+	}
+	for p.at(Caret) {
+		p.adv()
+		right, err := p.parseBitwiseAnd()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Op: "^", Left: left, Right: right}
+	}
+	return left, nil
+}
+
+func (p *Parser) parseBitwiseAnd() (Expr, error) {
+	left, err := p.parseCompare()
+	if err != nil {
+		return nil, err
+	}
+	for p.at(tAmp) {
+		p.adv()
+		right, err := p.parseCompare()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Op: "&", Left: left, Right: right}
+	}
+	return left, nil
+}
+
 func (p *Parser) parseCompare() (Expr, error) {
-	left, err := p.parseAdd()
+	left, err := p.parseShift()
 	if err != nil {
 		return nil, err
 	}
 	for p.at(tEqEq) || p.at(tEqEqEq) || p.at(tNotEq) || p.at(tNotEqEq) || p.at(tLT) || p.at(tGT) || p.at(tLE) || p.at(tGE) {
+		op := p.adv().Val
+		right, err := p.parseShift()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Op: op, Left: left, Right: right}
+	}
+	return left, nil
+}
+
+func (p *Parser) parseShift() (Expr, error) {
+	left, err := p.parseAdd()
+	if err != nil {
+		return nil, err
+	}
+	for p.at(ShiftLeft) || p.at(ShiftRight) {
 		op := p.adv().Val
 		right, err := p.parseAdd()
 		if err != nil {
@@ -1079,17 +1158,33 @@ func (p *Parser) parsePostfixFrom(e Expr) (Expr, error) {
 			if err != nil {
 				return nil, err
 			}
-			args, err := p.parseArgs()
-			if err != nil {
-				return nil, err
+			// 判断是方法调用还是常量访问
+			if p.at(tLParen) {
+				args, err := p.parseArgs()
+				if err != nil {
+					return nil, err
+				}
+				class := ""
+				if s, ok := e.(*ScalarStr); ok {
+					class = s.Val
+				} else if v, ok := e.(*VarExpr); ok {
+					class = v.Name
+				} else if c, ok := e.(*ConstExpr); ok {
+					class = c.Name
+				}
+				e = &StaticCall{Class: class, Method: m.Val, Args: args}
+				continue
 			}
+			// 常量访问：self::CONSTANT 或 ClassName::CONSTANT
 			class := ""
 			if s, ok := e.(*ScalarStr); ok {
 				class = s.Val
 			} else if v, ok := e.(*VarExpr); ok {
 				class = v.Name
+			} else if c, ok := e.(*ConstExpr); ok {
+				class = c.Name
 			}
-			e = &StaticCall{Class: class, Method: m.Val, Args: args}
+			e = &SelfConstExpr{Class: class, Name: m.Val}
 			continue
 		}
 		break
@@ -1108,6 +1203,20 @@ func (p *Parser) parseArgs() ([]Expr, error) {
 				return nil, err
 			}
 			args = append(args, &varRef{name: v.Val[1:]})
+			if p.at(tComma) {
+				p.adv()
+				continue
+			}
+			break
+		}
+		// ...$var splat 展开
+		if p.atVal("...") {
+			p.adv()
+			a, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, &SplatExpr{Expr: a})
 			if p.at(tComma) {
 				p.adv()
 				continue
@@ -1134,7 +1243,11 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	switch t.Kind {
 	case tVar:
 		p.adv()
-		return p.parseExprFromVar(t.Val[1:])
+		name := t.Val[1:]
+		if name == "this" {
+			return &ThisExpr{}, nil
+		}
+		return p.parseExprFromVar(name)
 	case tInt:
 		p.adv()
 		var n int64
@@ -1630,4 +1743,93 @@ func (p *Parser) parseUnset() (Stmt, error) {
 	p.expect(tRParen)
 	p.skipSemis()
 	return &UnsetStmt{Args: args}, nil
+}
+
+// parseClass 解析 class 定义
+func (p *Parser) parseClass() (Stmt, error) {
+	p.adv() // class
+	// 可选 abstract/final 已被 lexer 当 tIdent 跳过，这里跳过修饰符
+	for p.atVal("abstract") || p.atVal("final") {
+		p.adv()
+	}
+	name, err := p.expect(tIdent)
+	if err != nil {
+		return nil, err
+	}
+	// 跳过 extends/implements
+	if p.atVal("extends") {
+		p.adv()
+		for p.at(tIdent) || p.atVal("\\") {
+			p.adv()
+		}
+	}
+	if p.atVal("implements") {
+		p.adv()
+		for p.at(tIdent) || p.atVal("\\") || p.at(tComma) {
+			p.adv()
+		}
+	}
+	if _, err := p.expect(tLBrace); err != nil {
+		return nil, err
+	}
+	cls := &ClassDecl{Name: name.Val}
+	for !p.at(tRBrace) && !p.at(tEOF) {
+		p.skipSemis()
+		if p.at(tRBrace) {
+			break
+		}
+		// 可见性修饰符
+		visib := "public"
+		if p.atVal("public") || p.atVal("private") || p.atVal("protected") {
+			visib = p.adv().Val
+		}
+		// static 修饰符（跳过）
+		if p.atVal("static") {
+			p.adv()
+		}
+		// 常量
+		if p.at(tConst) {
+			p.adv()
+			cn, err := p.expect(tIdent)
+			if err != nil {
+				return nil, err
+			}
+			p.expect(tEquals)
+			cv, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			cls.Consts = append(cls.Consts, ConstStmt{Name: cn.Val, Val: cv})
+			p.skipSemis()
+			continue
+		}
+		// 方法
+		if p.at(tFunc) {
+			fn, err := p.parseFunc()
+			if err != nil {
+				return nil, err
+			}
+			cls.Methods = append(cls.Methods, fn.(*FuncDecl))
+			continue
+		}
+		// 属性
+		if p.at(tVar) {
+			propName := p.adv().Val[1:]
+			var def Expr
+			if p.at(tEquals) {
+				p.adv()
+				def, err = p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+			}
+			cls.Properties = append(cls.Properties, ClassProperty{Name: propName, Default: def, Visib: visib})
+			p.skipSemis()
+			continue
+		}
+		// 跳过未知内容
+		p.adv()
+	}
+	p.expect(tRBrace)
+	return cls, nil
 }

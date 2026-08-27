@@ -145,7 +145,9 @@ func init() {
 		return NewString(strconv.FormatInt(n, int(a[2].ToInt()))), nil
 	}
 	builtins["chr"] = func(e *Env, a []Value) (Value, error) {
-		return NewString(string(rune(a[0].ToInt()))), nil
+		// PHP chr() 返回单个字节，不能用 string(rune(...)) 因为 Go 会将 rune 转为 UTF-8
+		// 导致 > 127 的值变成多字节。必须用 []byte 保留单字节。
+		return NewString(string([]byte{byte(a[0].ToInt())})), nil
 	}
 	builtins["ord"] = func(e *Env, a []Value) (Value, error) {
 		s := a[0].ToString()
@@ -161,61 +163,93 @@ func init() {
 		format := a[0].ToString()
 		var b []byte
 		argIdx := 1
-		for i := 0; i < len(format); i++ {
-			switch format[i] {
+		i := 0
+		for i < len(format) {
+			c := format[i]
+			i++
+			// 解析重复次数后缀：* 或数字
+			repeat := 1
+			starRepeat := false
+			if i < len(format) && format[i] == '*' {
+				starRepeat = true
+				i++
+			} else if i < len(format) && format[i] >= '0' && format[i] <= '9' {
+				n := 0
+				for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+					n = n*10 + int(format[i]-'0')
+					i++
+				}
+				repeat = n
+			}
+			switch c {
 			case 'C':
-				if argIdx < len(a) {
-					b = append(b, byte(a[argIdx].ToInt()))
-					argIdx++
+				if starRepeat {
+					for argIdx < len(a) {
+						b = append(b, byte(a[argIdx].ToInt()))
+						argIdx++
+					}
+				} else {
+					for r := 0; r < repeat; r++ {
+						if argIdx < len(a) {
+							b = append(b, byte(a[argIdx].ToInt()))
+							argIdx++
+						}
+					}
 				}
 			case 'n':
-				if argIdx < len(a) {
-					v := a[argIdx].ToInt()
-					buf := make([]byte, 2)
-					binary.BigEndian.PutUint16(buf, uint16(v))
-					b = append(b, buf...)
-					argIdx++
+				for r := 0; r < repeat; r++ {
+					if argIdx < len(a) {
+						v := a[argIdx].ToInt()
+						buf := make([]byte, 2)
+						binary.BigEndian.PutUint16(buf, uint16(v))
+						b = append(b, buf...)
+						argIdx++
+					}
 				}
 			case 'N':
-				if argIdx < len(a) {
-					v := a[argIdx].ToInt()
-					buf := make([]byte, 4)
-					binary.BigEndian.PutUint32(buf, uint32(v))
-					b = append(b, buf...)
-					argIdx++
+				for r := 0; r < repeat; r++ {
+					if argIdx < len(a) {
+						v := a[argIdx].ToInt()
+						buf := make([]byte, 4)
+						binary.BigEndian.PutUint32(buf, uint32(v))
+						b = append(b, buf...)
+						argIdx++
+					}
 				}
 			case 'v':
-				if argIdx < len(a) {
-					v := a[argIdx].ToInt()
-					buf := make([]byte, 2)
-					binary.LittleEndian.PutUint16(buf, uint16(v))
-					b = append(b, buf...)
-					argIdx++
+				for r := 0; r < repeat; r++ {
+					if argIdx < len(a) {
+						v := a[argIdx].ToInt()
+						buf := make([]byte, 2)
+						binary.LittleEndian.PutUint16(buf, uint16(v))
+						b = append(b, buf...)
+						argIdx++
+					}
 				}
 			case 'V':
-				if argIdx < len(a) {
-					v := a[argIdx].ToInt()
-					buf := make([]byte, 4)
-					binary.LittleEndian.PutUint32(buf, uint32(v))
-					b = append(b, buf...)
-					argIdx++
+				for r := 0; r < repeat; r++ {
+					if argIdx < len(a) {
+						v := a[argIdx].ToInt()
+						buf := make([]byte, 4)
+						binary.LittleEndian.PutUint32(buf, uint32(v))
+						b = append(b, buf...)
+						argIdx++
+					}
 				}
 			case 'a', 'A':
-				// NUL/space padded string
 				if argIdx < len(a) {
 					s := a[argIdx].ToString()
 					b = append(b, []byte(s)...)
 					pad := byte(0)
-					if format[i] == 'A' {
+					if c == 'A' {
 						pad = ' '
 					}
-					// 查看是否有数量后缀
-					// 简化：直接追加
-					_ = pad
+					// 用 pad 填充到 repeat 长度
+					for len(b) < repeat {
+						b = append(b, pad)
+					}
 					argIdx++
 				}
-			case '*':
-				// repeat count
 			}
 		}
 		return NewString(string(b)), nil
@@ -229,48 +263,77 @@ func init() {
 		result := NewArray()
 		argIdx := 0
 		keyIdx := 1
-		for i := 0; i < len(format); i++ {
-			switch format[i] {
+		i := 0
+		for i < len(format) {
+			c := format[i]
+			i++
+			// 解析重复次数后缀：* 或数字
+			repeat := 1
+			starRepeat := false
+			if i < len(format) && format[i] == '*' {
+				starRepeat = true
+				i++
+			} else if i < len(format) && format[i] >= '0' && format[i] <= '9' {
+				n := 0
+				for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+					n = n*10 + int(format[i]-'0')
+					i++
+				}
+				repeat = n
+			}
+			switch c {
 			case 'C':
-				if argIdx < len(data) {
-					result.ArraySet(NewInt(int64(keyIdx)), NewInt(int64(data[argIdx])))
-					argIdx++
-					keyIdx++
+				if starRepeat {
+					for argIdx < len(data) {
+						result.ArraySet(NewInt(int64(keyIdx)), NewInt(int64(data[argIdx])))
+						argIdx++
+						keyIdx++
+					}
+				} else {
+					for r := 0; r < repeat; r++ {
+						if argIdx < len(data) {
+							result.ArraySet(NewInt(int64(keyIdx)), NewInt(int64(data[argIdx])))
+							argIdx++
+							keyIdx++
+						}
+					}
 				}
 			case 'n':
-				if argIdx+1 < len(data) {
-					v := binary.BigEndian.Uint16(data[argIdx:])
-					result.ArraySet(NewInt(int64(keyIdx)), NewInt(int64(v)))
-					argIdx += 2
-					keyIdx++
+				for r := 0; r < repeat; r++ {
+					if argIdx+1 < len(data) {
+						v := binary.BigEndian.Uint16(data[argIdx:])
+						result.ArraySet(NewInt(int64(keyIdx)), NewInt(int64(v)))
+						argIdx += 2
+						keyIdx++
+					}
 				}
 			case 'N':
-				if argIdx+3 < len(data) {
-					v := binary.BigEndian.Uint32(data[argIdx:])
-					result.ArraySet(NewInt(int64(keyIdx)), NewInt(int64(v)))
-					argIdx += 4
-					keyIdx++
+				for r := 0; r < repeat; r++ {
+					if argIdx+3 < len(data) {
+						v := binary.BigEndian.Uint32(data[argIdx:])
+						result.ArraySet(NewInt(int64(keyIdx)), NewInt(int64(v)))
+						argIdx += 4
+						keyIdx++
+					}
 				}
 			case 'v':
-				if argIdx+1 < len(data) {
-					v := binary.LittleEndian.Uint16(data[argIdx:])
-					result.ArraySet(NewInt(int64(keyIdx)), NewInt(int64(v)))
-					argIdx += 2
-					keyIdx++
+				for r := 0; r < repeat; r++ {
+					if argIdx+1 < len(data) {
+						v := binary.LittleEndian.Uint16(data[argIdx:])
+						result.ArraySet(NewInt(int64(keyIdx)), NewInt(int64(v)))
+						argIdx += 2
+						keyIdx++
+					}
 				}
 			case 'V':
-				if argIdx+3 < len(data) {
-					v := binary.LittleEndian.Uint32(data[argIdx:])
-					result.ArraySet(NewInt(int64(keyIdx)), NewInt(int64(v)))
-					argIdx += 4
-					keyIdx++
+				for r := 0; r < repeat; r++ {
+					if argIdx+3 < len(data) {
+						v := binary.LittleEndian.Uint32(data[argIdx:])
+						result.ArraySet(NewInt(int64(keyIdx)), NewInt(int64(v)))
+						argIdx += 4
+						keyIdx++
+					}
 				}
-			case '*':
-				// 跳过
-			}
-			// 跳过数字后缀
-			for i < len(format) && format[i] >= '0' && format[i] <= '9' {
-				i++
 			}
 		}
 		return result, nil
