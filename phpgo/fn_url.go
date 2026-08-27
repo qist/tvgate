@@ -3,6 +3,7 @@ package phpgo
 import (
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 func init() {
@@ -24,18 +25,43 @@ func init() {
 		if len(a) < 1 || a[0].Kind != KindArray {
 			return NewString(""), nil
 		}
-		vals := url.Values{}
+		// 第4个参数 encoding_type：PHP_QUERY_RFC3986 (用 %20) 或默认 PHP_QUERY_RFC1738 (用 +)
+		// PHP_QUERY_RFC1738 = 1, PHP_QUERY_RFC3986 = 2
+		useRFC3986 := false
+		if len(a) >= 4 {
+			encType := a[3].ToInt()
+			if encType == 2 {
+				useRFC3986 = true
+			}
+		}
+		var parts []string
 		for _, k := range a[0].Keys {
 			v := a[0].Arr[k]
 			if v.Kind == KindArray {
 				for i, subK := range v.Keys {
-					vals.Set(k+"["+strconv.Itoa(i)+"]", v.Arr[subK].ToString())
+					encodedKey := url.QueryEscape(k + "[" + strconv.Itoa(i) + "]")
+					if useRFC3986 {
+						encodedKey = strings.ReplaceAll(encodedKey, "+", "%20")
+					}
+					encodedVal := url.QueryEscape(v.Arr[subK].ToString())
+					if useRFC3986 {
+						encodedVal = strings.ReplaceAll(encodedVal, "+", "%20")
+					}
+					parts = append(parts, encodedKey+"="+encodedVal)
 				}
 			} else {
-				vals.Set(k, v.ToString())
+				encodedKey := url.QueryEscape(k)
+				if useRFC3986 {
+					encodedKey = strings.ReplaceAll(encodedKey, "+", "%20")
+				}
+				encodedVal := url.QueryEscape(v.ToString())
+				if useRFC3986 {
+					encodedVal = strings.ReplaceAll(encodedVal, "+", "%20")
+				}
+				parts = append(parts, encodedKey+"="+encodedVal)
 			}
 		}
-		return NewString(vals.Encode()), nil
+		return NewString(strings.Join(parts, "&")), nil
 	}
 	builtins["parse_url"] = func(e *Env, a []Value) (Value, error) {
 		if len(a) < 1 {

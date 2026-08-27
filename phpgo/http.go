@@ -118,10 +118,11 @@ func defaultProxy(client *http.Client) ProxyFunc {
 			return nil, err
 		}
 		return &ProxyResult{
-			Body:        string(data),
+			Body:         string(data),
 			StatusCode:  resp.StatusCode,
 			Location:    resp.Header.Get("Location"),
 			ContentType: resp.Header.Get("Content-Type"),
+			EffectiveURL: resp.Request.URL.String(),
 		}, nil
 	}
 }
@@ -362,17 +363,16 @@ func compilePHPRegex(pat string) (*regexp.Regexp, error) {
 	// 去定界符：首字符为定界符，尾字符为同一定界符，可选修饰符
 	if len(pat) >= 2 {
 		delim := pat[0]
-		if (delim == '/' || delim == '#' || delim == '~' || delim == '!') && pat[len(pat)-1] == delim {
-			// 去掉首尾定界符及修饰符（如 /.../i 的 i）
+		if delim == '/' || delim == '#' || delim == '~' || delim == '!' {
 			inner := pat[1:]
+			// 找最后一个定界符的位置（尾部可能有修饰符如 /pattern/i）
 			if i := strings.LastIndexByte(inner, delim); i >= 0 {
-				inner = inner[:i]
+				inner = inner[:i] // 只保留定界符之间的部分
 			}
 			pat = inner
 		}
 	}
 	// PCRE 修饰符 i（不区分大小写）转 Go 内联 (?i)
-	// 这里简单处理：若原串带 /i，已在上面剥离，用 (?i) 包裹
 	pat = strings.TrimPrefix(pat, "(?i)")
 	re, err := regexp.Compile("(?i)" + pat)
 	if err != nil {

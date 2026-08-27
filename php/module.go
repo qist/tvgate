@@ -1,6 +1,7 @@
 package php
 
 import (
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -91,6 +92,36 @@ func Handler() http.HandlerFunc {
 		env.SetServer("REMOTE_ADDR", r.RemoteAddr)
 		env.SetServer("SCRIPT_NAME", r.URL.Path)
 		env.SetServer("QUERY_STRING", r.URL.RawQuery)
+		env.SetServer("REQUEST_URI", r.URL.RequestURI())
+		// HTTP headers → $_SERVER（PHP 风格：HTTP_ 前缀 + 大写 + 下划线）
+		for k, vs := range r.Header {
+			// 跳过 Content-Type/Content-Length（PHP 单独处理）
+			lk := strings.ToLower(k)
+			if lk == "content-type" || lk == "content-length" {
+				continue
+			}
+			// HTTP_HOST, HTTP_USER_AGENT, HTTP_X_FORWARDED_PROTO 等
+			phpKey := "HTTP_" + strings.ToUpper(strings.ReplaceAll(k, "-", "_"))
+			env.SetServer(phpKey, vs[0])
+		}
+		// SERVER_NAME 和 SERVER_PORT
+		host := r.Host
+		serverName := host
+		serverPort := "80"
+		if h, p, err := net.SplitHostPort(host); err == nil {
+			serverName = h
+			serverPort = p
+		}
+		if serverPort == "80" && r.TLS != nil {
+			serverPort = "443"
+		}
+		env.SetServer("HTTP_HOST", host)
+		env.SetServer("SERVER_NAME", serverName)
+		env.SetServer("SERVER_PORT", serverPort)
+		env.SetServer("SERVER_PROTOCOL", r.Proto)
+		if r.TLS != nil {
+			env.SetServer("HTTPS", "on")
+		}
 		body := ""
 		if r.Body != nil {
 			buf := make([]byte, 0, 4096)

@@ -153,6 +153,23 @@ type PostIncStmt struct {
 	IsDec bool // true 为 --
 }
 
+// TryStmt try { ... } catch (Exception $e) { ... } finally { ... }
+type TryStmt struct {
+	Body     []Stmt
+	Catches  []CatchClause
+	Finally  []Stmt
+}
+
+// CatchClause catch (Type $var) { ... }
+type CatchClause struct {
+	Types []string // 异常类名列表（如 RuntimeException, Throwable）
+	Var   string   // 异常变量名（不含 $）
+	Body  []Stmt
+}
+
+// ThrowStmt throw expr;
+type ThrowStmt struct{ E Expr }
+
 // ---------------------------------------------------------------------------
 // 表达式
 // ---------------------------------------------------------------------------
@@ -280,3 +297,9 @@ type MagicConstExpr struct{ Name string }
 
 // ConstExpr 未定义常量引用（运行时查 e.consts，找不到则当字符串名）
 type ConstExpr struct{ Name string }
+
+// NewExpr new ClassName(args...)
+type NewExpr struct {
+	Class string
+	Args []Expr
+}

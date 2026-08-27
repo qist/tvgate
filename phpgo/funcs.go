@@ -170,6 +170,10 @@ func init() {
 		return NewNull(), nil
 	}
 	builtins["http_response_code"] = func(e *Env, a []Value) (Value, error) {
+		if len(a) >= 1 {
+			e.statusCode = int(a[0].ToInt())
+			e.statusCodeSet = true
+		}
 		return NewInt(200), nil
 	}
 	// curl 系列
@@ -482,9 +486,15 @@ func (e *Env) curlExec(h Value) (Value, error) {
 		}
 		if to, ok := h.Arr["CURLOPT_TIMEOUT"]; ok {
 			opts.Timeout = int(to.ToInt())
+			if opts.Timeout < 1 {
+				opts.Timeout = 1 // 最小1秒
+			}
 		}
 		if ct, ok := h.Arr["CURLOPT_CONNECTTIMEOUT"]; ok {
-			_ = ct // 简化：用同一 timeout
+			ctv := int(ct.ToInt())
+			if ctv > opts.Timeout {
+				opts.Timeout = ctv
+			}
 		}
 		if ua, ok := h.Arr["CURLOPT_USERAGENT"]; ok {
 			opts.UserAgent = ua.ToString()
@@ -499,6 +509,10 @@ func (e *Env) curlExec(h Value) (Value, error) {
 		}
 		method := "GET"
 		if _, ok := h.Arr["CURLOPT_POST"]; ok {
+			method = "POST"
+		}
+		// CURLOPT_POSTFIELDS 有值时自动转为 POST（对齐 PHP curl 行为）
+		if pd, ok := h.Arr["CURLOPT_POSTFIELDS"]; ok && pd.ToString() != "" {
 			method = "POST"
 		}
 		// CURLOPT_CUSTOMREQUEST
@@ -524,7 +538,12 @@ func (e *Env) curlExec(h Value) (Value, error) {
 			httpCode = result.StatusCode
 		}
 		h.ArraySet(NewString("__http_code"), NewInt(int64(httpCode)))
-		h.ArraySet(NewString("__effective_url"), NewString(finalURL))
+		// effective_url：优先使用跟随重定向后的最终 URL
+		effURL := finalURL
+		if result.EffectiveURL != "" {
+			effURL = result.EffectiveURL
+		}
+		h.ArraySet(NewString("__effective_url"), NewString(effURL))
 		h.ArraySet(NewString("__content_type"), NewString(result.ContentType))
 		h.ArraySet(NewString("__redirect_url"), NewString(result.Location))
 		h.ArraySet(NewString("__response"), NewString(result.Body))

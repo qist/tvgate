@@ -296,6 +296,20 @@ func (p *Parser) parseStmt() (Stmt, error) {
 		return p.parseListAssign()
 	case p.at(tConst):
 		return p.parseConstStmt()
+	case p.atVal("unset"):
+		return p.parseUnset()
+	case p.at(tDeclare):
+		return p.parseDeclare()
+	case p.at(tTry):
+		return p.parseTry()
+	case p.at(tThrow):
+		p.adv()
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		p.skipSemis()
+		return &ThrowStmt{E: e}, nil
 	}
 	// @ 错误抑制
 	if p.atVal("@") {
@@ -325,7 +339,7 @@ func (p *Parser) parseStmt() (Stmt, error) {
 
 func isExprStart(t Tok) bool {
 	switch t.Kind {
-	case tVar, tIdent, tInt, tFloat, tDoubleStr, tSingleStr, tConstTrue, tConstFalse, tConstNull, tArray, tLBracket, tLParen, tBang, tMinus, tStringCast, tIntCast, tFloatCast, tBoolCast, tArrayCast, tFunc, tConst:
+	case tVar, tIdent, tInt, tFloat, tDoubleStr, tSingleStr, tConstTrue, tConstFalse, tConstNull, tArray, tLBracket, tLParen, tBang, tMinus, tStringCast, tIntCast, tFloatCast, tBoolCast, tArrayCast, tFunc, tConst, tNew, tThrow:
 		return true
 	}
 	return false
@@ -1189,6 +1203,8 @@ func (p *Parser) parsePrimary() (Expr, error) {
 	case tFunc:
 		// 闭包 function($a) use($b) { ... }
 		return p.parseClosure()
+	case tNew:
+		return p.parseNew()
 	}
 	return nil, fmt.Errorf("parse: 无法解析的表达式 at %d (%q)", t.Pos, t.Val)
 }
@@ -1478,4 +1494,140 @@ func unescapeStr(s string, double bool) string {
 		}
 	}
 	return b.String()
+}
+
+// parseDeclare 解析 declare(strict_types=1); 语句（直接跳过）
+func (p *Parser) parseDeclare() (Stmt, error) {
+	p.adv() // declare
+	if _, err := p.expect(tLParen); err != nil {
+		return nil, err
+	}
+	// 跳过 declare 内的所有内容直到 )
+	for !p.at(tRParen) && !p.at(tEOF) {
+		p.adv()
+	}
+	p.expect(tRParen)
+	p.skipSemis()
+	// declare 可带 block: declare(...) { ... } 或不带 block: declare(...);
+	if p.at(tLBrace) {
+		p.adv()
+		for !p.at(tRBrace) && !p.at(tEOF) {
+			p.skipSemis()
+			if p.at(tRBrace) {
+				break
+			}
+			p.parseStmt()
+		}
+		p.expect(tRBrace)
+	}
+	return nil, nil
+}
+
+// parseTry 解析 try { ... } catch (Type $e) { ... } finally { ... }
+func (p *Parser) parseTry() (Stmt, error) {
+	p.adv() // try
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	var catches []CatchClause
+	for p.at(tCatch) {
+		p.adv() // catch
+		if _, err := p.expect(tLParen); err != nil {
+			return nil, err
+		}
+		var types []string
+		// 第一个类型
+		typ := ""
+		if p.at(tIdent) {
+			typ = p.adv().Val
+		}
+		// 可能是命名空间前缀 \NS\Class
+		for p.atVal("\\") {
+			p.adv()
+			if p.at(tIdent) {
+				typ += "\\" + p.adv().Val
+			}
+		}
+		types = append(types, typ)
+		// 多个类型用 | 分隔：catch (ExceptionA | ExceptionB $e)
+		for p.at(tPipe) {
+			p.adv()
+			typ2 := ""
+			if p.at(tIdent) {
+				typ2 = p.adv().Val
+			}
+			for p.atVal("\\") {
+				p.adv()
+				if p.at(tIdent) {
+					typ2 += "\\" + p.adv().Val
+				}
+			}
+			types = append(types, typ2)
+		}
+		var varName string
+		if p.at(tVar) {
+			varName = p.adv().Val[1:]
+		}
+		p.expect(tRParen)
+		catchBody, err := p.parseBlock()
+		if err != nil {
+			return nil, err
+		}
+		catches = append(catches, CatchClause{Types: types, Var: varName, Body: catchBody})
+	}
+	var finally []Stmt
+	if p.at(tFinally) {
+		p.adv()
+		finally, err = p.parseBlock()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &TryStmt{Body: body, Catches: catches, Finally: finally}, nil
+}
+
+// parseNew 解析 new ClassName(args...)
+func (p *Parser) parseNew() (Expr, error) {
+	p.adv() // new
+	// 类名
+	className := ""
+	if p.at(tIdent) {
+		className = p.adv().Val
+	}
+	for p.atVal("\\") {
+		p.adv()
+		if p.at(tIdent) {
+			className += "\\" + p.adv().Val
+		}
+	}
+	var args []Expr
+	if p.at(tLParen) {
+		args, _ = p.parseArgs()
+	}
+	return &NewExpr{Class: className, Args: args}, nil
+}
+
+// parseUnset 解析 unset($var) / unset($arr[$key]) 语句
+func (p *Parser) parseUnset() (Stmt, error) {
+	p.adv() // unset
+	if _, err := p.expect(tLParen); err != nil {
+		return nil, err
+	}
+	var args []Expr
+	for !p.at(tRParen) && !p.at(tEOF) {
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, e)
+		if p.at(tComma) {
+			p.adv()
+			continue
+		}
+		break
+	}
+	p.expect(tRParen)
+	p.skipSemis()
+	return &UnsetStmt{Args: args}, nil
 }

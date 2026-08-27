@@ -13,10 +13,11 @@ type ProxyFunc func(method, url string, opts *CurlOptions) (*ProxyResult, error)
 
 // ProxyResult 是 proxy 请求的结果
 type ProxyResult struct {
-	Body        string
-	StatusCode  int
+	Body         string
+	StatusCode   int
 	Location    string // 重定向 URL（如果有）
 	ContentType string
+	EffectiveURL string // 最终 URL（跟随重定向后）
 }
 
 // CurlOptions 对应 PHP curl_setopt 的关键选项
@@ -157,6 +158,9 @@ func defaultPHPConsts() map[string]Value {
 	c["SORT_REGULAR"] = NewInt(0)
 	c["SORT_NUMERIC"] = NewInt(1)
 	c["SORT_STRING"] = NewInt(2)
+	// PHP_QUERY
+	c["PHP_QUERY_RFC1738"] = NewInt(1)
+	c["PHP_QUERY_RFC3986"] = NewInt(2)
 	// STR_PAD
 	c["STR_PAD_LEFT"] = NewInt(0)
 	c["STR_PAD_RIGHT"] = NewInt(1)
@@ -333,6 +337,7 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 				delete(e.vars, a.Name)
 				delete(e.globals, a.Name)
 			case *IndexExpr:
+				// 先获取数组变量名，获取引用，unset 后写回
 				base, err := e.evalExpr(a.Arr)
 				if err != nil || base.Kind != KindArray {
 					continue
@@ -342,6 +347,11 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 					continue
 				}
 				base.ArrayUnset(kv)
+				// 写回根变量（$arr[$key] unset 后需更新 $arr）
+				if v, ok := a.Arr.(*VarExpr); ok {
+					e.vars[v.Name] = base
+					e.globals[v.Name] = base
+				}
 			}
 		}
 		return execResult{}, nil
@@ -478,6 +488,20 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 		e.vars[s.Name] = nv
 		e.globals[s.Name] = nv
 		return execResult{val: old}, nil
+	case *TryStmt:
+		return e.execTry(s)
+	case *ThrowStmt:
+		v, err := e.evalExpr(s.E)
+		if err != nil {
+			return execResult{}, err
+		}
+		// 如果是 new Exception/RuntimeException 的结果，提取 message 和 class
+		if v.Kind == KindArray {
+			msgVal := v.ArrayGet(NewString("message"))
+			classVal := v.ArrayGet(NewString("class"))
+			return execResult{}, &PHPException{Msg: msgVal.ToString(), Class: classVal.ToString()}
+		}
+		return execResult{}, &PHPException{Msg: v.ToString(), Class: "RuntimeException"}
 	}
 	return execResult{}, nil
 }
@@ -845,7 +869,21 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 	case *FuncCall:
 		return e.callFunc(n.Name, n.Args)
 	case *MethodCall:
-		// 不实现对象方法调用，返回 null 不报错
+		// 支持异常对象方法调用：$e->getMessage(), $e->getCode() 等
+		recv, err := e.evalExpr(n.Receiver)
+		if err != nil {
+			return recv, err
+		}
+		if recv.Kind == KindArray {
+			switch n.Method {
+			case "getMessage":
+				return recv.ArrayGet(NewString("message")), nil
+			case "getCode":
+				return NewInt(0), nil
+			case "getLine", "getFile", "getTraceAsString", "getPrevious":
+				return NewString(""), nil
+			}
+		}
 		return NewNull(), nil
 	case *StaticCall:
 		// Class::method() 暂不实现对象系统
@@ -963,6 +1001,22 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 		}
 		// 找不到则当字符串名（PHP 行为）
 		return NewString(n.Name), nil
+	case *NewExpr:
+		// new Exception/RuntimeException/Throwable
+		// 取第一个参数作为 message
+		var msg string
+		if len(n.Args) > 0 {
+			v, err := e.evalExpr(n.Args[0])
+			if err != nil {
+				return v, err
+			}
+			msg = v.ToString()
+		}
+		// 返回一个关联数组模拟异常对象
+		excVar := NewArray()
+		excVar.ArraySet(NewString("message"), NewString(msg))
+		excVar.ArraySet(NewString("class"), NewString(n.Class))
+		return excVar, nil
 	}
 	return NewNull(), fmt.Errorf("runtime: 未知表达式节点 %T", x)
 }
@@ -1317,4 +1371,89 @@ func NewMapValue(m map[string]Value) Value {
 		v.ArraySet(NewString(k), m[k])
 	}
 	return v
+}
+
+// PHPException 表示 PHP 异常（try-catch 中抛出和捕获）
+type PHPException struct {
+	Msg   string
+	Class string // 异常类名（RuntimeException, Exception, Throwable 等）
+}
+
+func (e *PHPException) Error() string { return e.Msg }
+
+// execTry 执行 try-catch-finally
+func (e *Env) execTry(s *TryStmt) (execResult, error) {
+	// 执行 try body
+	r, err := e.execBlock(s.Body)
+	if err != nil {
+		// 检查是否是 PHPException
+		if exc, ok := err.(*PHPException); ok {
+			// 尝试匹配 catch
+			for _, c := range s.Catches {
+				if matchException(exc, c.Types) {
+					// 设置异常变量
+					excVar := NewArray()
+					excVar.ArraySet(NewString("message"), NewString(exc.Msg))
+					excVar.ArraySet(NewString("class"), NewString(exc.Class))
+					if c.Var != "" {
+						e.vars[c.Var] = excVar
+						e.globals[c.Var] = excVar
+					}
+					// 执行 catch body
+					cr, cerr := e.execBlock(c.Body)
+					if cerr != nil {
+						// catch body 中又 throw 了
+						return cr, cerr
+					}
+					// 执行 finally
+					if s.Finally != nil {
+						fr, ferr := e.execBlock(s.Finally)
+						if ferr != nil {
+							return fr, ferr
+						}
+						if fr.flow != cfNormal {
+							return fr, nil
+						}
+					}
+					return cr, nil
+				}
+			}
+			// 没有匹配的 catch，执行 finally 后重新抛出
+			if s.Finally != nil {
+				e.execBlock(s.Finally)
+			}
+			return execResult{}, err
+		}
+		// 非异常错误，直接返回
+		return r, err
+	}
+	// try body 正常完成，执行 finally
+	if s.Finally != nil {
+		fr, ferr := e.execBlock(s.Finally)
+		if ferr != nil {
+			return fr, ferr
+		}
+		if fr.flow != cfNormal {
+			return fr, nil
+		}
+	}
+	return r, nil
+}
+
+// matchException 检查异常是否匹配 catch 的类型列表
+func matchException(exc *PHPException, types []string) bool {
+	if len(types) == 0 {
+		return true // 无类型限制，匹配所有
+	}
+	for _, t := range types {
+		// Throwable 匹配所有异常
+		if t == "Throwable" || t == "Exception" || t == "\\Throwable" || t == "\\Exception" {
+			return true
+		}
+		// 精确匹配类名
+		if t == exc.Class || t == "\\"+exc.Class {
+			return true
+		}
+	}
+	return false
 }

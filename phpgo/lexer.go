@@ -94,6 +94,13 @@ const (
 	tList
 	tPrint
 	tConst
+	tDeclare
+	tTry
+	tCatch
+	tThrow
+	tFinally
+	tNew
+	tClass
 	tConstTrue
 	tConstFalse
 	tConstNull
@@ -271,9 +278,23 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 				toks = append(toks, Tok{tList, word, start})
 			case "print":
 				toks = append(toks, Tok{tPrint, word, start})
-			case "const":
-				toks = append(toks, Tok{tConst, word, start})
-			default:
+		case "const":
+			toks = append(toks, Tok{tConst, word, start})
+		case "declare":
+			toks = append(toks, Tok{tDeclare, word, start})
+		case "try":
+			toks = append(toks, Tok{tTry, word, start})
+		case "catch":
+			toks = append(toks, Tok{tCatch, word, start})
+		case "throw":
+			toks = append(toks, Tok{tThrow, word, start})
+		case "finally":
+			toks = append(toks, Tok{tFinally, word, start})
+		case "new":
+			toks = append(toks, Tok{tNew, word, start})
+		case "class":
+			toks = append(toks, Tok{tClass, word, start})
+		default:
 				toks = append(toks, Tok{tIdent, word, start})
 			}
 		case unicode.IsDigit(rune(c)) || (c == '.' && unicode.IsDigit(rune(l.peekAt(1)))):
