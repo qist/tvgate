@@ -54,7 +54,7 @@
 <div class="topbar">
   <h1>🗂 备份文件中心</h1>
   <span class="theme-btn" id="themeBtn">🌙 深色</span>
-  <a href="{{.webPath}}">← 返回管理后台</a>
+  <a href="{{.webPath}}code">← 返回代码编辑</a>
 </div>
 <div class="container">
   <div class="toolbar">
@@ -156,7 +156,10 @@ async function restoreOne(path) {
   if (!confirm("确定回滚此备份？当前文件会被覆盖（会自动产生新备份）。")) return;
   setStatus("正在回滚...", "warn");
   const res = await api("api/backup/restore?path=" + encodeURIComponent(path), {method:"POST"});
-  if (res.status === "success") { setStatus("✅ " + res.message, "ok"); loadList(); }
+  if (res.status === "success") {
+    setStatus("✅ " + res.message + ' · <a href="' + webPath + 'code" style="color:var(--win11-accent);">点击返回代码编辑查看 →</a>', "ok");
+    loadList();
+  }
   else setStatus("回滚失败：" + (res.message||""), "err");
 }
 
