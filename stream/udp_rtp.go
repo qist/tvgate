@@ -886,10 +886,10 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	// 获取客户端列表和全局FCC状态（读锁即可，快照）
 	fccEnabled := h.fccEnabled.Load()
 
-	// 预先获取 addrList 用于后续FCC处理（AddrList 由主锁保护）
+	// 预先获取 addrList 用于后续FCC处理（AddrList 构造后不可变，直接引用避免每包拷贝）
 	var addrList []string
 	if fccEnabled {
-		addrList = append([]string(nil), h.AddrList...)
+		addrList = h.AddrList
 	}
 
 	// 从 sync.Pool 获取客户端切片，避免每包 make([])
