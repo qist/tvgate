@@ -544,6 +544,9 @@
         <label><input type="checkbox" id="matchRegex"> 正则</label>
         <span id="findCount"></span>
       </div>
+      <div style="font-size:11px;color:var(--win11-text-tertiary);padding-bottom:2px;">
+        Enter=下一个&nbsp; Shift+Enter=上一个&nbsp; Ctrl+F/Cmd+F=查找&nbsp; Ctrl+H=替换&nbsp; Esc=关闭
+      </div>
       <div class="row" style="flex-wrap:wrap;">
         <button class="cancel" id="btnFindClose">关闭</button>
         <button class="cancel" id="btnFindPrev">↑ 上一个</button>
@@ -1104,8 +1107,9 @@
     }
     function getFindParams() { return { needle: document.getElementById('findText').value, caseFold: !document.getElementById('matchCase').checked, isRegex: document.getElementById('matchRegex').checked }; }
     function showFindModal(replaceFocus) {
+      // 有选中文本则优先带入（替换刚选中的内容）；无选中则保留上次查询记忆
       const sel = editor.getSelection();
-      if (sel && !document.getElementById('findText').value && sel.length < 200) document.getElementById('findText').value = sel;
+      if (sel) document.getElementById('findText').value = sel;
       document.getElementById('modalFindRep').classList.add('show');
       const el = document.getElementById(replaceFocus ? 'replaceText' : 'findText');
       el.focus(); el.select();
@@ -1171,8 +1175,8 @@
     document.getElementById('replaceText').addEventListener('input', updateFindCount);
     document.getElementById('matchCase').addEventListener('change', updateFindCount);
     document.getElementById('matchRegex').addEventListener('change', updateFindCount);
-    document.getElementById('findText').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? findPrevModal() : findNextModal(); } });
-    document.getElementById('replaceText').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); replaceOneModal(); } });
+    document.getElementById('findText').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? findPrevModal() : findNextModal(); } if (e.key === 'Escape') document.getElementById('modalFindRep').classList.remove('show'); });
+    document.getElementById('replaceText').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); replaceOneModal(); } if (e.key === 'Escape') document.getElementById('modalFindRep').classList.remove('show'); });
     document.getElementById("btnRename").onclick = () => {
       if (!currentPath) { setStatus("请先打开要重命名的文件", "warn"); return; }
       renameTarget = currentPath;
