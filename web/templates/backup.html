@@ -126,16 +126,25 @@ async function loadList() {
   }
   for (const it of allItems) {
     const tr = document.createElement("tr");
+    const safeName = it.name.replace(/'/g, "\\'");
     tr.innerHTML = `
-      <td><input type="checkbox" class="cb item-cb" data-path="${it.name}"></td>
-      <td><span style="color:var(--win11-accent);">📄</span> ${it.original}</td>
+      <td><input type="checkbox" class="cb item-cb"></td>
+      <td><span style="color:var(--win11-accent);">📄</span> </td>
       <td>${it.time}</td>
       <td>${fmtSize(it.size)}</td>
       <td><div class="btn-row">
-        <button class="btn-restore" onclick="restoreOne('${it.name}')">⤴ 回滚</button>
-        <button class="btn-download" onclick="downloadOne('${it.name}')">⬇ 下载</button>
-        <button class="btn-del" onclick="deleteOne('${it.name}')">🗑 删除</button>
+        <button class="btn-restore">⤴ 回滚</button>
+        <button class="btn-download">⬇ 下载</button>
+        <button class="btn-del">🗑 删除</button>
       </div></td>`;
+    // 设置 checkbox 和按钮的 data 和事件（避免文件名含特殊字符导致 HTML 注入）
+    const cb = tr.querySelector(".item-cb");
+    cb.dataset.path = it.name;
+    tr.querySelector(".btn-restore").onclick = () => restoreOne(it.name);
+    tr.querySelector(".btn-download").onclick = () => downloadOne(it.name);
+    tr.querySelector(".btn-del").onclick = () => deleteOne(it.name);
+    // 设置原始文件名文本
+    tr.querySelectorAll("td")[1].appendChild(document.createTextNode(it.original));
     tbody.appendChild(tr);
   }
   setStatus(`已加载 ${allItems.length} 个备份文件`, "ok");

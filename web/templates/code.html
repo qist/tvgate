@@ -303,7 +303,8 @@ function renderBreadcrumb() {
     let acc = "";
     for (let i = 0; i < parts.length; i++) {
       acc = acc ? acc + "/" + parts[i] : parts[i];
-      html += `<span class="sep">/</span><span data-dir="${acc}">${parts[i]}</span>`;
+      let display = parts[i];
+      html += `<span class="sep">/</span><span data-dir="${acc}">${display}</span>`;
     }
   }
   html += `<span class="sep">/</span>`;
@@ -342,16 +343,16 @@ function renderFileList(items) {
     const div = document.createElement("div");
     const extCls = fileExtClass(it.name, it.isDir);
     div.className = "file-item" + (it.isDir ? " dir" : "") + (extCls ? " " + extCls : "");
-    if (!it.isDir && (currentDir ? currentDir + "/" + (it.raw_name||it.name) : (it.raw_name||it.name)) === currentPath) div.classList.add("active");
-    if (it.isDir && selectedDir === (currentDir ? currentDir + "/" + (it.raw_name||it.name) : (it.raw_name||it.name))) div.classList.add("ext-sel");
+    const fName = it.name;
+    if (!it.isDir && (currentDir ? currentDir + "/" + fName : fName) === currentPath) div.classList.add("active");
+    if (it.isDir && selectedDir === (currentDir ? currentDir + "/" + fName : fName)) div.classList.add("ext-sel");
     div.innerHTML = `<span class="icon">${it.isDir ? "📁" : fileIcon(it.name)}</span><span class="name">${it.name}</span>${it.size !== undefined ? `<span class="size">${fmtSize(it.size)}</span>` : ""}`;
 
-    const rawName = it.raw_name || it.name;
     if (it.isDir) {
-      div.ondblclick = () => { currentDir = currentDir ? currentDir + "/" + rawName : rawName; selectedDir = ''; loadList(); };
+      div.ondblclick = () => { currentDir = currentDir ? currentDir + "/" + fName : fName; selectedDir = ''; loadList(); };
       div.onclick = (e) => {
         // 选中目录（高亮），双击进入
-        selectedDir = currentDir ? currentDir + "/" + rawName : rawName;
+        selectedDir = currentDir ? currentDir + "/" + fName : fName;
         const btnDelDir = document.getElementById("btnDeleteDir");
         btnDelDir.style.display = "";
         btnDelDir.textContent = "🗑 删除目录";
@@ -359,20 +360,20 @@ function renderFileList(items) {
         setStatus("已选中目录：" + it.name + "（双击进入，或点删除目录按钮）", "warn");
       };
     } else {
-      const fullPath = currentDir ? currentDir + "/" + rawName : rawName;
+      const fullPath = currentDir ? currentDir + "/" + fName : fName;
       const isZip = it.name.toLowerCase().endsWith(".zip");
       div.onclick = () => {
         if (isZip) {
           // 选中 zip 文件，显示解压按钮
           currentPath = fullPath;
-          document.getElementById("curPath").textContent = fullPath;
+          document.getElementById("curPath").textContent = it.name;
           editor.setValue("");
           document.getElementById("btnUnzip").style.display = "";
           selectedDir = '';
           loadList();
-          setStatus("已选中 ZIP：" + fullPath + "，点击「解压」按钮解压到当前目录（覆盖模式）", "warn");
+          setStatus("已选中 ZIP：" + it.name + "，点击「解压」按钮解压到当前目录（覆盖模式）", "warn");
         } else {
-          openFile(fullPath);
+          openFile(fullPath, it.name);
         }
       };
     }
@@ -413,7 +414,9 @@ document.getElementById("btnUp").onclick = () => {
 };
 
 // ========== 打开文件 ==========
-async function openFile(path) {
+// path: 编码后的路径（用于 API 调用）
+// displayName: 可选的显示名称（用于编辑器栏和状态栏）
+async function openFile(path, displayName) {
   // 打开非 zip 文件时隐藏解压按钮
   document.getElementById("btnUnzip").style.display = "none";
   selectedDir = '';
@@ -425,10 +428,11 @@ async function openFile(path) {
       currentPath = path;
       editor.setValue(res.content);
       editor.setCursor({line: 0, ch: 0});
-      setEditorMode(path);
-      document.getElementById("curPath").textContent = path;
-      setStatus("已加载：" + path, "ok");
-      // 切换到文件所在目录
+      setEditorMode(displayName || path);
+      const showName = displayName || path;
+      document.getElementById("curPath").textContent = showName;
+      setStatus("已加载：" + showName, "ok");
+      // 切换到文件所在目录（用编码路径）
       const idx = path.lastIndexOf("/");
       if (idx >= 0) { currentDir = path.substring(0, idx); } else { currentDir = ""; }
       loadList();

@@ -51,7 +51,7 @@ func (h *ConfigHandler) handleBackupList(w http.ResponseWriter, r *http.Request)
 	dir := r.URL.Query().Get("dir")
 	targetDir := root
 	if dir != "" {
-		abs, err := h.safeJoin(root, dir)
+		abs, err := h.resolvePath(root, dir)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -82,11 +82,13 @@ func (h *ConfigHandler) handleBackupList(w http.ResponseWriter, r *http.Request)
 			timeStr = t.Format("2006-01-02 15:04:05")
 		}
 
-		// 相对路径
+		// 相对路径（转换为 UTF-8 显示）
 		rel, _ := filepath.Rel(root, p)
+		relUTF8 := filepath.ToSlash(decodeFilename(rel))
+		origUTF8 := decodeFilename(original)
 		items = append(items, backupItem{
-			Name:     filepath.ToSlash(rel),
-			Original: original,
+			Name:     relUTF8,
+			Original: origUTF8,
 			Time:     timeStr,
 			Size:     info.Size(),
 		})
@@ -117,7 +119,7 @@ func (h *ConfigHandler) handleBackupRestore(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
 		return
 	}
-	bakAbs, err := h.safeJoin(root, bakPath)
+	bakAbs, err := h.resolvePath(root, bakPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -151,7 +153,7 @@ func (h *ConfigHandler) handleBackupRestore(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":  "success",
-		"message": "已回滚：" + originalName,
+		"message": "已回滚：" + decodeFilename(originalName),
 	})
 }
 
@@ -167,7 +169,7 @@ func (h *ConfigHandler) handleBackupDelete(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
 		return
 	}
-	bakAbs, err := h.safeJoin(root, bakPath)
+	bakAbs, err := h.resolvePath(root, bakPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -208,7 +210,7 @@ func (h *ConfigHandler) handleBackupBatchDelete(w http.ResponseWriter, r *http.R
 	deleted := 0
 	failed := 0
 	for _, p := range req.Paths {
-		bakAbs, err := h.safeJoin(root, p)
+		bakAbs, err := h.resolvePath(root, p)
 		if err != nil {
 			failed++
 			continue
@@ -248,7 +250,7 @@ func (h *ConfigHandler) handleBackupDownload(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
 		return
 	}
-	bakAbs, err := h.safeJoin(root, bakPath)
+	bakAbs, err := h.resolvePath(root, bakPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -262,7 +264,7 @@ func (h *ConfigHandler) handleBackupDownload(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "读取失败: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	name := filepath.Base(bakAbs)
+	name := decodeFilename(filepath.Base(bakAbs))
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Write(data)
@@ -287,13 +289,15 @@ func (h *ConfigHandler) handleBackupCleanup(w http.ResponseWriter, r *http.Reque
 	// 收集所有备份文件
 	var allBackups []string
 	scanDir := root
+	var origOnDisk string // 磁盘上的原始文件名（可能是 GBK）
 	if req.Path != "" {
-		abs, err := h.safeJoin(root, req.Path)
+		abs, err := h.resolvePath(root, req.Path)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		scanDir = filepath.Dir(abs)
+		origOnDisk = filepath.Base(abs)
 	}
 
 	filepath.Walk(scanDir, func(p string, info os.FileInfo, err error) error {
@@ -305,8 +309,10 @@ func (h *ConfigHandler) handleBackupCleanup(w http.ResponseWriter, r *http.Reque
 		}
 		// 如果指定了文件，只处理该文件的备份
 		if req.Path != "" {
-			origName := filepath.Base(req.Path)
-			if !strings.HasPrefix(filepath.Base(p), origName+".bak.") {
+			origUTF8 := filepath.Base(req.Path)
+			bp := filepath.Base(p)
+			if !strings.HasPrefix(bp, origOnDisk+".bak.") &&
+				!strings.HasPrefix(bp, origUTF8+".bak.") {
 				return nil
 			}
 		}

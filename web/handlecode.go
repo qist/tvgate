@@ -107,7 +107,7 @@ func (h *ConfigHandler) handleCodeList(w http.ResponseWriter, r *http.Request) {
 	subDir := r.URL.Query().Get("dir")
 	targetDir := root
 	if subDir != "" {
-		abs, err := h.safeJoin(root, subDir)
+		abs, err := h.resolvePath(root, subDir)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -142,10 +142,9 @@ func (h *ConfigHandler) handleCodeList(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		items = append(items, map[string]interface{}{
-			"name":     displayName,
-			"raw_name": name, // 原始文件名（用于实际文件操作）
-			"isDir":    e.IsDir(),
-			"size":     fi.Size(),
+			"name":  displayName,
+			"isDir": e.IsDir(),
+			"size":  fi.Size(),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -159,7 +158,7 @@ func (h *ConfigHandler) handleCodeRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	root := h.codeRoot()
-	abs, err := h.safeJoin(root, r.URL.Query().Get("path"))
+	abs, err := h.resolvePath(root, r.URL.Query().Get("path"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -192,7 +191,7 @@ func (h *ConfigHandler) handleCodeSave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
 		return
 	}
-	abs, err := h.safeJoin(root, rel)
+	abs, err := h.resolvePath(root, rel)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -235,7 +234,7 @@ func (h *ConfigHandler) handleCodeNew(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
 		return
 	}
-	abs, err := h.safeJoin(root, rel)
+	abs, err := h.resolvePath(root, rel)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -272,7 +271,7 @@ func (h *ConfigHandler) handleCodeDelete(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
 		return
 	}
-	abs, err := h.safeJoin(root, rel)
+	abs, err := h.resolvePath(root, rel)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -305,7 +304,7 @@ func (h *ConfigHandler) handleCodeUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	dir := r.FormValue("dir")
-	absDir, err := h.safeJoin(root, dir)
+	absDir, err := h.resolvePath(root, dir)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -402,7 +401,7 @@ func (h *ConfigHandler) handleCodeDownload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	root := h.codeRoot()
-	abs, err := h.safeJoin(root, r.URL.Query().Get("path"))
+	abs, err := h.resolvePath(root, r.URL.Query().Get("path"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -439,7 +438,7 @@ func (h *ConfigHandler) handleCodeUnzip(w http.ResponseWriter, r *http.Request) 
 	// 模式1：通过 path 参数指定磁盘上已有的 zip 文件
 	zipParam := r.URL.Query().Get("path")
 	if zipParam != "" {
-		zipAbs, err := h.safeJoin(root, zipParam)
+		zipAbs, err := h.resolvePath(root, zipParam)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -452,7 +451,7 @@ func (h *ConfigHandler) handleCodeUnzip(w http.ResponseWriter, r *http.Request) 
 		dir := r.URL.Query().Get("dir")
 		var absDir string
 		if dir != "" {
-			absDir, err = h.safeJoin(root, dir)
+			absDir, err = h.resolvePath(root, dir)
 		} else {
 			absDir = filepath.Dir(zipAbs)
 		}
@@ -489,7 +488,7 @@ func (h *ConfigHandler) handleCodeUnzip(w http.ResponseWriter, r *http.Request) 
 	}
 	dir := r.FormValue("dir")
 	flatten := r.FormValue("flatten") == "true"
-	absDir, err := h.safeJoin(root, dir)
+	absDir, err := h.resolvePath(root, dir)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -609,7 +608,7 @@ func (h *ConfigHandler) handleCodeCheck(w http.ResponseWriter, r *http.Request) 
 	var src string
 	if r.URL.Query().Get("path") != "" {
 		root := h.codeRoot()
-		abs, err := h.safeJoin(root, r.URL.Query().Get("path"))
+		abs, err := h.resolvePath(root, r.URL.Query().Get("path"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -752,26 +751,132 @@ func simplePHPCheck(src string) []phpIssue {
 }
 
 // decodeFilename 尝试将文件名从 GBK 转为 UTF-8。
-// 如果文件名已经是合法 UTF-8，原样返回；否则尝试 GBK→UTF-8 转换。
+// 某些 GBK 字节序列恰好也是合法 UTF-8（但会被解码成希腊/亚美尼亚等字符，
+// 而非中文），所以不能仅靠 utf8.ValidString 判断。
+// 策略：如果有非 ASCII 字节，先尝试 GBK→UTF-8，如果结果含 CJK 字符就优先用；
+// 如果 GBK 解码失败，再看原始是否合法 UTF-8。
 func decodeFilename(name string) string {
-	// 如果已经是合法 UTF-8，直接返回
+	// 全 ASCII 直接返回
+	isAllASCII := true
+	for _, r := range name {
+		if r > 127 {
+			isAllASCII = false
+			break
+		}
+	}
+	if isAllASCII {
+		return name
+	}
+
+	// 有非 ASCII 字节，先尝试 GBK 解码
+	decoder := simplifiedchinese.GBK.NewDecoder()
+	if gbkUTF8, err := decoder.String(name); err == nil && utf8.ValidString(gbkUTF8) {
+		if containsCJK(gbkUTF8) {
+			return gbkUTF8
+		}
+	}
+
+	// GBK 失败或不含 CJK，尝试 GB18030
+	gb18030Decoder := simplifiedchinese.GB18030.NewDecoder()
+	if gb18030UTF8, err := gb18030Decoder.String(name); err == nil && utf8.ValidString(gb18030UTF8) {
+		if containsCJK(gb18030UTF8) {
+			return gb18030UTF8
+		}
+	}
+
+	// 如果 GBK/GB18030 解码结果不含 CJK，但原始是合法 UTF-8，用原始
 	if utf8.ValidString(name) {
 		return name
 	}
-	// 尝试 GBK → UTF-8
-	decoder := simplifiedchinese.GBK.NewDecoder()
-	utf8Name, err := decoder.String(name)
-	if err == nil && utf8.ValidString(utf8Name) {
-		return utf8Name
+
+	// 最后兜底：返回 GBK 解码结果（即使不含 CJK）
+	if gbkUTF8, err := decoder.String(name); err == nil {
+		return gbkUTF8
 	}
-	// GBK 转换失败，尝试 GB18030（更广泛的中文字符集）
-	gb18030Decoder := simplifiedchinese.GB18030.NewDecoder()
-	utf8Name, err = gb18030Decoder.String(name)
-	if err == nil {
-		return utf8Name
+	if gb18030UTF8, err := gb18030Decoder.String(name); err == nil {
+		return gb18030UTF8
 	}
-	// 都失败了，返回原始名称
+
 	return name
+}
+
+// containsCJK 检查字符串是否包含 CJK 统一汉字（U+4E00~U+9FFF）
+func containsCJK(s string) bool {
+	for _, r := range s {
+		if r >= 0x4E00 && r <= 0x9FFF {
+			return true
+		}
+	}
+	return false
+}
+
+// encodeFilenameToGBK 尝试将 UTF-8 文件名转回 GBK 字节序列（磁盘上的原始字节）。
+// 如果文件名是纯 ASCII 或转换失败，返回原文。
+func encodeFilenameToGBK(name string) string {
+	if utf8.ValidString(name) {
+		// 如果全是 ASCII，不需要转换
+		isASCII := true
+		for _, r := range name {
+			if r > 127 {
+				isASCII = false
+				break
+			}
+		}
+		if isASCII {
+			return name
+		}
+		// 尝试 UTF-8 → GBK
+		encoder := simplifiedchinese.GBK.NewEncoder()
+		gbkName, err := encoder.String(name)
+		if err == nil {
+			return gbkName
+		}
+		// GBK 失败，尝试 GB18030
+		gb18030Encoder := simplifiedchinese.GB18030.NewEncoder()
+		gbkName, err = gb18030Encoder.String(name)
+		if err == nil {
+			return gbkName
+		}
+	}
+	return name
+}
+
+// resolvePath 将 UTF-8 相对路径解析为磁盘绝对路径。
+// 先尝试直接拼接（UTF-8 文件名），如果文件不存在则尝试 GBK 转换。
+// 这样前端始终用 UTF-8 文件名，后端自动处理编码匹配。
+func (h *ConfigHandler) resolvePath(root, relPath string) (string, error) {
+	if relPath == "" {
+		return root, nil
+	}
+	// 安全检查
+	rel := strings.TrimPrefix(filepath.Clean(relPath), string(filepath.Separator))
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("非法路径")
+	}
+	abs := filepath.Join(root, rel)
+	// 检查是否在 root 内
+	if abs != root && !strings.HasPrefix(abs, root+string(filepath.Separator)) {
+		return "", fmt.Errorf("非法路径")
+	}
+	// 如果直接路径存在，返回
+	if _, err := os.Stat(abs); err == nil {
+		return abs, nil
+	}
+	// 文件不存在，尝试将每段路径从 UTF-8 转为 GBK 再拼接
+	parts := strings.Split(rel, "/")
+	var gbkParts []string
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		gbkParts = append(gbkParts, encodeFilenameToGBK(p))
+	}
+	gbkAbs := filepath.Join(root, filepath.Join(gbkParts...))
+	if _, err := os.Stat(gbkAbs); err == nil {
+		return gbkAbs, nil
+	}
+	// 两种方式都不存在，返回原始路径（让后续报错）
+	return abs, nil
 }
 
 // timestamp 生成备份时间戳
