@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"os"
@@ -14,41 +15,19 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-	"html/template"
 
 	"github.com/qist/tvgate/config"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
-// codeRoot 返回 PHP 脚本根目录（docroot），已为绝对路径
+// codeRoot 返回 PHP 脚本根目录（docroot）。
+// 配置加载阶段已保证 DocRoot 非空且为绝对路径（相对路径会以配置文件目录为基准拼接），
+// 故这里直接返回，不再设置旧的绝对 /www 兜底，避免与默认相对路径不一致。
 func (h *ConfigHandler) codeRoot() string {
 	config.CfgMu.RLock()
 	root := config.Cfg.PHP.DocRoot
 	config.CfgMu.RUnlock()
-	if root == "" {
-		root = "/www"
-	}
 	return root
-}
-
-// safeJoin 将相对路径安全拼接进 root，严格防目录穿越（.. 逃逸 + 绝对路径逃逸）
-func (h *ConfigHandler) safeJoin(root, rel string) (string, error) {
-	// 1) 先规范化 rel 并去掉前导分隔符，使其成为纯相对路径（避免 Join 时第二个参数
-	//    被当作绝对路径而丢弃 root，导致逃逸）
-	rel = strings.TrimPrefix(filepath.Clean(rel), string(filepath.Separator))
-	// 2) Clean 后若仍以 ".." 开头，说明意图逃逸到 root 上层，直接拒绝
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("非法路径：禁止穿越 docroot（%s）", rel)
-	}
-	abs := filepath.Join(root, rel)
-	// 3) 必须落在 root 内（含 root 自身）
-	if abs == root {
-		return abs, nil
-	}
-	if !strings.HasPrefix(abs, root+string(filepath.Separator)) {
-		return "", fmt.Errorf("非法路径：禁止穿越 docroot（%s）", abs)
-	}
-	return abs, nil
 }
 
 // assertInside 对路径做完整符号链接解析，确保真实文件仍落在 root 内
@@ -62,7 +41,14 @@ func (h *ConfigHandler) assertInside(root, abs string) error {
 		}
 		return fmt.Errorf("无法解析路径：%v", err)
 	}
-	if real != root && !strings.HasPrefix(real, root+string(filepath.Separator)) {
+	// 归一化 root 的符号链接：Android 等系统上 docroot 路径本身可能含
+	// 符号链接（如 /data/user/0 -> /data/data），EvalSymlinks(abs) 会把它
+	// 解析成真实路径，若仍用未解析的 root 做前缀比较会误判为越权。
+	resolvedRoot := root
+	if rr, err := filepath.EvalSymlinks(root); err == nil {
+		resolvedRoot = rr
+	}
+	if real != resolvedRoot && !strings.HasPrefix(real, resolvedRoot+string(filepath.Separator)) {
 		return fmt.Errorf("非法路径：符号链接指向 docroot 之外（%s）", real)
 	}
 	return nil
@@ -425,8 +411,9 @@ func (h *ConfigHandler) handleCodeDownload(w http.ResponseWriter, r *http.Reques
 
 // handleCodeUnzip 解压 ZIP 文件到指定目录（覆盖模式）。
 // 支持两种模式：
-//   1. 手动解压：POST ?path=xxx.zip&dir=目标目录（磁盘上已有 zip 文件）
-//   2. 上传解压：POST multipart file=xxx.zip&dir=目标目录
+//  1. 手动解压：POST ?path=xxx.zip&dir=目标目录（磁盘上已有 zip 文件）
+//  2. 上传解压：POST multipart file=xxx.zip&dir=目标目录
+//
 // 可选 flatten=true 展平子目录。
 func (h *ConfigHandler) handleCodeUnzip(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -521,20 +508,20 @@ func (h *ConfigHandler) handleCodeUnzip(w http.ResponseWriter, r *http.Request) 
 		}
 		src, e := fh.Open()
 		if e != nil {
-			results = append(results, result{Name: name, Error: "打开失败: "+e.Error()})
+			results = append(results, result{Name: name, Error: "打开失败: " + e.Error()})
 			totalErrors++
 			continue
 		}
 		buf, e := io.ReadAll(io.LimitReader(src, 64<<20))
 		src.Close()
 		if e != nil {
-			results = append(results, result{Name: name, Error: "读取失败: "+e.Error()})
+			results = append(results, result{Name: name, Error: "读取失败: " + e.Error()})
 			totalErrors++
 			continue
 		}
 		zipReader, e := zip.NewReader(bytes.NewReader(buf), int64(len(buf)))
 		if e != nil {
-			results = append(results, result{Name: name, Error: "解析 zip 失败: "+e.Error()})
+			results = append(results, result{Name: name, Error: "解析 zip 失败: " + e.Error()})
 			totalErrors++
 			continue
 		}
@@ -567,14 +554,14 @@ func (h *ConfigHandler) handleCodeUnzip(w http.ResponseWriter, r *http.Request) 
 			}
 			out, e := os.Create(dstPath)
 			if e != nil {
-				results = append(results, result{Name: name, Path: fname, Error: "创建文件失败: "+e.Error()})
+				results = append(results, result{Name: name, Path: fname, Error: "创建文件失败: " + e.Error()})
 				totalErrors++
 				continue
 			}
 			rc, e := zf.Open()
 			if e != nil {
 				out.Close()
-				results = append(results, result{Name: name, Path: fname, Error: "打开 zip 条目失败: "+e.Error()})
+				results = append(results, result{Name: name, Path: fname, Error: "打开 zip 条目失败: " + e.Error()})
 				totalErrors++
 				continue
 			}
@@ -582,7 +569,7 @@ func (h *ConfigHandler) handleCodeUnzip(w http.ResponseWriter, r *http.Request) 
 			rc.Close()
 			out.Close()
 			if e != nil {
-				results = append(results, result{Name: name, Path: fname, Error: "写入失败: "+e.Error()})
+				results = append(results, result{Name: name, Path: fname, Error: "写入失败: " + e.Error()})
 				totalErrors++
 				continue
 			}

@@ -315,6 +315,10 @@ php:
 > ```
 > 例如 Termux 中配置在 `~/tvgate/config.yaml`、脚本在 `~/tvgate/www/`，即可正常访问（默认配置即满足，无需再改）。
 >
+> **两个注意点（安卓建议遵循）**：
+> - **启动时用绝对路径传 `-config`**：安卓进程 cwd 不可靠（常为 `/`），若用相对 `-config config.yaml` 启动，相对 docroot 会以 cwd 为基准，解析不可控。建议 `tvgate -config /data/data/com.termux/files/home/tvgate/config.yaml`（或 shell 会先展开 `~/tvgate/config.yaml`）。
+> - **支持 `~` / `~/` 家目录写法**：`docroot` 也支持 `~/www`、`~` 等写法，程序会自动展开为用户家目录，无需手动拼接绝对路径。
+>
 > 不依赖任何 PHP 扩展（如 `iconv` / `session` / `xml` 等），常见字符串、数组、日期、curl、文件、加解密等内置函数均以 Go 原生实现。
 
 ### 访问方式

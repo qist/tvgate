@@ -21,24 +21,24 @@ func init() {
 	// 这样 jar/txt/js/json/xml/md/py/html/htm/jpg/jpeg/png/m3u 等静态文件
 	// 浏览器会根据类型在线打开或下载。
 	for ext, ct := range map[string]string{
-		".m3u":  "audio/mpegurl",
-		".m3u8": "application/vnd.apple.mpegurl",
-		".ts":   "video/mp2t",
-		".key":  "application/octet-stream",
-		".crt":  "application/x-x509-ca-cert",
-		".pem":  "application/x-pem-file",
-		".jar":  "application/java-archive",
-		".py":   "text/x-python; charset=utf-8",
-		".md":   "text/markdown; charset=utf-8",
-		".log":  "text/plain; charset=utf-8",
-		".csv":  "text/csv; charset=utf-8",
-		".svg":  "image/svg+xml",
-		".webp": "image/webp",
-		".ico":  "image/x-icon",
-		".woff": "font/woff",
+		".m3u":   "audio/mpegurl",
+		".m3u8":  "application/vnd.apple.mpegurl",
+		".ts":    "video/mp2t",
+		".key":   "application/octet-stream",
+		".crt":   "application/x-x509-ca-cert",
+		".pem":   "application/x-pem-file",
+		".jar":   "application/java-archive",
+		".py":    "text/x-python; charset=utf-8",
+		".md":    "text/markdown; charset=utf-8",
+		".log":   "text/plain; charset=utf-8",
+		".csv":   "text/csv; charset=utf-8",
+		".svg":   "image/svg+xml",
+		".webp":  "image/webp",
+		".ico":   "image/x-icon",
+		".woff":  "font/woff",
 		".woff2": "font/woff2",
-		".ttf":  "font/ttf",
-		".wasm": "application/wasm",
+		".ttf":   "font/ttf",
+		".wasm":  "application/wasm",
 	} {
 		_ = mime.AddExtensionType(ext, ct)
 	}
@@ -48,6 +48,9 @@ var (
 	cfg     *config.PHPConfig
 	client  *http.Client
 	docRoot string
+	// resolvedDocRoot 是 docRoot 解析符号链接后的真实绝对路径，用于防 symlink 逃逸。
+	// Android 下 docRoot 本身可能含 symlink（如 /data/user/0 -> /data/data）。
+	resolvedDocRoot string
 )
 
 // Init 初始化纯 Go PHP 模块。
@@ -63,6 +66,11 @@ func Init(c *config.Config) error {
 	if docRoot == "" {
 		// 兜底与配置默认一致：相对路径（相对配置文件所在目录）
 		docRoot = "www"
+	}
+	// 预解析 docRoot 的真实路径，避免每次请求重复 EvalSymlinks
+	resolvedDocRoot = docRoot
+	if rr, err := filepath.EvalSymlinks(docRoot); err == nil {
+		resolvedDocRoot = rr
 	}
 	return nil
 }
@@ -108,8 +116,21 @@ func Handler() http.HandlerFunc {
 		rel := strings.Trim(p, "/")
 		// rel 为空时访问 docroot 根目录（后面由目录逻辑处理 index 查找）
 		scriptPath := filepath.Join(docRoot, rel)
-		// 防穿越
-		if !strings.HasPrefix(scriptPath, docRoot) {
+		// 防目录穿越：必须是 docRoot 本身或其子路径（边界判断，避免同前缀兄弟目录误放行）
+		if scriptPath != docRoot && !strings.HasPrefix(scriptPath, docRoot+string(filepath.Separator)) {
+			w.WriteHeader(http.StatusForbidden)
+			logger.LogPHPRequest(r, rel, http.StatusForbidden, 0)
+			return
+		}
+		// 防符号链接逃逸：真实路径必须仍落在 docRoot 内
+		// （www 内若存在指向外部的 symlink，可被读取/执行，必须拒绝）
+		if real, err := filepath.EvalSymlinks(scriptPath); err == nil {
+			if real != resolvedDocRoot && !strings.HasPrefix(real, resolvedDocRoot+string(filepath.Separator)) {
+				w.WriteHeader(http.StatusForbidden)
+				logger.LogPHPRequest(r, rel, http.StatusForbidden, 0)
+				return
+			}
+		} else if !os.IsNotExist(err) {
 			w.WriteHeader(http.StatusForbidden)
 			logger.LogPHPRequest(r, rel, http.StatusForbidden, 0)
 			return
@@ -224,18 +245,18 @@ func Handler() http.HandlerFunc {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		if err := phpgo.ServePHP(env, rec, src); err != nil {
 			// 错误已在 ServePHP 写入响应
+			logger.LogPHPRequest(r, rel, rec.status, rec.bytesSent)
+			return
+		}
 		logger.LogPHPRequest(r, rel, rec.status, rec.bytesSent)
-		return
-	}
-	logger.LogPHPRequest(r, rel, rec.status, rec.bytesSent)
 	}
 }
 
 // statusRecorder 包装 http.ResponseWriter，记录最终写入的状态码和响应大小。
 type statusRecorder struct {
 	http.ResponseWriter
-	status   int
-	wrote    bool
+	status    int
+	wrote     bool
 	bytesSent int64
 }
 

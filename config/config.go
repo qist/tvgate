@@ -5,7 +5,9 @@ import (
 	_ "embed"
 	"errors"
 	"flag"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -123,12 +125,12 @@ type TSConfig struct {
 
 // PHPConfig 表示纯 Go phpgo runtime 的配置
 type PHPConfig struct {
-	Enabled     bool     `yaml:"enabled"`      // 是否启用 PHP 模块
-	Path        string   `yaml:"path"`         // 访问路径前缀，如 /php/（缺省 /php/）
-	DocRoot     string   `yaml:"docroot"`      // PHP 脚本根目录，如 /www
-	Index       []string `yaml:"index"`        // 目录索引文件列表，如 [index.php, index.html]
-	WorkerMode  bool     `yaml:"worker_mode"`  // 是否启用 Worker 常驻模式
-	Workers     int      `yaml:"workers"`      // Worker 进程数（worker_mode 为 true 时生效）
+	Enabled    bool     `yaml:"enabled"`     // 是否启用 PHP 模块
+	Path       string   `yaml:"path"`        // 访问路径前缀，如 /php/（缺省 /php/）
+	DocRoot    string   `yaml:"docroot"`     // PHP 脚本根目录，如 /www
+	Index      []string `yaml:"index"`       // 目录索引文件列表，如 [index.php, index.html]
+	WorkerMode bool     `yaml:"worker_mode"` // 是否启用 Worker 常驻模式
+	Workers    int      `yaml:"workers"`     // Worker 进程数（worker_mode 为 true 时生效）
 }
 
 // PublisherConfig represents the publisher configuration structure
@@ -511,10 +513,12 @@ func (c *Config) SetDefaults() {
 	if c.PHP.DocRoot == "" {
 		c.PHP.DocRoot = "www" // 默认相对路径（相对配置文件所在目录）
 	}
+	// 支持 ~ / ~/ 家目录写法（安卓 Termux、移动端用户常用，cwd 不可靠）
+	c.PHP.DocRoot = expandHome(c.PHP.DocRoot)
 	if !filepath.IsAbs(c.PHP.DocRoot) {
 		// 相对路径：基准为配置文件所在目录（而非进程 cwd），跨平台一致
 		if *ConfigFilePath != "" {
-			c.PHP.DocRoot = filepath.Join(filepath.Dir(*ConfigFilePath), c.PHP.DocRoot)
+			c.PHP.DocRoot = filepath.Join(filepath.Dir(expandHome(*ConfigFilePath)), c.PHP.DocRoot)
 		}
 	}
 	if len(c.PHP.Index) == 0 {
@@ -533,3 +537,20 @@ func InitStartTime() {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// expandHome 将 ~ 或 ~/ (~\\) 展开为用户家目录。
+// 安卓 Termux、移动端环境进程 cwd 不可靠，用户常用 ~ 写路径。
+func expandHome(p string) string {
+	if p == "~" {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			return home
+		}
+		return p
+	}
+	if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "~\\") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			return filepath.Join(home, p[2:])
+		}
+	}
+	return p
+}
