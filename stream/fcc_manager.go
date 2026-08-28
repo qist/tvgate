@@ -17,8 +17,7 @@ Channel Manager
 */
 
 type ChannelManager struct {
-	mu        sync.RWMutex
-	channels  map[string]*MulticastChannel
+	channels  sync.Map // map[string]*MulticastChannel，读路径无锁，避免 FCC 热路径每包抢全局 RWMutex
 	cacheSize int
 
 	sessionTTL time.Duration
@@ -31,7 +30,7 @@ type ChannelManager struct {
 // NewChannelManager 创建新的频道管理器
 func NewChannelManager() *ChannelManager {
 	return &ChannelManager{
-		channels:    make(map[string]*MulticastChannel),
+		channels:    sync.Map{},
 		cacheSize:   0, // 延迟从配置读取
 		sessionTTL:  10 * time.Second,
 		stopCleaner: make(chan struct{}),
@@ -56,31 +55,22 @@ func (cm *ChannelManager) getCacheSize() int {
 var GlobalChannelManager = NewChannelManager()
 
 func (cm *ChannelManager) Get(channel string) *MulticastChannel {
-	cm.mu.RLock()
-	ch := cm.channels[channel]
-	cm.mu.RUnlock()
-	return ch
+	v, ok := cm.channels.Load(channel)
+	if !ok {
+		return nil
+	}
+	return v.(*MulticastChannel)
 }
 
 func (cm *ChannelManager) GetOrCreate(channel string) *MulticastChannel {
-	cm.mu.RLock()
-	ch := cm.channels[channel]
-	cm.mu.RUnlock()
-
-	if ch != nil {
-		return ch
+	if v, ok := cm.channels.Load(channel); ok {
+		return v.(*MulticastChannel)
 	}
-
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-
-	if ch = cm.channels[channel]; ch == nil {
-		ch = NewMulticastChannel(channel, cm.getCacheSize())
-		cm.channels[channel] = ch
-		logger.LogPrintf("[FCC] 创建频道 channel=%s", channel)
-
+	actual, _ := cm.channels.LoadOrStore(channel, NewMulticastChannel(channel, cm.getCacheSize()))
+	if v, ok := actual.(*MulticastChannel); ok {
+		return v
 	}
-	return ch
+	return nil
 }
 
 func (cm *ChannelManager) StartCleaner() {
@@ -115,17 +105,17 @@ func (cm *ChannelManager) Stop() {
 func (cm *ChannelManager) cleanup() {
 	now := time.Now()
 
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	var toDelete []string
+	cm.channels.Range(func(key, value any) bool {
+		chID := key.(string)
+		ch := value.(*MulticastChannel)
 
-	for chID, ch := range cm.channels {
 		ch.mu.Lock()
 		for id, sess := range ch.Sessions {
 			if now.Sub(sess.LastActive) > cm.sessionTTL {
 				delete(ch.Sessions, id)
 				atomic.AddInt32(&ch.refCount, -1)
 				logger.LogPrintf("[FCC] 会话超时 conn=%s channel=%s", id, chID)
-
 			}
 		}
 		ch.mu.Unlock()
@@ -134,10 +124,14 @@ func (cm *ChannelManager) cleanup() {
 			if ch.Cache != nil {
 				ch.Cache.Reset()
 			}
-			delete(cm.channels, chID)
+			toDelete = append(toDelete, chID)
 			logger.LogPrintf("[FCC] 移除频道 channel=%s", chID)
-
 		}
+		return true
+	})
+
+	for _, chID := range toDelete {
+		cm.channels.Delete(chID)
 	}
 }
 
