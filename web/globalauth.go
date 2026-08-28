@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+
 	// "strings"
 	"time"
 
@@ -27,6 +28,27 @@ func (h *ConfigHandler) handleGlobalAuthEditor(w http.ResponseWriter, r *http.Re
 	}
 }
 
+// 凭据掩码占位符：GET 返回给前端时用该值替代真实密钥/token，save 收到该值时保留原始配置，
+// 避免凭据明文经 API 回显泄露。
+const credentialMask = "********"
+
+// maskCredential 返回掩码占位符（仅在已配置时）
+func maskCredential(v string) string {
+	if v == "" {
+		return ""
+	}
+	return credentialMask
+}
+
+// resolveCredential 解析保存的凭据：若提交值为掩码占位符，则保留原始配置值（不覆盖不回显）；
+// 否则返回实际提交值。
+func resolveCredential(submitted, original interface{}) string {
+	if fmt.Sprintf("%v", submitted) == credentialMask {
+		return fmt.Sprintf("%v", original)
+	}
+	return fmt.Sprintf("%v", submitted)
+}
+
 // handleGlobalAuthConfig 处理全局认证配置获取请求
 func (h *ConfigHandler) handleGlobalAuthConfig(w http.ResponseWriter, r *http.Request) {
 	// 设置响应头
@@ -37,19 +59,19 @@ func (h *ConfigHandler) handleGlobalAuthConfig(w http.ResponseWriter, r *http.Re
 	globalAuth := config.Cfg.GlobalAuth
 	config.CfgMu.RUnlock()
 
-	// 转换为可JSON序列化的格式
+	// 转换为可JSON序列化的格式（密钥/token 用掩码替代真实值）
 	authConfig := map[string]interface{}{
 		"tokens_enabled":   globalAuth.TokensEnabled,
 		"token_param_name": globalAuth.TokenParamName,
 		"dynamic_tokens": map[string]interface{}{
 			"enable_dynamic": globalAuth.DynamicTokens.EnableDynamic,
 			"dynamic_ttl":    formatDuration(globalAuth.DynamicTokens.DynamicTTL),
-			"secret":         globalAuth.DynamicTokens.Secret,
-			"salt":           globalAuth.DynamicTokens.Salt,
+			"secret":         maskCredential(globalAuth.DynamicTokens.Secret),
+			"salt":           maskCredential(globalAuth.DynamicTokens.Salt),
 		},
 		"static_tokens": map[string]interface{}{
 			"enable_static": globalAuth.StaticTokens.EnableStatic,
-			"token":         globalAuth.StaticTokens.Token,
+			"token":         maskCredential(globalAuth.StaticTokens.Token),
 			"expire_hours":  formatDuration(globalAuth.StaticTokens.ExpireHours),
 		},
 	}
@@ -60,7 +82,6 @@ func (h *ConfigHandler) handleGlobalAuthConfig(w http.ResponseWriter, r *http.Re
 		return
 	}
 }
-
 
 // handleGlobalAuthConfigSave 处理全局认证配置保存请求
 func (h *ConfigHandler) handleGlobalAuthConfigSave(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +105,11 @@ func (h *ConfigHandler) handleGlobalAuthConfigSave(w http.ResponseWriter, r *htt
 		http.Error(w, "解析JSON失败: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// 读取当前配置快照，用于掩码占位符的凭据保持（不覆盖不回显）
+	config.CfgMu.RLock()
+	globalAuth := config.Cfg.GlobalAuth
+	config.CfgMu.RUnlock()
 
 	// 读取配置文件
 	configPath := *config.ConfigFilePath
@@ -153,13 +179,13 @@ func (h *ConfigHandler) handleGlobalAuthConfigSave(w http.ResponseWriter, r *htt
 							if secret, ok := dtMap["secret"]; ok && secret != "" {
 								dtNode.Content = append(dtNode.Content,
 									&yaml.Node{Kind: yaml.ScalarNode, Value: "secret"},
-									&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", secret)})
+									&yaml.Node{Kind: yaml.ScalarNode, Value: resolveCredential(secret, globalAuth.DynamicTokens.Secret)})
 							}
 
 							if salt, ok := dtMap["salt"]; ok && salt != "" {
 								dtNode.Content = append(dtNode.Content,
 									&yaml.Node{Kind: yaml.ScalarNode, Value: "salt"},
-									&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", salt)})
+									&yaml.Node{Kind: yaml.ScalarNode, Value: resolveCredential(salt, globalAuth.DynamicTokens.Salt)})
 							}
 
 							if len(dtNode.Content) > 0 {
@@ -184,7 +210,7 @@ func (h *ConfigHandler) handleGlobalAuthConfigSave(w http.ResponseWriter, r *htt
 							if token, ok := stMap["token"]; ok && token != "" {
 								stNode.Content = append(stNode.Content,
 									&yaml.Node{Kind: yaml.ScalarNode, Value: "token"},
-									&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", token)})
+									&yaml.Node{Kind: yaml.ScalarNode, Value: resolveCredential(token, globalAuth.StaticTokens.Token)})
 							}
 
 							if expireHours, ok := stMap["expire_hours"]; ok && expireHours != "" {

@@ -16,6 +16,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -114,8 +115,45 @@ func (h *ConfigHandler) cookieAuth(handler http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// CSRF 纵深防护：对会引起状态变更的非安全方法，校验来源是否同源。
+		// SameSite=Strict 已拦截跨站 Cookie，此处额外校验 Origin/Referer 作为纵深防御。
+		if !isSafeMethod(r.Method) && !h.isSameOrigin(r) {
+			http.Error(w, "CSRF 校验失败：跨站请求被拒绝", http.StatusForbidden)
+			return
+		}
+
 		handler(w, r)
 	}
+}
+
+// isSafeMethod 返回该方法是否不会引起状态变更（无需 CSRF 校验）
+func isSafeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	default:
+		return false
+	}
+}
+
+// isSameOrigin 校验请求来源是否与当前主机同源。
+// 仅当请求带有 Origin 或 Referer 头时才校验；两者均缺失(如 curl 等非浏览器工具)时视为同源放行，
+// 避免误伤 API 客户端。若存在头且解析出 host 与请求 Host 不一致，则判定为跨站。
+func (h *ConfigHandler) isSameOrigin(r *http.Request) bool {
+	checkers := []string{r.Header.Get("Origin"), r.Header.Get("Referer")}
+	for _, raw := range checkers {
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" {
+			continue // 无法解析的来源头忽略，交由其余头或默认放行
+		}
+		// 一旦存在可解析的来源，就必须与请求 Host 匹配，否则拒绝
+		return strings.EqualFold(u.Host, r.Host)
+	}
+	// 无 Origin 也无 Referer：非浏览器场景，放行
+	return true
 }
 
 // renderTemplate 渲染指定的模板
@@ -754,6 +792,7 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 				Value:    h.generateAuthCookieValue(credentials.Username),
 				Path:     webPath,
 				HttpOnly: true,
+				Secure:   r.TLS != nil, // 仅 HTTPS 下标记 Secure，避免明文 HTTP 下丢失会话
 				SameSite: http.SameSiteStrictMode,
 				MaxAge:   2592000, // 30天
 			})
@@ -788,10 +827,12 @@ func (h *ConfigHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// log.Printf("清除认证Cookie，路径: %s", webPath)
 
 	http.SetCookie(w, &http.Cookie{
-		Name:   "tvgate_auth",
-		Value:  "",
-		Path:   webPath,
-		MaxAge: -1,
+		Name:     "tvgate_auth",
+		Value:    "",
+		Path:     webPath,
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		MaxAge:   -1,
 	})
 
 	// 重定向到登录页面
