@@ -4,10 +4,11 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	_ "time/tzdata" // 内嵌 IANA 时区库，保证精简镜像(无 /usr/share/zoneinfo)也能 LoadLocation
 )
 
-// 全局默认时区（对应 PHP 的 date_default_timezone_set / 配置 timezone）。
-// 并发请求可能各自设置时区，用互斥锁保护。
+// 全局默认时区（Env 创建时的播种值，缺省 UTC；脚本可用 date_default_timezone_set 修改）。
+// 每次请求的 Env 各自持有 loc，互不影响，故此处仅静态读默认值，用互斥锁保护。
 var (
 	phpTimeLoc   *time.Location = time.UTC
 	phpTimeLocMu sync.RWMutex
