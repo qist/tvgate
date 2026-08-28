@@ -1,6 +1,8 @@
 package phpgo
 
 import (
+	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -218,5 +220,29 @@ func init() {
 			return NewBool(false), nil
 		}
 		return NewBool(true), nil
+	}
+	// mime_content_type：检测文件 MIME 类型
+	// 优先按扩展名查 MIME 表，其次读取文件前 512 字节做内容嗅探
+	builtins["mime_content_type"] = func(e *Env, a []Value) (Value, error) {
+		if len(a) == 0 {
+			return NewString("application/octet-stream"), nil
+		}
+		path := e.ResolvePath(a[0].ToString())
+		// 1) 先按扩展名查 MIME 表（快速路径）
+		if ct := mime.TypeByExtension(filepath.Ext(path)); ct != "" {
+			return NewString(ct), nil
+		}
+		// 2) 读取文件前 512 字节做内容嗅探
+		f, err := os.Open(path)
+		if err != nil {
+			return NewString("application/octet-stream"), nil
+		}
+		buf := make([]byte, 512)
+		n, _ := f.Read(buf)
+		f.Close()
+		ct := http.DetectContentType(buf[:n])
+		// http.DetectContentType 对纯文本返回 "text/plain; charset=utf-8"
+		// 对图片/视频等二进制格式能正确识别
+		return NewString(ct), nil
 	}
 }
