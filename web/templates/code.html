@@ -60,6 +60,20 @@
   .file-item .size { font-size: 11px; opacity: 0.5; flex-shrink: 0; }
   .file-item.dir { color: var(--win11-accent); font-weight: 500; }
 
+  /* 文件类型颜色 */
+  .file-item .ext-php { color: #8856c0; }
+  .file-item .ext-html { color: #e45649; }
+  .file-item .ext-css { color: #2196f3; }
+  .file-item .ext-js { color: #f0c040; }
+  .file-item .ext-json { color: #f0c040; }
+  .file-item .ext-img { color: #4caf50; }
+  .file-item .ext-bin { color: #ff9800; }
+  .file-item .ext-txt { color: #9e9e9e; }
+  .file-item .ext-m3u { color: #ff5722; }
+  .file-item .ext-md { color: #00bcd4; }
+  .file-item .ext-py { color: #3f51b5; }
+  .file-item .ext-sel { background: rgba(0,120,212,0.25); color: var(--win11-text-primary); }
+
   /* 右侧编辑区 */
   .content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .editor-bar { padding: 8px 14px; background: var(--win11-surface); border-bottom: 1px solid var(--win11-border); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -122,6 +136,9 @@
       <button id="btnUp" title="返回上级目录">⬆ 上级</button>
       <button id="btnRefresh" title="刷新">🔄 刷新</button>
     </div>
+    <div style="padding:4px 10px;border-bottom:1px solid var(--win11-border);">
+      <input id="searchInput" placeholder="🔍 搜索当前目录文件…" style="width:100%;padding:5px 8px;border:1px solid var(--win11-border);border-radius:5px;background:var(--win11-card);color:var(--win11-text-primary);font-size:12px;">
+    </div>
     <div class="filelist" id="filelist"></div>
   </div>
   <div class="content">
@@ -131,6 +148,7 @@
       <button class="sec" id="btnCheck">语法检测</button>
       <button class="sec" id="btnDownload">下载</button>
       <button class="danger" id="btnDelete">删除</button>
+      <button class="sec" id="btnDeleteDir" style="display:none">🗑 删除目录</button>
     </div>
     <div class="editor-container">
       <textarea id="editor" placeholder="选择左侧文件进行编辑，或新建文件后在此输入代码…" spellcheck="false"></textarea>
@@ -256,6 +274,26 @@ function fmtSize(n) {
   return (n/1048576).toFixed(1) + " MB";
 }
 
+// 根据扩展名返回 CSS 类名
+function fileExtClass(name, isDir) {
+  if (isDir) return '';
+  const ext = (name || '').toLowerCase().split('.').pop();
+  const imgExts = ['jpg','jpeg','png','gif','bmp','webp','svg','ico'];
+  const binExts = ['zip','jar','apk','exe','dll','so','bin','dat','db','sqlite','key','pem','crt'];
+  const txtExts = ['txt','log','conf','ini','env','ts'];
+  if (ext === 'php' || ext === 'php3' || ext === 'php4' || ext === 'phtml' || ext === 'inc') return 'ext-php';
+  if (ext === 'html' || ext === 'htm') return 'ext-html';
+  if (ext === 'css') return 'ext-css';
+  if (ext === 'js' || ext === 'json') return 'ext-js';
+  if (imgExts.includes(ext)) return 'ext-img';
+  if (binExts.includes(ext)) return 'ext-bin';
+  if (ext === 'm3u' || ext === 'm3u8') return 'ext-m3u';
+  if (ext === 'md') return 'ext-md';
+  if (ext === 'py') return 'ext-py';
+  if (txtExts.includes(ext)) return 'ext-txt';
+  return '';
+}
+
 // ========== 面包屑导航 ==========
 function renderBreadcrumb() {
   const bc = document.getElementById("breadcrumb");
@@ -271,9 +309,13 @@ function renderBreadcrumb() {
   html += `<span class="sep">/</span>`;
   bc.innerHTML = html;
   bc.querySelectorAll("span[data-dir]").forEach(el => {
-    el.onclick = () => { currentDir = el.getAttribute("data-dir"); loadList(); };
+    el.onclick = () => { currentDir = el.getAttribute("data-dir"); selectedDir = ''; document.getElementById("btnDeleteDir").style.display = "none"; loadList(); };
   });
 }
+
+// 所有文件列表（用于搜索）
+let allItems = [];
+let selectedDir = ''; // 选中的目录（用于删除）
 
 // ========== 文件列表（目录浏览模式） ==========
 async function loadList() {
@@ -283,22 +325,41 @@ async function loadList() {
   list.innerHTML = "";
   if (res.status !== "success") { setStatus("加载失败：" + (res.message||""), "err"); return; }
 
-  const items = (res.items||[]).slice().sort((a,b) => {
+  allItems = (res.items||[]).slice().sort((a,b) => {
     if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
     return a.name > b.name ? 1 : -1;
   });
+  // 检查搜索框是否已有内容
+  const searchVal = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
+  const filtered = searchVal ? allItems.filter(it => it.name.toLowerCase().includes(searchVal)) : allItems;
+  renderFileList(filtered);
+}
 
+function renderFileList(items) {
+  const list = document.getElementById("filelist");
+  list.innerHTML = "";
   for (const it of items) {
     const div = document.createElement("div");
-    div.className = "file-item" + (it.isDir ? " dir" : "");
-    if (!it.isDir && (currentDir ? currentDir + "/" + it.name : it.name) === currentPath) div.classList.add("active");
-    div.innerHTML = `<span class="icon">${it.isDir ? "📁" : "📄"}</span><span class="name">${it.name}</span>${it.size !== undefined ? `<span class="size">${fmtSize(it.size)}</span>` : ""}`;
+    const extCls = fileExtClass(it.name, it.isDir);
+    div.className = "file-item" + (it.isDir ? " dir" : "") + (extCls ? " " + extCls : "");
+    if (!it.isDir && (currentDir ? currentDir + "/" + (it.raw_name||it.name) : (it.raw_name||it.name)) === currentPath) div.classList.add("active");
+    if (it.isDir && selectedDir === (currentDir ? currentDir + "/" + (it.raw_name||it.name) : (it.raw_name||it.name))) div.classList.add("ext-sel");
+    div.innerHTML = `<span class="icon">${it.isDir ? "📁" : fileIcon(it.name)}</span><span class="name">${it.name}</span>${it.size !== undefined ? `<span class="size">${fmtSize(it.size)}</span>` : ""}`;
 
+    const rawName = it.raw_name || it.name;
     if (it.isDir) {
-      div.ondblclick = () => { currentDir = currentDir ? currentDir + "/" + it.name : it.name; loadList(); };
-      div.onclick = () => { currentDir = currentDir ? currentDir + "/" + it.name : it.name; loadList(); };
+      div.ondblclick = () => { currentDir = currentDir ? currentDir + "/" + rawName : rawName; selectedDir = ''; loadList(); };
+      div.onclick = (e) => {
+        // 选中目录（高亮），双击进入
+        selectedDir = currentDir ? currentDir + "/" + rawName : rawName;
+        const btnDelDir = document.getElementById("btnDeleteDir");
+        btnDelDir.style.display = "";
+        btnDelDir.textContent = "🗑 删除目录";
+        renderFileList(items);
+        setStatus("已选中目录：" + it.name + "（双击进入，或点删除目录按钮）", "warn");
+      };
     } else {
-      const fullPath = currentDir ? currentDir + "/" + it.name : it.name;
+      const fullPath = currentDir ? currentDir + "/" + rawName : rawName;
       const isZip = it.name.toLowerCase().endsWith(".zip");
       div.onclick = () => {
         if (isZip) {
@@ -306,9 +367,8 @@ async function loadList() {
           currentPath = fullPath;
           document.getElementById("curPath").textContent = fullPath;
           editor.setValue("");
-          const btnUnzip = document.getElementById("btnUnzip");
-          btnUnzip.style.display = "";
-          // 更新激活状态
+          document.getElementById("btnUnzip").style.display = "";
+          selectedDir = '';
           loadList();
           setStatus("已选中 ZIP：" + fullPath + "，点击「解压」按钮解压到当前目录（覆盖模式）", "warn");
         } else {
@@ -319,8 +379,27 @@ async function loadList() {
     list.appendChild(div);
   }
   if (items.length === 0) {
-    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--win11-text-tertiary);font-size:13px;">空目录</div>';
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--win11-text-tertiary);font-size:13px;">空目录或无匹配文件</div>';
   }
+}
+
+// 文件图标
+function fileIcon(name) {
+  const ext = (name || '').toLowerCase().split('.').pop();
+  const imgExts = ['jpg','jpeg','png','gif','bmp','webp','svg','ico'];
+  const binExts = ['zip','jar','apk','exe','dll','so','bin'];
+  if (ext === 'php') return '🐘';
+  if (ext === 'html' || ext === 'htm') return '🌐';
+  if (ext === 'css') return '🎨';
+  if (ext === 'js') return '📜';
+  if (ext === 'json') return '📋';
+  if (imgExts.includes(ext)) return '🖼️';
+  if (binExts.includes(ext)) return '📦';
+  if (ext === 'm3u' || ext === 'm3u8') return '📺';
+  if (ext === 'md') return '📝';
+  if (ext === 'py') return '🐍';
+  if (ext === 'sql') return '🗄️';
+  return '📄';
 }
 
 // ========== 上级目录 ==========
@@ -328,6 +407,8 @@ document.getElementById("btnUp").onclick = () => {
   if (!currentDir) return;
   const idx = currentDir.lastIndexOf("/");
   currentDir = idx >= 0 ? currentDir.substring(0, idx) : "";
+  selectedDir = '';
+  document.getElementById("btnDeleteDir").style.display = "none";
   loadList();
 };
 
@@ -335,6 +416,8 @@ document.getElementById("btnUp").onclick = () => {
 async function openFile(path) {
   // 打开非 zip 文件时隐藏解压按钮
   document.getElementById("btnUnzip").style.display = "none";
+  selectedDir = '';
+  document.getElementById("btnDeleteDir").style.display = "none";
   const r = await fetch(webPath + "api/code/read?path=" + encodeURIComponent(path), {cache: "no-store"});
   if (r.ok) {
     const res = await r.json();
@@ -553,6 +636,33 @@ document.getElementById("btnUnzip").onclick = async () => {
   }
   btn.textContent = orig;
   btn.disabled = false;
+};
+
+// ========== 删除目录 ==========
+document.getElementById("btnDeleteDir").onclick = async () => {
+  if (!selectedDir) { setStatus("请先点击选中一个目录", "warn"); return; }
+  if (!confirm("确定删除目录 " + selectedDir + " 及其所有内容？此操作不可恢复！")) return;
+  const res = await api("api/code/delete?path=" + encodeURIComponent(selectedDir), {method:"POST"});
+  if (res.status === "success") {
+    setStatus("✅ 已删除目录：" + selectedDir, "ok");
+    selectedDir = '';
+    document.getElementById("btnDeleteDir").style.display = "none";
+    loadList();
+  } else {
+    setStatus("删除目录失败：" + (res.message||""), "err");
+  }
+};
+
+// ========== 文件搜索 ==========
+let searchTimer = null;
+document.getElementById("searchInput").oninput = () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    const val = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+    if (!val) { renderFileList(allItems); return; }
+    const filtered = allItems.filter(it => it.name.toLowerCase().includes(val));
+    renderFileList(filtered);
+  }, 150);
 };
 
 // ========== 初始化 ==========

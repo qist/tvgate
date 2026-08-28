@@ -252,13 +252,28 @@ func fileExists(p string) bool {
 
 // isPHPScript 判断文件是否应由 phpgo 解释执行。
 // 标准 PHP 扩展名（.php/.php3/.php4/.phtml/.inc）视为 PHP；
+// 已知的二进制/静态文件扩展名（jar/ico/png/jpg/zip 等）永远不按 PHP 处理；
 // 其它扩展名若内容含 PHP 开始标签（<?php / <?= / <?）也按 PHP 处理；
 // 否则视为静态文件，直接以文件流返回。
 func isPHPScript(path, src string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
+	ext := strings.ToLower(filepath.Ext(path))
+	// 标准 PHP 扩展名
+	switch ext {
 	case ".php", ".php3", ".php4", ".phtml", ".inc":
 		return true
 	}
+	// 已知的二进制/静态文件扩展名：即使内容碰巧包含 PHP 标签字节也不当 PHP 处理
+	switch ext {
+	case ".jar", ".zip", ".apk", ".exe", ".dll", ".so", ".bin", ".dat",
+		".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico",
+		".mp3", ".mp4", ".avi", ".mkv", ".flv", ".wav", ".flac",
+		".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+		".ttf", ".woff", ".woff2", ".otf", ".eot", ".wasm",
+		".db", ".sqlite", ".key", ".pem", ".crt", ".cer", ".p12",
+		".ts", ".m4s", ".mpd":
+		return false
+	}
+	// 检查内容是否含 PHP 开始标签
 	return strings.Contains(src, "<?php") || strings.Contains(src, "<?=") || strings.Contains(src, "<?")
 }
 

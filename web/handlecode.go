@@ -13,9 +13,11 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"html/template"
 
 	"github.com/qist/tvgate/config"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // codeRoot 返回 PHP 脚本根目录（docroot），已为绝对路径
@@ -133,14 +135,17 @@ func (h *ConfigHandler) handleCodeList(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(name, ".") || strings.Contains(name, ".bak.") {
 			continue
 		}
+		// 尝试将非 UTF-8 文件名（如 GBK）转换为 UTF-8
+		displayName := decodeFilename(name)
 		fi, err := e.Info()
 		if err != nil {
 			continue
 		}
 		items = append(items, map[string]interface{}{
-			"name":  name,
-			"isDir": e.IsDir(),
-			"size":  fi.Size(),
+			"name":     displayName,
+			"raw_name": name, // 原始文件名（用于实际文件操作）
+			"isDir":    e.IsDir(),
+			"size":     fi.Size(),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -412,7 +417,9 @@ func (h *ConfigHandler) handleCodeDownload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	name := filepath.Base(abs)
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	// 尝试将文件名转为 UTF-8 用于 Content-Disposition
+	displayName := decodeFilename(name)
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+displayName+"\"; filename*=UTF-8''"+displayName)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Write(data)
 }
@@ -742,6 +749,29 @@ func simplePHPCheck(src string) []phpIssue {
 	}
 
 	return issues
+}
+
+// decodeFilename 尝试将文件名从 GBK 转为 UTF-8。
+// 如果文件名已经是合法 UTF-8，原样返回；否则尝试 GBK→UTF-8 转换。
+func decodeFilename(name string) string {
+	// 如果已经是合法 UTF-8，直接返回
+	if utf8.ValidString(name) {
+		return name
+	}
+	// 尝试 GBK → UTF-8
+	decoder := simplifiedchinese.GBK.NewDecoder()
+	utf8Name, err := decoder.String(name)
+	if err == nil && utf8.ValidString(utf8Name) {
+		return utf8Name
+	}
+	// GBK 转换失败，尝试 GB18030（更广泛的中文字符集）
+	gb18030Decoder := simplifiedchinese.GB18030.NewDecoder()
+	utf8Name, err = gb18030Decoder.String(name)
+	if err == nil {
+		return utf8Name
+	}
+	// 都失败了，返回原始名称
+	return name
 }
 
 // timestamp 生成备份时间戳
