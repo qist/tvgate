@@ -38,11 +38,11 @@ web:
 # PHP 模块（纯 Go phpgo runtime，单一静态二进制，无 CGO / 无 PHP 解释器）
 # 启用后 Go HTTP Server 可通过 path 路径解释执行 PHP 脚本
 # 支持平台: Windows / Linux / macOS / Android / 无需 PHP-FPM / 运行时无 .so/.dll
-# PHP 脚本从磁盘 docroot 目录读取（默认 /www），不打包进二进制
+# PHP 脚本从磁盘 docroot 目录读取（默认相对路径 www，相对配置文件所在目录），不打包进二进制
 php:
   enabled: false          # 是否启用 PHP 模块（独立模块，可单独开关）
   path: /php/             # 访问路径前缀
-  docroot: /www            # PHP 脚本根目录（从磁盘读取）
+  docroot: www            # PHP 脚本根目录（从磁盘读取，相对配置文件所在目录）
   index:                  # 目录索引文件列表
     - index.php
     - index.html

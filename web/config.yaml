@@ -12,11 +12,11 @@ web:
   password: admin
   path: /web/ # 自定义路径
 
-# PHP 脚本从磁盘 docroot 目录读取（默认 /www），不打包进二进制
+# PHP 脚本从磁盘 docroot 目录读取（默认 www），不打包进二进制
 php:
   enabled: true          # 是否启用 PHP 模块（独立模块，可单独开关）
   path: /php/             # 访问路径前缀
-  docroot: /www            # PHP 脚本根目录（从磁盘读取）
+  docroot: www            # PHP 脚本根目录（从磁盘读取）
   index:                  # 目录索引文件列表
     - index.php
     - index.html

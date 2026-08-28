@@ -21,7 +21,7 @@ ASMFLAGS := -trimpath
 BUILD    = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) $(if $(3),GOARM=$(3) )go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
 
 # PHP 模块：纯 Go 自研 runtime（phpgo），不依赖 CGO / FrankenPHP / 外部 PHP 库。
-# 单一静态二进制，PHP 脚本从磁盘读取（默认 /www，见 config.PHP.DocRoot）。
+# 单一静态二进制，PHP 脚本从磁盘读取（默认 www，相对配置文件所在目录，见 config.PHP.DocRoot）。
 
 # ==================== Linux ====================
 

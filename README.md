@@ -294,7 +294,7 @@ Tvgate 内置一个**纯 Go 实现的 PHP 运行时（phpgo）**，无需 PHP-FP
 php:
   enabled: false          # 是否启用 PHP 模块（独立模块，可单独开关）
   path: /php/             # 访问路径前缀。对外访问 URL 为 http://<IP>:<port>/php/<脚本>
-  docroot: /www           # PHP 脚本根目录（从磁盘读取，不打包进二进制）。默认 /www；写相对路径（如 www）则相对配置文件所在目录解析
+  docroot: www            # PHP 脚本根目录（从磁盘读取，不打包进二进制）。默认相对路径 www，相对配置文件所在目录解析（安卓/移动端友好）
   index:                  # 目录索引文件列表（访问 /php/ 时按序尝试）
     - index.php
     - index.html
@@ -302,24 +302,24 @@ php:
   workers: 4              # Worker 进程数（worker_mode 为 true 时生效）
 ```
 
-> **docroot 说明**：脚本一律从 `docroot` 指定的磁盘目录读取（默认 `/www`）。部署时把 PHP 代码放到该目录即可，例如 `/www/index.php`、`/www/huya.php`。该路径可在配置中自由修改，无需重新编译。
+> **docroot 说明**：脚本一律从 `docroot` 指定的磁盘目录读取（默认相对路径 `www`，即 `<配置文件所在目录>/www`）。部署时把 PHP 代码放到该目录即可，例如 `<配置文件所在目录>/www/index.php`。该路径可在配置中自由修改，无需重新编译。
 >
 > **路径写法（跨平台）**：
 > - 绝对路径：`/www`、`C:/www`、`/data/data/com.termux/files/home/www` 直接使用。
 > - 相对路径（如 `www`、`php`）：基准为**配置文件所在目录**（不是进程 cwd），跨平台一致。例如配置在 `/etc/tvgate/config.yaml`、写 `docroot: www`，实际解析为 `/etc/tvgate/www`。
 >
-> **安卓 / 移动端部署**：安卓上 `/www` 这类绝对路径通常不存在或不可写，推荐将 `config.yaml` 与脚本目录一起放置，并改用相对路径：
+> **安卓 / 移动端部署**：安卓上 `/www` 这类绝对路径通常不存在或不可写，所以默认值就是相对路径 `www`——将 `config.yaml` 与脚本目录放在一起即可使用：
 > ```yaml
 > php:
 >   docroot: www     # 实际 = <config.yaml 所在目录>/www
 > ```
-> 例如 Termux 中配置在 `~/tvgate/config.yaml`、脚本在 `~/tvgate/www/`，即可正常访问。
+> 例如 Termux 中配置在 `~/tvgate/config.yaml`、脚本在 `~/tvgate/www/`，即可正常访问（默认配置即满足，无需再改）。
 >
 > 不依赖任何 PHP 扩展（如 `iconv` / `session` / `xml` 等），常见字符串、数组、日期、curl、文件、加解密等内置函数均以 Go 原生实现。
 
 ### 访问方式
 
-假设服务监听 `8888`，机器 IP 为 `192.168.1.10`，脚本放在 `/www/huya.php`：
+假设服务监听 `8888`，机器 IP 为 `192.168.1.10`，脚本放在默认的 `www/huya.php`（即 `<配置文件所在目录>/www/huya.php`）：
 
 - 本机：`http://127.0.0.1:8888/php/huya.php?id=11342412`
 - 局域网/外网：`http://192.168.1.10:8888/php/huya.php?id=11342412`
@@ -358,7 +358,7 @@ http://<IP>:<port>/php/huya.php?id=12345&juieieiri=tertwertw
 
 ## Web 代码文件管理（编辑/上传/下载/语法检测）
 
-Web 管理后台内置**代码文件管理器**，可直接在浏览器中对 `docroot`（默认 `/www`，即 PHP 脚本目录）下的文件进行可视化操作，无需 SSH 登录服务器。
+Web 管理后台内置**代码文件管理器**，可直接在浏览器中对 `docroot`（默认相对路径 `www`，即 PHP 脚本目录）下的文件进行可视化操作，无需 SSH 登录服务器。
 
 ### 入口
 

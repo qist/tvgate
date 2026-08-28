@@ -51,7 +51,7 @@ var (
 )
 
 // Init 初始化纯 Go PHP 模块。
-// 构建统一单二进制：从磁盘读取 cfg.PHP.DocRoot（可配置，默认 /www）脚本，
+// 构建统一单二进制：从磁盘读取 cfg.PHP.DocRoot（可配置，默认 www，相对配置文件所在目录）脚本，
 // 由 phpgo 解释器执行。复用 TVGate 的 HTTP client（含 DNS/代理能力）。
 func Init(c *config.Config) error {
 	cfg = &c.PHP
@@ -61,7 +61,8 @@ func Init(c *config.Config) error {
 	}
 	docRoot = cfg.DocRoot
 	if docRoot == "" {
-		docRoot = "/www"
+		// 兜底与配置默认一致：相对路径（相对配置文件所在目录）
+		docRoot = "www"
 	}
 	return nil
 }

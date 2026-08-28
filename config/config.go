@@ -509,8 +509,9 @@ func (c *Config) SetDefaults() {
 		c.PHP.Path = "/php/"
 	}
 	if c.PHP.DocRoot == "" {
-		c.PHP.DocRoot = "/www"
-	} else if !filepath.IsAbs(c.PHP.DocRoot) {
+		c.PHP.DocRoot = "www" // 默认相对路径（相对配置文件所在目录）
+	}
+	if !filepath.IsAbs(c.PHP.DocRoot) {
 		// 相对路径：基准为配置文件所在目录（而非进程 cwd），跨平台一致
 		if *ConfigFilePath != "" {
 			c.PHP.DocRoot = filepath.Join(filepath.Dir(*ConfigFilePath), c.PHP.DocRoot)
