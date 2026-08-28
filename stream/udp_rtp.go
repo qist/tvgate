@@ -189,7 +189,6 @@ type StreamHub struct {
 	stateCond      *sync.Cond
 	lastCCArr      [8192]byte // 固定数组替代 map，0xFF 表示未见过
 	rtpSequenceMap map[uint32]*rtpSeqEntry
-	rtpLastCleanup time.Time
 	ifaces         []string
 
 	// 多播重新加入相关
@@ -624,12 +623,6 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	}
 	entry.lastActive = time.Now()
 
-	// 定期清理（每5秒一次）
-	if time.Since(h.rtpLastCleanup) >= 5*time.Second {
-		h.rtpLastCleanup = time.Now()
-		h.cleanupOldSSRCsLocked(h.rtpLastCleanup)
-	}
-
 	// --- rtpBuffer 累积 ---
 	h.rtpBuffer = append(h.rtpBuffer, payload...)
 
@@ -759,6 +752,24 @@ func (h *StreamHub) cleanupOldSSRCsLocked(now time.Time) {
 	for ssrc, entry := range h.rtpSequenceMap {
 		if now.Sub(entry.lastActive) > rtpSSRCExpire {
 			delete(h.rtpSequenceMap, ssrc)
+		}
+	}
+}
+
+// cleanupRTPSSRCsLoop 后台周期清理过期的 SSRC 状态。
+// 原实现在每包热路径上报到 5s 触发一次全 map 遍历（放 procMu 锁内），
+// 会周期性抢占整段 RTP 处理的锁；改为后台 goroutine 定时扫描，消除热路径尖峰。
+func (h *StreamHub) cleanupRTPSSRCsLoop() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.ctx.Done():
+			return
+		case <-ticker.C:
+			h.procMu.Lock()
+			h.cleanupOldSSRCsLocked(time.Now())
+			h.procMu.Unlock()
 		}
 	}
 }
@@ -995,6 +1006,9 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 func (h *StreamHub) run() {
 	// 启动定期检查FCC状态的goroutine
 	h.Wg.Go(h.checkFCCStatus)
+
+	// 启动后台周期的 SSRC 过期清理，避免在每包热路径上做全 map 扫描
+	h.Wg.Go(h.cleanupRTPSSRCsLoop)
 
 	// 启动 MCAST_ACTIVE 通知处理 goroutine，避免每包创建 goroutine
 	h.Wg.Go(h.fccMcastActiveNotifier)
