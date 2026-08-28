@@ -492,6 +492,7 @@
         <button class="sec" id="btnRename">✏️ 重命名</button>
         <button class="danger" id="btnDelete">删除</button>
         <button class="sec" id="btnDeleteDir" style="display:none">🗑 删除目录</button>
+        <button class="sec" id="btnRenameDir" style="display:none">✏️ 重命名目录</button>
       </div>
       <div class="editor-container">
         <textarea id="editor" placeholder="选择左侧文件进行编辑，或新建文件后在此输入代码…" spellcheck="false"></textarea>
@@ -653,14 +654,22 @@
       html += `<span class="sep">/</span>`;
       bc.innerHTML = html;
       bc.querySelectorAll("span[data-dir]").forEach(el => {
-        el.onclick = () => { currentDir = el.getAttribute("data-dir"); selectedDir = ''; document.getElementById("btnDeleteDir").style.display = "none"; loadList(); };
+        el.onclick = () => { currentDir = el.getAttribute("data-dir"); selectedDir = ''; syncDirActions(); loadList(); };
       });
     }
 
     // 所有文件列表（用于搜索）
     let allItems = [];
-    let selectedDir = ''; // 选中的目录（用于删除）
+    let selectedDir = ''; // 选中的目录（用于删除/重命名）
     let renameTarget = ''; // 待重命名的相对路径（文件或目录）
+
+    // 根据是否选中目录，统一切换「删除目录 / 重命名目录」按钮显示
+    function syncDirActions() {
+      for (const id of ["btnDeleteDir", "btnRenameDir"]) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = selectedDir ? "" : "none";
+      }
+    }
 
     // ========== 文件列表（目录浏览模式） ==========
     async function loadList() {
@@ -697,11 +706,9 @@
           div.onclick = (e) => {
             // 选中目录（高亮），双击进入
             selectedDir = currentDir ? currentDir + "/" + fName : fName;
-            const btnDelDir = document.getElementById("btnDeleteDir");
-            btnDelDir.style.display = "";
-            btnDelDir.textContent = "🗑 删除目录";
+            syncDirActions();
             renderFileList(items);
-            setStatus("已选中目录：" + it.name + "（双击进入，或点删除目录按钮）", "warn");
+            setStatus("已选中目录：" + it.name + "（双击进入，或点删除/重命名目录按钮）", "warn");
           };
         } else {
           const fullPath = currentDir ? currentDir + "/" + fName : fName;
@@ -753,7 +760,7 @@
       const idx = currentDir.lastIndexOf("/");
       currentDir = idx >= 0 ? currentDir.substring(0, idx) : "";
       selectedDir = '';
-      document.getElementById("btnDeleteDir").style.display = "none";
+      syncDirActions();
       loadList();
     };
 
@@ -764,7 +771,7 @@
       // 打开非 zip 文件时隐藏解压按钮
       document.getElementById("btnUnzip").style.display = "none";
       selectedDir = '';
-      document.getElementById("btnDeleteDir").style.display = "none";
+      syncDirActions();
       const r = await fetch(webPath + "api/code/read?path=" + encodeURIComponent(path), { cache: "no-store" });
       if (r.ok) {
         const res = await r.json();
@@ -926,6 +933,11 @@
             currentPath = idx >= 0 ? renameTarget.substring(0, idx + 1) + name : name;
             document.getElementById("curPath").textContent = currentPath;
           }
+          // 若重命名的是选中的目录，清空选中并隐藏目录动作按钮
+          if (selectedDir === renameTarget) {
+            selectedDir = '';
+            syncDirActions();
+          }
           setStatus("✅ 已重命名：" + name, "ok");
           loadList();
         } else setStatus("重命名失败：" + (res.message || ""), "err");
@@ -954,14 +966,13 @@
       await openFile(currentPath);
     };
     document.getElementById("btnRename").onclick = () => {
-      const targetPath = currentPath || selectedDir;
-      if (!targetPath) { setStatus("请先选择要重命名的文件或目录（双击目录进入，单击选中）", "warn"); return; }
-      renameTarget = targetPath;
+      if (!currentPath) { setStatus("请先打开要重命名的文件", "warn"); return; }
+      renameTarget = currentPath;
       modalMode = "rename";
       document.getElementById("modalTitle").textContent = "重命名";
       const inp = document.getElementById("modalInput");
-      inp.placeholder = "输入新名称";
-      inp.value = targetPath.split("/").pop();
+      inp.placeholder = "输入新文件名";
+      inp.value = currentPath.split("/").pop();
       modal.classList.add("show");
       inp.focus();
       inp.select();
@@ -1028,11 +1039,25 @@
       if (res.status === "success") {
         setStatus("✅ 已删除目录：" + selectedDir, "ok");
         selectedDir = '';
-        document.getElementById("btnDeleteDir").style.display = "none";
+        syncDirActions();
         loadList();
       } else {
         setStatus("删除目录失败：" + (res.message || ""), "err");
       }
+    };
+
+    // ========== 重命名目录 ==========
+    document.getElementById("btnRenameDir").onclick = () => {
+      if (!selectedDir) { setStatus("请先点击选中一个目录", "warn"); return; }
+      renameTarget = selectedDir;
+      modalMode = "rename";
+      document.getElementById("modalTitle").textContent = "重命名目录";
+      const inp = document.getElementById("modalInput");
+      inp.placeholder = "输入新目录名";
+      inp.value = selectedDir.split("/").pop();
+      modal.classList.add("show");
+      inp.focus();
+      inp.select();
     };
 
     // ========== 文件搜索 ==========
