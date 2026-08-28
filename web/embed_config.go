@@ -18,6 +18,19 @@ func EnsureConfigFile(configPath string) (string, error) {
 		configPath = "config.yaml"
 	}
 
+	// 展开 ~ / ~/ (~\\) 家目录写法（安卓 Termux、移动端 wrapper 可能直接传字面量 ~，不走 shell 展开）。
+	// 在入口统一展开，确保全局 ConfigFilePath、配置备份(cfg.backup.*) 的目录计算等均基于真实绝对路径。
+	if strings.HasPrefix(configPath, "~") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			switch {
+			case configPath == "~":
+				configPath = home
+			case strings.HasPrefix(configPath, "~/") || strings.HasPrefix(configPath, "~\\"):
+				configPath = filepath.Join(home, configPath[2:])
+			}
+		}
+	}
+
 	var configFilePath string
 
 	ext := filepath.Ext(configPath)
