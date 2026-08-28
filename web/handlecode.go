@@ -343,27 +343,28 @@ func (h *ConfigHandler) handleCodeUpload(w http.ResponseWriter, r *http.Request)
 	}
 	_ = os.MkdirAll(absDir, 0755)
 	var uploaded []string
+	var failed []string
 	files := r.MultipartForm.File["file"]
 	for _, fh := range files {
 		name := filepath.Base(fh.Filename)
 		dst := filepath.Join(absDir, name)
 		src, e := fh.Open()
 		if e != nil {
-			http.Error(w, "打开上传文件失败: "+e.Error(), http.StatusInternalServerError)
-			return
+			failed = append(failed, name+": "+e.Error())
+			continue
 		}
 		dstFile, e := os.Create(dst)
 		if e != nil {
 			src.Close()
-			http.Error(w, "写入失败: "+e.Error(), http.StatusInternalServerError)
-			return
+			failed = append(failed, name+": "+e.Error())
+			continue
 		}
 		_, e = io.Copy(dstFile, src)
 		src.Close()
 		dstFile.Close()
 		if e != nil {
-			http.Error(w, "保存失败: "+e.Error(), http.StatusInternalServerError)
-			return
+			failed = append(failed, name+": "+e.Error())
+			continue
 		}
 		uploaded = append(uploaded, name)
 	}
@@ -418,6 +419,8 @@ func (h *ConfigHandler) handleCodeUpload(w http.ResponseWriter, r *http.Request)
 	resp := map[string]interface{}{
 		"status":  "success",
 		"message": "上传完成",
+		"uploaded": uploaded,
+		"failed":   failed,
 	}
 	if len(autoResults) > 0 {
 		resp["unzip"] = autoResults

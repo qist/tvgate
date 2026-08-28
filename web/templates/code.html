@@ -1196,9 +1196,13 @@
       const fd = new FormData();
       fd.append("dir", currentDir);
       for (const f of files) fd.append("file", f);
-      const res = await fetch(webPath + "api/code/upload", { method: "POST", body: fd }).then(r => r.json());
+      setStatus(`正在上传 ${files.length} 个文件 …`, "warn");
+      const res = await fetch(webPath + "api/code/upload", { method: "POST", body: fd }).then(r => r.json()).catch(err => ({ status: "error", message: err.message }));
       if (res.status === "success") {
-        let msg = "上传完成";
+        const okN = (res.uploaded || []).length;
+        const failN = (res.failed || []).length;
+        let msg = `✅ 上传完成：${okN} 个成功` + (failN ? `，${failN} 个失败` : "");
+        if (failN) msg += "\n" + res.failed.map(f => "  ❌ " + f).join("\n");
         // 显示自动解压结果（MD5 校验通过时触发）
         if (res.unzip && res.unzip.length > 0) {
           for (const u of res.unzip) {
@@ -1207,7 +1211,7 @@
             else msg += `\n❌ ${u.zip} 解压失败：${u.error || ""}`;
           }
         }
-        setStatus(msg, "ok");
+        setStatus(msg, okN ? "ok" : "err");
         loadList();
       } else {
         setStatus("上传失败：" + (res.message || ""), "err");
