@@ -110,16 +110,6 @@ func init() {
 	}
 }
 
-// phpDate 实现 PHP date() 格式化（按当前默认时区）。
-func phpDate(format string, ts int64) string {
-	return phpDateIn(format, ts, currentPHPLocation())
-}
-
-// phpGmDate 实现 PHP gmdate() — UTC 版 date()
-func phpGmDate(format string, ts int64) string {
-	return phpDateIn(format, ts, time.UTC)
-}
-
 func phpDateIn(format string, ts int64, loc *time.Location) string {
 	t := time.Unix(ts, 0).In(loc)
 	var b []byte
