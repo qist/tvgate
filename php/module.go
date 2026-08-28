@@ -88,7 +88,8 @@ func Handler() http.HandlerFunc {
 			}
 			token := r.URL.Query().Get(tokenParam)
 			if !gt.ValidateToken(token, r.URL.Path, connID) {
-				http.Error(w, "Forbidden", http.StatusForbidden)
+				w.WriteHeader(http.StatusForbidden)
+				logger.LogPHPRequest(r, r.URL.Path, http.StatusForbidden, 0)
 				return
 			}
 			gt.KeepAlive(token, connID, clientIP, r.URL.Path)
@@ -108,13 +109,15 @@ func Handler() http.HandlerFunc {
 		scriptPath := filepath.Join(docRoot, rel)
 		// 防穿越
 		if !strings.HasPrefix(scriptPath, docRoot) {
-			http.Error(w, "forbidden", http.StatusForbidden)
+			w.WriteHeader(http.StatusForbidden)
+			logger.LogPHPRequest(r, rel, http.StatusForbidden, 0)
 			return
 		}
 		// 目录访问：尝试 index 文件，否则 403 禁止目录列表
 		fi, err := os.Stat(scriptPath)
 		if err != nil {
-			http.NotFound(w, r)
+			w.WriteHeader(http.StatusNotFound)
+			logger.LogPHPRequest(r, rel, http.StatusNotFound, 0)
 			return
 		}
 		if fi.IsDir() {
@@ -129,13 +132,15 @@ func Handler() http.HandlerFunc {
 				}
 			}
 			// 无 index 文件 → 禁止目录列表
-			http.Error(w, "forbidden", http.StatusForbidden)
+			w.WriteHeader(http.StatusForbidden)
+			logger.LogPHPRequest(r, rel, http.StatusForbidden, 0)
 			return
 		}
 	found:
 		src, err := readFile(scriptPath)
 		if err != nil {
-			http.NotFound(w, r)
+			w.WriteHeader(http.StatusNotFound)
+			logger.LogPHPRequest(r, rel, http.StatusNotFound, 0)
 			return
 		}
 
@@ -144,7 +149,9 @@ func Handler() http.HandlerFunc {
 		// http.ServeFile 会根据扩展名自动设置 Content-Type，
 		// 支持 jar/txt/js/json/xml/md/py/html/htm/jpg/jpeg/png/m3u 等。
 		if !isPHPScript(scriptPath, src) {
-			http.ServeFile(w, r, scriptPath)
+			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			http.ServeFile(rec, r, scriptPath)
+			logger.LogPHPRequest(r, rel, rec.status, rec.bytesSent)
 			return
 		}
 
