@@ -121,7 +121,7 @@ func NewPooledBufferRef(backing []byte, view []byte, pool *sync.Pool) *BufferRef
 
 // processFCCPacket 处理FCC相关数据包
 func (h *StreamHub) processFCCPacket(data []byte) bool {
-	if !h.fccEnabled || len(data) < 8 {
+	if !h.fccEnabled.Load() || len(data) < 8 {
 		return false
 	}
 
@@ -519,11 +519,11 @@ func (h *StreamHub) EnableFCC(enabled bool) {
 	h.Mu.Lock()
 	defer h.Mu.Unlock()
 
-	if h.fccEnabled == enabled {
+	if h.fccEnabled.Load() == enabled {
 		return
 	}
 
-	h.fccEnabled = enabled
+	h.fccEnabled.Store(enabled)
 
 	if enabled {
 		// 初始化FCC相关参数
@@ -659,7 +659,7 @@ func (h *StreamHub) GetFccState() int {
 func (h *StreamHub) IsFccEnabled() bool {
 	h.Mu.RLock()
 	defer h.Mu.RUnlock()
-	return h.fccEnabled
+	return h.fccEnabled.Load()
 }
 
 // IsFccActive 检查FCC是否处于活动状态（已切换到多播）
@@ -677,7 +677,7 @@ func (h *StreamHub) GetFccStateInfo() map[string]interface{} {
 	stateName := fccStateToString(h.fccState)
 
 	return map[string]interface{}{
-		"enabled":     h.fccEnabled,
+		"enabled":     h.fccEnabled.Load(),
 		"state":       h.fccState,
 		"state_name":  stateName,
 		"fcc_type":    h.fccType,
@@ -976,7 +976,7 @@ func (h *StreamHub) updateFCCActivity() {
 // sendFCCTermination 发送FCC终止包
 func (h *StreamHub) sendFCCTermination(fccServerAddr *net.UDPAddr, seqNum uint16) error {
 	h.Mu.RLock()
-	fccEnabled := h.fccEnabled
+	fccEnabled := h.fccEnabled.Load()
 	fccType := h.fccType
 	fccConn := h.fccConn
 	if fccConn == nil {
@@ -1878,7 +1878,7 @@ func (h *StreamHub) checkFCCStatus() {
 	// FCC 未激活时使用较长间隔，避免空转浪费 CPU
 	const (
 		activeInterval   = 100 * time.Millisecond // FCC 活跃时检查间隔
-		inactiveInterval = 2 * time.Second         // FCC 未激活时检查间隔
+		inactiveInterval = 2 * time.Second        // FCC 未激活时检查间隔
 	)
 
 	ticker := time.NewTicker(inactiveInterval)
@@ -1892,7 +1892,7 @@ func (h *StreamHub) checkFCCStatus() {
 			}
 
 			h.Mu.RLock()
-			fccEnabled := h.fccEnabled
+			fccEnabled := h.fccEnabled.Load()
 			currentState := h.fccState
 			h.Mu.RUnlock()
 

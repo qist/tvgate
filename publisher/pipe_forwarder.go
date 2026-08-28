@@ -816,6 +816,61 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 		}
 	}
 
+	// 写 ffmpeg/RTMP stdin 的控制。
+	// 原实现在每个数据块都 `go func(){ Write(chunk) }()` + 新建 channel + Reset 计时器，
+	// 高码率下每秒产生数百 goroutine/channel。改为单一 writer goroutine + 有界 channel。
+	var ffCh chan []byte
+	closeFFIn := func() {
+		pf.ffInLock.Lock()
+		if ffIn != nil {
+			_ = ffIn.Close()
+			ffIn = nil
+		}
+		pf.ffInLock.Unlock()
+	}
+	var closeOnce sync.Once
+	closeFFCh := func() {
+		closeOnce.Do(func() {
+			if ffCh != nil {
+				close(ffCh)
+			}
+		})
+	}
+	if ffIn != nil {
+		ffOut := ffIn
+		ffCh = make(chan []byte, 1024)
+		pf.Wg.Go(func() {
+			for {
+				select {
+				case <-pf.ctx.Done():
+					return
+				case data, ok := <-ffCh:
+					if !ok {
+						return
+					}
+					// 写超时防护：ffmpeg 超过 5s 不消费 stdin 则断开推流
+					if f, isFile := ffOut.(interface {
+						SetWriteDeadline(time.Time) error
+					}); isFile {
+						_ = f.SetWriteDeadline(time.Now().Add(5 * time.Second))
+					}
+					if _, werr := ffOut.Write(data); werr != nil {
+						if os.IsTimeout(werr) {
+							logger.LogPrintf("[%s] Timeout writing to RTMP stdin", pf.streamName)
+						} else if werr == io.ErrClosedPipe || strings.Contains(werr.Error(), "file already closed") ||
+							strings.Contains(werr.Error(), "broken pipe") || strings.Contains(werr.Error(), "read/write on closed pipe") {
+							logger.LogPrintf("[%s] Expected pipe close error: %v", pf.streamName, werr)
+						} else {
+							logger.LogPrintf("[%s] Error writing to RTMP stdin: %v", pf.streamName, werr)
+						}
+						closeFFIn()
+						return
+					}
+				}
+			}
+		})
+	}
+
 	// 标记 hub 为播放状态
 	pf.hub.SetPlaying()
 
@@ -824,20 +879,11 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 		// 从管道读取数据（主拉流实例）
 		buf := make([]byte, 32*1024)
 		chunkCount := 0
-		writeTimeout := time.NewTimer(0)
-		if !writeTimeout.Stop() {
-			<-writeTimeout.C
-		}
-		defer writeTimeout.Stop()
 		for {
 			if pf.ctx.Err() != nil {
 				logger.LogPrintf("[%s] context canceled, stopping forwardDataFromPipe, chunks: %d", pf.streamName, chunkCount)
-				pf.ffInLock.Lock()
-				if ffIn != nil {
-					_ = ffIn.Close()
-					ffIn = nil
-				}
-				pf.ffInLock.Unlock()
+				closeFFCh()
+				closeFFIn()
 				pf.Wg.Wait()
 				return
 			}
@@ -847,59 +893,35 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				copy(chunk, buf[:n])
 				chunkCount++
 
-				// 在 header 未捕获时缓存前段数据
-				pf.headerMutex.Lock()
+				// 在 header 未捕获时缓存前段数据（已捕获后走无锁快路径，避免每块重复加锁）
 				if !pf.headerCaptured {
-					if pf.headerBuf.Len() < 4*1024 {
-						pf.headerBuf.Write(chunk)
+					pf.headerMutex.Lock()
+					if !pf.headerCaptured {
+						if pf.headerBuf.Len() < 4*1024 {
+							pf.headerBuf.Write(chunk)
+						}
+						b := pf.headerBuf.Bytes()
+						if len(b) >= 9 && b[0] == 'F' && b[1] == 'L' && b[2] == 'V' {
+							pf.headerCaptured = true
+							logger.LogPrintf("[%s] FLV header captured (%d bytes)", pf.streamName, pf.headerBuf.Len())
+						}
 					}
-
-					b := pf.headerBuf.Bytes()
-					if len(b) >= 9 && b[0] == 'F' && b[1] == 'L' && b[2] == 'V' {
-						pf.headerCaptured = true
-						logger.LogPrintf("[%s] FLV header captured (%d bytes)", pf.streamName, pf.headerBuf.Len())
-					}
+					pf.headerMutex.Unlock()
 				}
-				pf.headerMutex.Unlock()
 
-				// 写入 RTMP 推流进程 stdin（如果有）
-				pf.ffInLock.Lock()
-				currentFFIn := ffIn
-				pf.ffInLock.Unlock()
-
-				if currentFFIn != nil {
-					wDone := make(chan error, 1)
-					pf.Wg.Go(func() {
-						_, werr := currentFFIn.Write(chunk)
-						wDone <- werr
-					})
-
-					writeTimeout.Reset(5 * time.Second)
+				// 写入 RTMP 推流进程 stdin（交给单一 writer goroutine，满则丢弃最旧，不阻塞读循环）
+				if ffCh != nil {
 					select {
-					case werr := <-wDone:
-						if werr != nil {
-							// 检查是否是预期的关闭错误
-							if werr == io.ErrClosedPipe || strings.Contains(werr.Error(), "file already closed") ||
-								strings.Contains(werr.Error(), "broken pipe") || strings.Contains(werr.Error(), "read/write on closed pipe") {
-								logger.LogPrintf("[%s] Expected pipe close error: %v", pf.streamName, werr)
-							} else {
-								logger.LogPrintf("[%s] Error writing to RTMP stdin: %v", pf.streamName, werr)
-							}
-							pf.ffInLock.Lock()
-							if ffIn != nil {
-								_ = ffIn.Close()
-								ffIn = nil
-							}
-							pf.ffInLock.Unlock()
+					case ffCh <- chunk:
+					default:
+						select {
+						case <-ffCh:
+						default:
 						}
-					case <-writeTimeout.C:
-						logger.LogPrintf("[%s] Timeout writing to RTMP stdin", pf.streamName)
-						pf.ffInLock.Lock()
-						if ffIn != nil {
-							_ = ffIn.Close()
-							ffIn = nil
+						select {
+						case ffCh <- chunk:
+						default:
 						}
-						pf.ffInLock.Unlock()
 					}
 				}
 
@@ -907,26 +929,13 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				// chunk 是每次 Read 后独立 make 的副本，不会被复用，可直接共享引用（零拷贝）。
 				pf.hub.BroadcastNoCopy(chunk)
 
-				// 在 header 未捕获时缓存前段数据（转发模式下也需要捕获头部信息）
-				pf.headerMutex.Lock()
-				if !pf.headerCaptured {
-					if pf.headerBuf.Len() < 4*1024 {
-						pf.headerBuf.Write(chunk)
+				// 仅在开始时通知 StreamHub 已接收到数据（避免循环内每次抢全局写锁）
+				if chunkCount <= 10 {
+					streamHub := GetStreamHub(pf.streamName)
+					if streamHub != nil {
+						streamHub.SetDataReceived()
+						// logger.LogPrintf("[%s] Data received and broadcasted, chunk #%d", pf.streamName, chunkCount)
 					}
-
-					b := pf.headerBuf.Bytes()
-					if len(b) >= 9 && b[0] == 'F' && b[1] == 'L' && b[2] == 'V' {
-						pf.headerCaptured = true
-						logger.LogPrintf("[%s] FLV header captured (%d bytes)", pf.streamName, pf.headerBuf.Len())
-					}
-				}
-				pf.headerMutex.Unlock()
-
-				// 通知StreamHub已接收到数据
-				streamHub := GetStreamHub(pf.streamName)
-				if streamHub != nil && chunkCount <= 10 {
-					streamHub.SetDataReceived()
-					// logger.LogPrintf("[%s] Data received and broadcasted, chunk #%d", pf.streamName, chunkCount)
 				}
 			}
 
@@ -934,24 +943,16 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				// 检查上下文是否已取消
 				if pf.ctx.Err() != nil {
 					logger.LogPrintf("[%s] context canceled, stopping pipe read: %v", pf.streamName, err)
-					pf.ffInLock.Lock()
-					if ffIn != nil {
-						_ = ffIn.Close()
-						ffIn = nil
-					}
-					pf.ffInLock.Unlock()
+					closeFFCh()
+					closeFFIn()
 					pf.Wg.Wait()
 					return
 				}
 
 				if err == io.EOF {
 					logger.LogPrintf("[%s] pipe EOF reached, chunks: %d", pf.streamName, chunkCount)
-					pf.ffInLock.Lock()
-					if ffIn != nil {
-						_ = ffIn.Close()
-						ffIn = nil
-					}
-					pf.ffInLock.Unlock()
+					closeFFCh()
+					closeFFIn()
 					pf.Wg.Wait()
 					return
 				}
@@ -967,21 +968,12 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 		if pf.clientBuffer != nil {
 			pf.hub.AddClient(pf.clientBuffer)
 			chunkCount := 0
-			writeTimeout2 := time.NewTimer(0)
-			if !writeTimeout2.Stop() {
-				<-writeTimeout2.C
-			}
-			defer writeTimeout2.Stop()
 
 			for {
 				if pf.ctx.Err() != nil {
 					logger.LogPrintf("[%s] context canceled, stopping forwardDataFromPipe (forward-only mode), chunks: %d", pf.streamName, chunkCount)
-					pf.ffInLock.Lock()
-					if ffIn != nil {
-						_ = ffIn.Close()
-						ffIn = nil
-					}
-					pf.ffInLock.Unlock()
+					closeFFCh()
+					closeFFIn()
 					pf.Wg.Wait()
 					pf.hub.RemoveClient(pf.clientBuffer)
 					if pf.clientBuffer != nil {
@@ -992,12 +984,8 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				}
 				data, ok := pf.clientBuffer.PullWithContext(pf.ctx)
 				if !ok {
-					pf.ffInLock.Lock()
-					if ffIn != nil {
-						_ = ffIn.Close()
-						ffIn = nil
-					}
-					pf.ffInLock.Unlock()
+					closeFFCh()
+					closeFFIn()
 					pf.Wg.Wait()
 					pf.hub.RemoveClient(pf.clientBuffer)
 					return
@@ -1005,44 +993,19 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 
 				if chunk := data; chunk != nil {
 					chunkCount++
-					// 写入 RTMP 推流进程 stdin（如果有）
-					pf.ffInLock.Lock()
-					currentFFIn := ffIn
-					pf.ffInLock.Unlock()
-
-					if currentFFIn != nil {
-						wDone := make(chan error, 1)
-						pf.Wg.Go(func() {
-							_, werr := currentFFIn.Write(chunk)
-							wDone <- werr
-						})
-
-						writeTimeout2.Reset(5 * time.Second)
+					// 写入 RTMP 推流进程 stdin（交给单一 writer goroutine，满则丢弃最旧，不阻塞读循环）
+					if ffCh != nil {
 						select {
-						case werr := <-wDone:
-							if werr != nil {
-								// 检查是否是预期的关闭错误
-								if werr == io.ErrClosedPipe || strings.Contains(werr.Error(), "file already closed") ||
-									strings.Contains(werr.Error(), "broken pipe") || strings.Contains(werr.Error(), "read/write on closed pipe") {
-									logger.LogPrintf("[%s] Expected pipe close error: %v", pf.streamName, werr)
-								} else {
-									logger.LogPrintf("[%s] Error writing to RTMP stdin: %v", pf.streamName, werr)
-								}
-								pf.ffInLock.Lock()
-								if ffIn != nil {
-									_ = ffIn.Close()
-									ffIn = nil
-								}
-								pf.ffInLock.Unlock()
+						case ffCh <- chunk:
+						default:
+							select {
+							case <-ffCh:
+							default:
 							}
-						case <-writeTimeout2.C:
-							logger.LogPrintf("[%s] Timeout writing to RTMP stdin", pf.streamName)
-							pf.ffInLock.Lock()
-							if ffIn != nil {
-								_ = ffIn.Close()
-								ffIn = nil
+							select {
+							case ffCh <- chunk:
+							default:
 							}
-							pf.ffInLock.Unlock()
 						}
 					}
 

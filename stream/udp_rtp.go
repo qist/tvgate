@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/ipv4"
@@ -180,10 +181,11 @@ type StreamHub struct {
 	RemoveCh       chan string
 	UdpConns       []*net.UDPConn
 	CacheBuffer    *RingBuffer
+	cacheMu        sync.Mutex // 保护 CacheBuffer 懒分配/写入/清空，与主锁 Mu 解耦，供热路径只持读锁
 	Closed         chan struct{}
 	BufPool        *sync.Pool
 	AddrList       []string
-	state          int
+	state          atomic.Int32
 	stateCond      *sync.Cond
 	lastCCArr      [8192]byte // 固定数组替代 map，0xFF 表示未见过
 	rtpSequenceMap map[uint32]*rtpSeqEntry
@@ -195,7 +197,7 @@ type StreamHub struct {
 	rejoinTimer    *time.Timer
 
 	// FCC (Fast Channel Change) 相关
-	fccEnabled             bool
+	fccEnabled             atomic.Bool
 	fccType                int
 	fccCacheSize           int
 	fccPortMin, fccPortMax int
@@ -291,13 +293,13 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		Closed:      make(chan struct{}),
 		BufPool:     &sync.Pool{New: func() any { return make([]byte, 2048) }},
 		AddrList:    addrs,
-		state:       StateStopped,
+		state:       atomic.Int32{}, // zero = StateStopped
 		// lastCCArr 初始化为 0xFF（表示未见过该 PID）
 		rtpSequenceMap: make(map[uint32]*rtpSeqEntry),
 		ifaces:         ifaces,
 
 		// FCC相关初始化
-		fccEnabled:        false, // 默认不启用，由请求参数决定
+		fccEnabled:        atomic.Bool{}, // 默认不启用，由请求参数决定
 		fccType:           fccType,
 		fccCacheSize:      fccCacheSize,
 		fccPortMin:        fccPortMin,
@@ -577,10 +579,8 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	}
 
 	// ===== 使用独立 procMu 锁保护 RTP 状态，避免与广播/客户端管理争用主锁 Mu =====
-	// fccEnabled 由主锁 Mu 保护（run 中 FCC 启用时会翻转），这里短暂读取一次快照。
-	h.Mu.RLock()
-	fccEnabled := h.fccEnabled
-	h.Mu.RUnlock()
+	// fccEnabled 用原子读，避免每包获取主锁 Mu 的快照。
+	fccEnabled := h.fccEnabled.Load()
 
 	h.procMu.Lock()
 
@@ -865,34 +865,21 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 		return
 	}
 
-	h.Mu.Lock()
+	h.Mu.RLock()
 	if h.Closed == nil || h.Clients == nil {
-		h.Mu.Unlock()
+		h.Mu.RUnlock()
 		bufRef.Put()
 		return
 	}
 
-	// 懒分配 CacheBuffer（1024 条目 ≈ 1.3MB，足够客户端重连缓存）
-	if h.CacheBuffer == nil {
-		h.CacheBuffer = NewRingBuffer(1024)
-	}
+	// 获取客户端列表和全局FCC状态（读锁即可，快照）
+	fccEnabled := h.fccEnabled.Load()
 
-	// 更新状态和缓存
-	bufRef.Get()
-	if evicted := h.CacheBuffer.PushWithReuse(bufRef); evicted != nil {
-		evicted.Put()
+	// 预先获取 addrList 用于后续FCC处理（AddrList 由主锁保护）
+	var addrList []string
+	if fccEnabled {
+		addrList = append([]string(nil), h.AddrList...)
 	}
-
-	// 播放状态更新
-	if h.state != StatePlaying {
-		h.state = StatePlaying
-		if h.stateCond != nil {
-			h.stateCond.Broadcast()
-		}
-	}
-
-	// 获取客户端列表和全局FCC状态
-	fccEnabled := h.fccEnabled
 
 	// 从 sync.Pool 获取客户端切片，避免每包 make([])
 	clientsPtr := hubClientSlicePool.Get().(*[]*hubClient)
@@ -900,13 +887,27 @@ func (h *StreamHub) broadcastRef(bufRef *BufferRef) {
 	for _, v := range h.Clients {
 		clients = append(clients, v)
 	}
+	h.Mu.RUnlock()
 
-	// 预先获取 addrList 用于后续FCC处理
-	var addrList []string
-	if fccEnabled {
-		addrList = append([]string(nil), h.AddrList...)
+	// 缓存写入（独立 cacheMu，避免热路径与客户端管理争用主写锁）
+	h.cacheMu.Lock()
+	// 懒分配 CacheBuffer（1024 条目 ≈ 1.3MB，足够客户端重连缓存）
+	if h.CacheBuffer == nil {
+		h.CacheBuffer = NewRingBuffer(1024)
 	}
-	h.Mu.Unlock()
+	bufRef.Get()
+	if evicted := h.CacheBuffer.PushWithReuse(bufRef); evicted != nil {
+		evicted.Put()
+	}
+	h.cacheMu.Unlock()
+
+	// 播放状态更新（原子写，唤醒等待者）
+	if h.state.Load() != StatePlaying {
+		h.state.Store(StatePlaying)
+		if h.stateCond != nil {
+			h.stateCond.Broadcast()
+		}
+	}
 
 	// 异步写入频道缓存（仅在启用FCC且是多播TS包时）
 	data := bufRef.data
@@ -1099,7 +1100,7 @@ func (h *StreamHub) run() {
 				logger.LogPrintf("客户端移除: %s, 当前客户端数: %d", connID, len(h.Clients))
 
 				// 检查全局FCC状态更新
-				if h.fccEnabled {
+				if h.fccEnabled.Load() {
 					hasFccClient := false
 					for _, c := range h.Clients {
 						if c != nil && (c.fccSession != nil || c.fccState != FCC_STATE_INIT) {
@@ -1316,7 +1317,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 			client.fccConn = fccConn
 			client.fccServerAddr = fccServerAddr
 			h.Mu.Lock()
-			h.fccEnabled = true
+			h.fccEnabled.Store(true)
 			h.fccServerAddr = fccServerAddr
 			h.Mu.Unlock()
 			GlobalChannelManager.StartCleaner()
@@ -1543,13 +1544,15 @@ func (h *StreamHub) Close() {
 	h.UdpConns = nil
 
 	// 清理各种缓冲区
+	h.cacheMu.Lock()
 	if h.CacheBuffer != nil {
 		h.CacheBuffer.Reset()
 		h.CacheBuffer = nil
 	}
+	h.cacheMu.Unlock()
 
 	// 状态更新
-	h.state = StateError
+	h.state.Store(StateError)
 	stateCond := h.stateCond
 
 	h.Mu.Unlock() // 尽快释放主锁
@@ -1643,11 +1646,11 @@ func (h *StreamHub) IsClosed() bool {
 // ====================
 func (h *StreamHub) WaitForPlaying(ctx context.Context) bool {
 	h.Mu.Lock()
-	if h.state == StatePlaying {
+	if h.state.Load() == StatePlaying {
 		h.Mu.Unlock()
 		return true
 	}
-	if h.IsClosed() || h.state == StateError {
+	if h.IsClosed() || h.state.Load() == StateError {
 		h.Mu.Unlock()
 		return false
 	}
@@ -1667,11 +1670,11 @@ func (h *StreamHub) WaitForPlaying(ctx context.Context) bool {
 
 	h.Mu.Lock()
 	for {
-		if h.state == StatePlaying {
+		if h.state.Load() == StatePlaying {
 			h.Mu.Unlock()
 			return true
 		}
-		if h.state == StateError {
+		if h.state.Load() == StateError {
 			h.Mu.Unlock()
 			return false
 		}
@@ -1928,7 +1931,9 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 	if newHub.Clients == nil {
 		newHub.Clients = make(map[string]*hubClient)
 	}
+	h.cacheMu.Lock()
 	if h.CacheBuffer != nil {
+		newHub.cacheMu.Lock()
 		if newHub.CacheBuffer == nil {
 			newHub.CacheBuffer = NewRingBuffer(h.CacheBuffer.size)
 		}
@@ -1951,7 +1956,9 @@ func (h *StreamHub) TransferClientsTo(newHub *StreamHub) {
 				frame.Put()
 			}
 		}
+		newHub.cacheMu.Unlock()
 	}
+	h.cacheMu.Unlock()
 
 	// 迁移客户端
 	for connID, client := range h.Clients {
@@ -2084,7 +2091,7 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 		return
 	}
 	h.Mu.RLock()
-	fccEnabled := h.fccEnabled
+	fccEnabled := h.fccEnabled.Load()
 	currentState := h.fccState
 	addrList := append([]string(nil), h.AddrList...)
 	h.Mu.RUnlock()
@@ -2096,12 +2103,12 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 			currentState != FCC_STATE_MCAST_ACTIVE) {
 
 		// 获取缓存快照
-		h.Mu.RLock()
+		h.cacheMu.Lock()
 		var cachedFrames []*BufferRef
 		if h.CacheBuffer != nil {
 			cachedFrames = h.CacheBuffer.GetAllRefs()
 		}
-		h.Mu.RUnlock()
+		h.cacheMu.Unlock()
 
 		if len(cachedFrames) == 0 {
 			return
@@ -2151,9 +2158,14 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 		}
 		if len(frames) > 0 {
 			packets = append(packets, frames...)
-		} else if h.CacheBuffer != nil {
-			cachedFrames := h.CacheBuffer.GetAllRefs()
-			packets = append(packets, cachedFrames...)
+		} else {
+			// 补充普通缓存（独立 cacheMu，避免与主锁争用）
+			h.cacheMu.Lock()
+			if h.CacheBuffer != nil {
+				cachedFrames := h.CacheBuffer.GetAllRefs()
+				packets = append(packets, cachedFrames...)
+			}
+			h.cacheMu.Unlock()
 		}
 
 	case FCC_STATE_MCAST_REQUESTED, FCC_STATE_MCAST_ACTIVE:
@@ -2166,16 +2178,22 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 		}
 
 		// 补充普通缓存（如果没有FCC帧或者需要更多数据）
-		if (!fccFramesAvailable || len(packets) < 10) && h.CacheBuffer != nil {
-			cachedFrames := h.CacheBuffer.GetAllRefs()
-			packets = append(packets, cachedFrames...)
+		if !fccFramesAvailable || len(packets) < 10 {
+			h.cacheMu.Lock()
+			if h.CacheBuffer != nil {
+				cachedFrames := h.CacheBuffer.GetAllRefs()
+				packets = append(packets, cachedFrames...)
+			}
+			h.cacheMu.Unlock()
 		}
 	default:
 		// 对于其他状态，使用普通缓存
+		h.cacheMu.Lock()
 		if h.CacheBuffer != nil {
 			cachedFrames := h.CacheBuffer.GetAllRefs()
 			packets = append(packets, cachedFrames...)
 		}
+		h.cacheMu.Unlock()
 	}
 
 	h.Mu.RUnlock()

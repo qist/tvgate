@@ -238,14 +238,14 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/backup/download", h.cookieAuth(backupHandler.handleDownloadBackup))
 
 	// GitHub 配置相关路由
-	mux.HandleFunc(webPath+"github", h.handleGithubEditor)
-	mux.HandleFunc(webPath+"api/github/config", h.handleGithubConfig)
-	mux.HandleFunc(webPath+"api/github/config/save", h.handleGithubConfigSave)
+	mux.HandleFunc(webPath+"github", h.cookieAuth(h.handleGithubEditor))
+	mux.HandleFunc(webPath+"api/github/config", h.cookieAuth(h.handleGithubConfig))
+	mux.HandleFunc(webPath+"api/github/config/save", h.cookieAuth(h.handleGithubConfigSave))
 
 	// DNS 配置相关路由
-	mux.HandleFunc(webPath+"dns", h.handleDnsEditor)
-	mux.HandleFunc(webPath+"api/dns/config", h.handleDnsConfig)
-	mux.HandleFunc(webPath+"api/dns/config/save", h.handleDnsConfigSave)
+	mux.HandleFunc(webPath+"dns", h.cookieAuth(h.handleDnsEditor))
+	mux.HandleFunc(webPath+"api/dns/config", h.cookieAuth(h.handleDnsConfig))
+	mux.HandleFunc(webPath+"api/dns/config/save", h.cookieAuth(h.handleDnsConfigSave))
 
 	// 全局认证配置相关路由
 	// mux.HandleFunc(webPath+"globalauth", h.handleGlobalAuthEditor)

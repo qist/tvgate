@@ -302,11 +302,44 @@ func (h *HLSSegmentManager) Start() error {
 	// 启动数据推送（来自 hub）
 	if h.clientBuffer != nil {
 		h.wg.Go(func() {
-			writeTimeout := time.NewTimer(0)
-			if !writeTimeout.Stop() {
-				<-writeTimeout.C
+			// 单一 writer goroutine 负责所有数据写 ffmpeg stdin。
+			// 替代原"每 chunk 新建 goroutine + channel + Reset 计时器"的高开销写法。
+			var ffCh chan []byte
+			h.mutex.Lock()
+			ffOut := h.ffmpegIn
+			h.mutex.Unlock()
+			if ffOut == nil {
+				return
 			}
-			defer writeTimeout.Stop()
+			ffCh = make(chan []byte, 1024)
+			h.wg.Go(func() {
+				for {
+					select {
+					case <-h.ctx.Done():
+						return
+					case data, ok := <-ffCh:
+						if !ok {
+							return
+						}
+						if f, isFile := ffOut.(interface {
+							SetWriteDeadline(time.Time) error
+						}); isFile {
+							_ = f.SetWriteDeadline(time.Now().Add(5 * time.Second))
+						}
+						if _, werr := ffOut.Write(data); werr != nil {
+							logger.LogPrintf("[%s] write to ffmpeg stdin error: %v", h.streamName, werr)
+							h.mutex.Lock()
+							if h.ffmpegIn != nil {
+								_ = h.ffmpegIn.Close()
+								h.ffmpegIn = nil
+							}
+							h.mutex.Unlock()
+							h.cancel()
+							return
+						}
+					}
+				}
+			})
 			for {
 				select {
 				case <-h.ctx.Done():
@@ -321,38 +354,18 @@ func (h *HLSSegmentManager) Start() error {
 						if h.ctx.Err() != nil {
 							return
 						}
-
-						h.mutex.Lock()
-						ffmpegIn := h.ffmpegIn
-						h.mutex.Unlock()
-
-						// 检查ffmpegIn是否有效
-						if ffmpegIn == nil {
-							return
-						}
-
-						writeDone := make(chan error, 1)
-						h.wg.Go(func() {
-							_, err := ffmpegIn.Write(data)
-							writeDone <- err
-						})
-
-						writeTimeout.Reset(5 * time.Second)
+						// 交给单一 writer goroutine，满则丢弃最旧，不阻塞读取循环
 						select {
-						case <-h.ctx.Done():
-							return
-						case err := <-writeDone:
-							if err != nil {
-								logger.LogPrintf("[%s] write to ffmpeg stdin error: %v", h.streamName, err)
-								// 不直接调用h.Stop()，而是取消上下文让其他goroutine自行退出
-								h.cancel()
-								return
+						case ffCh <- data:
+						default:
+							select {
+							case <-ffCh:
+							default:
 							}
-						case <-writeTimeout.C:
-							logger.LogPrintf("[%s] timeout writing to ffmpeg stdin", h.streamName)
-							// 不直接调用h.Stop()，而是取消上下文让其他goroutine自行退出
-							h.cancel()
-							return
+							select {
+							case ffCh <- data:
+							default:
+							}
 						}
 					}
 				}
