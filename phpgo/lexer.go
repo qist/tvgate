@@ -105,6 +105,7 @@ const (
 	tFinally
 	tNew
 	tClass
+	tInstanceOf
 	tConstTrue
 	tConstFalse
 	tConstNull
@@ -113,6 +114,7 @@ const (
 	tFloatCast
 	tBoolCast
 	tArrayCast
+	tObjectCast // (object)
 )
 
 // Lexer 把 PHP 源码切成记号
@@ -302,6 +304,8 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 			toks = append(toks, Tok{tNew, word, start})
 		case "class":
 			toks = append(toks, Tok{tClass, word, start})
+		case "instanceof":
+			toks = append(toks, Tok{tInstanceOf, word, start})
 		default:
 				toks = append(toks, Tok{tIdent, word, start})
 			}
@@ -395,9 +399,11 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 				castKind = tBoolCast
 			} else if strings.HasPrefix(lower, "string)") {
 				castKind = tStringCast
-			} else if strings.HasPrefix(lower, "array)") {
-				castKind = tArrayCast
-			}
+		} else if strings.HasPrefix(lower, "array)") {
+			castKind = tArrayCast
+		} else if strings.HasPrefix(lower, "object)") {
+			castKind = tObjectCast
+		}
 			if castKind > 0 {
 				// 跳过 ( + 内容 + )
 				// 计算 rest 中的前缀长度（含空格）

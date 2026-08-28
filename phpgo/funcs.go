@@ -620,6 +620,16 @@ func phpToGo(v Value) interface{} {
 			return m
 		}
 		return []interface{}{}
+	case KindObject:
+		// 对象转 JSON 对象：属性名 → 属性值
+		if v.Object != nil {
+			m := map[string]interface{}{}
+			for k, val := range v.Object.Properties {
+				m[k] = phpToGo(val)
+			}
+			return m
+		}
+		return map[string]interface{}{}
 	}
 	return nil
 }

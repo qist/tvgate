@@ -1053,7 +1053,32 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 		}
 		return NewNull(), nil
 	case *StaticCall:
-		// 特殊处理：DateTime::createFromFormat 等返回 null
+		// 特殊处理：DateTime::createFromFormat
+		className := n.Class
+		method := n.Method
+		if strings.EqualFold(className, "DateTime") && strings.EqualFold(method, "createFromFormat") {
+			// DateTime::createFromFormat($format, $value)
+			// 简化实现：如果 $value 能匹配 $format 的基本模式，返回非 null
+			if len(n.Args) >= 2 {
+				formatVal, _ := e.evalExpr(n.Args[0])
+				dateVal, _ := e.evalExpr(n.Args[1])
+				formatStr := formatVal.ToString()
+				dateStr := dateVal.ToString()
+				// 简单验证：Y-m-d 格式对应 YYYY-MM-DD
+				if formatStr == "Y-m-d" {
+					// 检查 YYYY-MM-DD 格式
+					if len(dateStr) == 10 && dateStr[4] == '-' && dateStr[7] == '-' {
+						return NewString(dateStr), nil
+					}
+				}
+				// 其它格式：非空就认为有效
+				if dateStr != "" {
+					return NewString(dateStr), nil
+				}
+			}
+			return NewNull(), nil
+		}
+		// 其它静态调用返回 null
 		return NewNull(), nil
 	case *PropertyAccess:
 		recv, err := e.evalExpr(n.Receiver)
@@ -1092,6 +1117,24 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 		return e.evalExpr(n.Right)
 	case *AssignExpr:
 		return e.evalAssignExpr(n)
+	case *InstanceOfExpr:
+		// instanceof 简化实现：检测左侧值是否为指定类的实例
+		v, err := e.evalExpr(n.Expr)
+		if err != nil {
+			return NewBool(false), nil
+		}
+		// null/null 值永远不是任何类的实例
+		if v.Kind == KindNull {
+			return NewBool(false), nil
+		}
+		// DateTime 特例：phpgo 没有真正的 DateTime 类，
+		// 但 DateTime::createFromFormat 返回的值非 null 时认为 true
+		className := strings.ToLower(n.Class)
+		if className == "datetime" {
+			return NewBool(v.Kind != KindNull), nil
+		}
+		// 通用：非 null 值视为 true（简化）
+		return NewBool(true), nil
 	case *CastExpr:
 		v, err := e.evalExpr(n.Expr)
 		if err != nil {
@@ -1113,6 +1156,17 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 			arr := NewArray()
 			arr.ArraySet(NewInt(0), v)
 			return arr, nil
+		case "object":
+			// (object) 将数组转为 stdClass 对象，键变成属性
+			if v.Kind == KindArray {
+				obj := NewObject("stdClass")
+				for _, k := range v.Keys {
+					obj.Object.Properties[k] = v.ArrayGet(NewString(k))
+				}
+				return obj, nil
+			}
+			// 非数组：包装为空对象
+			return NewObject("stdClass"), nil
 		}
 		return v, nil
 	case *ClosureExpr:

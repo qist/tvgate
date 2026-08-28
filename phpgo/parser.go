@@ -341,7 +341,7 @@ func (p *Parser) parseStmt() (Stmt, error) {
 
 func isExprStart(t Tok) bool {
 	switch t.Kind {
-	case tVar, tIdent, tInt, tFloat, tDoubleStr, tSingleStr, tConstTrue, tConstFalse, tConstNull, tArray, tLBracket, tLParen, tBang, tMinus, tStringCast, tIntCast, tFloatCast, tBoolCast, tArrayCast, tFunc, tConst, tNew, tThrow, Caret:
+	case tVar, tIdent, tInt, tFloat, tDoubleStr, tSingleStr, tConstTrue, tConstFalse, tConstNull, tArray, tLBracket, tLParen, tBang, tMinus, tStringCast, tIntCast, tFloatCast, tBoolCast, tArrayCast, tObjectCast, tFunc, tConst, tNew, tThrow, Caret:
 		return true
 	}
 	return false
@@ -970,6 +970,20 @@ func (p *Parser) parseCompare() (Expr, error) {
 	if err != nil {
 		return nil, err
 	}
+	// instanceof 运算符：$a instanceof MyClass
+	if p.at(tInstanceOf) {
+		p.adv()
+		// 右侧是类名（可能是 tIdent 或 StaticCall）
+		var className string
+		if p.at(tIdent) {
+			className = p.adv().Val
+		} else {
+			// 无法解析类名，返回 true 作为安全默认值
+			return left, nil
+		}
+		left = &InstanceOfExpr{Expr: left, Class: className}
+		return left, nil
+	}
 	for p.at(tEqEq) || p.at(tEqEqEq) || p.at(tNotEq) || p.at(tNotEqEq) || p.at(tLT) || p.at(tGT) || p.at(tLE) || p.at(tGE) {
 		op := p.adv().Val
 		right, err := p.parseShift()
@@ -1068,7 +1082,7 @@ func (p *Parser) parseUnary() (Expr, error) {
 			Val:    &BinaryExpr{Op: "-", Left: &VarExpr{Name: v.Val[1:]}, Right: &ScalarInt{Val: 1}},
 		}, nil
 	}
-	if p.at(tStringCast) || p.at(tIntCast) || p.at(tFloatCast) || p.at(tBoolCast) || p.at(tArrayCast) {
+	if p.at(tStringCast) || p.at(tIntCast) || p.at(tFloatCast) || p.at(tBoolCast) || p.at(tArrayCast) || p.at(tObjectCast) {
 		var kind string
 		switch p.adv().Kind {
 		case tStringCast:
@@ -1081,6 +1095,8 @@ func (p *Parser) parseUnary() (Expr, error) {
 			kind = "bool"
 		case tArrayCast:
 			kind = "array"
+		case tObjectCast:
+			kind = "object"
 		}
 		e, err := p.parseUnary()
 		if err != nil {
