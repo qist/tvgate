@@ -1,6 +1,10 @@
 package web
 
 import (
+	"archive/zip"
+	"bytes"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -282,13 +286,16 @@ func (h *ConfigHandler) handleCodeDelete(w http.ResponseWriter, r *http.Request)
 }
 
 // handleCodeUpload 上传文件（multipart，字段 file + 可选 dir 前缀）
+// 上传完成后自动检测：如果同目录下存在 xxx.zip 和 xxx.zip.md5，
+// 且 .md5 文件内容与 .zip 实际 MD5 一致，则自动解压 xxx.zip（覆盖模式）。
+// 没有 .md5 文件不报错，就是普通上传。
 func (h *ConfigHandler) handleCodeUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	root := h.codeRoot()
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
 		http.Error(w, "解析上传失败: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -298,13 +305,12 @@ func (h *ConfigHandler) handleCodeUpload(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	_ = os.MkdirAll(absDir, 0755)
+	var uploaded []string
 	files := r.MultipartForm.File["file"]
 	for _, fh := range files {
-		name := filepath.Base(fh.Filename) // 防穿越：仅取文件名
+		name := filepath.Base(fh.Filename)
 		dst := filepath.Join(absDir, name)
-		if absDir != root {
-			_ = os.MkdirAll(absDir, 0755)
-		}
 		src, e := fh.Open()
 		if e != nil {
 			http.Error(w, "打开上传文件失败: "+e.Error(), http.StatusInternalServerError)
@@ -323,9 +329,65 @@ func (h *ConfigHandler) handleCodeUpload(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "保存失败: "+e.Error(), http.StatusInternalServerError)
 			return
 		}
+		uploaded = append(uploaded, name)
+	}
+
+	// 上传完成后检测配套 .zip.md5，MD5 匹配则自动解压
+	type autoUnzip struct {
+		Zip    string `json:"zip"`
+		MD5    string `json:"md5"`
+		Status string `json:"status"`
+		Files  int    `json:"files,omitempty"`
+		Error  string `json:"error,omitempty"`
+	}
+	var autoResults []autoUnzip
+
+	for _, name := range uploaded {
+		if !strings.HasSuffix(strings.ToLower(name), ".zip") {
+			continue
+		}
+		// 查找配套 .md5 文件：xxx.zip.md5
+		md5Path := filepath.Join(absDir, name+".md5")
+		md5Data, e := os.ReadFile(md5Path)
+		if e != nil {
+			continue // 没有 .md5 文件，正常跳过不报错
+		}
+		// 解析期望的 MD5 值（取第一段非空内容）
+		expectedMD5 := strings.Fields(strings.TrimSpace(string(md5Data)))
+		if len(expectedMD5) == 0 {
+			continue
+		}
+		expected := strings.ToLower(expectedMD5[0])
+
+		// 计算实际 zip 文件的 MD5
+		zipPath := filepath.Join(absDir, name)
+		actual, e := md5File(zipPath)
+		if e != nil {
+			autoResults = append(autoResults, autoUnzip{Zip: name, MD5: expected, Status: "error", Error: "计算 MD5 失败: " + e.Error()})
+			continue
+		}
+		if actual != expected {
+			autoResults = append(autoResults, autoUnzip{Zip: name, MD5: expected, Status: "mismatch", Error: "MD5 不匹配: 期望 " + expected + " 实际 " + actual})
+			continue
+		}
+		// MD5 匹配，执行解压
+		n, e := extractZip(zipPath, absDir, root, h)
+		if e != nil {
+			autoResults = append(autoResults, autoUnzip{Zip: name, MD5: expected, Status: "error", Error: "解压失败: " + e.Error()})
+		} else {
+			autoResults = append(autoResults, autoUnzip{Zip: name, MD5: expected, Status: "ok", Files: n})
+		}
+	}
+
+	resp := map[string]interface{}{
+		"status":  "success",
+		"message": "上传完成",
+	}
+	if len(autoResults) > 0 {
+		resp["unzip"] = autoResults
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Write([]byte(`{"status":"success","message":"上传完成"}`))
+	json.NewEncoder(w).Encode(resp)
 }
 
 // handleCodeDownload 下载文件
@@ -355,7 +417,183 @@ func (h *ConfigHandler) handleCodeDownload(w http.ResponseWriter, r *http.Reques
 	w.Write(data)
 }
 
-// handleCodeCheck 对提交的 PHP 源码做简单语法检测（文本级，无需 PHP 运行时）
+// handleCodeUnzip 解压 ZIP 文件到指定目录（覆盖模式）。
+// 支持两种模式：
+//   1. 手动解压：POST ?path=xxx.zip&dir=目标目录（磁盘上已有 zip 文件）
+//   2. 上传解压：POST multipart file=xxx.zip&dir=目标目录
+// 可选 flatten=true 展平子目录。
+func (h *ConfigHandler) handleCodeUnzip(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	root := h.codeRoot()
+
+	// 模式1：通过 path 参数指定磁盘上已有的 zip 文件
+	zipParam := r.URL.Query().Get("path")
+	if zipParam != "" {
+		zipAbs, err := h.safeJoin(root, zipParam)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := h.assertInside(root, zipAbs); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		// 目标目录：dir 参数或 zip 文件所在目录
+		dir := r.URL.Query().Get("dir")
+		var absDir string
+		if dir != "" {
+			absDir, err = h.safeJoin(root, dir)
+		} else {
+			absDir = filepath.Dir(zipAbs)
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := h.assertInside(root, absDir); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		n, e := extractZip(zipAbs, absDir, root, h)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if e != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "error",
+				"message": "解压失败: " + e.Error(),
+			})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "success",
+				"files":   n,
+				"errors":  0,
+				"message": fmt.Sprintf("解压完成: %d 个文件", n),
+			})
+		}
+		return
+	}
+
+	// 模式2：通过 multipart 上传 zip 文件
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		http.Error(w, "解析上传失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	dir := r.FormValue("dir")
+	flatten := r.FormValue("flatten") == "true"
+	absDir, err := h.safeJoin(root, dir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := h.assertInside(root, absDir); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	_ = os.MkdirAll(absDir, 0755)
+	files := r.MultipartForm.File["file"]
+	if len(files) == 0 {
+		http.Error(w, "缺少 zip 文件", http.StatusBadRequest)
+		return
+	}
+	type result struct {
+		Name  string `json:"name"`
+		Path  string `json:"path"`
+		Size  int64  `json:"size"`
+		Error string `json:"error,omitempty"`
+	}
+	var results []result
+	totalFiles := 0
+	totalErrors := 0
+	for _, fh := range files {
+		name := filepath.Base(fh.Filename)
+		if !strings.HasSuffix(strings.ToLower(name), ".zip") {
+			results = append(results, result{Name: name, Error: "非 zip 文件"})
+			totalErrors++
+			continue
+		}
+		src, e := fh.Open()
+		if e != nil {
+			results = append(results, result{Name: name, Error: "打开失败: "+e.Error()})
+			totalErrors++
+			continue
+		}
+		buf, e := io.ReadAll(io.LimitReader(src, 64<<20))
+		src.Close()
+		if e != nil {
+			results = append(results, result{Name: name, Error: "读取失败: "+e.Error()})
+			totalErrors++
+			continue
+		}
+		zipReader, e := zip.NewReader(bytes.NewReader(buf), int64(len(buf)))
+		if e != nil {
+			results = append(results, result{Name: name, Error: "解析 zip 失败: "+e.Error()})
+			totalErrors++
+			continue
+		}
+		for _, zf := range zipReader.File {
+			fname := strings.TrimPrefix(filepath.Clean(zf.Name), string(filepath.Separator))
+			if fname == "" || fname == "." || strings.HasPrefix(fname, "..") {
+				continue
+			}
+			if flatten {
+				fname = filepath.Base(fname)
+				if fname == "." || fname == "/" {
+					continue
+				}
+			}
+			dstPath := filepath.Join(absDir, fname)
+			if !strings.HasPrefix(dstPath, absDir+string(filepath.Separator)) && dstPath != absDir {
+				continue
+			}
+			if err := h.assertInside(root, dstPath); err != nil {
+				continue
+			}
+			if zf.FileInfo().IsDir() {
+				if !flatten {
+					_ = os.MkdirAll(dstPath, 0755)
+				}
+				continue
+			}
+			if parent := filepath.Dir(dstPath); parent != absDir {
+				_ = os.MkdirAll(parent, 0755)
+			}
+			out, e := os.Create(dstPath)
+			if e != nil {
+				results = append(results, result{Name: name, Path: fname, Error: "创建文件失败: "+e.Error()})
+				totalErrors++
+				continue
+			}
+			rc, e := zf.Open()
+			if e != nil {
+				out.Close()
+				results = append(results, result{Name: name, Path: fname, Error: "打开 zip 条目失败: "+e.Error()})
+				totalErrors++
+				continue
+			}
+			_, e = io.Copy(out, rc)
+			rc.Close()
+			out.Close()
+			if e != nil {
+				results = append(results, result{Name: name, Path: fname, Error: "写入失败: "+e.Error()})
+				totalErrors++
+				continue
+			}
+			totalFiles++
+		}
+		results = append(results, result{Name: name, Path: dir, Size: int64(len(buf))})
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"files":   totalFiles,
+		"errors":  totalErrors,
+		"results": results,
+		"message": fmt.Sprintf("解压完成: %d 个文件, %d 个错误", totalFiles, totalErrors),
+	})
+}
+
 func (h *ConfigHandler) handleCodeCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -509,4 +747,72 @@ func simplePHPCheck(src string) []phpIssue {
 // timestamp 生成备份时间戳
 func timestamp() string {
 	return strings.ReplaceAll(strings.ReplaceAll(time.Now().Format("2006-01-02 15:04:05"), " ", "_"), ":", "-")
+}
+
+// md5File 计算文件内容的 MD5 哈希值（返回小写十六进制字符串）
+func md5File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := md5.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// extractZip 将 zipPath 指向的 zip 文件解压到 destDir（覆盖模式）。
+// root 用于防穿越校验。返回解压的文件数和错误。
+func extractZip(zipPath, destDir, root string, h *ConfigHandler) (int, error) {
+	data, err := os.ReadFile(zipPath)
+	if err != nil {
+		return 0, err
+	}
+	zipReader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, zf := range zipReader.File {
+		fname := strings.TrimPrefix(filepath.Clean(zf.Name), string(filepath.Separator))
+		if fname == "" || fname == "." || strings.HasPrefix(fname, "..") {
+			continue
+		}
+		dstPath := filepath.Join(destDir, fname)
+		// 防穿越：确保解压后路径仍在 destDir 内
+		if !strings.HasPrefix(dstPath, destDir+string(filepath.Separator)) && dstPath != destDir {
+			continue
+		}
+		// 防符号链接逃逸
+		if err := h.assertInside(root, dstPath); err != nil {
+			continue
+		}
+		if zf.FileInfo().IsDir() {
+			_ = os.MkdirAll(dstPath, 0755)
+			continue
+		}
+		// 确保父目录存在
+		if parent := filepath.Dir(dstPath); parent != destDir {
+			_ = os.MkdirAll(parent, 0755)
+		}
+		out, e := os.Create(dstPath)
+		if e != nil {
+			continue
+		}
+		rc, e := zf.Open()
+		if e != nil {
+			out.Close()
+			continue
+		}
+		_, e = io.Copy(out, rc)
+		rc.Close()
+		out.Close()
+		if e != nil {
+			continue
+		}
+		count++
+	}
+	return count, nil
 }

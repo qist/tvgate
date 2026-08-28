@@ -1,6 +1,7 @@
 package php
 
 import (
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +14,35 @@ import (
 	"github.com/qist/tvgate/phpgo"
 	utilshttp "github.com/qist/tvgate/utils/http"
 )
+
+func init() {
+	// 注册 Go mime 表中缺失的多媒体/文本扩展名，
+	// 使 http.ServeFile 返回正确的 Content-Type。
+	// 这样 jar/txt/js/json/xml/md/py/html/htm/jpg/jpeg/png/m3u 等静态文件
+	// 浏览器会根据类型在线打开或下载。
+	for ext, ct := range map[string]string{
+		".m3u":  "audio/mpegurl",
+		".m3u8": "application/vnd.apple.mpegurl",
+		".ts":   "video/mp2t",
+		".key":  "application/octet-stream",
+		".crt":  "application/x-x509-ca-cert",
+		".pem":  "application/x-pem-file",
+		".jar":  "application/java-archive",
+		".py":   "text/x-python; charset=utf-8",
+		".md":   "text/markdown; charset=utf-8",
+		".log":  "text/plain; charset=utf-8",
+		".csv":  "text/csv; charset=utf-8",
+		".svg":  "image/svg+xml",
+		".webp": "image/webp",
+		".ico":  "image/x-icon",
+		".woff": "font/woff",
+		".woff2": "font/woff2",
+		".ttf":  "font/ttf",
+		".wasm": "application/wasm",
+	} {
+		_ = mime.AddExtensionType(ext, ct)
+	}
+}
 
 var (
 	cfg     *config.PHPConfig
@@ -74,33 +104,45 @@ func Handler() http.HandlerFunc {
 			p = strings.TrimPrefix(p, cfg.Path)
 		}
 		rel := strings.Trim(p, "/")
-		if rel == "" {
-			rel = "index.php"
-		}
-		// 默认索引
-		if filepath.Ext(rel) == "" {
-			for _, idx := range cfg.Index {
-				cand := filepath.Join(docRoot, rel, idx)
-				if fileExists(cand) {
-					rel = filepath.Join(rel, idx)
-					break
-				}
-			}
-		}
+		// rel 为空时访问 docroot 根目录（后面由目录逻辑处理 index 查找）
 		scriptPath := filepath.Join(docRoot, rel)
 		// 防穿越
 		if !strings.HasPrefix(scriptPath, docRoot) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		// 目录访问：尝试 index 文件，否则 403 禁止目录列表
+		fi, err := os.Stat(scriptPath)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		if fi.IsDir() {
+			// 尝试 index 文件
+			for _, idx := range cfg.Index {
+				cand := filepath.Join(scriptPath, idx)
+				if fileExists(cand) {
+					scriptPath = cand
+					rel = filepath.Join(rel, idx)
+					fi, _ = os.Stat(scriptPath)
+					goto found
+				}
+			}
+			// 无 index 文件 → 禁止目录列表
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	found:
 		src, err := readFile(scriptPath)
 		if err != nil {
-			http.Error(w, "script not found: "+rel, http.StatusNotFound)
+			http.NotFound(w, r)
 			return
 		}
 
 		// 静态文件（非 PHP 脚本）直接以文件流返回，不经 phpgo 解释，
 		// 否则标签外内容会被 phpgo 丢弃导致空白页。
+		// http.ServeFile 会根据扩展名自动设置 Content-Type，
+		// 支持 jar/txt/js/json/xml/md/py/html/htm/jpg/jpeg/png/m3u 等。
 		if !isPHPScript(scriptPath, src) {
 			http.ServeFile(w, r, scriptPath)
 			return

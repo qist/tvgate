@@ -27,6 +27,11 @@
 <script src="{{.webPath}}static/js/codemirror/matchbrackets.min.js"></script>
 <script src="{{.webPath}}static/js/codemirror/closebrackets.min.js"></script>
 <script src="{{.webPath}}static/js/codemirror/comment.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/python.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/shell.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/yaml.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/markdown.min.js"></script>
+<script src="{{.webPath}}static/js/codemirror/sql.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: var(--win11-bg); color: var(--win11-text-primary); }
@@ -113,6 +118,7 @@
       <button id="btnNewFile" title="新建文件">📄 新建</button>
       <button id="btnNewDir" title="新建目录">📁 新目录</button>
       <label class="btn" title="上传文件">⬆ 上传<input id="fileUpload" type="file" multiple style="display:none"></label>
+      <button id="btnUnzip" title="解压当前目录下的 ZIP 文件（覆盖模式）" style="display:none">📦 解压</button>
       <button id="btnUp" title="返回上级目录">⬆ 上级</button>
       <button id="btnRefresh" title="刷新">🔄 刷新</button>
     </div>
@@ -168,6 +174,46 @@ const editor = CodeMirror.fromTextArea(document.getElementById("editor"), {
     "Tab": function(cm) { cm.replaceSelection("  ", "end"); }
   }
 });
+
+// 根据文件扩展名切换 CodeMirror 语法高亮模式
+function setEditorMode(path) {
+  const ext = (path || "").toLowerCase().split(".").pop();
+  const modeMap = {
+    php: "application/x-httpd-php",
+    php3: "application/x-httpd-php",
+    php4: "application/x-httpd-php",
+    phtml: "application/x-httpd-php",
+    inc: "application/x-httpd-php",
+    html: "htmlmixed",
+    htm: "htmlmixed",
+    xml: "xml",
+    js: "javascript",
+    json: { name: "javascript", json: true },
+    css: "css",
+    py: "python",
+    c: "text/x-csrc",
+    h: "text/x-csrc",
+    cpp: "text/x-c++src",
+    java: "text/x-java",
+    go: "text/x-go",
+    sh: "shell",
+    bash: "shell",
+    sql: "text/x-sql",
+    md: "markdown",
+    yml: "yaml",
+    yaml: "yaml",
+    txt: "text/plain",
+    m3u: "text/plain",
+    m3u8: "text/plain",
+    conf: "text/plain",
+    ini: "text/plain",
+    log: "text/plain",
+    env: "text/plain",
+    ts: "text/plain",
+  };
+  const mode = modeMap[ext] || "text/plain";
+  editor.setOption("mode", mode);
+}
 
 function updateEditorTheme() {
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -253,7 +299,22 @@ async function loadList() {
       div.onclick = () => { currentDir = currentDir ? currentDir + "/" + it.name : it.name; loadList(); };
     } else {
       const fullPath = currentDir ? currentDir + "/" + it.name : it.name;
-      div.onclick = () => openFile(fullPath);
+      const isZip = it.name.toLowerCase().endsWith(".zip");
+      div.onclick = () => {
+        if (isZip) {
+          // 选中 zip 文件，显示解压按钮
+          currentPath = fullPath;
+          document.getElementById("curPath").textContent = fullPath;
+          editor.setValue("");
+          const btnUnzip = document.getElementById("btnUnzip");
+          btnUnzip.style.display = "";
+          // 更新激活状态
+          loadList();
+          setStatus("已选中 ZIP：" + fullPath + "，点击「解压」按钮解压到当前目录（覆盖模式）", "warn");
+        } else {
+          openFile(fullPath);
+        }
+      };
     }
     list.appendChild(div);
   }
@@ -272,6 +333,8 @@ document.getElementById("btnUp").onclick = () => {
 
 // ========== 打开文件 ==========
 async function openFile(path) {
+  // 打开非 zip 文件时隐藏解压按钮
+  document.getElementById("btnUnzip").style.display = "none";
   const r = await fetch(webPath + "api/code/read?path=" + encodeURIComponent(path), {cache: "no-store"});
   if (r.ok) {
     const res = await r.json();
@@ -279,6 +342,7 @@ async function openFile(path) {
       currentPath = path;
       editor.setValue(res.content);
       editor.setCursor({line: 0, ch: 0});
+      setEditorMode(path);
       document.getElementById("curPath").textContent = path;
       setStatus("已加载：" + path, "ok");
       // 切换到文件所在目录
@@ -445,9 +509,50 @@ document.getElementById("fileUpload").onchange = async (e) => {
   fd.append("dir", currentDir);
   for (const f of files) fd.append("file", f);
   const res = await fetch(webPath + "api/code/upload", {method:"POST", body: fd}).then(r=>r.json());
-  setStatus(res.status === "success" ? "上传完成" : ("上传失败：" + (res.message||"")), res.status==="success"?"ok":"err");
-  if (res.status === "success") loadList();
+  if (res.status === "success") {
+    let msg = "上传完成";
+    // 显示自动解压结果（MD5 校验通过时触发）
+    if (res.unzip && res.unzip.length > 0) {
+      for (const u of res.unzip) {
+        if (u.status === "ok") msg += `\n✅ ${u.zip} MD5 校验通过，已解压 ${u.files} 个文件`;
+        else if (u.status === "mismatch") msg += `\n⚠️ ${u.zip} MD5 不匹配，未解压（${u.error}）`;
+        else msg += `\n❌ ${u.zip} 解压失败：${u.error||""}`;
+      }
+    }
+    setStatus(msg, "ok");
+    loadList();
+  } else {
+    setStatus("上传失败：" + (res.message||""), "err");
+  }
   e.target.value = "";
+};
+
+// ========== 手动解压 ==========
+document.getElementById("btnUnzip").onclick = async () => {
+  if (!currentPath || !currentPath.toLowerCase().endsWith(".zip")) {
+    setStatus("请先选择一个 .zip 文件", "warn");
+    return;
+  }
+  const btn = document.getElementById("btnUnzip");
+  const orig = btn.textContent;
+  btn.textContent = "⏳ 解压中...";
+  btn.disabled = true;
+  // 调用手动解压接口：上传已保存的 zip 文件并解压
+  const fd = new FormData();
+  fd.append("dir", currentDir);
+  fd.append("file", currentPath.split("/").pop());
+  // 直接用 api/code/unzip，把 zip 文件路径作为参数传递
+  const res = await fetch(webPath + "api/code/unzip?path=" + encodeURIComponent(currentPath) + "&dir=" + encodeURIComponent(currentDir), {
+    method: "POST"
+  }).then(r => r.json()).catch(e => ({status: "error", message: e.message}));
+  if (res.status === "success") {
+    setStatus(`✅ 解压完成：${res.files} 个文件，${res.errors} 个错误`, res.errors > 0 ? "warn" : "ok");
+    loadList();
+  } else {
+    setStatus("解压失败：" + (res.message || ""), "err");
+  }
+  btn.textContent = orig;
+  btn.disabled = false;
 };
 
 // ========== 初始化 ==========

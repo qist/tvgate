@@ -262,6 +262,7 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"api/code/upload", h.cookieAuth(h.handleCodeUpload))
 	mux.HandleFunc(webPath+"api/code/download", h.cookieAuth(h.handleCodeDownload))
 	mux.HandleFunc(webPath+"api/code/check", h.cookieAuth(h.handleCodeCheck))
+	mux.HandleFunc(webPath+"api/code/unzip", h.cookieAuth(h.handleCodeUnzip))
 
 	// 备份文件中心
 	mux.HandleFunc(webPath+"backup", h.cookieAuth(h.handleBackupPage))
