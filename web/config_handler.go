@@ -296,6 +296,7 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"api/code/read", h.cookieAuth(h.handleCodeRead))
 	mux.HandleFunc(webPath+"api/code/save", h.cookieAuth(h.handleCodeSave))
 	mux.HandleFunc(webPath+"api/code/new", h.cookieAuth(h.handleCodeNew))
+	mux.HandleFunc(webPath+"api/code/rename", h.cookieAuth(h.handleCodeRename))
 	mux.HandleFunc(webPath+"api/code/delete", h.cookieAuth(h.handleCodeDelete))
 	mux.HandleFunc(webPath+"api/code/upload", h.cookieAuth(h.handleCodeUpload))
 	mux.HandleFunc(webPath+"api/code/download", h.cookieAuth(h.handleCodeDownload))

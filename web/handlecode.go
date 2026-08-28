@@ -245,6 +245,52 @@ func (h *ConfigHandler) handleCodeNew(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"success","message":"已创建"}`))
 }
 
+// handleCodeRename 重命名文件或目录（?path=旧相对路径 & newname=新文件名）
+// 仅允许在 docroot 内重命名，且新名不能含路径分隔符（禁止穿越）。
+func (h *ConfigHandler) handleCodeRename(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	root := h.codeRoot()
+	rel := r.URL.Query().Get("path")
+	newname := strings.TrimSpace(r.URL.Query().Get("newname"))
+	if rel == "" || newname == "" {
+		http.Error(w, "缺少 path / newname 参数", http.StatusBadRequest)
+		return
+	}
+	// 新名必须是单一文件/目录名，禁止 . 、.. 、含路径分隔符（防穿越）
+	if newname == "." || newname == ".." || strings.ContainsAny(newname, "/\\") {
+		http.Error(w, "新名称不合法", http.StatusBadRequest)
+		return
+	}
+	oldAbs, err := h.resolvePath(root, rel)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := h.assertInside(root, oldAbs); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	// 新路径 = 原目录 + 新名称，且必须仍在 docroot 内
+	newAbs := filepath.Join(filepath.Dir(oldAbs), newname)
+	if newAbs != root && !strings.HasPrefix(newAbs, root+string(filepath.Separator)) {
+		http.Error(w, "非法路径：禁止穿越 docroot", http.StatusForbidden)
+		return
+	}
+	if _, e := os.Stat(newAbs); e == nil {
+		http.Error(w, "同名文件或目录已存在", http.StatusConflict)
+		return
+	}
+	if err := os.Rename(oldAbs, newAbs); err != nil {
+		http.Error(w, "重命名失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Write([]byte(`{"status":"success","message":"已重命名"}`))
+}
+
 // handleCodeDelete 删除文件或目录
 func (h *ConfigHandler) handleCodeDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
