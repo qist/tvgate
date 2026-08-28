@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="{{.webPath}}static/common.css">
   <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/codemirror.min.css">
   <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/material-darker.min.css">
+  <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/dialog.css">
   <style>
     /* 浅色主题时覆盖 CodeMirror 背景 */
     html[data-theme="light"] .CodeMirror {
@@ -49,6 +50,12 @@
   <script src="{{.webPath}}static/js/codemirror/yaml.min.js"></script>
   <script src="{{.webPath}}static/js/codemirror/markdown.min.js"></script>
   <script src="{{.webPath}}static/js/codemirror/sql.min.js"></script>
+  <!-- CodeMirror 5 官方 search addon（查找/替换） -->
+  <script src="{{.webPath}}static/js/codemirror/searchcursor.js"></script>
+  <script src="{{.webPath}}static/js/codemirror/dialog.js"></script>
+  <script src="{{.webPath}}static/js/codemirror/annotatescrollbar.js"></script>
+  <script src="{{.webPath}}static/js/codemirror/matchesonscrollbar.js"></script>
+  <script src="{{.webPath}}static/js/codemirror/search.js"></script>
   <style>
     * {
       box-sizing: border-box;
@@ -489,6 +496,7 @@
         <button class="sec" id="btnCheck">语法检测</button>
         <button class="sec" id="btnDownload">下载</button>
         <button class="sec" id="btnReload" title="从磁盘重新加载当前文件内容（丢弃未保存修改）">🔄 刷新内容</button>
+        <button class="sec" id="btnFindToggle" title="查找/替换 (Ctrl+F / Ctrl+H)">🔍 查找替换</button>
         <button class="sec" id="btnRename">✏️ 重命名</button>
         <button class="danger" id="btnDelete">删除</button>
         <button class="sec" id="btnDeleteDir" style="display:none">🗑 删除目录</button>
@@ -533,7 +541,15 @@
         "Ctrl-S": function () { saveFile(); },
         "Cmd-S": function () { saveFile(); },
         "Ctrl-/": function () { editor.toggleComment(); },
-        "Tab": function (cm) { cm.replaceSelection("  ", "end"); }
+        "Tab": function (cm) { cm.replaceSelection("  ", "end"); },
+        "Ctrl-F": "findPersistent",
+        "Cmd-F": "findPersistent",
+        "F3": "findPersistentNext",
+        "Cmd-G": "findPersistentNext",
+        "Shift-F3": "findPersistentPrev",
+        "Cmd-Shift-G": "findPersistentPrev",
+        "Ctrl-H": "replace",
+        "Cmd-Alt-F": "replace"
       }
     });
 
@@ -964,6 +980,10 @@
       if (!currentPath) { setStatus("请先打开一个文件再刷新内容", "warn"); return; }
       if (!confirm("将从磁盘重新加载「" + currentPath + "」，未保存的修改将丢失。继续？")) return;
       await openFile(currentPath);
+    };
+    document.getElementById("btnFindToggle").onclick = () => {
+      if (!currentPath) { setStatus("请先打开一个文件再进行查找/替换", "warn"); return; }
+      editor.execCommand("findPersistent");
     };
     document.getElementById("btnRename").onclick = () => {
       if (!currentPath) { setStatus("请先打开要重命名的文件", "warn"); return; }
