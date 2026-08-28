@@ -777,14 +777,16 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 		// log.Printf("收到登录凭据，用户名: %s", credentials.Username)
 
-		// 验证用户名和密码
-
-		usernameMatch := subtle.ConstantTimeCompare([]byte(credentials.Username), []byte(h.webConfig.Username)) == 1
-		passwordMatch := subtle.ConstantTimeCompare([]byte(credentials.Password), []byte(h.webConfig.Password)) == 1
+		// 验证用户名和密码。空口令加固：web 未启用、未配置密码、或提交空密码，
+		// 一律拒绝——避免"空口令 + 管理界面"被用于未授权写入/执行（RCE 链）。
+		passwordConfigured := h.webConfig.Password != ""
 
 		// log.Printf("用户名匹配: %t, 密码匹配: %t", usernameMatch, passwordMatch)
 
-		if h.webConfig.Enabled && usernameMatch && passwordMatch {
+		if passwordConfigured && h.webConfig.Enabled &&
+			credentials.Password != "" &&
+			subtle.ConstantTimeCompare([]byte(credentials.Username), []byte(h.webConfig.Username)) == 1 &&
+			subtle.ConstantTimeCompare([]byte(credentials.Password), []byte(h.webConfig.Password)) == 1 {
 			// 认证成功，设置会话cookie
 			// log.Printf("认证成功，设置认证Cookie")
 			http.SetCookie(w, &http.Cookie{

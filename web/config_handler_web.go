@@ -66,6 +66,11 @@ func (h *ConfigHandler) handleWebConfigSave(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// 读取当前配置快照，用于空口令时保留原密码
+	config.CfgMu.RLock()
+	webCfg := config.Cfg.Web
+	config.CfgMu.RUnlock()
+
 	configPath := *config.ConfigFilePath
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -100,6 +105,11 @@ func (h *ConfigHandler) handleWebConfigSave(w http.ResponseWriter, r *http.Reque
 							&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", username)})
 					}
 					if password, ok := webConfig["password"]; ok {
+						// 空口令加固：若提交值为空，保留原配置密码而不是覆盖为空，
+						// 避免误操作将 web 口令置空（配合登录侧拒绝空口令）
+						if fmt.Sprintf("%v", password) == "" {
+							password = webCfg.Password
+						}
 						newWebNode.Content = append(newWebNode.Content,
 							&yaml.Node{Kind: yaml.ScalarNode, Value: "password"},
 							&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", password)})
