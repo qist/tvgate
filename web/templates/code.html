@@ -482,6 +482,7 @@
         <button id="btnUnzip" title="解压当前目录下的 ZIP 文件（覆盖模式）" style="display:none">📦 解压</button>
         <button id="btnUp" title="返回上级目录">⬆ 上级</button>
         <button id="btnRefresh" title="刷新">🔄 刷新</button>
+        <button id="btnRepl" title="批量替换内容（当前目录及子目录的文本文件）">🔁 批量替换</button>
       </div>
       <div style="padding:4px 10px;border-bottom:1px solid var(--win11-border);">
         <input id="searchInput" placeholder="🔍 搜索当前目录文件…"
@@ -516,6 +517,25 @@
       <div class="row">
         <button class="cancel" id="modalCancel">取消</button>
         <button id="modalOk">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 批量替换弹窗 -->
+  <div class="modal" id="modalRepl">
+    <div class="box">
+      <div>批量替换内容</div>
+      <input id="replFrom" placeholder="查找内容…">
+      <input id="replTo" placeholder="替换为…">
+      <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--win11-text-tertiary);padding:4px 0;">
+        <label><input type="checkbox" id="replRegex"> 正则</label>
+        <label><input type="checkbox" id="replCase"> 区分大小写</label>
+        <span style="color:var(--win11-text-tertiary);">（保存接口会自动备份被改文件）</span>
+      </div>
+      <div style="font-size:12px;color:var(--win11-warning);">作用范围：当前目录及子目录（<span id="replScope"></span>）</div>
+      <div class="row">
+        <button class="cancel" id="modalReplCancel">取消</button>
+        <button id="modalReplOk">开始替换</button>
       </div>
     </div>
   </div>
@@ -973,6 +993,70 @@
     document.getElementById("btnNewFile").onclick = () => openModal("file");
     document.getElementById("btnNewDir").onclick = () => openModal("dir");
     document.getElementById("btnRefresh").onclick = loadList;
+    document.getElementById("btnRepl").onclick = () => {
+      document.getElementById("replScope").textContent = currentDir ? currentDir : "docroot(全目录)";
+      document.getElementById("replFrom").value = "";
+      document.getElementById("replTo").value = "";
+      document.getElementById("replRegex").checked = false;
+      document.getElementById("replCase").checked = false;
+      document.getElementById("modalRepl").classList.add("show");
+      document.getElementById("replFrom").focus();
+    };
+    document.getElementById("modalReplCancel").onclick = () => document.getElementById("modalRepl").classList.remove("show");
+
+    // 忽略大小写统计 / 替换（前端）
+    function countIgnoreCaseJS(s, old) { var c = 0, i = 0; var lo = s.toLowerCase(), lo2 = old.toLowerCase(); if (!lo2) return 0; while ((i = lo.indexOf(lo2, i)) !== -1) { c++; i += old.length; } return c; }
+    function replaceIgnoreCaseJS(s, old, rep) { var lo = s.toLowerCase(), lo2 = old.toLowerCase(); var out = "", i = 0; if (!lo2) return s; for (; ;) { var k = lo.indexOf(lo2, i); if (k === -1) { out += s.slice(i); break; } out += s.slice(i, k) + rep; i = k + old.length; } return out; }
+
+    // 递归采集目录下所有文件（相对路径 + 大小）
+    async function gatherFiles(dir, out) {
+      const res = await api("api/code/list?dir=" + encodeURIComponent(dir), { cache: "no-store" });
+      for (const it of (res.items || [])) {
+        const full = dir ? dir + "/" + it.name : it.name;
+        if (it.isDir) await gatherFiles(full, out);
+        else out.push({ path: full, size: it.size || 0 });
+      }
+    }
+
+    document.getElementById("modalReplOk").onclick = async () => {
+      const from = document.getElementById("replFrom").value;
+      if (!from.trim()) { setStatus("请输入查找内容", "warn"); return; }
+      document.getElementById("modalRepl").classList.remove("show");
+      setStatus("正在批量替换 …", "warn");
+      const to = document.getElementById("replTo").value;
+      const useRegex = document.getElementById("replRegex").checked;
+      const caseSensitive = document.getElementById("replCase").checked;
+      const allFiles = [];
+      await gatherFiles(currentDir, allFiles);
+
+      const modified = [], skipped = [];
+      let replaced = 0;
+      // 校验正则
+      let re = null;
+      if (useRegex) { try { re = new RegExp(from, caseSensitive ? "g" : "gi"); } catch (e) { setStatus("正则错误：" + e.message, "err"); return; } }
+
+      for (const f of allFiles) {
+        const base = f.path.split("/").pop();
+        if (f.path.indexOf(".bak.") !== -1 || base.charAt(0) === ".") { skipped.push(f.path); continue; }
+        if (f.size > 5 * 1024 * 1024) { skipped.push(f.path); continue; }
+        let content;
+        try { const rr = await fetch(webPath + "api/code/read?path=" + encodeURIComponent(f.path), { cache: "no-store" }); const rj = await rr.json(); content = rj.content || ""; } catch { skipped.push(f.path); continue; }
+        if (content.indexOf("\0") !== -1) { skipped.push(f.path); continue; } // 二进制
+
+        let out, count;
+        if (useRegex) { const m = content.match(re); count = m ? m.length : 0; if (!count) continue; out = content.replace(re, to); }
+        else if (caseSensitive) { const parts = content.split(from); count = parts.length - 1; if (!count) continue; out = parts.join(to); }
+        else { count = countIgnoreCaseJS(content, from); if (!count) continue; out = replaceIgnoreCaseJS(content, from, to); }
+
+        const resp = await fetch(webPath + "api/code/save?path=" + encodeURIComponent(f.path), { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" }, body: out });
+        if (resp.ok) { modified.push(f.path); replaced += count; } else { skipped.push(f.path); }
+      }
+
+      let msg = `✅ 批量替换完成：${modified.length} 个文件，共 ${replaced} 处` + (skipped.length ? `，跳过 ${skipped.length} 个` : "");
+      if (modified.length) { msg += "\n" + modified.slice(0, 20).map(x => "  • " + x).join("\n"); if (modified.length > 20) msg += `\n  … 共 ${modified.length} 个`; }
+      setStatus(msg, "ok");
+      loadList();
+    };
     document.getElementById("btnSave").onclick = saveFile;
     document.getElementById("btnCheck").onclick = checkSyntax;
     document.getElementById("btnDownload").onclick = downloadFile;
