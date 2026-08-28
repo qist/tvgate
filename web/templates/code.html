@@ -8,7 +8,6 @@
   <link rel="stylesheet" href="{{.webPath}}static/common.css">
   <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/codemirror.min.css">
   <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/material-darker.min.css">
-  <link rel="stylesheet" href="{{.webPath}}static/js/codemirror/dialog.css">
   <style>
     /* 浅色主题时覆盖 CodeMirror 背景 */
     html[data-theme="light"] .CodeMirror {
@@ -50,12 +49,6 @@
   <script src="{{.webPath}}static/js/codemirror/yaml.min.js"></script>
   <script src="{{.webPath}}static/js/codemirror/markdown.min.js"></script>
   <script src="{{.webPath}}static/js/codemirror/sql.min.js"></script>
-  <!-- CodeMirror 5 官方 search addon（查找/替换） -->
-  <script src="{{.webPath}}static/js/codemirror/searchcursor.js"></script>
-  <script src="{{.webPath}}static/js/codemirror/dialog.js"></script>
-  <script src="{{.webPath}}static/js/codemirror/annotatescrollbar.js"></script>
-  <script src="{{.webPath}}static/js/codemirror/matchesonscrollbar.js"></script>
-  <script src="{{.webPath}}static/js/codemirror/search.js"></script>
   <style>
     * {
       box-sizing: border-box;
@@ -540,6 +533,27 @@
     </div>
   </div>
 
+  <!-- 查找/替换弹窗 -->
+  <div class="modal" id="modalFindRep">
+    <div class="box">
+      <div>查找 / 替换</div>
+      <input id="findText" placeholder="查找…">
+      <input id="replaceText" placeholder="替换为（留空则只查找）">
+      <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--win11-text-tertiary);padding:4px 0;">
+        <label><input type="checkbox" id="matchCase"> 区分大小写</label>
+        <label><input type="checkbox" id="matchRegex"> 正则</label>
+        <span id="findCount"></span>
+      </div>
+      <div class="row" style="flex-wrap:wrap;">
+        <button class="cancel" id="btnFindClose">关闭</button>
+        <button class="cancel" id="btnFindPrev">↑ 上一个</button>
+        <button class="sec" id="btnFindNext">↓ 下一个</button>
+        <button class="sec" id="btnReplaceOne">替换</button>
+        <button class="sec" id="btnReplaceAll">全部替换</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const webPath = "{{.webPath}}";
     let currentPath = "";       // 当前打开的文件完整相对路径
@@ -562,14 +576,14 @@
         "Cmd-S": function () { saveFile(); },
         "Ctrl-/": function () { editor.toggleComment(); },
         "Tab": function (cm) { cm.replaceSelection("  ", "end"); },
-        "Ctrl-F": "findPersistent",
-        "Cmd-F": "findPersistent",
-        "F3": "findPersistentNext",
-        "Cmd-G": "findPersistentNext",
-        "Shift-F3": "findPersistentPrev",
-        "Cmd-Shift-G": "findPersistentPrev",
-        "Ctrl-H": "replace",
-        "Cmd-Alt-F": "replace"
+        "Ctrl-F": function () { showFindModal(false); },
+        "Cmd-F": function () { showFindModal(false); },
+        "F3": function () { findNextModal(); },
+        "Cmd-G": function () { findNextModal(); },
+        "Shift-F3": function () { findPrevModal(); },
+        "Cmd-Shift-G": function () { findPrevModal(); },
+        "Ctrl-H": function () { showFindModal(true); },
+        "Cmd-Alt-F": function () { showFindModal(true); }
       }
     });
 
@@ -1067,8 +1081,98 @@
     };
     document.getElementById("btnFindToggle").onclick = () => {
       if (!currentPath) { setStatus("请先打开一个文件再进行查找/替换", "warn"); return; }
-      editor.execCommand("findPersistent");
+      showFindModal(false);
     };
+
+    // ========== 查找/替换（弹窗） ==========
+    function findItems(text, needle, caseFold, isRegex) {
+      const res = [];
+      if (!needle) return res;
+      if (isRegex) {
+        let re;
+        try { re = new RegExp(needle, caseFold ? 'gi' : 'g'); } catch (e) { return res; }
+        let m;
+        while ((m = re.exec(text)) !== null) { res.push({ idx: m.index, len: m[0].length }); if (m[0] === '') re.lastIndex++; }
+      } else {
+        const hay = caseFold ? text.toLowerCase() : text;
+        const pin = caseFold ? needle.toLowerCase() : needle;
+        if (!pin) return res;
+        let i = 0;
+        while ((i = hay.indexOf(pin, i)) !== -1) { res.push({ idx: i, len: needle.length }); i += needle.length; }
+      }
+      return res;
+    }
+    function getFindParams() { return { needle: document.getElementById('findText').value, caseFold: !document.getElementById('matchCase').checked, isRegex: document.getElementById('matchRegex').checked }; }
+    function showFindModal(replaceFocus) {
+      const sel = editor.getSelection();
+      if (sel && !document.getElementById('findText').value && sel.length < 200) document.getElementById('findText').value = sel;
+      document.getElementById('modalFindRep').classList.add('show');
+      const el = document.getElementById(replaceFocus ? 'replaceText' : 'findText');
+      el.focus(); el.select();
+      updateFindCount();
+    }
+    function updateFindCount() { const p = getFindParams(); const el = document.getElementById('findCount'); if (!p.needle.trim()) { el.textContent = ''; return; } const n = findItems(editor.getValue(), p.needle, p.caseFold, p.isRegex).length; el.textContent = n ? ('共 ' + n + ' 处') : '无结果'; }
+    function doFindModal(dir) {
+      const p = getFindParams();
+      if (!p.needle.trim()) { setStatus('请输入查找内容', 'warn'); return; }
+      const matches = findItems(editor.getValue(), p.needle, p.caseFold, p.isRegex);
+      const el = document.getElementById('findCount');
+      if (!matches.length) { el.textContent = '无结果'; setStatus('未找到：' + p.needle, 'warn'); return; }
+      const cur = editor.indexFromPos(editor.getCursor());
+      let k;
+      if (dir > 0) k = matches.findIndex(m => m.idx >= cur);
+      else { k = -1; for (let i = matches.length - 1; i >= 0; i--) { if (matches[i].idx <= cur) { k = i; break; } } }
+      if (k < 0) k = dir > 0 ? 0 : matches.length - 1;
+      const m = matches[k];
+      const from = editor.posFromIndex(m.idx), to = editor.posFromIndex(m.idx + m.len);
+      editor.setSelection(from, to);
+      editor.scrollIntoView({ from: from, to: to }, 80);
+      el.textContent = (k + 1) + '/' + matches.length;
+    }
+    function findNextModal() { doFindModal(1); }
+    function findPrevModal() { doFindModal(-1); }
+    function replaceOneModal() {
+      const p = getFindParams(), rep = document.getElementById('replaceText').value;
+      if (!p.needle.trim()) { setStatus('请输入查找内容', 'warn'); return; }
+      const sel = editor.getSelection();
+      let hit = false;
+      if (p.isRegex) { try { hit = new RegExp('^' + p.needle + '$', p.caseFold ? 'i' : '').test(sel); } catch (e) { hit = false; } }
+      else hit = p.caseFold ? (sel.toLowerCase() === p.needle.toLowerCase()) : (sel === p.needle);
+      if (!hit) { doFindModal(1); return; }
+      let to = rep;
+      if (p.isRegex) { try { to = sel.replace(new RegExp(p.needle, p.caseFold ? 'i' : ''), rep.replace(/\$/g, '$$$$')); } catch (e) { to = rep; } }
+      editor.replaceSelection(to);
+      findNextModal();
+    }
+    function replaceAllModal() {
+      const p = getFindParams(), rep = document.getElementById('replaceText').value;
+      if (!p.needle.trim()) { setStatus('请输入查找内容', 'warn'); return; }
+      const text = editor.getValue();
+      const matches = findItems(text, p.needle, p.caseFold, p.isRegex);
+      const el = document.getElementById('findCount');
+      if (!matches.length) { el.textContent = '无结果'; return; }
+      for (let i = matches.length - 1; i >= 0; i--) {
+        const m = matches[i];
+        let to = rep;
+        if (p.isRegex) { try { to = text.slice(m.idx, m.idx + m.len).replace(new RegExp(p.needle, p.caseFold ? 'i' : ''), rep); } catch (e) { to = rep; } }
+        editor.replaceRange(to, editor.posFromIndex(m.idx), editor.posFromIndex(m.idx + m.len));
+      }
+      el.textContent = '已替换 ' + matches.length + ' 处';
+      setStatus('✅ 已替换 ' + matches.length + ' 处', 'ok');
+      updateFindCount();
+    }
+    // 关闭弹窗
+    document.getElementById('btnFindClose').onclick = () => document.getElementById('modalFindRep').classList.remove('show');
+    document.getElementById('btnFindPrev').onclick = findPrevModal;
+    document.getElementById('btnFindNext').onclick = findNextModal;
+    document.getElementById('btnReplaceOne').onclick = replaceOneModal;
+    document.getElementById('btnReplaceAll').onclick = replaceAllModal;
+    document.getElementById('findText').addEventListener('input', updateFindCount);
+    document.getElementById('replaceText').addEventListener('input', updateFindCount);
+    document.getElementById('matchCase').addEventListener('change', updateFindCount);
+    document.getElementById('matchRegex').addEventListener('change', updateFindCount);
+    document.getElementById('findText').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? findPrevModal() : findNextModal(); } });
+    document.getElementById('replaceText').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); replaceOneModal(); } });
     document.getElementById("btnRename").onclick = () => {
       if (!currentPath) { setStatus("请先打开要重命名的文件", "warn"); return; }
       renameTarget = currentPath;
