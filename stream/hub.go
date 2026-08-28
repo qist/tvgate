@@ -9,7 +9,6 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/qist/tvgate/config"
-	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
 	"github.com/qist/tvgate/utils/mem"
 	tsync "github.com/qist/tvgate/utils/sync"
@@ -41,8 +40,8 @@ type StreamHubs struct {
 	cancel context.CancelFunc
 	wg     tsync.WaitGroup
 	// 添加流状态管理
-	state     int // 0: stopped, 1: playing, 2: error
-	stateCond *sync.Cond
+	state     int           // 0: stopped, 1: playing, 2: error
+	stateCh   chan struct{} // 状态变更通知通道（close+replace 实现广播）
 	lastError error
 	// 添加RTSP客户端引用
 	rtspClient  *gortsplib.Client
@@ -61,7 +60,7 @@ func NewStreamHubs() *StreamHubs {
 		ctx:     ctx,
 		cancel:  cancel,
 	}
-	hub.stateCond = sync.NewCond(&hub.mu)
+	hub.stateCh = make(chan struct{})
 	return hub
 }
 
@@ -118,18 +117,12 @@ func (hub *StreamHubs) Broadcast(data []byte) {
 	}
 	hub.mu.RUnlock()
 
-	// 快速检测是否是 H264 关键帧（只检查前5字节）
-	isKeyFrame := len(data) >= 5 &&
-		data[0] == 0x00 && data[1] == 0x00 &&
-		data[2] == 0x00 && data[3] == 0x01 &&
-		(data[4]&0x1F) == 5 // NAL type 5 = IDR frame
-
 	// 只复制一次，所有客户端共享同一份只读副本
 	// data 来自 astits muxer 的内部 buffer，下次 WriteTables 会覆盖，所以必须复制
 	shared := make([]byte, len(data))
 	copy(shared, data)
 
-	hub.pushToClients(clients, shared, isKeyFrame)
+	hub.pushToClients(clients, shared)
 
 	// 归还快照 slice 到池
 	*clientsPtr = clients
@@ -152,24 +145,18 @@ func (hub *StreamHubs) BroadcastNoCopy(data []byte) {
 	}
 	hub.mu.RUnlock()
 
-	// mpegts 直通模式不需要关键帧检测
-	hub.pushToClients(clients, data, false)
+	hub.pushToClients(clients, data)
 
 	*clientsPtr = clients
 	clientSlicePool.Put(clientsPtr)
 }
 
-// pushToClients 将数据推送到所有客户端
-func (hub *StreamHubs) pushToClients(clients []*ringbuffer.RingBuffer, data []byte, isKeyFrame bool) {
+// pushToClients 将数据推送到所有客户端。
+// Push 仅在缓冲已关闭时返回 false；关闭的客户端由 RemoveClient 负责清理，
+// 这里无需阻塞重试，直接跳过即可，避免拖慢整个 hub 的生产者。
+func (hub *StreamHubs) pushToClients(clients []*ringbuffer.RingBuffer, data []byte) {
 	for _, ch := range clients {
-		if !ch.Push(data) {
-			if isKeyFrame {
-				time.Sleep(30 * time.Millisecond)
-				if !ch.Push(data) {
-					logger.LogPrintf("Key frame dropped for slow client")
-				}
-			}
-		}
+		ch.Push(data)
 	}
 }
 
@@ -214,7 +201,7 @@ func (hub *StreamHubs) Close() {
 	hub.isClosed = true
 	hub.cancelIdleCloseLocked()
 	hub.state = StateStopped
-	hub.stateCond.Broadcast()
+	hub.notifyState()
 
 	// 清理媒体信息
 	hub.videoMedia = nil
@@ -309,13 +296,20 @@ func (hub *StreamHubs) Go(f func()) {
 	hub.wg.Go(f)
 }
 
+// notifyState 通知所有等待者状态已变更。使用 close+replace 实现广播。
+// 调用方必须已持有 hub.mu 写锁。
+func (hub *StreamHubs) notifyState() {
+	close(hub.stateCh)
+	hub.stateCh = make(chan struct{})
+}
+
 // 新增方法：设置流为播放状态
 func (hub *StreamHubs) SetPlaying() {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	hub.state = 1
 	hub.lastError = nil
-	hub.stateCond.Broadcast()
+	hub.notifyState()
 }
 
 // 新增方法：设置流为停止状态
@@ -323,7 +317,7 @@ func (hub *StreamHubs) SetStopped() {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
 	hub.state = 0
-	hub.stateCond.Broadcast()
+	hub.notifyState()
 }
 
 // SetError 设置流为错误状态
@@ -332,7 +326,7 @@ func (hub *StreamHubs) SetError(err error) {
 	defer hub.mu.Unlock()
 	hub.state = StateError
 	hub.lastError = err
-	hub.stateCond.Broadcast()
+	hub.notifyState()
 
 	// 清除媒体信息
 	hub.videoMedia = nil
@@ -363,54 +357,27 @@ func (hub *StreamHubs) GetLastError() error {
 
 // 新增方法：等待流变为播放状态
 func (hub *StreamHubs) WaitForPlaying(ctx context.Context) bool {
-	hub.mu.Lock()
-	defer hub.mu.Unlock()
-
-	// 如果已经关闭，直接返回
-	if hub.isClosed {
-		return false
-	}
-
-	// 如果在错误状态，返回错误
-	if hub.state == StateError {
-		return false
-	}
-
-	// 如果已经在播放，直接返回
-	if hub.state == StatePlaying {
-		return true
-	}
-
-	// 启动一个 goroutine 监听 context 取消，确保 Wait() 不会永久阻塞
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			hub.stateCond.Broadcast()
-		case <-done:
-		}
-	}()
-	defer close(done)
-
-	// 使用带超时的条件变量等待，支持 context 取消
 	for {
-		// 检查 context 是否已取消
-		select {
-		case <-ctx.Done():
-			return false
-		default:
-		}
-
-		// 检查状态
+		hub.mu.RLock()
 		if hub.isClosed || hub.state == StateError {
+			hub.mu.RUnlock()
 			return false
 		}
 		if hub.state == StatePlaying {
+			hub.mu.RUnlock()
 			return true
 		}
+		// 快照当前通知通道；后续状态变更会关闭它，从而唤醒本次等待。
+		ch := hub.stateCh
+		hub.mu.RUnlock()
 
-		// 等待状态变化（最多等待 100ms，以便检查 context）
-		hub.stateCond.Wait()
+		// 等待状态变更或 context 取消（无需为每次等待额外分配 goroutine）
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ch:
+			// 状态可能已变更，回到循环顶部重新检查
+		}
 	}
 }
 

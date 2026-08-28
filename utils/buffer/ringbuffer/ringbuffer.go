@@ -6,42 +6,27 @@ import (
 	"sync"
 )
 
-// RingBuffer is a ring buffer.
+// RingBuffer 基于单一有类型 channel 实现的环形缓冲。
+//
+// 旧实现同时维护一个 []interface{} 环形数组和一个 chan interface{}：
+// Push 时把数据引用写入两份容器，消费端却只读其中一份，另一份成为纯死重并滞留
+// 旧引用；此外 []byte 装箱成 interface{} 在每次 Push/send 时都会产生一次堆分配。
+// 这里改为单一的 chan []byte，既消除双容器冗余，也去掉 interface{} 装箱开销。
 type RingBuffer struct {
-	size       uint64
-	mutex      sync.Mutex
-	cond       *sync.Cond
-	buffer     []interface{}
-	readIndex  uint64
-	writeIndex uint64
-	closed     bool
-	dataChan   chan interface{}
+	size   uint64
+	mutex  sync.Mutex
+	closed bool
+
+	dataChan   chan []byte
 	chanClosed bool
-	mask       uint64
 }
 
-// Chan returns a channel that can be used in select statements
-func (r *RingBuffer) Chan() <-chan interface{} {
+// Chan 返回可在 select 语句中使用的 channel。
+func (r *RingBuffer) Chan() <-chan []byte {
 	return r.dataChan
 }
 
-// type ctxWrapper struct {
-// 	ctx context.Context
-// }
-// type DoneContext interface {
-// 	IsDone() bool
-// }
-
-// func (c *ctxWrapper) IsDone() bool {
-// 	select {
-// 	case <-c.ctx.Done():
-// 		return true
-// 	default:
-// 		return false
-// 	}
-// }
-
-// New creates a new ring buffer with the given size.
+// New 创建指定大小的环形缓冲，size 必须是 2 的幂。
 func New(size uint64) (*RingBuffer, error) {
 	if size == 0 {
 		return nil, fmt.Errorf("size must be positive")
@@ -52,63 +37,43 @@ func New(size uint64) (*RingBuffer, error) {
 		return nil, fmt.Errorf("size must be a power of 2")
 	}
 
-	rb := &RingBuffer{
-		buffer:   make([]interface{}, size),
+	return &RingBuffer{
 		size:     size,
-		mask:     size - 1,
-		dataChan: make(chan interface{}, size), // channel 容量与 ring buffer 一致
-	}
-	rb.cond = sync.NewCond(&rb.mutex)
-	return rb, nil
+		dataChan: make(chan []byte, size),
+	}, nil
 }
 
-// Close makes Pull() return false.
+// Close 关闭缓冲，使 Pull/Chan 的读取方收到结束信号。
 func (r *RingBuffer) Close() {
 	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
 	if r.closed {
-		r.mutex.Unlock()
 		return
 	}
 	r.closed = true
-	for i := uint64(0); i < r.size; i++ {
-		r.buffer[i] = nil
-	}
 	if !r.chanClosed {
-		// 排空 dataChan 中残留的数据引用，避免内存泄漏
-		// close 后消费者会收到零值并退出，但 channel 中已缓冲的 interface{} 引用不会被 GC
-		for len(r.dataChan) > 0 {
-			<-r.dataChan
-		}
+		r.drain()
 		close(r.dataChan)
 		r.chanClosed = true
 	}
-	r.mutex.Unlock()
-	r.cond.Broadcast()
 }
 
-// Reset restores Pull() behavior after a Close().
+// Reset 在 Close 之后恢复缓冲，使缓冲可继续写入和读取。
 func (r *RingBuffer) Reset() {
 	r.mutex.Lock()
-	for i := uint64(0); i < r.size; i++ {
-		r.buffer[i] = nil
-	}
-	r.writeIndex = 0
-	r.readIndex = 0
+	defer r.mutex.Unlock()
+
+	r.closed = false
 	if r.chanClosed {
-		chanCap := cap(r.dataChan)
-		if chanCap == 0 {
-			chanCap = int(r.size)
-		}
-		r.dataChan = make(chan interface{}, chanCap)
+		r.dataChan = make(chan []byte, r.size)
 		r.chanClosed = false
 	}
-	r.closed = false
-	r.mutex.Unlock()
-	r.cond.Broadcast()
 }
 
-// Push pushes data at the end of the buffer, overwriting oldest if full.
-func (r *RingBuffer) Push(data interface{}) bool {
+// Push 在缓冲尾部写入数据；满时丢弃最旧数据，保证慢消费者不会阻塞生产者。
+// 仅在缓冲已关闭时返回 false。
+func (r *RingBuffer) Push(data []byte) bool {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
@@ -116,114 +81,60 @@ func (r *RingBuffer) Push(data interface{}) bool {
 		return false
 	}
 
-	if r.buffer[r.writeIndex] != nil {
-		// overwrite oldest
-		r.readIndex = (r.readIndex + 1) % r.size
+	select {
+	case r.dataChan <- data:
+		return true
+	default:
 	}
 
-	r.buffer[r.writeIndex] = data
-	r.writeIndex = (r.writeIndex + 1) % r.size
-
-	// 发送到内部channel，使用非阻塞方式
-	if !r.chanClosed {
-		func() {
-			defer func() {
-				if recover() != nil {
-					r.chanClosed = true
-				}
-			}()
-			select {
-			case r.dataChan <- data:
-			default:
-				// channel满了，丢弃最旧的数据腾出空间，避免旧引用堆积
-				select {
-				case <-r.dataChan:
-					r.dataChan <- data
-				default:
-				}
-			}
-		}()
+	// channel 已满：丢弃最旧元素，为最新数据腾出空间。
+	// 生产者持锁串行写入，消费者只会取走元素，因此此处发送必然有空间，不会阻塞。
+	select {
+	case <-r.dataChan:
+	default:
 	}
 
-	r.cond.Signal()
+	r.dataChan <- data
 	return true
 }
 
-// Clear 排空 buffer 和 dataChan 中的所有数据引用，不关闭 RingBuffer。
+// Clear 排空缓冲中残留的数据引用，但不关闭缓冲。
 // 用于客户端断开连接后立即释放内存。
 func (r *RingBuffer) Clear() {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
-	for i := uint64(0); i < r.size; i++ {
-		r.buffer[i] = nil
-	}
-	r.readIndex = 0
-	r.writeIndex = 0
-
 	if !r.chanClosed {
-		for len(r.dataChan) > 0 {
-			<-r.dataChan
-		}
+		r.drain()
 	}
 }
 
-// Pull blocks until data is available or buffer is closed.
-func (r *RingBuffer) Pull() (interface{}, bool) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	for r.buffer[r.readIndex] == nil && !r.closed {
-		r.cond.Wait()
-	}
-
-	if r.closed {
-		return nil, false
-	}
-
-	data := r.buffer[r.readIndex]
-	r.buffer[r.readIndex] = nil
-	r.readIndex = (r.readIndex + 1) % r.size
-	return data, true
-}
-
-// PullWithContext blocks until data is available, buffer is closed, or ctx is done.
-func (r *RingBuffer) PullWithContext(ctx context.Context) (interface{}, bool) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	// 检查初始 Context 状态
-	if err := ctx.Err(); err != nil {
-		return nil, false
-	}
-
-	// 启动 goroutine 监听 context 取消，确保 Wait() 不会永久阻塞
-	done := make(chan struct{})
-	go func() {
+// drain 非阻塞排空 channel 中已缓冲的元素，避免滞留数据引用。
+func (r *RingBuffer) drain() {
+	for {
 		select {
-		case <-ctx.Done():
-			r.cond.Broadcast()
-		case <-done:
-		}
-	}()
-	defer close(done)
-
-	for r.buffer[r.readIndex] == nil && !r.closed {
-		r.cond.Wait()
-
-		// 唤醒后立即检查 Context 和 Closed 状态
-		if ctx.Err() != nil || r.closed {
-			return nil, false
+		case <-r.dataChan:
+		default:
+			return
 		}
 	}
+}
 
-	// 再次确认缓冲区是否有数据（防止因 Closed 被唤醒但实际无数据）
-	if r.buffer[r.readIndex] == nil {
+// Pull 阻塞直到有数据或缓冲被关闭。
+func (r *RingBuffer) Pull() ([]byte, bool) {
+	data, ok := <-r.dataChan
+	return data, ok
+}
+
+// PullWithContext 阻塞直到有数据、缓冲关闭或 ctx 完成。
+func (r *RingBuffer) PullWithContext(ctx context.Context) ([]byte, bool) {
+	if ctx == nil {
+		return r.Pull()
+	}
+	select {
+	case <-ctx.Done():
 		return nil, false
+	case data, ok := <-r.dataChan:
+		return data, ok
 	}
-
-	data := r.buffer[r.readIndex]
-	r.buffer[r.readIndex] = nil
-	r.readIndex = (r.readIndex + 1) % r.size
-	return data, true
 }

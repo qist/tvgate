@@ -493,11 +493,7 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 		default:
 		}
 
-		// 进行类型断言
-		byteData, ok := data.([]byte)
-		if !ok {
-			continue // 如果类型断言失败，跳过此次循环
-		}
+		byteData := data
 
 		// 设置写超时，防止慢客户端阻塞
 		_ = rc.SetWriteDeadline(time.Now().Add(writeTimeout))

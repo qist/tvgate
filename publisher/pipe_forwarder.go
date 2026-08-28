@@ -498,7 +498,7 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 	} else {
 		// 不需要拉流，创建客户端缓冲区从hub读取数据
 		var err error
-		pf.clientBuffer, err = ringbuffer.New(1024 * 1024)
+		pf.clientBuffer, err = ringbuffer.New(16 * 1024) // 约16K个包，避免单通道 MB 级内存占用
 		if err != nil {
 			logger.LogPrintf("[%s] Failed to create client buffer: %v", pf.streamName, err)
 
@@ -903,8 +903,9 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					}
 				}
 
-				// 广播到 hub（所有已注册客户端）
-				pf.hub.Broadcast(chunk)
+				// 广播到 hub（所有已注册客户端）。
+				// chunk 是每次 Read 后独立 make 的副本，不会被复用，可直接共享引用（零拷贝）。
+				pf.hub.BroadcastNoCopy(chunk)
 
 				// 在 header 未捕获时缓存前段数据（转发模式下也需要捕获头部信息）
 				pf.headerMutex.Lock()
@@ -989,7 +990,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					}
 					return
 				}
-				data, ok := pf.clientBuffer.Pull()
+				data, ok := pf.clientBuffer.PullWithContext(pf.ctx)
 				if !ok {
 					pf.ffInLock.Lock()
 					if ffIn != nil {
@@ -1002,7 +1003,7 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					return
 				}
 
-				if chunk, ok := data.([]byte); ok {
+				if chunk := data; chunk != nil {
 					chunkCount++
 					// 写入 RTMP 推流进程 stdin（如果有）
 					pf.ffInLock.Lock()
@@ -1493,7 +1494,7 @@ func (sh *StreamHub) ServeFLV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Transfer-Encoding", "chunked")
 
 	// 创建客户端 ringbuffer 并注册到共享hub
-	clientBuffer, err := ringbuffer.New(4 * 1024 * 1024)
+	clientBuffer, err := ringbuffer.New(16 * 1024) // 约16K个包，避免每客户端 MB 级内存占用
 	if err != nil {
 		logger.LogPrintf("[%s] Failed to create ring buffer for client: %v", sh.streamName, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -1543,16 +1544,16 @@ func (sh *StreamHub) ServeFLV(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		default:
-			data, ok := clientBuffer.Pull()
+			data, ok := clientBuffer.PullWithContext(r.Context())
 			if !ok {
 				// logger.LogPrintf("[%s] Client buffer closed, sent %d chunks", sh.streamName, chunkCount)
 				return
 			}
 
-			chunk, ok := data.([]byte)
-			if !ok || len(chunk) == 0 {
+			if len(data) == 0 {
 				continue
 			}
+			chunk := data
 
 			sendBuffer = append(sendBuffer, chunk...)
 			bufferSize += len(chunk)

@@ -178,7 +178,7 @@ func (h *HLSSegmentManager) Start() error {
 
 	// 如果有 hub，则创建 clientBuffer 并注册
 	if h.hub != nil {
-		buf, err := ringbuffer.New(2 * 1024 * 1024) // 2MB
+		buf, err := ringbuffer.New(16 * 1024) // 约16K个包，避免 MB 级内存占用
 		if err != nil {
 			return fmt.Errorf("failed to create client buffer: %v", err)
 		}
@@ -316,7 +316,7 @@ func (h *HLSSegmentManager) Start() error {
 					if !ok {
 						return
 					}
-					if data, ok := item.([]byte); ok {
+					if data := item; data != nil {
 						// 检查上下文是否已取消
 						if h.ctx.Err() != nil {
 							return

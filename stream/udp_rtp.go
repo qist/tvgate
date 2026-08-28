@@ -174,6 +174,7 @@ type hubClient struct {
 // StreamHub represents a multicast/unicast streaming hub
 type StreamHub struct {
 	Mu             sync.RWMutex
+	procMu         sync.Mutex // 保护 RTP 处理状态（rtpSequenceMap/rtpBuffer/lastCCArr/patBuffer/pmtBuffer），与主锁 Mu 解耦
 	Clients        map[string]*hubClient
 	AddCh          chan *hubClient
 	RemoveCh       chan string
@@ -282,15 +283,15 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 	}
 
 	hub := &StreamHub{
-		Clients:        make(map[string]*hubClient),
-		AddCh:          make(chan *hubClient, 1024),
-		RemoveCh:       make(chan string, 1024),
-		UdpConns:       make([]*net.UDPConn, 0, len(addrs)),
-		CacheBuffer:    nil, // 懒分配：有客户端连接时才创建
-		Closed:         make(chan struct{}),
-		BufPool:        &sync.Pool{New: func() any { return make([]byte, 2048) }},
-		AddrList:       addrs,
-		state:          StateStopped,
+		Clients:     make(map[string]*hubClient),
+		AddCh:       make(chan *hubClient, 1024),
+		RemoveCh:    make(chan string, 1024),
+		UdpConns:    make([]*net.UDPConn, 0, len(addrs)),
+		CacheBuffer: nil, // 懒分配：有客户端连接时才创建
+		Closed:      make(chan struct{}),
+		BufPool:     &sync.Pool{New: func() any { return make([]byte, 2048) }},
+		AddrList:    addrs,
+		state:       StateStopped,
 		// lastCCArr 初始化为 0xFF（表示未见过该 PID）
 		rtpSequenceMap: make(map[uint32]*rtpSeqEntry),
 		ifaces:         ifaces,
@@ -575,8 +576,13 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		return inRef
 	}
 
-	// ===== 单次锁完成全部操作：RTP去重 + rtpBuffer + CC检查 + TS拷贝 =====
-	h.Mu.Lock()
+	// ===== 使用独立 procMu 锁保护 RTP 状态，避免与广播/客户端管理争用主锁 Mu =====
+	// fccEnabled 由主锁 Mu 保护（run 中 FCC 启用时会翻转），这里短暂读取一次快照。
+	h.Mu.RLock()
+	fccEnabled := h.fccEnabled
+	h.Mu.RUnlock()
+
+	h.procMu.Lock()
 
 	// --- RTP 重复检测 ---
 	if h.rtpSequenceMap == nil {
@@ -606,7 +612,7 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	}
 
 	if duplicate {
-		h.Mu.Unlock()
+		h.procMu.Unlock()
 		return nil
 	}
 
@@ -630,12 +636,12 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	const maxRTPBufferSize = 128 * 1024
 	if len(h.rtpBuffer) > maxRTPBufferSize {
 		h.rtpBuffer = h.rtpBuffer[:0]
-		h.Mu.Unlock()
+		h.procMu.Unlock()
 		return nil
 	}
 
 	if len(h.rtpBuffer) < 188 {
-		h.Mu.Unlock()
+		h.procMu.Unlock()
 		return nil
 	}
 
@@ -644,13 +650,13 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		idx := bytes.IndexByte(h.rtpBuffer, 0x47)
 		if idx < 0 {
 			h.rtpBuffer = h.rtpBuffer[:0]
-			h.Mu.Unlock()
+			h.procMu.Unlock()
 			return nil
 		}
 		copy(h.rtpBuffer, h.rtpBuffer[idx:])
 		h.rtpBuffer = h.rtpBuffer[:len(h.rtpBuffer)-idx]
 		if len(h.rtpBuffer) < 188 {
-			h.Mu.Unlock()
+			h.procMu.Unlock()
 			return nil
 		}
 	}
@@ -664,8 +670,7 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		h.rtpBuffer = h.rtpBuffer[:0]
 	}
 
-	// --- CC检查 + TS拷贝（在同一锁内完成） ---
-	fccEnabled := h.fccEnabled
+	// --- CC检查 + TS拷贝（在同一 procMu 锁内完成） ---
 	ccArr := &h.lastCCArr
 
 	// 预分配输出缓冲区：最坏情况每个TS包后插3个null包
@@ -673,7 +678,7 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	poolBuf := h.BufPool.Get().([]byte)
 	if cap(poolBuf) < maxOutSize {
 		// 池缓冲区不够大，直接用 chunk 作为输出（零拷贝）
-		h.Mu.Unlock()
+		h.procMu.Unlock()
 		outRef := NewBufferRef(chunk)
 		outRef.Source = inRef.Source
 		return outRef
@@ -735,7 +740,7 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		out = out[:pos+188]
 		copy(out[pos:pos+188], ts)
 	}
-	h.Mu.Unlock()
+	h.procMu.Unlock()
 
 	outRef := NewPooledBufferRef(poolBuf, out, h.BufPool)
 	outRef.Source = inRef.Source
@@ -1542,6 +1547,15 @@ func (h *StreamHub) Close() {
 		h.CacheBuffer.Reset()
 		h.CacheBuffer = nil
 	}
+
+	// 状态更新
+	h.state = StateError
+	stateCond := h.stateCond
+
+	h.Mu.Unlock() // 尽快释放主锁
+
+	// 清理 RTP 处理状态（使用独立 procMu，与读循环的 RTP 处理保持一致）
+	h.procMu.Lock()
 	// 归还 PAT/PMT 缓冲区到 pool
 	if h.patBuffer != nil {
 		patBufferPool.Put(h.patBuffer)
@@ -1559,12 +1573,7 @@ func (h *StreamHub) Close() {
 		h.rtpSequenceMap = nil
 	}
 	h.rtpBuffer = nil // 彻底释放内存
-
-	// 状态更新
-	h.state = StateError
-	stateCond := h.stateCond
-
-	h.Mu.Unlock() // 尽快释放主锁
+	h.procMu.Unlock()
 
 	// 取消上下文
 	if h.cancel != nil {
@@ -2109,20 +2118,22 @@ func (h *StreamHub) sendInitialToClient(client *hubClient) {
 	// ---------- FCC 模式 ----------
 	var packets []*BufferRef
 
-	// PAT / PMT 优先
-	h.Mu.RLock()
+	// PAT / PMT 优先（使用独立 procMu，避免与 RTP 热路径争用主锁 Mu）
+	h.procMu.Lock()
 	if h.patBuffer != nil {
 		packets = append(packets, NewBufferRef(h.patBuffer))
 	}
 	if h.pmtBuffer != nil {
 		packets = append(packets, NewBufferRef(h.pmtBuffer))
 	}
+	h.procMu.Unlock()
 
 	// 检查客户端特定的FCC状态
 	client.mu.Lock()
 	clientFccState := client.fccState
 	client.mu.Unlock()
 
+	h.Mu.RLock()
 	switch clientFccState {
 	case FCC_STATE_UNICAST_ACTIVE:
 		// 单播 FCC：发送最近 FCC 缓存帧

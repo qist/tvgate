@@ -69,7 +69,7 @@ func HandleMpegtsStream(
 		hub.lastError = nil
 		hub.rtspClient = client
 	}
-	hub.stateCond.Broadcast() // 通知等待的客户端状态变化
+	hub.notifyState() // 通知等待的客户端状态变化
 	hub.mu.Unlock()
 
 	defer cleanup()
@@ -132,9 +132,9 @@ func HandleMpegtsStream(
 	dataChan := clientChan.Chan()
 
 	const (
-		maxFlushBytes   = 32 * 1024
-		maxFlushDelay   = 200 * time.Millisecond
-		activeInterval  = 5 * time.Second
+		maxFlushBytes  = 32 * 1024
+		maxFlushDelay  = 200 * time.Millisecond
+		activeInterval = 5 * time.Second
 	)
 
 	// 批量写出缓冲：将多个 RTP 包攒成一块再交给底层 ResponseWriter，
@@ -144,9 +144,9 @@ func HandleMpegtsStream(
 	defer bw.Flush()
 
 	var (
-		bufferedBytes     = 0
-		lastFlush         = time.Now()
-		lastActiveUpdate  = time.Now()
+		bufferedBytes    = 0
+		lastFlush        = time.Now()
+		lastActiveUpdate = time.Now()
 	)
 
 	for {
@@ -155,10 +155,10 @@ func HandleMpegtsStream(
 			if !ok {
 				return nil
 			}
-			payload, ok := data.([]byte)
-			if !ok || len(payload) == 0 {
+			if len(data) == 0 {
 				continue
 			}
+			payload := data
 
 			_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			n, err := bw.Write(payload)
@@ -175,10 +175,10 @@ func HandleMpegtsStream(
 					if !ok {
 						return nil
 					}
-					payload2, ok := data2.([]byte)
-					if !ok || len(payload2) == 0 {
+					if len(data2) == 0 {
 						continue
 					}
+					payload2 := data2
 					n2, err := bw.Write(payload2)
 					if err != nil {
 						logger.LogPrintf("Write error: %v", err)

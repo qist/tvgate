@@ -34,6 +34,13 @@ var videoBufPool = sync.Pool{
 	},
 }
 
+// 音频 AU 专用池。音频帧远小于视频帧（KB 级），分池避免大小混用降低复用率。
+var audioBufPool = sync.Pool{
+	New: func() any {
+		return &bytes.Buffer{}
+	},
+}
+
 type broadcastWriter struct {
 	hub *StreamHubs
 }
@@ -43,7 +50,8 @@ func (w *broadcastWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func buildADTSHeader(cfg *mpeg4audio.Config, aacLen int) []byte {
+// writeADTSHeader 将 7 字节 ADTS 头直接写入 buf，避免每帧分配中间 []byte
+func writeADTSHeader(buf *bytes.Buffer, cfg *mpeg4audio.Config, aacLen int) {
 	profile := byte(cfg.Type - 1)
 	sampleRateIndex := byte(4)
 	switch cfg.SampleRate {
@@ -76,14 +84,15 @@ func buildADTSHeader(cfg *mpeg4audio.Config, aacLen int) []byte {
 	}
 	channels := byte(cfg.ChannelCount)
 	adtsLen := aacLen + 7 // aacLen为AAC帧数据长度
-	return []byte{
-		0xFF, 0xF1,
-		((profile & 0x3) << 6) | ((sampleRateIndex & 0xF) << 2) | ((channels >> 2) & 0x1),
-		((channels & 0x3) << 6) | byte((adtsLen>>11)&0x3),
-		byte((adtsLen >> 3) & 0xFF),
-		byte(((adtsLen & 0x7) << 5) | 0x1F),
-		0xFC,
-	}
+	var hdr [7]byte
+	hdr[0] = 0xFF
+	hdr[1] = 0xF1
+	hdr[2] = ((profile & 0x3) << 6) | ((sampleRateIndex & 0xF) << 2) | ((channels >> 2) & 0x1)
+	hdr[3] = ((channels & 0x3) << 6) | byte((adtsLen>>11)&0x3)
+	hdr[4] = byte((adtsLen >> 3) & 0xFF)
+	hdr[5] = byte(((adtsLen & 0x7) << 5) | 0x1F)
+	hdr[6] = 0xFC
+	buf.Write(hdr[:])
 }
 
 func HandleH264AacStream(
@@ -139,7 +148,7 @@ func HandleH264AacStream(
 		hub.lastError = nil
 		hub.rtspClient = client
 	}
-	hub.stateCond.Broadcast() // 通知等待的客户端状态变化
+	hub.notifyState() // 通知等待的客户端状态变化
 	hub.mu.Unlock()
 
 	defer cleanup()
@@ -309,11 +318,10 @@ func HandleH264AacStream(
 							logger.LogPrintf("⚠️ Skip empty AU")
 							continue
 						}
-						adts := buildADTSHeader(audioFormat.Config, len(au))
-						// 用 Buffer 池避免每帧 make
-						auBuf := videoBufPool.Get().(*bytes.Buffer)
+						// 用独立的音频 Buffer 池避免每帧 make
+						auBuf := audioBufPool.Get().(*bytes.Buffer)
 						auBuf.Reset()
-						auBuf.Write(adts)
+						writeADTSHeader(auBuf, audioFormat.Config, len(au))
 						auBuf.Write(au)
 						data := auBuf.Bytes()
 						if !audioInit {
@@ -334,7 +342,7 @@ func HandleH264AacStream(
 								Data: data,
 							},
 						})
-						videoBufPool.Put(auBuf)
+						audioBufPool.Put(auBuf)
 						if err == nil {
 							audioPTS += float64(1024*90000) / float64(audioFormat.Config.SampleRate)
 						}
@@ -398,10 +406,10 @@ func HandleH264AacStream(
 			if !ok {
 				return nil
 			}
-			payload, ok := data.([]byte)
-			if !ok || len(payload) == 0 {
+			if len(data) == 0 {
 				continue
 			}
+			payload := data
 
 			_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			n, err := w.Write(payload)
@@ -418,10 +426,10 @@ func HandleH264AacStream(
 					if !ok {
 						return nil
 					}
-					payload2, ok := data2.([]byte)
-					if !ok || len(payload2) == 0 {
+					if len(data2) == 0 {
 						continue
 					}
+					payload2 := data2
 					n2, err := w.Write(payload2)
 					if err != nil {
 						return err
