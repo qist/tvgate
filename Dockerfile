@@ -6,7 +6,7 @@
 #       PHP 脚本从磁盘读取，默认目录 /www（部署时把 PHP 代码放该路径）。
 # ========================================================
 # Stage: build —— 纯 Go 编译，无需 CGO
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:alpine AS build
 WORKDIR /app
 
 ARG TARGETOS
