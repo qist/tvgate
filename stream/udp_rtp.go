@@ -66,6 +66,12 @@ type rtpSeqEntry struct {
 const (
 	rtpSequenceWindow = 64
 	rtpSSRCExpire     = 30 * time.Second // 超过30秒未收到包就清理
+
+	// rtpLastActiveRefresh 为 SSRC lastActive 时间戳的刷新间隔。
+	// 该间隔远小于 SSRC 过期阈值(rtpSSRCExpire=30s)，确保任何活跃(含低包率稀疏)流的
+	// lastActive 都会被周期性刷新而不会被误清理，与逐包更新时间戳语义等价。
+	// 通过仅在超过间隔时写 lastActive，避免每包触碰该共享字段，缓解缓存行争用。
+	rtpLastActiveRefresh = 10 * time.Second
 )
 
 // ====================
@@ -618,10 +624,10 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 
 	// 更新序列记录
 	entry.seq[entry.seqPos] = sequence
-	// 低频更新时间戳：仅当序列位置回到窗口起点（每 rtpSequenceWindow=64 包）时调用 time.Now()，
-	// 降低每包 VDSO 开销。活跃流仍会被周期性刷新（30s 清理阈值 >> 64 包间隔），流停止则自然超时，
-	// 去重与 SSRC 过期清理语义保持不变。
-	if entry.seqPos == 0 {
+	// 时间节流更新时间戳（rtpLastActiveRefresh=10s）：仅当距上次刷新超过间隔时才写
+	// lastActive。与旧版逐包 time.Now() 语义等价——任何活跃流(含稀疏流)只要间隔内有包
+	// 就会被刷新，30s 清理阈值下不会被误清理；同时避免每包写该共享字段引发缓存行争用。
+	if time.Since(entry.lastActive) >= rtpLastActiveRefresh {
 		entry.lastActive = time.Now()
 	}
 	entry.seqPos = (entry.seqPos + 1) % rtpSequenceWindow
