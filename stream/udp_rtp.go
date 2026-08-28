@@ -227,8 +227,9 @@ type StreamHub struct {
 	OnEmpty                func(*StreamHub)
 
 	// 缓存视频PID，避免重复解析PAT/PMT
-	videoPID      uint16
-	pmtPID        uint16
+	// 仅 FCC 过渡期 detectStrictIDRFrame 使用，且并发访问，用原子避免每 10 包取主锁 Mu
+	videoPID      atomic.Uint32
+	pmtPID        atomic.Uint32
 	multicastAddr *net.UDPAddr       // 多播地址
 	ctx           context.Context    // StreamHub的上下文
 	cancel        context.CancelFunc // 用于取消上下文
@@ -617,11 +618,16 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 
 	// 更新序列记录
 	entry.seq[entry.seqPos] = sequence
+	// 低频更新时间戳：仅当序列位置回到窗口起点（每 rtpSequenceWindow=64 包）时调用 time.Now()，
+	// 降低每包 VDSO 开销。活跃流仍会被周期性刷新（30s 清理阈值 >> 64 包间隔），流停止则自然超时，
+	// 去重与 SSRC 过期清理语义保持不变。
+	if entry.seqPos == 0 {
+		entry.lastActive = time.Now()
+	}
 	entry.seqPos = (entry.seqPos + 1) % rtpSequenceWindow
 	if entry.seqCount < rtpSequenceWindow {
 		entry.seqCount++
 	}
-	entry.lastActive = time.Now()
 
 	// --- rtpBuffer 累积 ---
 	h.rtpBuffer = append(h.rtpBuffer, payload...)

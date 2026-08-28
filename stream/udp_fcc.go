@@ -325,7 +325,8 @@ func (h *StreamHub) fccHandleMcastActive() {
 	atomic.StoreInt32(&h.fccPendingCount, 0)
 
 	// 预获取客户端列表，避免在循环中重复获取
-	clientList := make([]*hubClient, 0, len(h.Clients))
+	clientsPtr := hubClientSlicePool.Get().(*[]*hubClient)
+	clientList := (*clientsPtr)[:0]
 	for _, c := range h.Clients {
 		clientList = append(clientList, c)
 	}
@@ -333,6 +334,8 @@ func (h *StreamHub) fccHandleMcastActive() {
 
 	// 如果没有待处理数据，直接返回
 	if current == nil {
+		*clientsPtr = clientList
+		hubClientSlicePool.Put(clientsPtr)
 		return
 	}
 
@@ -398,6 +401,8 @@ func (h *StreamHub) fccHandleMcastActive() {
 			h.Mu.Unlock()
 			h.fccLogStateChange(prevState, FCC_STATE_INIT, "检测到IDR帧，FCC流程完成")
 			logger.LogPrintf("[FCC] 已关闭FCC连接并清理剩余缓冲数据，状态切换到INIT")
+			*clientsPtr = clientList
+			hubClientSlicePool.Put(clientsPtr)
 			return
 		} else {
 			h.Mu.Unlock()
@@ -414,6 +419,9 @@ func (h *StreamHub) fccHandleMcastActive() {
 	h.Mu.Lock()
 	h.fccLastActivityTime = now
 	h.Mu.Unlock()
+
+	*clientsPtr = clientList
+	hubClientSlicePool.Put(clientsPtr)
 }
 
 // prepareSwitchToMulticast 准备切换到多播模式
@@ -934,25 +942,9 @@ func (h *StreamHub) fccLogStateChange(prevState, state int, reason string) {
 		}
 	}
 
-	// 记录状态转换日志
-	stateNames := map[int]string{
-		FCC_STATE_INIT:            "INIT",
-		FCC_STATE_REQUESTED:       "REQUESTED",
-		FCC_STATE_UNICAST_PENDING: "UNICAST_PENDING",
-		FCC_STATE_UNICAST_ACTIVE:  "UNICAST_ACTIVE",
-		FCC_STATE_MCAST_REQUESTED: "MCAST_REQUESTED",
-		FCC_STATE_MCAST_ACTIVE:    "MCAST_ACTIVE",
-		FCC_STATE_ERROR:           "ERROR",
-	}
-
-	prevName := stateNames[prevState]
-	currentName := stateNames[state]
-	if prevName == "" {
-		prevName = "UNKNOWN"
-	}
-	if currentName == "" {
-		currentName = "UNKNOWN"
-	}
+	// 记录状态转换日志（复用包级 fccStateToString，避免每次调用构造 map）
+	prevName := fccStateToString(prevState)
+	currentName := fccStateToString(state)
 
 	logger.LogPrintf("FCC State: %s -> %s (%s)", prevName, currentName, reason)
 }
@@ -1765,10 +1757,9 @@ func (h *StreamHub) detectStrictIDRFrame(data []byte) bool {
 		return false
 	}
 
-	h.Mu.Lock()
-	cachedVideoPID := h.videoPID
-	cachedPmtPID := h.pmtPID
-	h.Mu.Unlock()
+	// 原子读缓存 PID，避免 FCC 过渡期每 10 包与客户端管理争用主锁 Mu
+	cachedVideoPID := uint16(h.videoPID.Load())
+	cachedPmtPID := uint16(h.pmtPID.Load())
 
 	var videoPID uint16 = cachedVideoPID
 	var pmtPID uint16 = cachedPmtPID
@@ -1847,10 +1838,8 @@ func (h *StreamHub) detectStrictIDRFrame(data []byte) bool {
 								// 仅检测IDR帧
 								if nalType == 5 {
 									// 缓存找到的视频PID
-									h.Mu.Lock()
-									h.videoPID = videoPID
-									h.pmtPID = pmtPID
-									h.Mu.Unlock()
+									h.videoPID.Store(uint32(videoPID))
+									h.pmtPID.Store(uint32(pmtPID))
 									logger.LogPrintf("FCC: 检测到严格IDR帧")
 									return true
 								}
@@ -1864,10 +1853,8 @@ func (h *StreamHub) detectStrictIDRFrame(data []byte) bool {
 
 	// 如果找到了视频PID，缓存它
 	if foundVideoPID && videoPID != cachedVideoPID {
-		h.Mu.Lock()
-		h.videoPID = videoPID
-		h.pmtPID = pmtPID
-		h.Mu.Unlock()
+		h.videoPID.Store(uint32(videoPID))
+		h.pmtPID.Store(uint32(pmtPID))
 	}
 
 	return false
