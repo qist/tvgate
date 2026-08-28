@@ -1,14 +1,16 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
-
-	"net/http"
 
 	"github.com/qist/tvgate/config"
 	"gopkg.in/yaml.v3"
@@ -103,12 +105,12 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 
 	// 添加日志，打印解析后的数据
 	// fmt.Printf("DEBUG: 解析后的jxConfig: %+v\n", jxConfig)
-	
+
 	// 特别打印 path 和 default_id 字段
 	// if path, ok := jxConfig["path"]; ok {
 	// 	fmt.Printf("DEBUG: path字段值: %v, 类型: %T\n", path, path)
 	// }
-	
+
 	// if defaultID, ok := jxConfig["default_id"]; ok {
 	// 	fmt.Printf("DEBUG: default_id字段值: %v, 类型: %T\n", defaultID, defaultID)
 	// }
@@ -178,17 +180,17 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 				if ok && len(apiGroupsMap) > 0 {
 					// 创建api_groups节点
 					apiGroupsNode := &yaml.Node{Kind: yaml.MappingNode}
-					
+
 					// 遍历api_groups
 					for groupName, groupData := range apiGroupsMap {
 						groupMap, ok := groupData.(map[string]interface{})
 						if !ok {
 							continue
 						}
-						
+
 						// 创建group节点
 						groupNode := &yaml.Node{Kind: yaml.MappingNode}
-						
+
 						// 添加endpoints字段
 						if endpoints, ok := groupMap["endpoints"]; ok {
 							endpointsSlice, ok := endpoints.([]interface{})
@@ -205,49 +207,49 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 									endpointsNode)
 							}
 						}
-						
+
 						// 添加timeout字段
 						if timeout, ok := groupMap["timeout"]; ok && timeout != "" {
 							groupNode.Content = append(groupNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "timeout"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", timeout)})
 						}
-						
+
 						// 添加query_template字段
 						if queryTemplate, ok := groupMap["query_template"]; ok && queryTemplate != "" {
 							groupNode.Content = append(groupNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "query_template"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", queryTemplate)})
 						}
-						
+
 						// 添加primary字段
 						if primary, ok := groupMap["primary"]; ok {
 							groupNode.Content = append(groupNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "primary"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", primary)})
 						}
-						
+
 						// 添加weight字段
 						if weight, ok := groupMap["weight"]; ok {
 							groupNode.Content = append(groupNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "weight"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", weight)})
 						}
-						
+
 						// 添加fallback字段
 						if fallback, ok := groupMap["fallback"]; ok {
 							groupNode.Content = append(groupNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "fallback"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", fallback)})
 						}
-						
+
 						// 添加max_retries字段
 						if maxRetries, ok := groupMap["max_retries"]; ok {
 							groupNode.Content = append(groupNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "max_retries"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", maxRetries)})
 						}
-						
+
 						// 添加filters字段
 						if filters, ok := groupMap["filters"]; ok {
 							filtersMap, ok := filters.(map[string]interface{})
@@ -263,13 +265,13 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 									filtersNode)
 							}
 						}
-						
+
 						// 将group节点添加到api_groups节点
 						apiGroupsNode.Content = append(apiGroupsNode.Content,
 							&yaml.Node{Kind: yaml.ScalarNode, Value: groupName},
 							groupNode)
 					}
-					
+
 					// 将api_groups节点添加到jx节点
 					jxNode.Content = append(jxNode.Content,
 						&yaml.Node{Kind: yaml.ScalarNode, Value: "api_groups"},
@@ -343,6 +345,59 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(jxMap)
 }
 
+// blockedIP 判断目标 IP 是否属于不可访问的私密/保留地址。
+// 覆盖回环、链路本地(含云元数据 169.254.169.254)、私网、未指定与组播，
+// 防止 SSRF 探测内网服务与云元数据端点。
+func blockedIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsPrivate() || ip.IsUnspecified() || ip.IsMulticast() {
+		return true
+	}
+	return false
+}
+
+// newSSRFProxyHTTPClient 构造受 SSRF 防护的 HTTP 客户端：
+//   - DialContext 对解析出的所有 IP 做黑名单校验（防 DNS 重绑定），并直接连接解析 IP；
+//   - CheckRedirect 同样校验重定向目标，避免借重定向绕过黑名单；
+//   - 仅允许 http/https scheme，其余 scheme 在请求前调用方负责拒绝，此处额外兜底。
+func newSSRFProxyHTTPClient(timeout time.Duration) *http.Client {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			// 解析所有 A 记录，任一命中黑名单即拒绝
+			ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+			if err != nil {
+				return nil, err
+			}
+			for _, ip := range ips {
+				if blockedIP(ip) {
+					return nil, fmt.Errorf("拒绝访问受限或内网地址: %s", ip)
+				}
+			}
+			// 直接连接第一个通过校验的 IP，避免二次解析导致 DNS 重绑定
+			normalized := net.JoinHostPort(ips[0].String(), addr[strings.LastIndex(addr, ":")+1:])
+			var d net.Dialer
+			return d.DialContext(ctx, network, normalized)
+		},
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if u := req.URL; u != nil && (u.Scheme != "http" && u.Scheme != "https") {
+				return fmt.Errorf("拒绝非 http/https 重定向: %s", u.Scheme)
+			}
+			return nil
+		},
+	}
+}
+
 // TestAPIEndpoint 测试API接口
 func (h *ConfigHandler) TestAPIEndpoint(w http.ResponseWriter, r *http.Request) {
 	// 检查请求方法
@@ -374,10 +429,19 @@ func (h *ConfigHandler) TestAPIEndpoint(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 发送测试请求
-	client := &http.Client{
-		Timeout: 10 * time.Second,
+	// SSRF 防护：校验 scheme 与 URL 合法性
+	parsed, err := url.Parse(requestData.Endpoint)
+	if err != nil || parsed.Host == "" {
+		http.Error(w, "无效的API接口地址", http.StatusBadRequest)
+		return
 	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		http.Error(w, "仅支持 http/https 协议的API接口地址", http.StatusBadRequest)
+		return
+	}
+
+	// 发送测试请求（受限 SSRF 防护 client）
+	client := newSSRFProxyHTTPClient(10 * time.Second)
 
 	// 尝试发送一个简单的GET请求测试API接口
 	resp, err := client.Get(requestData.Endpoint)
@@ -406,12 +470,12 @@ func (h *ConfigHandler) TestAPIEndpoint(w http.ResponseWriter, r *http.Request) 
 		responsePreview := string(buffer[:n])
 		// 检查是否包含JSON响应的特征
 		isJSON := strings.Contains(responsePreview, "{") || strings.Contains(responsePreview, "[")
-		
+
 		message := fmt.Sprintf("状态码: %d", resp.StatusCode)
 		if isJSON {
 			message += ", 检测到JSON响应"
 		}
-		
+
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"message": message,
