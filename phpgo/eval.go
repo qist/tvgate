@@ -712,6 +712,13 @@ func (e *Env) evalAssignTarget(target Expr, val Value, concat bool, op string) (
 			e.vars[v.Name] = arr
 			e.globals[v.Name] = arr
 		}
+		// 回写对象属性：$obj->prop[$key] = val
+		if pa, ok := t.Arr.(*PropertyAccess); ok {
+			recv, err := e.evalExpr(pa.Receiver)
+			if err == nil && recv.Kind == KindObject {
+				recv.Object.Properties[pa.Prop] = arr
+			}
+		}
 		return execResult{val: val}, nil
 	}
 	return execResult{}, nil
@@ -1077,6 +1084,29 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 				}
 			}
 			return NewNull(), nil
+		}
+		// self::method() 或 static::method() — 调用当前类的方法
+		if className == "self" || className == "static" {
+			if curClass, ok := e.vars["__current_class__"]; ok && curClass.Kind == KindString {
+				className = curClass.Str
+			}
+		}
+		// 查找类方法
+		if cls, ok := e.classes[className]; ok {
+			for _, m := range cls.Methods {
+				if m.Name == method {
+					// 保存当前 $this 和 __current_class__
+					savedThis := e.vars["this"]
+					savedClass := e.vars["__current_class__"]
+					// 静态方法：$this 为 null
+					e.vars["this"] = NewNull()
+					e.vars["__current_class__"] = NewString(className)
+					result, err := e.callMethod(m, n.Args)
+					e.vars["this"] = savedThis
+					e.vars["__current_class__"] = savedClass
+					return result, err
+				}
+			}
 		}
 		// 其它静态调用返回 null
 		return NewNull(), nil
@@ -1526,6 +1556,27 @@ func (e *Env) evalAssignExpr(n *AssignExpr) (Value, error) {
 			e.vars[v.Name] = arr
 			e.globals[v.Name] = arr
 			return val, nil
+		}
+		// $obj->prop[$key] = val（对象属性的数组下标赋值）
+		if pa, ok := t.Arr.(*PropertyAccess); ok {
+			recv, err := e.evalExpr(pa.Receiver)
+			if err != nil {
+				return val, err
+			}
+			key, err := e.evalExpr(t.Key)
+			if err != nil {
+				return val, err
+			}
+			if recv.Kind == KindObject {
+				// 获取属性数组（或创建）
+				arr, ok := recv.Object.Properties[pa.Prop]
+				if !ok || arr.Kind != KindArray {
+					arr = NewArray()
+				}
+				arr.ArraySet(key, val)
+				recv.Object.Properties[pa.Prop] = arr
+				return val, nil
+			}
 		}
 	case *PropertyAccess:
 		// $this->prop = val 或 $obj->prop = val

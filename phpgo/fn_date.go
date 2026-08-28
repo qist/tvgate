@@ -49,6 +49,18 @@ func init() {
 				return NewInt(t.Unix()), nil
 			}
 		}
+		// Ymd 格式：8位纯数字（如 20260828）
+		if len(s) == 8 {
+			if t, err := time.Parse("20060102", s); err == nil {
+				return NewInt(t.Unix()), nil
+			}
+		}
+		// YmdHis 格式：14位纯数字
+		if len(s) == 14 {
+			if t, err := time.Parse("20060102150405", s); err == nil {
+				return NewInt(t.Unix()), nil
+			}
+		}
 		return NewBool(false), nil
 	}
 	builtins["date_default_timezone_set"] = func(e *Env, a []Value) (Value, error) {
