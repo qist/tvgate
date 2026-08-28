@@ -2,8 +2,23 @@ package phpgo
 
 import (
 	"strconv"
+	"sync"
 	"time"
 )
+
+// 全局默认时区（对应 PHP 的 date_default_timezone_set / 配置 timezone）。
+// 并发请求可能各自设置时区，用互斥锁保护。
+var (
+	phpTimeLoc   *time.Location = time.UTC
+	phpTimeLocMu sync.RWMutex
+)
+
+// currentPHPLocation 返回当前默认时区（date() 等按此输出）。
+func currentPHPLocation() *time.Location {
+	phpTimeLocMu.RLock()
+	defer phpTimeLocMu.RUnlock()
+	return phpTimeLoc
+}
 
 func init() {
 	builtins["date"] = func(e *Env, a []Value) (Value, error) {
@@ -12,7 +27,7 @@ func init() {
 		if len(a) >= 2 {
 			ts = a[1].ToInt()
 		}
-		return NewString(phpDate(format, ts)), nil
+		return NewString(phpDateIn(format, ts, e.loc)), nil
 	}
 	builtins["gmdate"] = func(e *Env, a []Value) (Value, error) {
 		format := a[0].ToString()
@@ -20,7 +35,7 @@ func init() {
 		if len(a) >= 2 {
 			ts = a[1].ToInt()
 		}
-		return NewString(phpGmDate(format, ts)), nil
+		return NewString(phpDateIn(format, ts, time.UTC)), nil
 	}
 	builtins["time"] = func(e *Env, a []Value) (Value, error) {
 		return NewInt(time.Now().Unix()), nil
@@ -34,52 +49,78 @@ func init() {
 		return NewString(strconv.FormatFloat(sec, 'f', 8, 64) + " " + strconv.FormatInt(now.Unix(), 10)), nil
 	}
 	builtins["strtotime"] = func(e *Env, a []Value) (Value, error) {
-		// 简化：尝试解析常见格式
+		// 简化：尝试解析常见格式（无时区按当前请求默认时区解析）
 		s := a[0].ToString()
-		layouts := []string{
+		loc := e.loc
+		if loc == nil {
+			loc = time.UTC
+		}
+		naiveLayouts := []string{
 			"2006-01-02 15:04:05",
-			"2006-01-02T15:04:05Z",
+			"2006-01-02 15:04",
 			"2006-01-02",
+			"20060102", // Ymd
+			"20060102150405",
+		}
+		for _, layout := range naiveLayouts {
+			if t, err := time.ParseInLocation(layout, s, loc); err == nil {
+				return NewInt(t.Unix()), nil
+			}
+		}
+		// 带时区/时区偏移的格式
+		zoneLayouts := []string{
+			"2006-01-02T15:04:05Z",
 			time.RFC3339,
 			time.RFC1123,
+			time.RFC1123Z,
 		}
-		for _, layout := range layouts {
-			t, err := time.Parse(layout, s)
-			if err == nil {
+		for _, layout := range zoneLayouts {
+			if t, err := time.Parse(layout, s); err == nil {
 				return NewInt(t.Unix()), nil
 			}
 		}
 		// Ymd 格式：8位纯数字（如 20260828）
 		if len(s) == 8 {
-			if t, err := time.Parse("20060102", s); err == nil {
+			if t, err := time.ParseInLocation("20060102", s, loc); err == nil {
 				return NewInt(t.Unix()), nil
 			}
 		}
 		// YmdHis 格式：14位纯数字
 		if len(s) == 14 {
-			if t, err := time.Parse("20060102150405", s); err == nil {
+			if t, err := time.ParseInLocation("20060102150405", s, loc); err == nil {
 				return NewInt(t.Unix()), nil
 			}
 		}
 		return NewBool(false), nil
 	}
 	builtins["date_default_timezone_set"] = func(e *Env, a []Value) (Value, error) {
-		tz := a[0].ToString()
-		loc, err := time.LoadLocation(tz)
+		loc, err := time.LoadLocation(a[0].ToString())
 		if err != nil {
 			return NewBool(false), nil
 		}
-		_ = loc
+		e.loc = loc
 		return NewBool(true), nil
 	}
 	builtins["date_default_timezone_get"] = func(e *Env, a []Value) (Value, error) {
-		return NewString("UTC"), nil
+		if e.loc == nil {
+			return NewString("UTC"), nil
+		}
+		return NewString(e.loc.String()), nil
 	}
 }
 
-// phpDate 实现 PHP date() 格式化
+// phpDate 实现 PHP date() 格式化（按当前默认时区）。
 func phpDate(format string, ts int64) string {
-	t := time.Unix(ts, 0).Local()
+	return phpDateIn(format, ts, currentPHPLocation())
+}
+
+// phpGmDate 实现 PHP gmdate() — UTC 版 date()
+func phpGmDate(format string, ts int64) string {
+	return phpDateIn(format, ts, time.UTC)
+}
+
+func phpDateIn(format string, ts int64, loc *time.Location) string {
+	t := time.Unix(ts, 0).In(loc)
 	var b []byte
 	for i := 0; i < len(format); i++ {
 		c := format[i]
@@ -128,55 +169,6 @@ func phpDate(format string, ts int64) string {
 			b = append(b, []byte(pad3(t.Nanosecond()/1000))...)
 		case 'u':
 			b = append(b, []byte(pad3(t.Nanosecond()/1000))...)
-		case '\\':
-			if i+1 < len(format) {
-				b = append(b, format[i+1])
-				i++
-			}
-		default:
-			b = append(b, c)
-		}
-	}
-	return string(b)
-}
-
-// phpGmDate 实现 PHP gmdate() — UTC 版 date()
-func phpGmDate(format string, ts int64) string {
-	t := time.Unix(ts, 0).UTC()
-	// 复用 phpDate 但用 UTC 时间
-	return phpDateWithT(format, t)
-}
-
-func phpDateWithT(format string, t time.Time) string {
-	var b []byte
-	for i := 0; i < len(format); i++ {
-		c := format[i]
-		switch c {
-		case 'Y':
-			b = append(b, []byte(strconv.Itoa(t.Year()))...)
-		case 'y':
-			s := strconv.Itoa(t.Year())
-			if len(s) >= 4 {
-				b = append(b, []byte(s[2:])...)
-			}
-		case 'm':
-			b = append(b, []byte(pad2(int(t.Month())))...)
-		case 'n':
-			b = append(b, []byte(strconv.Itoa(int(t.Month())))...)
-		case 'd':
-			b = append(b, []byte(pad2(t.Day()))...)
-		case 'j':
-			b = append(b, []byte(strconv.Itoa(t.Day()))...)
-		case 'H':
-			b = append(b, []byte(pad2(t.Hour()))...)
-		case 'G':
-			b = append(b, []byte(strconv.Itoa(t.Hour()))...)
-		case 'i':
-			b = append(b, []byte(pad2(t.Minute()))...)
-		case 's':
-			b = append(b, []byte(pad2(t.Second()))...)
-		case 'U':
-			b = append(b, []byte(strconv.FormatInt(t.Unix(), 10))...)
 		case '\\':
 			if i+1 < len(format) {
 				b = append(b, format[i+1])

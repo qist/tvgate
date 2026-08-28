@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ProxyFunc 是 Go 实现的 HTTP 请求能力（替代 curl + 代理）。
@@ -15,77 +16,79 @@ type ProxyFunc func(method, url string, opts *CurlOptions) (*ProxyResult, error)
 type ProxyResult struct {
 	Body         string
 	StatusCode   int
-	Location    string // 重定向 URL（如果有）
-	ContentType string
+	Location     string // 重定向 URL（如果有）
+	ContentType  string
 	EffectiveURL string // 最终 URL（跟随重定向后）
 }
 
 // CurlOptions 对应 PHP curl_setopt 的关键选项
 type CurlOptions struct {
-	Proxy       string // CURLOPT_PROXY
-	ProxyType   string // CURLOPT_PROXYTYPE
-	Headers     []string
-	PostData    string
-	HasPostData bool   // 是否设置了 CURLOPT_POSTFIELDS
-	Timeout     int               // CURLOPT_TIMEOUT（整数秒，兼容旧逻辑）
-	TimeoutFloat  float64         // CURLOPT_TIMEOUT（浮点秒，优先于 Timeout）
+	Proxy               string // CURLOPT_PROXY
+	ProxyType           string // CURLOPT_PROXYTYPE
+	Headers             []string
+	PostData            string
+	HasPostData         bool    // 是否设置了 CURLOPT_POSTFIELDS
+	Timeout             int     // CURLOPT_TIMEOUT（整数秒，兼容旧逻辑）
+	TimeoutFloat        float64 // CURLOPT_TIMEOUT（浮点秒，优先于 Timeout）
 	ConnectTimeoutFloat float64 // CURLOPT_CONNECTTIMEOUT（浮点秒）
-	UserAgent   string
-	Method      string
-	FollowRedirect bool
-	SkipSSL     bool   // CURLOPT_SSL_VERIFYPEER=false
+	UserAgent           string
+	Method              string
+	FollowRedirect      bool
+	SkipSSL             bool // CURLOPT_SSL_VERIFYPEER=false
 }
 
 // Env 执行环境
 type Env struct {
-	vars      map[string]Value
-	funcs     map[string]*FuncDecl
-	classes   map[string]*ClassDecl
-	globals   map[string]Value // $GLOBALS
-	consts    map[string]Value
-	server    map[string]string // $_SERVER
-	get       map[string]string // $_GET
-	post      map[string]string // $_POST
-	cookie    map[string]string // $_COOKIE
-	session   map[string]string // $_SESSION
-	envmap    map[string]string // $_ENV
-	ufiles    map[string]Value  // $_FILES
-	reqURI    string            // $_SERVER["REQUEST_URI"]
-	phpInput  string            // php://input 原始请求体
-	headers        []string          // 捕获的 header() 输出
-	statusCode     int               // 显式设置的状态码（如 header("HTTP/1.1 404")）
-	statusCodeSet  bool              // 是否显式设置过状态码
-	exitLoc        bool              // 触发 exit
-	exitVal        Value             // exit() 参数值
-	proxy     ProxyFunc
-	echoOut   *strings.Builder
-	obStack   []*strings.Builder // output buffer stack
-	breakN    int                // 待处理的 break 层数
-	continueN int                // 待处理的 continue 层数
-	files    map[int]io.ReadWriteCloser // 文件/流句柄表（fd -> 资源）
-	nextFd   int                        // 下一个可用 fd
-	scriptPath string                     // 当前脚本路径（用于 __DIR__/__FILE__）
+	vars          map[string]Value
+	funcs         map[string]*FuncDecl
+	classes       map[string]*ClassDecl
+	globals       map[string]Value // $GLOBALS
+	consts        map[string]Value
+	server        map[string]string // $_SERVER
+	get           map[string]string // $_GET
+	post          map[string]string // $_POST
+	cookie        map[string]string // $_COOKIE
+	session       map[string]string // $_SESSION
+	envmap        map[string]string // $_ENV
+	ufiles        map[string]Value  // $_FILES
+	reqURI        string            // $_SERVER["REQUEST_URI"]
+	phpInput      string            // php://input 原始请求体
+	headers       []string          // 捕获的 header() 输出
+	statusCode    int               // 显式设置的状态码（如 header("HTTP/1.1 404")）
+	statusCodeSet bool              // 是否显式设置过状态码
+	exitLoc       bool              // 触发 exit
+	exitVal       Value             // exit() 参数值
+	proxy         ProxyFunc
+	echoOut       *strings.Builder
+	obStack       []*strings.Builder         // output buffer stack
+	breakN        int                        // 待处理的 break 层数
+	continueN     int                        // 待处理的 continue 层数
+	files         map[int]io.ReadWriteCloser // 文件/流句柄表（fd -> 资源）
+	nextFd        int                        // 下一个可用 fd
+	scriptPath    string                     // 当前脚本路径（用于 __DIR__/__FILE__）
+	loc           *time.Location             // 当前请求默认时区（date/strtotime 使用）
 }
 
 // NewEnv 创建执行环境
 func NewEnv(proxy ProxyFunc) *Env {
 	ev := &Env{
-		vars:     map[string]Value{},
-		funcs:    map[string]*FuncDecl{},
-		classes:  map[string]*ClassDecl{},
-		globals:  map[string]Value{},
-		consts:   defaultPHPConsts(),
-		server:   map[string]string{},
-		get:      map[string]string{},
-		post:     map[string]string{},
-		cookie:   map[string]string{},
-		session:  map[string]string{},
-		envmap:   map[string]string{},
-		ufiles:   map[string]Value{},
-		proxy:    proxy,
-		echoOut:  &strings.Builder{},
-		files:    map[int]io.ReadWriteCloser{},
-		nextFd:   1,
+		vars:    map[string]Value{},
+		funcs:   map[string]*FuncDecl{},
+		classes: map[string]*ClassDecl{},
+		globals: map[string]Value{},
+		consts:  defaultPHPConsts(),
+		server:  map[string]string{},
+		get:     map[string]string{},
+		post:    map[string]string{},
+		cookie:  map[string]string{},
+		session: map[string]string{},
+		envmap:  map[string]string{},
+		ufiles:  map[string]Value{},
+		proxy:   proxy,
+		echoOut: &strings.Builder{},
+		files:   map[int]io.ReadWriteCloser{},
+		nextFd:  1,
+		loc:     currentPHPLocation(), // 播种为配置默认时区（date_default_timezone_set 可改）
 	}
 	return ev
 }
