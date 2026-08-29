@@ -523,6 +523,9 @@ func (c *Config) SetDefaults() {
 			c.PHP.DocRoot = filepath.Join(filepath.Dir(expandHome(*ConfigFilePath)), c.PHP.DocRoot)
 		}
 	}
+	// 归一化尾斜杠/多余分隔符：否则 docroot 带尾斜杠时，docroot+"/" 会拼成
+	// "/apps/www//" 双斜杠，导致边界判断把正常脚本误判为越权（403/非法路径）
+	c.PHP.DocRoot = filepath.Clean(c.PHP.DocRoot)
 	if len(c.PHP.Index) == 0 {
 		c.PHP.Index = []string{"index.php", "index.html"}
 	}

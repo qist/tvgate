@@ -57,6 +57,8 @@
 18、安卓日志输出本地时区 — 读取 persist.sys.timezone 设置 time.Local，服务日志时间与设备本地一致
 19、安卓/服务器平台隐藏版本升级卡片 — 前端 UA + 后端平台双判断，修正浏览器 UA 盲区
 20、保持 /debug/pprof 调试接口禁用 — 生产环境不开放（加回后回退）
+21、修复 PHP docroot 尾斜杠误判越权 — filepath.Clean 归一化，/apps/www 与 /apps/www/ 两种写法均正常（此前带尾斜杠会触发 403/非法路径）
+22、修复 Docker buildx 多平台构建 — final 镜像 debian:bookworm-slim 换 alpine（manifest 解析失败）
 ```
 
 ### v3.0.5
