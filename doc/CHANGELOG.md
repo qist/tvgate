@@ -23,6 +23,22 @@
 
 ## 服务端 (tvgate)
 
+### v3.0.6
+
+```
+1、修复 PHP 时区 — 内嵌 time/tzdata，安卓/精简镜像无系统时区也能正确 LoadLocation，避免 UTC 时间错乱
+2、修复 PHP 中文乱码 — 脚本未声明 charset 时自动补 ;charset=UTF-8，已声明的 gbk 等保持不变
+3、移除 PHP 无引用死函数（phpDate/phpGmDate）
+4、Web 代码编辑器修复与增强 — 补回丢失的代码注释按钮；注释快捷键支持 Ctrl+Q（兼容 Ctrl+/）
+5、代理转发路径精简 — 移除 executeCopyWithPool 的 goroutine/通道/任务池开销；删除 proxy/client 死代码
+6、普通响应保留 Content-Length 并放开 HTTP/1.1 keep-alive — 消除 chunked 开销，支持连接复用
+7、无 Content-Length 的普通响应改走连接关闭帧 — 修复部分播放器"普通页面一直不返回"（chunked 兼容问题）
+8、统一 RTSP 写出路径 — 抽离 writeRTSPToClient 批量写 helper，H.264/AAC 也吃到 TLS 批量写优化
+9、TS 缓存从首个关键帧起缓存并前置 PAT/PMT — 修复首客户端花屏/关键帧问题，缓存不含 P 帧垃圾前缀
+10、放宽 HTTP 连接数默认值 — MaxIdleConns/MaxIdleConnsPerHost/MaxConnsPerHost/IdleConnTimeout 提升，修复同一源站并发第 N 路流断开重连
+11、流媒体(.ts/.flv)免疫 http.timeout 整体超时 — 修复长连接被超时掐断反复重连；普通响应超时仍生效
+```
+
 ### v3.0.5
 
 ```
