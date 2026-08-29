@@ -642,7 +642,7 @@
                         <p>功能面板编辑</p>
                         <a href="{{.webPath}}node" class="btn">访问编辑器</a>
                     </div>
-                    
+
                     <!-- 版本升级 -->
                     <div class="feature-card" id="upgradeCard">
                         <h3>版本升级</h3>
@@ -760,13 +760,14 @@
         const webPath = "{{.webPath}}";
         const monitorPath = "{{.monitorPath}}";
         const isWindows = "{{.isWindows}}" === "true"; // 从后端传递的操作系统信息
+        const isAndroid = /android/i.test(navigator.userAgent); // 前端 UA 判断，安卓经 APK 升级不显示 web 版本升级
         window.webPath = webPath; // 设为全局变量供theme.js使用
         window.monitorPath = monitorPath; // 设为全局变量供system-stats.js使用
 
         // 侧边栏导航功能
         document.addEventListener('DOMContentLoaded', function () {
-            // 根据操作系统类型切换显示内容
-            if (isWindows === true) {
+            // 根据操作系统类型切换显示内容（安卓经前端 UA 判断）
+            if (isWindows === true || isAndroid === true) {
                 document.getElementById('upgradeCard').style.display = 'none';
                 document.getElementById('serverConfigCard').style.display = 'block';
             }
