@@ -59,6 +59,7 @@
 20、保持 /debug/pprof 调试接口禁用 — 生产环境不开放（加回后回退）
 21、修复 PHP docroot 尾斜杠误判越权 — filepath.Clean 归一化，/apps/www 与 /apps/www/ 两种写法均正常（此前带尾斜杠会触发 403/非法路径）
 22、修复 Docker buildx 多平台构建 — final 镜像 debian:bookworm-slim 换 alpine（manifest 解析失败）
+23、PHP 新增 DNS 系列函数 — gethostbyname/gethostbynamel/dns_get_record（A/AAAA 位掩码、真实 TTL，复用项目 DNS 解析器，支持 dnscrypt/DoH 配置）
 ```
 
 ### v3.0.5

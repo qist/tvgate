@@ -272,6 +272,45 @@ func (r *Resolver) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr,
 	return ips, nil
 }
 
+// LookupIPWithTTL 解析主机名，返回 A 或 AAAA 记录及真实 TTL
+// IP 以常规解析路径为准（配置客户端 → 系统解析器），TTL 通过系统 DNS 原始查询按 IP 匹配；
+// 系统原始查询失败时 TTL 记为 0（IP 仍有效）
+func (r *Resolver) LookupIPWithTTL(ctx context.Context, host string, wantAAAA bool) ([]DNSRecord, error) {
+	r.mutex.RLock()
+	timeout := r.timeout
+	r.mutex.RUnlock()
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ips, err := r.LookupIP(host)
+	if err != nil {
+		return nil, err
+	}
+	ttlMap := map[string]uint32{}
+	if recs, err := systemLookupTTL(ctx, host, wantAAAA, timeout); err == nil {
+		for _, rec := range recs {
+			ttlMap[rec.IP.String()] = rec.TTL
+		}
+	}
+	out := make([]DNSRecord, 0, len(ips))
+	for _, ip := range ips {
+		v4 := ip.To4()
+		if wantAAAA {
+			if v4 != nil {
+				continue
+			}
+		} else {
+			if v4 == nil {
+				continue
+			}
+			ip = v4
+		}
+		out = append(out, DNSRecord{IP: ip, TTL: ttlMap[ip.String()]})
+	}
+	return out, nil
+}
+
 // RefreshConfig 刷新配置
 func (r *Resolver) RefreshConfig() {
 	r.loadConfig()

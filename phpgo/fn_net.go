@@ -2,8 +2,11 @@ package phpgo
 
 import (
 	"encoding/hex"
+	"net"
 	"net/url"
 	"strconv"
+
+	pgdns "github.com/qist/tvgate/dns"
 )
 
 func init() {
@@ -86,6 +89,116 @@ func init() {
 			strconv.FormatInt((v>>16)&0xFF, 10) + "." +
 			strconv.FormatInt((v>>8)&0xFF, 10) + "." +
 			strconv.FormatInt(v&0xFF, 10)), nil
+	}
+	// gethostbyname：主机名 -> IPv4 字符串（PHP 语义）
+	// 已传入 IP 时原样返回；解析失败或无 IPv4 记录时返回原 hostname
+	builtins["gethostbyname"] = func(e *Env, a []Value) (Value, error) {
+		if len(a) == 0 {
+			return NewString(""), nil
+		}
+		host := a[0].ToString()
+		if net.ParseIP(host) != nil {
+			return NewString(host), nil
+		}
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
+			return NewString(host), nil
+		}
+		for _, ip := range ips {
+			if v4 := ip.To4(); v4 != nil {
+				return NewString(v4.String()), nil
+			}
+		}
+		return NewString(host), nil
+	}
+	// gethostbynamel：主机名 -> IPv4 字符串数组（解析失败返回 false）
+	builtins["gethostbynamel"] = func(e *Env, a []Value) (Value, error) {
+		if len(a) == 0 {
+			return NewBool(false), nil
+		}
+		host := a[0].ToString()
+		if net.ParseIP(host) != nil {
+			return NewBool(false), nil
+		}
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
+			return NewBool(false), nil
+		}
+		arr := NewArray()
+		n := 0
+		for _, ip := range ips {
+			if v4 := ip.To4(); v4 != nil {
+				arr.ArraySet(NewInt(int64(n)), NewString(v4.String()))
+				n++
+			}
+		}
+		if n == 0 {
+			return NewBool(false), nil
+		}
+		return arr, nil
+	}
+	// dns_get_record：DNS 记录查询（PHP 语义，支持 A/AAAA 类型）
+	// $type 为 DNS_A | DNS_AAAA 位掩码（DNS_ANY 缺省，A/AAAA 都查）；
+	// 返回记录数组，每条含 host/class/ttl/type + ip(A) 或 ipv6(AAAA)，ttl 为真实 TTL；
+	// 解析失败返回 false；不支持的记录类型（NS/MX/TXT 等）返回空数组
+	builtins["dns_get_record"] = func(e *Env, a []Value) (Value, error) {
+		if len(a) < 1 {
+			return NewBool(false), nil
+		}
+		host := a[0].ToString()
+		typ := int64(268435456) // 缺省 DNS_ANY
+		if len(a) >= 2 {
+			typ = a[1].ToInt()
+		}
+		wantA := typ&1 != 0 || typ&268435456 != 0            // DNS_A / DNS_ANY
+		wantAAAA := typ&134217728 != 0 || typ&268435456 != 0 // DNS_AAAA / DNS_ANY
+		result := NewArray()
+		n := 0
+		addRec := func(ip string, ttl uint32, rtype, ipkey string) {
+			rec := NewArray()
+			rec.ArraySet(NewString("host"), NewString(host))
+			rec.ArraySet(NewString("class"), NewString("IN"))
+			rec.ArraySet(NewString("ttl"), NewInt(int64(ttl)))
+			rec.ArraySet(NewString("type"), NewString(rtype))
+			rec.ArraySet(NewString(ipkey), NewString(ip))
+			result.ArraySet(NewInt(int64(n)), rec)
+			n++
+		}
+		fetch := func(wantAAAA bool, rtype, ipkey string) bool {
+			// 走项目 DNS 解析器（配置客户端 → 系统解析器），带真实 TTL
+			if recs, err := pgdns.LookupIPWithTTL(host, wantAAAA); err == nil {
+				for _, r := range recs {
+					addRec(r.IP.String(), r.TTL, rtype, ipkey)
+				}
+				return true
+			}
+			// 解析失败兜底：net.LookupIP 拿 IP（ttl 记 0）
+			if ips, err := net.LookupIP(host); err == nil {
+				for _, ip := range ips {
+					v4 := ip.To4()
+					if wantAAAA {
+						if v4 == nil {
+							addRec(ip.String(), 0, rtype, ipkey)
+						}
+					} else if v4 != nil {
+						addRec(v4.String(), 0, rtype, ipkey)
+					}
+				}
+				return true
+			}
+			return false
+		}
+		okA, okAAAA := false, false
+		if wantA {
+			okA = fetch(false, "A", "ip")
+		}
+		if wantAAAA {
+			okAAAA = fetch(true, "AAAA", "ipv6")
+		}
+		if n == 0 && !okA && !okAAAA {
+			return NewBool(false), nil // 所有请求类型均解析失败
+		}
+		return result, nil
 	}
 	// utf8_encode：ISO-8859-1 -> UTF-8（PHP 历史语义）
 	builtins["utf8_encode"] = func(e *Env, a []Value) (Value, error) {

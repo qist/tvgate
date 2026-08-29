@@ -33,6 +33,12 @@ func LookupIP(host string) ([]net.IP, error) {
 	return GetInstance().LookupIP(host)
 }
 
+// LookupIPWithTTL 使用默认解析器解析主机名，返回 A/AAAA 记录及真实 TTL
+// wantAAAA=false 查 A（IPv4），true 查 AAAA（IPv6）
+func LookupIPWithTTL(host string, wantAAAA bool) ([]DNSRecord, error) {
+	return GetInstance().LookupIPWithTTL(context.Background(), host, wantAAAA)
+}
+
 // LookupIPAddr 使用默认解析器解析IP地址（返回net.IPAddr数组）
 func LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
 	return GetInstance().LookupIPAddr(ctx, host)
