@@ -760,7 +760,8 @@
         const webPath = "{{.webPath}}";
         const monitorPath = "{{.monitorPath}}";
         const isWindows = "{{.isWindows}}" === "true"; // 从后端传递的操作系统信息
-        const isAndroid = /android/i.test(navigator.userAgent); // 前端 UA 判断，安卓经 APK 升级不显示 web 版本升级
+        // 安卓经 APK 安装升级，web 端不提供版本升级；按服务器平台判断（同 isWindows 机制）
+        const isAndroid = "{{.isAndroid}}" === "true";
         window.webPath = webPath; // 设为全局变量供theme.js使用
         window.monitorPath = monitorPath; // 设为全局变量供system-stats.js使用
 

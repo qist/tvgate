@@ -653,6 +653,7 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 			"goroutines":             runtime.NumGoroutine(),
 			"clientIP":               clientIP,
 			"isWindows":              strings.Contains(strings.ToLower(trafficStats.HostInfo.Platform), "windows"),
+			"isAndroid":              strings.Contains(strings.ToLower(trafficStats.HostInfo.Platform), "android"),
 		}
 
 		// 从嵌入的文件系统读取模板
