@@ -46,11 +46,9 @@ func SecurityHeaders(next http.Handler) http.Handler {
 			}
 		}
 
-		// 2️⃣ 智能关闭 HTTP/1.1 keep-alive
-		// 流媒体路径保持 keep-alive，避免每包重连
-		if !streaming && r.ProtoMajor == 1 {
-			w.Header().Set("Connection", "close")
-		}
+		// 2️⃣ 统一启用 HTTP/1.1 keep-alive
+		// 流媒体路径与普通路径都复用连接，配合 Content-Length 透传降低建连开销；
+		// 不再对非流媒体路径强制 Connection: close。
 
 		// 3️⃣ 调用下一个 handler
 		next.ServeHTTP(w, r)
