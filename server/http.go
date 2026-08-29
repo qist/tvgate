@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	// "net/http/pprof" // pprof 调试接口已禁用
+	"net/http/pprof" // pprof 调试接口（临时启用用于内存分析）
 	"strings"
 	"sync"
 	"time"
@@ -132,13 +132,13 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 			TLSConfig:   tlsConfig,
 			IdleTimeout: 120 * time.Second,
 			QUICConfig: &quic.Config{
-				Allow0RTT:          false, // 禁用 0-RTT 防止重放攻击
-				MaxIdleTimeout:     120 * time.Second,
-				KeepAlivePeriod:    20 * time.Second,
-				MaxIncomingStreams: 65535,  // 最大并发流
-				MaxIncomingUniStreams: 65535,
-				EnableDatagrams:    true,
-				InitialStreamReceiveWindow:     512 * 1024, // 512KB 初始流接收窗口
+				Allow0RTT:                      false, // 禁用 0-RTT 防止重放攻击
+				MaxIdleTimeout:                 120 * time.Second,
+				KeepAlivePeriod:                20 * time.Second,
+				MaxIncomingStreams:             65535, // 最大并发流
+				MaxIncomingUniStreams:          65535,
+				EnableDatagrams:                true,
+				InitialStreamReceiveWindow:     512 * 1024,      // 512KB 初始流接收窗口
 				InitialConnectionReceiveWindow: 2 * 1024 * 1024, // 2MB 初始连接接收窗口
 			},
 		}
@@ -165,7 +165,7 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 			_ = http2.ConfigureServer(srv, &http2.Server{
 				MaxConcurrentStreams: 256,
 				MaxReadFrameSize:     1 << 14, // 16KB，匹配 TS/FLV 包大小
-				IdleTimeout:         60 * time.Second,
+				IdleTimeout:          60 * time.Second,
 			})
 			logger.LogPrintf("🚀 启动 HTTPS H1/H2 %s", addr)
 			if err := srv.ServeTLS(ln, certFile, keyFile); err != nil && err != http.ErrServerClosed {
@@ -285,8 +285,8 @@ func RegisterMux(addr string, cfg *config.Config) *http.ServeMux {
 		RegisterMonitorWebMux(mux, cfg)
 	}
 
-	// // 在所有端口上挂载 /debug/pprof 性能分析端点（生产环境已禁用）
-	// registerPprof(mux)
+	// 在所有端口上挂载 /debug/pprof 性能分析端点（临时启用）
+	registerPprof(mux)
 
 	return mux
 }
@@ -298,14 +298,13 @@ func RegisterMux(addr string, cfg *config.Config) *http.ServeMux {
 //	go tool pprof http://127.0.0.1:8888/debug/pprof/heap
 //	go tool pprof http://127.0.0.1:8888/debug/pprof/profile?seconds=30
 //	curl http://127.0.0.1:8888/debug/pprof/goroutine?debug=1
-//
-// func registerPprof(mux *http.ServeMux) {
-// 	mux.HandleFunc("/debug/pprof/", pprof.Index)
-// 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-// 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-// 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-// 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-// }
+func registerPprof(mux *http.ServeMux) {
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+}
 
 // monitor + web
 func RegisterMonitorWebMux(mux *http.ServeMux, cfg *config.Config) {
