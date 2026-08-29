@@ -72,6 +72,7 @@
    - 文件：rename/copy/touch/readfile/fseek/ftell/rewind/fileatime/filectime
    - HTTP：get_headers（ProxyResult 增加响应头字段）
    - 数学/日期/正则：exp/log/log10/log2/log1p/fmod/deg2rad/rad2deg/三角函数/decoct/octdec/srand/is_finite/is_infinite/is_nan、mktime/gmmktime/checkdate/getdate/gettimeofday、preg_quote/preg_grep
+29、修复 json_encode 关联数组键序 — 重写为自定义保序编码器，按 PHP 插入顺序输出对象键（此前经 Go map 编码被按键排序打乱），删除废弃的 phpToGo；连续数字键仍输出 JSON 数组，JSON_UNESCAPED_UNICODE/JSON_PRETTY_PRINT 等 flags 行为不变
 ```
 
 ### v3.0.5

@@ -89,7 +89,7 @@ echo "mra=".json_encode($mr2["a"])."|mrn=".$mr2["n"]."|mrm=".$mr2["m"]."\n";
 	expectContains(t, out, `rest=[1,8,9,4,5]`)
 	expectContains(t, out, `shuf_len=4`)
 	expectContains(t, out, "reduce=10")
-	expectContains(t, out, `mr={"a":[1,2,4],"m":5,"n":3}`)
+	expectContains(t, out, `mr={"a":[1,2,4],"n":3,"m":5}`)
 	expectContains(t, out, "mra=[1,2,4]|mrn=3|mrm=5")
 	t.Logf("arr out:\n%s", out)
 }
@@ -157,6 +157,33 @@ echo "extract=".$foo.$num."\n";
 	expectContains(t, out, "const=42")
 	expectContains(t, out, "extract=bar7")
 	t.Logf("var out:\n%s", out)
+}
+
+func TestJSONKeyOrder(t *testing.T) {
+	out := runPHP(t, `<?php
+// 关联数组按插入顺序输出（此前会被 Go map 排序打乱）
+echo "order=".json_encode(array("b"=>2,"a"=>1,"c"=>3))."\n";
+// 嵌套数组同样保序
+echo "nest=".json_encode(array("z"=>array("y"=>1,"x"=>2),"m"=>3))."\n";
+// 连续数字键仍输出 JSON 数组
+echo "seq=".json_encode(array(5,6,7))."\n";
+// 非 0 起始数字键仍输出对象
+echo "shift=".json_encode(array(2=>"a", 5=>"b"))."\n";
+// 空数组
+echo "empty=".json_encode(array())."\n";
+// JSON_UNESCAPED_UNICODE 保留中文
+echo "uni=".json_encode(array("k"=>"中文"), 256)."\n";
+// JSON_PRETTY_PRINT
+echo "pp=".json_encode(array("a"=>1,"b"=>2), 128)."\n";
+`)
+	expectContains(t, out, `order={"b":2,"a":1,"c":3}`)
+	expectContains(t, out, `nest={"z":{"y":1,"x":2},"m":3}`)
+	expectContains(t, out, `seq=[5,6,7]`)
+	expectContains(t, out, `shift={"2":"a","5":"b"}`)
+	expectContains(t, out, "empty=[]")
+	expectContains(t, out, `uni={"k":"中文"}`)
+	expectContains(t, out, "{\n    \"a\": 1,\n    \"b\": 2\n  }")
+	t.Logf("json out:\n%s", out)
 }
 
 func TestNewMathDatePreg(t *testing.T) {

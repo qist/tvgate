@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -106,28 +107,20 @@ func init() {
 	}
 	// json_encode/decode
 	builtins["json_encode"] = func(e *Env, a []Value) (Value, error) {
-		goVal := phpToGo(a[0])
-		// 默认行为：json.Marshal
-		b, err := json.Marshal(goVal)
+		flags := int64(0)
+		if len(a) >= 2 {
+			flags = a[1].ToInt()
+		}
+		// 自定义保序编码：关联数组按 PHP 插入顺序输出（Go map 会丢序）
+		s, err := jsonEncodeValue(a[0], flags)
 		if err != nil {
 			return NewString(""), err
 		}
-		s := string(b)
-		// 处理 JSON flags
-		if len(a) >= 2 {
-			flags := a[1].ToInt()
-			if flags&256 != 0 { // JSON_UNESCAPED_UNICODE
-				// Go 的 json.Marshal 默认会转义非 ASCII，需要反转义
-				s = unescapeUnicode(s)
-			}
-			if flags&64 != 0 { // JSON_UNESCAPED_SLASHES
-				s = strings.ReplaceAll(s, "\\/", "/")
-			}
-			if flags&128 != 0 { // JSON_PRETTY_PRINT
-				var buf bytes.Buffer
-				if err := json.Indent(&buf, b, "  ", "  "); err == nil {
-					s = buf.String()
-				}
+		// JSON_PRETTY_PRINT
+		if flags&128 != 0 {
+			var buf bytes.Buffer
+			if err := json.Indent(&buf, []byte(s), "  ", "  "); err == nil {
+				s = buf.String()
 			}
 		}
 		return NewString(s), nil
@@ -294,6 +287,124 @@ func unescapeUnicode(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// jsonEncodeValue 递归编码 PHP Value 为紧凑 JSON 字符串。
+// 关键点：关联数组按 Keys 插入顺序输出，避免 Go map 的键排序丢序。
+func jsonEncodeValue(v Value, flags int64) (string, error) {
+	v = deref(v)
+	switch v.Kind {
+	case KindNull:
+		return "null", nil
+	case KindBool:
+		if v.Bool {
+			return "true", nil
+		}
+		return "false", nil
+	case KindInt:
+		return strconv.FormatInt(v.Int, 10), nil
+	case KindFloat:
+		return jsonMarshalScalar(v.Float)
+	case KindString:
+		return jsonQuote(v.Str, flags), nil
+	case KindArray:
+		return jsonEncodeArray(v, flags)
+	case KindObject:
+		// 对象属性以 map 存储（无插入序），按键排序输出（与旧实现一致）
+		if v.Object == nil {
+			return "{}", nil
+		}
+		keys := make([]string, 0, len(v.Object.Properties))
+		for k := range v.Object.Properties {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var b strings.Builder
+		b.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(jsonQuote(k, flags))
+			b.WriteByte(':')
+			s, err := jsonEncodeValue(v.Object.Properties[k], flags)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(s)
+		}
+		b.WriteByte('}')
+		return b.String(), nil
+	}
+	return "null", nil
+}
+
+// jsonEncodeArray 编码数组/关联数组：连续 0..N-1 键输出 JSON 数组，否则按插入序输出对象
+func jsonEncodeArray(v Value, flags int64) (string, error) {
+	if len(v.Keys) == 0 {
+		return "[]", nil
+	}
+	sequential := true
+	for i, k := range v.Keys {
+		if k != strconv.FormatInt(int64(i), 10) {
+			sequential = false
+			break
+		}
+	}
+	var b strings.Builder
+	if sequential {
+		b.WriteByte('[')
+		for i, k := range v.Keys {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			s, err := jsonEncodeValue(v.Arr[k], flags)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(s)
+		}
+		b.WriteByte(']')
+		return b.String(), nil
+	}
+	b.WriteByte('{')
+	for i, k := range v.Keys {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(jsonQuote(k, flags))
+		b.WriteByte(':')
+		s, err := jsonEncodeValue(v.Arr[k], flags)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(s)
+	}
+	b.WriteByte('}')
+	return b.String(), nil
+}
+
+// jsonQuote 编码 JSON 字符串字面量（复用 Go 的转义规则）；
+// JSON_UNESCAPED_UNICODE 时把 \uXXXX 还原为非 ASCII 字符
+func jsonQuote(s string, flags int64) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
+	out := string(b)
+	if flags&256 != 0 {
+		out = unescapeUnicode(out)
+	}
+	return out
+}
+
+// jsonMarshalScalar 用 Go json 编码浮点标量（保持与旧实现一致的 float 格式）
+func jsonMarshalScalar(f float64) (string, error) {
+	b, err := json.Marshal(f)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // parseHTTPStatusHeader 解析 header("HTTP/1.1 404 Not Found") 之类的显式状态码行。
@@ -593,60 +704,6 @@ func (e *Env) execCurlHandle(h Value) (string, error) {
 // ---------------------------------------------------------------------------
 // JSON 互转
 // ---------------------------------------------------------------------------
-
-// phpToGo 把 PHP Value 转 Go 值用于 json.Marshal
-func phpToGo(v Value) interface{} {
-	switch v.Kind {
-	case KindNull:
-		return nil
-	case KindBool:
-		return v.Bool
-	case KindInt:
-		return v.Int
-	case KindFloat:
-		return v.Float
-	case KindString:
-		return v.Str
-	case KindArray:
-		// 判断是索引还是关联
-		// PHP json_encode 规则：只有当 key 恰好是 0,1,2,...,N-1 的连续整数时，
-		// 才输出 JSON 数组 []；否则输出 JSON 对象 {}。
-		// phpgo 中所有 key 都以字符串存储，所以需要检查 keys 是否依次为 "0","1",...
-		if len(v.Keys) > 0 {
-			isSequential := true
-			for i, k := range v.Keys {
-				if k != strconv.FormatInt(int64(i), 10) {
-					isSequential = false
-					break
-				}
-			}
-			if isSequential {
-				arr := make([]interface{}, 0, len(v.Keys))
-				for _, k := range v.Keys {
-					arr = append(arr, phpToGo(v.Arr[k]))
-				}
-				return arr
-			}
-			m := map[string]interface{}{}
-			for _, k := range v.Keys {
-				m[k] = phpToGo(v.Arr[k])
-			}
-			return m
-		}
-		return []interface{}{}
-	case KindObject:
-		// 对象转 JSON 对象：属性名 → 属性值
-		if v.Object != nil {
-			m := map[string]interface{}{}
-			for k, val := range v.Object.Properties {
-				m[k] = phpToGo(val)
-			}
-			return m
-		}
-		return map[string]interface{}{}
-	}
-	return nil
-}
 
 // goToPHP 把 Go 解码值转 PHP Value（assoc=true 时对象转关联数组）
 func goToPHP(v interface{}, assoc bool) Value {
