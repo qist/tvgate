@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	_ "time/tzdata" // 内嵌 IANA 时区库，保证精简镜像(无 /usr/share/zoneinfo)也能 LoadLocation
 )
 
 // 全局默认时区（Env 创建时的播种值，缺省 UTC；脚本可用 date_default_timezone_set 修改）。
