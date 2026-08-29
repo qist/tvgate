@@ -81,7 +81,14 @@ func init() {
 	}
 
 	builtins["usleep"] = func(e *Env, a []Value) (Value, error) {
-		// 简化：不真正 sleep
+		// usleep(微秒)：真正睡眠，不阻塞其他并发请求（Go 的 time.Sleep 按 goroutine 挂起）
+		us := int64(0)
+		if len(a) >= 1 {
+			us = a[0].ToInt()
+		}
+		if us > 0 {
+			time.Sleep(time.Duration(us) * time.Microsecond)
+		}
 		return NewNull(), nil
 	}
 }

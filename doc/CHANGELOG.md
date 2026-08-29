@@ -63,6 +63,7 @@
 24、curl 新增 CURLOPT_IPRESOLVE 支持 — 指定 IPv4/IPv6 解析（复用项目 DNS 解析器按族拨号）
 25、真正实现 curl_multi 并发 — 多句柄 goroutine 并行拉取，标准 do/while 循环一次完成，$still_running 引用回写，getcontent/getinfo 正常读取
 26、dns_get_record TTL 查询优先使用 YAML 配置的 dns.servers — 安卓/内网可指向内网 DNS，外部公共 DNS 仅作最后兜底，避免内网域名解析失败
+27、修复 usleep 为真正睡眠 — 此前为 no-op 直接返回，现按微秒挂起当前请求（time.Sleep 按 goroutine 阻塞，不影响其他并发请求）
 ```
 
 ### v3.0.5
