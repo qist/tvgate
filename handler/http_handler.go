@@ -148,6 +148,8 @@ func Handler(client *http.Client) http.HandlerFunc {
 		}
 		targetPath := stream.GetTargetPath(r)
 		targetURL := stream.GetTargetURL(r, targetPath)
+		// 长连接/分片流媒体不受 http.Client 整体超时约束，避免超时掐断流导致反复重连
+		isStreaming := stream.IsStreamingPath(targetPath)
 		parsedURL, err := url.Parse(targetURL)
 		if err != nil {
 			http.Error(w, "无效的目标 URL", http.StatusBadRequest)
@@ -330,6 +332,10 @@ func Handler(client *http.Client) http.HandlerFunc {
 					markProxyResult(pg, selectedProxy, false)
 					continue
 				}
+				// 流媒体请求不设整体超时（proxyClient 为每次新建的实例，可直接改字段）
+				if isStreaming {
+					proxyClient.Timeout = 0
+				}
 
 				// 构造代理请求
 				var proxyBody io.ReadCloser
@@ -435,7 +441,14 @@ func Handler(client *http.Client) http.HandlerFunc {
 			}
 		}
 		// fallback: 直连请求
-		clientResp, err := client.Do(originReq)
+		// 流媒体请求不设整体超时（client 为共享实例，需克隆避免影响其他请求）
+		effClient := client
+		if isStreaming {
+			c2 := *client
+			c2.Timeout = 0
+			effClient = &c2
+		}
+		clientResp, err := effClient.Do(originReq)
 		if err != nil {
 			http.Error(w, "直连请求失败："+err.Error(), http.StatusBadGateway)
 			return

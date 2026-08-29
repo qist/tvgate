@@ -42,12 +42,12 @@ http:
   connect_timeout: 10s # 建立连接的超时时间
   keepalive: 10s # 长连接的保活时间
   response_header_timeout: 10s # 接收响应头的超时时间
-  idle_conn_timeout: 5s # 空闲连接在连接池中的保留时间
+  idle_conn_timeout: 30s # 空闲连接在连接池中的保留时间
   tls_handshake_timeout: 10s # TLS 握手超时时间
   expect_continue_timeout: 1s # Expect: 100-continue 的等待超时时间
-  max_idle_conns: 100 # 最大空闲连接数（全局）
-  max_idle_conns_per_host: 4 # 每个主机最大空闲连接数
-  max_conns_per_host: 8 # 每个主机最大连接数（总数，含空闲和活跃）
+  max_idle_conns: 1000 # 最大空闲连接数（全局）
+  max_idle_conns_per_host: 32 # 每个主机最大空闲连接数
+  max_conns_per_host: 64 # 每个主机最大连接数（总数，含空闲和活跃）
   disable_keepalives: false # 是否禁用长连接复用 (false 表示启用 KeepAlive)
 # 10 万并发参考
 #  http:

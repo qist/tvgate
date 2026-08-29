@@ -444,7 +444,7 @@ func (c *Config) SetDefaults() {
 		c.HTTP.ResponseHeaderTimeout = 10 * time.Second
 	}
 	if c.HTTP.IdleConnTimeout == 0 {
-		c.HTTP.IdleConnTimeout = 5 * time.Second
+		c.HTTP.IdleConnTimeout = 30 * time.Second
 	}
 	if c.HTTP.TLSHandshakeTimeout == 0 {
 		c.HTTP.TLSHandshakeTimeout = 10 * time.Second
@@ -452,14 +452,16 @@ func (c *Config) SetDefaults() {
 	if c.HTTP.ExpectContinueTimeout == 0 {
 		c.HTTP.ExpectContinueTimeout = 1 * time.Second
 	}
+	// 连接数默认值放宽：IPTV 网关常有大量并发观看同一源站，
+	// 过小的 MaxConnsPerHost/MaxIdleConnsPerHost 会导致第 N 路流断开重连
 	if c.HTTP.MaxIdleConns == 0 {
-		c.HTTP.MaxIdleConns = 100
+		c.HTTP.MaxIdleConns = 1000
 	}
 	if c.HTTP.MaxIdleConnsPerHost == 0 {
-		c.HTTP.MaxIdleConnsPerHost = 4
+		c.HTTP.MaxIdleConnsPerHost = 32
 	}
 	if c.HTTP.MaxConnsPerHost == 0 {
-		c.HTTP.MaxConnsPerHost = 8
+		c.HTTP.MaxConnsPerHost = 64
 	}
 	if c.HTTP.DisableKeepAlives == nil {
 		c.HTTP.DisableKeepAlives = ptr(false)

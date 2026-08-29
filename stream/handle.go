@@ -754,6 +754,13 @@ func IsTSRequest(rawURL string) bool {
 	return strings.EqualFold(filepath.Ext(u.Path), ".ts")
 }
 
+// IsStreamingPath 判断是否为长连接/分片流媒体路径（FLV 直播、TS 分片）。
+// 这类请求不应受 http.Client 整体超时（http.timeout）约束，
+// 否则超时一到流就被掐断，播放器反复断开重连。
+func IsStreamingPath(path string) bool {
+	return IsTSRequest(path) || isLiveStream(path)
+}
+
 // normalizeCacheKey 生成直观的缓存键
 func normalizeCacheKey(rawURL string) string {
 	u, err := url.Parse(rawURL)
