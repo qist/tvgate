@@ -47,9 +47,15 @@ func ServePHP(env *Env, w http.ResponseWriter, src string) error {
 			w.Header().Set(strings.TrimSpace(h[:i]), strings.TrimSpace(h[i+1:]))
 		}
 	}
+	ct := w.Header().Get("Content-Type")
 	// 未显式设置 Content-Type 时默认 text/html
-	if w.Header().Get("Content-Type") == "" {
+	if ct == "" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	} else if !strings.Contains(strings.ToLower(ct), "charset=") {
+		// 与 PHP 默认 default_charset(=UTF-8) 行为一致：脚本设了 Content-Type 但未带 charset 时补 UTF-8，
+		// 避免浏览器/播放器按本地 GBK 解读 UTF-8 输出造成中文乱码。
+		// 已带 charset（如 charset=gbk）的保持不变，兼容 GBK 脚本。
+		w.Header().Set("Content-Type", ct+";charset=UTF-8")
 	}
 	// 决定最终状态码：
 	//  - 脚本显式 header("HTTP/1.x NNN ...") 优先；
@@ -153,9 +159,9 @@ func defaultProxy(client *http.Client) ProxyFunc {
 		}
 		return &ProxyResult{
 			Body:         string(data),
-			StatusCode:  resp.StatusCode,
-			Location:    resp.Header.Get("Location"),
-			ContentType: resp.Header.Get("Content-Type"),
+			StatusCode:   resp.StatusCode,
+			Location:     resp.Header.Get("Location"),
+			ContentType:  resp.Header.Get("Content-Type"),
 			EffectiveURL: resp.Request.URL.String(),
 		}, nil
 	}
@@ -283,8 +289,10 @@ func writeRef(env *Env, refVal Value, v Value) {
 
 // lookbehindWorkaround 处理 (?<=X)MAIN(?=Y) 形式的简单后行/先行断言：
 // Go RE2 不支持 lookbehind (?<=)，所以把断言改写为捕获组：
-//   原 pattern = [prefix] (?<=LIT) MAIN (?=TAIL) [suffix]
-//   改写为     = [prefix] (LIT) (MAIN) (TAIL) [suffix]
+//
+//	原 pattern = [prefix] (?<=LIT) MAIN (?=TAIL) [suffix]
+//	改写为     = [prefix] (LIT) (MAIN) (TAIL) [suffix]
+//
 // 匹配后只替换 MAIN 部分（第 2 个捕获组），保留前后缀。
 // 这是针对 fj.php 等场景的 workaround。
 func lookbehindWorkaround(pattern, repl, subj string) string {
@@ -310,7 +318,7 @@ func lookbehindWorkaround(pattern, repl, subj string) string {
 		if end < 0 {
 			return subj
 		}
-		lit = rest[:end] // 断言内的字面量（可能含转义 \/）
+		lit = rest[:end]              // 断言内的字面量（可能含转义 \/）
 		p = p[:idx] + p[idx+4+end+1:] // 移除 (?<=...) 整个组
 	}
 
@@ -322,7 +330,7 @@ func lookbehindWorkaround(pattern, repl, subj string) string {
 		if end < 0 {
 			return subj
 		}
-		tail = rest[:end] // 断言内的字面量
+		tail = rest[:end]             // 断言内的字面量
 		p = p[:idx] + p[idx+3+end+1:] // 移除 (?=...) 整个组
 	}
 
@@ -342,8 +350,10 @@ func lookbehindWorkaround(pattern, repl, subj string) string {
 
 // lookaheadWorkaround 处理 MAIN(?=TAIL) 形式的纯先行断言：
 // Go RE2 不支持 (?=...) lookahead，所以把断言改写为捕获组：
-//   原 pattern = [prefix] MAIN (?=TAIL) [suffix]
-//   改写为     = [prefix] (MAIN) (TAIL) [suffix]
+//
+//	原 pattern = [prefix] MAIN (?=TAIL) [suffix]
+//	改写为     = [prefix] (MAIN) (TAIL) [suffix]
+//
 // 匹配后只替换 MAIN 部分（第 1 个捕获组），保留 TAIL（第 2 个捕获组）。
 // 例如 /zoneoffset.*?(?=accountinfo)/ → (zoneoffset.*?)(accountinfo)
 // 替换时用 ${2} 保留 TAIL 部分。
@@ -352,7 +362,7 @@ func lookaheadWorkaround(pattern, repl, subj string) string {
 
 	// 0. 剥离 PCRE 定界符（如 /.../、#...#、~...~、!...!）
 	if len(p) >= 2 {
-		if d := p[0]; (d == '/' || d == '#' || d == '~' || d == '!') {
+		if d := p[0]; d == '/' || d == '#' || d == '~' || d == '!' {
 			inner := p[1:]
 			if i := strings.LastIndexByte(inner, d); i >= 0 {
 				p = inner[:i]
