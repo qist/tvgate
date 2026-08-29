@@ -59,6 +59,8 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 
 	// 复制响应头；Content-Length 由 CopyResponse 按路径决定保留或删除
 	CopyHeader(w.Header(), resp.Header, r.ProtoMajor)
+	// 普通响应后端未提供 Content-Length 时走连接关闭帧，避免下发 chunked
+	SetConnectionCloseFraming(w, resp, u.Path)
 	w.WriteHeader(resp.StatusCode)
 
 	// 解析URL并获取最优缓冲区大小
@@ -614,6 +616,21 @@ func generateToken(tm *auth.TokenManager, path string) string {
 		}
 	}
 	return ""
+}
+
+// SetConnectionCloseFraming 在普通响应后端未提供 Content-Length 时，
+// 强制走连接关闭帧（Transfer-Encoding: identity + Connection: close），
+// 避免下发 chunked 导致部分播放器/客户端"普通页面一直不返回"（chunked 兼容性问题）。
+// 必须在 WriteHeader 之前调用；TS/直播流不受影响（仍需 chunked 流式下发）。
+func SetConnectionCloseFraming(w http.ResponseWriter, resp *http.Response, urlPath string) {
+	if IsTSRequest(urlPath) || isLiveStream(urlPath) {
+		return
+	}
+	if resp.Header.Get("Content-Length") != "" {
+		return
+	}
+	w.Header().Set("Transfer-Encoding", "identity")
+	w.Header().Set("Connection", "close")
 }
 
 // CopyResponse 根据内容类型选择适当的复制方法

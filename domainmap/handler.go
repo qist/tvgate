@@ -1000,6 +1000,9 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// TS/直播流的移除由 CopyResponse 按路径处理
 	if isM3U8 {
 		w.Header().Del("Content-Length")
+	} else {
+		// 普通响应后端未提供 Content-Length 时走连接关闭帧，避免下发 chunked
+		stream.SetConnectionCloseFraming(w, resp, originalReqURL.Path)
 	}
 	w.WriteHeader(resp.StatusCode)
 
