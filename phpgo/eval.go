@@ -35,6 +35,7 @@ type CurlOptions struct {
 	Method              string
 	FollowRedirect      bool
 	SkipSSL             bool // CURLOPT_SSL_VERIFYPEER=false
+	IPResolve           int  // CURLOPT_IPRESOLVE（0=whatever,1=V4,2=V6）
 }
 
 // Env 执行环境
@@ -146,6 +147,10 @@ func defaultPHPConsts() map[string]Value {
 	c["CURLOPT_FILE"] = NewInt(10001)
 	c["CURLOPT_WRITEFUNCTION"] = NewInt(20011)
 	c["CURLOPT_HEADERFUNCTION"] = NewInt(20079)
+	c["CURLOPT_IPRESOLVE"] = NewInt(113)
+	c["CURL_IPRESOLVE_WHATEVER"] = NewInt(0)
+	c["CURL_IPRESOLVE_V4"] = NewInt(1)
+	c["CURL_IPRESOLVE_V6"] = NewInt(2)
 	// CURLINFO
 	c["CURLINFO_HTTP_CODE"] = NewInt(2097154)
 	c["CURLINFO_RESPONSE_CODE"] = NewInt(2097154)
@@ -1639,6 +1644,7 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 			"preg_match_all":        {2: true},
 			"preg_replace_callback": {3: true},
 			"parse_str":             {1: true},
+			"curl_multi_exec":       {1: true},
 		}
 		for i, a := range args {
 			// 特定函数的特定参数按引用传递（供 writeRef 写回）

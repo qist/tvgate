@@ -75,13 +75,15 @@ func curlOptIntToName(v int64) string {
 		return "CURLOPT_WRITEFUNCTION"
 	case 20079:
 		return "CURLOPT_HEADERFUNCTION"
+	case 113:
+		return "CURLOPT_IPRESOLVE"
 	}
 	return ""
 }
 
 // curlOptNameToInt 把字符串名映射为整数（反向查找）
 func curlOptNameToInt(name string) int64 {
-	for _, v := range []int64{1, 19913, 47, 10015, 10023, 13, 78, 10018, 52, 10036, 44, 10004, 10100, 64, 81, 10102, 10016, 10022, 10031, 10082, 42, 41, 45, 75, 74, 68, 32, 10065, 10097, 10025, 10026, 80, 3, 10001, 20011, 20079} {
+	for _, v := range []int64{1, 19913, 47, 10015, 10023, 13, 78, 10018, 52, 10036, 44, 10004, 10100, 64, 81, 10102, 10016, 10022, 10031, 10082, 42, 41, 45, 75, 74, 68, 32, 10065, 10097, 10025, 10026, 80, 3, 10001, 20011, 20079, 113} {
 		if curlOptIntToName(v) == name {
 			return v
 		}

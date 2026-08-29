@@ -60,6 +60,9 @@
 21、修复 PHP docroot 尾斜杠误判越权 — filepath.Clean 归一化，/apps/www 与 /apps/www/ 两种写法均正常（此前带尾斜杠会触发 403/非法路径）
 22、修复 Docker buildx 多平台构建 — final 镜像 debian:bookworm-slim 换 alpine（manifest 解析失败）
 23、PHP 新增 DNS 系列函数 — gethostbyname/gethostbynamel/dns_get_record（A/AAAA 位掩码、真实 TTL，复用项目 DNS 解析器，支持 dnscrypt/DoH 配置）
+24、curl 新增 CURLOPT_IPRESOLVE 支持 — 指定 IPv4/IPv6 解析（复用项目 DNS 解析器按族拨号）
+25、真正实现 curl_multi 并发 — 多句柄 goroutine 并行拉取，标准 do/while 循环一次完成，$still_running 引用回写，getcontent/getinfo 正常读取
+26、dns_get_record TTL 查询优先使用 YAML 配置的 dns.servers — 安卓/内网可指向内网 DNS，外部公共 DNS 仅作最后兜底，避免内网域名解析失败
 ```
 
 ### v3.0.5

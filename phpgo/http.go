@@ -1,14 +1,18 @@
 package phpgo
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
 	"strings"
 	"time"
+
+	pgdns "github.com/qist/tvgate/dns"
 )
 
 // ServePHP 执行 PHP 源码并写入 HTTP 响应。
@@ -81,10 +85,40 @@ func defaultProxy(client *http.Client) ProxyFunc {
 		if c == nil {
 			c = http.DefaultClient
 		}
-		// 如果需要跳过 SSL 验证或控制重定向，创建自定义 client
-		if opts != nil && (opts.SkipSSL || opts.FollowRedirect || opts.TimeoutFloat > 0 || opts.ConnectTimeoutFloat > 0) {
+		// 如果需要跳过 SSL 验证、控制重定向、指定 IP 族或设置超时，创建自定义 client
+		if opts != nil && (opts.SkipSSL || opts.FollowRedirect || opts.TimeoutFloat > 0 || opts.ConnectTimeoutFloat > 0 || opts.IPResolve != 0) {
 			transport := &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipSSL},
+			}
+			// CURLOPT_IPRESOLVE：强制 v4/v6 解析
+			if opts.IPResolve != 0 {
+				transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					host, port, err := net.SplitHostPort(addr)
+					if err != nil {
+						return nil, err
+					}
+					ips, err := pgdns.GetInstance().LookupIP(host)
+					if err != nil || len(ips) == 0 {
+						return nil, fmt.Errorf("curl IPRESOLVE 解析失败: %w", err)
+					}
+					var chosen net.IP
+					for _, ip := range ips {
+						v4 := ip.To4()
+						if opts.IPResolve == 1 && v4 != nil { // CURL_IPRESOLVE_V4
+							chosen = v4
+							break
+						}
+						if opts.IPResolve == 2 && v4 == nil { // CURL_IPRESOLVE_V6
+							chosen = ip
+							break
+						}
+					}
+					if chosen == nil {
+						return nil, fmt.Errorf("curl IPRESOLVE: 无匹配 %d 的地址", opts.IPResolve)
+					}
+					var d net.Dialer
+					return d.DialContext(ctx, network, net.JoinHostPort(chosen.String(), port))
+				}
 			}
 			c = &http.Client{
 				Transport: transport,

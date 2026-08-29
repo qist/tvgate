@@ -207,15 +207,32 @@ func init() {
 			optName := k
 			if n, ok := tryParseInt64(k); ok {
 				if name := curlOptIntToName(n); name != "" {
-				optName = name
-			}
+					optName = name
+				}
 			}
 			h.ArraySet(NewString(optName), arr.Arr[k])
 		}
 		return NewBool(true), nil
 	}
 	builtins["curl_exec"] = func(e *Env, a []Value) (Value, error) {
-		return e.curlExec(deref(a[0]))
+		if len(a) < 1 {
+			return NewString(""), nil
+		}
+		h := deref(a[0])
+		body, err := e.execCurlHandle(h)
+		if err != nil {
+			return NewBool(false), nil
+		}
+		// CURLOPT_RETURNTRANSFER: true 时返回内容，false 时直接输出
+		returnRaw := true
+		if rt, ok := h.Arr["CURLOPT_RETURNTRANSFER"]; ok {
+			returnRaw = rt.ToBool()
+		}
+		if !returnRaw {
+			e.writeOutput(body)
+			return NewBool(true), nil
+		}
+		return NewString(body), nil
 	}
 	builtins["curl_error"] = func(e *Env, a []Value) (Value, error) {
 		h := deref(a[0])
@@ -385,7 +402,8 @@ func opensslCBC(a []Value, data, key, iv []byte, encrypt bool) (Value, error) {
 
 // opensslGCM 实现 AES-GCM 加解密
 // PHP: openssl_encrypt($data, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, $aad)
-//      openssl_decrypt($data, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, $aad)
+//
+//	openssl_decrypt($data, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, $aad)
 func opensslGCM(a []Value, data, key, iv []byte, encrypt bool) (Value, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -464,117 +482,113 @@ func deref(v Value) Value {
 // curl 执行：统一路由到 Env.proxy（Go 实现 HTTP + 代理）
 // ---------------------------------------------------------------------------
 
-func (e *Env) curlExec(h Value) (Value, error) {
+// execCurlHandle 解析 curl 句柄选项、执行 HTTP 请求并把结果写回句柄
+// （__response/__http_code/__content_type 等，供 curl_getinfo/curl_multi_getcontent 读取）
+// 返回响应体字符串；请求失败时把错误写入 __error 并返回 err
+func (e *Env) execCurlHandle(h Value) (string, error) {
 	h = deref(h)
+	if h.Kind != KindArray {
+		return "", nil
+	}
 	opts := &CurlOptions{Timeout: 30}
-	if h.Kind == KindArray {
-		// 取出 URL
-		urlVal := h.Arr["url"]
-		if urlVal.Kind == KindNull {
-			urlVal = h.Arr["CURLOPT_URL"]
-		}
-		finalURL := urlVal.ToString()
-		// 代理
-		if pr, ok := h.Arr["CURLOPT_PROXY"]; ok {
-			opts.Proxy = pr.ToString()
-		}
-		if pt, ok := h.Arr["CURLOPT_PROXYTYPE"]; ok {
-			opts.ProxyType = pt.ToString()
-		}
-		if hd, ok := h.Arr["CURLOPT_HTTPHEADER"]; ok {
-			if hd.Kind == KindArray {
-				for _, k := range hd.Keys {
-					opts.Headers = append(opts.Headers, hd.Arr[k].ToString())
-				}
+	// 取出 URL
+	urlVal := h.Arr["url"]
+	if urlVal.Kind == KindNull {
+		urlVal = h.Arr["CURLOPT_URL"]
+	}
+	finalURL := urlVal.ToString()
+	// 代理
+	if pr, ok := h.Arr["CURLOPT_PROXY"]; ok {
+		opts.Proxy = pr.ToString()
+	}
+	if pt, ok := h.Arr["CURLOPT_PROXYTYPE"]; ok {
+		opts.ProxyType = pt.ToString()
+	}
+	if hd, ok := h.Arr["CURLOPT_HTTPHEADER"]; ok {
+		if hd.Kind == KindArray {
+			for _, k := range hd.Keys {
+				opts.Headers = append(opts.Headers, hd.Arr[k].ToString())
 			}
 		}
-		if pd, ok := h.Arr["CURLOPT_POSTFIELDS"]; ok {
-			opts.PostData = pd.ToString()
-			opts.HasPostData = true
-		}
-		if to, ok := h.Arr["CURLOPT_TIMEOUT"]; ok {
-			// PHP 中 timeout 可以是浮点数（如 0.1 秒），用 ToFloat 而非 ToInt
-			timeoutSec := to.ToFloat()
-			if timeoutSec > 0 {
-				opts.TimeoutFloat = timeoutSec
-			} else {
-				opts.Timeout = 30
-			}
+	}
+	if pd, ok := h.Arr["CURLOPT_POSTFIELDS"]; ok {
+		opts.PostData = pd.ToString()
+		opts.HasPostData = true
+	}
+	if to, ok := h.Arr["CURLOPT_TIMEOUT"]; ok {
+		// PHP 中 timeout 可以是浮点数（如 0.1 秒），用 ToFloat 而非 ToInt
+		timeoutSec := to.ToFloat()
+		if timeoutSec > 0 {
+			opts.TimeoutFloat = timeoutSec
 		} else {
 			opts.Timeout = 30
 		}
-		if ct, ok := h.Arr["CURLOPT_CONNECTTIMEOUT"]; ok {
-			ctv := ct.ToFloat()
-			if ctv > 0 {
-				opts.ConnectTimeoutFloat = ctv
-			}
-		}
-		if ua, ok := h.Arr["CURLOPT_USERAGENT"]; ok {
-			opts.UserAgent = ua.ToString()
-		}
-		// FOLLOWLOCATION
-		if fl, ok := h.Arr["CURLOPT_FOLLOWLOCATION"]; ok {
-			opts.FollowRedirect = fl.ToBool()
-		}
-		// SSL VERIFYPEER
-		if ssl, ok := h.Arr["CURLOPT_SSL_VERIFYPEER"]; ok {
-			opts.SkipSSL = !ssl.ToBool()
-		}
-		method := "GET"
-		if _, ok := h.Arr["CURLOPT_POST"]; ok {
-			method = "POST"
-		}
-		// CURLOPT_POSTFIELDS 有值时自动转为 POST（对齐 PHP curl 行为）
-		if pd, ok := h.Arr["CURLOPT_POSTFIELDS"]; ok && pd.ToString() != "" {
-			method = "POST"
-		}
-		// CURLOPT_CUSTOMREQUEST
-		if cr, ok := h.Arr["CURLOPT_CUSTOMREQUEST"]; ok {
-			method = cr.ToString()
-		}
-		// CURLOPT_NOBODY -> HEAD
-		if nb, ok := h.Arr["CURLOPT_NOBODY"]; ok && nb.ToBool() {
-			method = "HEAD"
-		}
-		if e.proxy == nil {
-			return NewBool(false), nil
-		}
-		result, err := e.proxy(method, finalURL, opts)
-		if err != nil {
-			// 记录错误信息到 handle，供 curl_error 使用
-			h.ArraySet(NewString("__error"), NewString(err.Error()))
-			return NewBool(false), nil
-		}
-		// 记录 info（真实 HTTP 状态码和重定向 URL）
-		httpCode := 200
-		if result.StatusCode > 0 {
-			httpCode = result.StatusCode
-		}
-		h.ArraySet(NewString("__http_code"), NewInt(int64(httpCode)))
-		// effective_url：优先使用跟随重定向后的最终 URL
-		effURL := finalURL
-		if result.EffectiveURL != "" {
-			effURL = result.EffectiveURL
-		}
-		h.ArraySet(NewString("__effective_url"), NewString(effURL))
-		h.ArraySet(NewString("__content_type"), NewString(result.ContentType))
-		h.ArraySet(NewString("__redirect_url"), NewString(result.Location))
-		h.ArraySet(NewString("__response"), NewString(result.Body))
-
-		// CURLOPT_RETURNTRANSFER: true 时返回内容，false 时直接输出
-		returnRaw := true
-		if rt, ok := h.Arr["CURLOPT_RETURNTRANSFER"]; ok {
-			returnRaw = rt.ToBool()
-		}
-		if !returnRaw {
-			e.writeOutput(result.Body)
-			return NewBool(true), nil
-		}
-		return NewString(result.Body), nil
+	} else {
+		opts.Timeout = 30
 	}
-	return NewString(""), nil
+	if ct, ok := h.Arr["CURLOPT_CONNECTTIMEOUT"]; ok {
+		ctv := ct.ToFloat()
+		if ctv > 0 {
+			opts.ConnectTimeoutFloat = ctv
+		}
+	}
+	if ua, ok := h.Arr["CURLOPT_USERAGENT"]; ok {
+		opts.UserAgent = ua.ToString()
+	}
+	// FOLLOWLOCATION
+	if fl, ok := h.Arr["CURLOPT_FOLLOWLOCATION"]; ok {
+		opts.FollowRedirect = fl.ToBool()
+	}
+	// SSL VERIFYPEER
+	if ssl, ok := h.Arr["CURLOPT_SSL_VERIFYPEER"]; ok {
+		opts.SkipSSL = !ssl.ToBool()
+	}
+	// IPRESOLVE：指定 v4/v6
+	if ipr, ok := h.Arr["CURLOPT_IPRESOLVE"]; ok {
+		opts.IPResolve = int(ipr.ToInt())
+	}
+	method := "GET"
+	if _, ok := h.Arr["CURLOPT_POST"]; ok {
+		method = "POST"
+	}
+	// CURLOPT_POSTFIELDS 有值时自动转为 POST（对齐 PHP curl 行为）
+	if pd, ok := h.Arr["CURLOPT_POSTFIELDS"]; ok && pd.ToString() != "" {
+		method = "POST"
+	}
+	// CURLOPT_CUSTOMREQUEST
+	if cr, ok := h.Arr["CURLOPT_CUSTOMREQUEST"]; ok {
+		method = cr.ToString()
+	}
+	// CURLOPT_NOBODY -> HEAD
+	if nb, ok := h.Arr["CURLOPT_NOBODY"]; ok && nb.ToBool() {
+		method = "HEAD"
+	}
+	if e.proxy == nil {
+		return "", fmt.Errorf("proxy is nil")
+	}
+	result, err := e.proxy(method, finalURL, opts)
+	if err != nil {
+		// 记录错误信息到 handle，供 curl_error 使用
+		h.ArraySet(NewString("__error"), NewString(err.Error()))
+		return "", err
+	}
+	// 记录 info（真实 HTTP 状态码和重定向 URL）
+	httpCode := 200
+	if result.StatusCode > 0 {
+		httpCode = result.StatusCode
+	}
+	h.ArraySet(NewString("__http_code"), NewInt(int64(httpCode)))
+	// effective_url：优先使用跟随重定向后的最终 URL
+	effURL := finalURL
+	if result.EffectiveURL != "" {
+		effURL = result.EffectiveURL
+	}
+	h.ArraySet(NewString("__effective_url"), NewString(effURL))
+	h.ArraySet(NewString("__content_type"), NewString(result.ContentType))
+	h.ArraySet(NewString("__redirect_url"), NewString(result.Location))
+	h.ArraySet(NewString("__response"), NewString(result.Body))
+	return result.Body, nil
 }
-
 
 // ---------------------------------------------------------------------------
 // JSON 互转
