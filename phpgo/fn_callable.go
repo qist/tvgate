@@ -112,6 +112,20 @@ func callCallable(e *Env, callable Value, args []Value) (Value, error) {
 		return NewNull(), nil
 	}
 	if callable.Kind == KindArray && len(callable.Keys) >= 2 {
+		// 闭包：{__closure_name, __captured}
+		if cn := callable.ArrayGet(NewString("__closure_name")); cn.Kind == KindString {
+			fn, ok := e.funcs[cn.Str]
+			if !ok {
+				return NewNull(), nil
+			}
+			// 恢复捕获变量到当前作用域（callUserFuncValues 会一并保存/还原）
+			if capV := callable.ArrayGet(NewString("__captured")); capV.Kind == KindArray {
+				for _, k := range capV.Keys {
+					e.vars[k] = capV.Arr[k]
+				}
+			}
+			return e.callUserFuncValues(fn, args)
+		}
 		target := callable.Arr[callable.Keys[0]]
 		methodName := callable.Arr[callable.Keys[1]].ToString()
 		if target.Kind == KindObject {

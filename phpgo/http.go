@@ -1,13 +1,18 @@
 package phpgo
 
 import (
+	"bytes"
+	"compress/gzip"
+	"compress/zlib"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -86,10 +91,17 @@ func defaultProxy(client *http.Client) ProxyFunc {
 		if c == nil {
 			c = http.DefaultClient
 		}
-		// 如果需要跳过 SSL 验证、控制重定向、指定 IP 族或设置超时，创建自定义 client
-		if opts != nil && (opts.SkipSSL || opts.FollowRedirect || opts.TimeoutFloat > 0 || opts.ConnectTimeoutFloat > 0 || opts.IPResolve != 0) {
+		// 需要自定义 TLS/超时/重定向/IP 族时创建独立 client（共享 client 的 transport 无法逐请求改 TLS）
+		if opts != nil && (opts.SkipSSL || opts.SkipHostVerify || opts.FollowRedirect ||
+			opts.TimeoutFloat > 0 || opts.ConnectTimeoutFloat > 0 || opts.IPResolve != 0 ||
+			opts.TLSVersion != 0 || opts.CAFile != "" || opts.CAPath != "" ||
+			opts.CertFile != "" || opts.KeyFile != "" || opts.MaxRedirects > 0 || opts.ForbidReuse) {
+			tlsCfg, err := buildCurlTLSConfig(opts)
+			if err != nil {
+				return nil, err
+			}
 			transport := &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipSSL},
+				TLSClientConfig: tlsCfg,
 			}
 			// CURLOPT_IPRESOLVE：强制 v4/v6 解析
 			if opts.IPResolve != 0 {
@@ -121,6 +133,10 @@ func defaultProxy(client *http.Client) ProxyFunc {
 					return d.DialContext(ctx, network, net.JoinHostPort(chosen.String(), port))
 				}
 			}
+			// CURLOPT_FORBID_REUSE：禁用连接复用
+			if opts.ForbidReuse {
+				transport.DisableKeepAlives = true
+			}
 			c = &http.Client{
 				Transport: transport,
 			}
@@ -136,9 +152,19 @@ func defaultProxy(client *http.Client) ProxyFunc {
 				transport.TLSHandshakeTimeout = time.Duration(opts.ConnectTimeoutFloat * float64(time.Second))
 				transport.ResponseHeaderTimeout = time.Duration(opts.ConnectTimeoutFloat * float64(time.Second))
 			}
-			if !opts.FollowRedirect {
+			// 重定向：严格按 CURLOPT_FOLLOWLOCATION / CURLOPT_MAXREDIRS 控制
+			switch {
+			case !opts.FollowRedirect:
 				c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 					return http.ErrUseLastResponse
+				}
+			case opts.MaxRedirects > 0:
+				max := opts.MaxRedirects
+				c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+					if len(via) >= max {
+						return fmt.Errorf("curl: 超过最大重定向次数 %d", max)
+					}
+					return nil
 				}
 			}
 		}
@@ -166,6 +192,22 @@ func defaultProxy(client *http.Client) ProxyFunc {
 			if opts.UserAgent != "" {
 				req.Header.Set("User-Agent", opts.UserAgent)
 			}
+			// CURLOPT_REFERER
+			if opts.Referer != "" {
+				req.Header.Set("Referer", opts.Referer)
+			}
+			// CURLOPT_COOKIE（含 COOKIEFILE 合并后的值）
+			if opts.Cookie != "" {
+				req.Header.Set("Cookie", opts.Cookie)
+			}
+			// CURLOPT_ENCODING："" 表示由 Go 自动处理 gzip；显式指定则按值发 Accept-Encoding
+			if opts.Encoding != "" {
+				req.Header.Set("Accept-Encoding", opts.Encoding)
+			}
+			// CURLOPT_VERBOSE
+			if opts.Verbose {
+				fmt.Printf("curl: %s %s (ua=%s)\n", method, u, opts.UserAgent)
+			}
 			// PHP curl: 当 CURLOPT_POSTFIELDS 为字符串且未显式设置 Content-Type 时，
 			// 自动设为 application/x-www-form-urlencoded
 			if opts.HasPostData && opts.PostData != "" {
@@ -188,9 +230,32 @@ func defaultProxy(client *http.Client) ProxyFunc {
 			return nil, err
 		}
 		defer resp.Body.Close()
+		// CURLOPT_FAILONERROR：HTTP >= 400 视为错误（对齐 PHP curl，返回 false）
+		if opts != nil && opts.FailOnError && resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("curl: HTTP %d %s", resp.StatusCode, resp.Status)
+		}
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
+		}
+		// CURLOPT_ENCODING 显式设置时 Go 不会自动解压，按 Content-Encoding 手动解压
+		if opts != nil && opts.Encoding != "" {
+			switch strings.ToLower(resp.Header.Get("Content-Encoding")) {
+			case "gzip":
+				if gz, gerr := gzip.NewReader(bytes.NewReader(data)); gerr == nil {
+					if d, derr := io.ReadAll(gz); derr == nil {
+						data = d
+					}
+					_ = gz.Close()
+				}
+			case "deflate":
+				if zr, zerr := zlib.NewReader(bytes.NewReader(data)); zerr == nil {
+					if d, derr := io.ReadAll(zr); derr == nil {
+						data = d
+					}
+					_ = zr.Close()
+				}
+			}
 		}
 		return &ProxyResult{
 			Body:         string(data),
@@ -201,6 +266,49 @@ func defaultProxy(client *http.Client) ProxyFunc {
 			Headers:      headerLines(resp.Header),
 		}, nil
 	}
+}
+
+// buildCurlTLSConfig 按 curl TLS 选项构建 tls.Config。
+func buildCurlTLSConfig(opts *CurlOptions) (*tls.Config, error) {
+	tlsCfg := &tls.Config{InsecureSkipVerify: opts.SkipSSL || opts.SkipHostVerify}
+	if opts.TLSVersion != 0 {
+		tlsCfg.MinVersion = opts.TLSVersion
+	}
+	if opts.CAFile != "" || opts.CAPath != "" {
+		pool := x509.NewCertPool()
+		if opts.CAFile != "" {
+			pem, err := os.ReadFile(opts.CAFile)
+			if err != nil {
+				return nil, fmt.Errorf("curl: 读取 CAINFO 失败: %w", err)
+			}
+			if !pool.AppendCertsFromPEM(pem) {
+				return nil, fmt.Errorf("curl: CAINFO 无有效证书: %s", opts.CAFile)
+			}
+		}
+		if opts.CAPath != "" {
+			entries, err := os.ReadDir(opts.CAPath)
+			if err != nil {
+				return nil, fmt.Errorf("curl: 读取 CAPATH 失败: %w", err)
+			}
+			for _, ent := range entries {
+				if ent.IsDir() {
+					continue
+				}
+				if pem, err := os.ReadFile(filepath.Join(opts.CAPath, ent.Name())); err == nil {
+					pool.AppendCertsFromPEM(pem)
+				}
+			}
+		}
+		tlsCfg.RootCAs = pool
+	}
+	if opts.CertFile != "" && opts.KeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(opts.CertFile, opts.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("curl: 加载客户端证书失败: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+	return tlsCfg, nil
 }
 
 // headerLines 把 http.Header 转为 "Key: Value" 行（按键排序，保证确定性输出）

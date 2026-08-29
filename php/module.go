@@ -58,9 +58,15 @@ var (
 // 由 phpgo 解释器执行。复用 TVGate 的 HTTP client（含 DNS/代理能力）。
 func Init(c *config.Config) error {
 	cfg = &c.PHP
-	// 仅在 client 未初始化时创建（首次调用）；热加载时复用已有 client
+	// 仅在 client 未初始化时创建（首次调用）；热加载时复用已有 client。
+	// PHP 模块使用独立 HTTP client（NewPHPHTTPClient）：复用项目自定义 DNS 拨号 transport，
+	// 与代理专用 client（带 m3u8 重定向统计 CheckRedirect）分离。
+	// 注意 CheckRedirect 返回 ErrUseLastResponse（不自动跟随），
+	// 因为 phpgo 需按脚本 CURLOPT_FOLLOWLOCATION 逐请求控制重定向：
+	// 若此处默认跟随，gitv.php 等依赖 FOLLOWLOCATION=false + CURLINFO_REDIRECT_URL
+	// 获取重定向地址的脚本会拿不到地址而失效。
 	if client == nil {
-		client = utilshttp.NewHTTPClient(c, nil)
+		client = utilshttp.NewPHPHTTPClient(c)
 	}
 	docRoot = cfg.DocRoot
 	if docRoot == "" {

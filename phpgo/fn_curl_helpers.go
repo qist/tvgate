@@ -1,5 +1,11 @@
 package phpgo
 
+import (
+	"crypto/tls"
+	"os"
+	"strings"
+)
+
 // curlOptIntToName 把 CURLOPT_* 整数值映射为字符串名（用于 curl_setopt/curl_exec 内部存储）
 func curlOptIntToName(v int64) string {
 	switch v {
@@ -123,4 +129,100 @@ func tryParseInt64(s string) (int64, bool) {
 		n = -n
 	}
 	return n, true
+}
+
+// curlTLSVersion 把 CURL_SSLVERSION_* 常量值映射为 Go tls 最低版本。
+// 0=默认 1=TLSv1 4=TLSv1.0 5=TLSv1.1 6=TLSv1.2 7=TLSv1.3（2/3 为已废弃的 SSLv2/v3）。
+func curlTLSVersion(v int) uint16 {
+	switch v {
+	case 4: // CURL_SSLVERSION_TLSv1_0
+		return tls.VersionTLS10
+	case 5: // CURL_SSLVERSION_TLSv1_1
+		return tls.VersionTLS11
+	case 6: // CURL_SSLVERSION_TLSv1_2
+		return tls.VersionTLS12
+	case 7: // CURL_SSLVERSION_TLSv1_3
+		return tls.VersionTLS13
+	case 1: // CURL_SSLVERSION_TLSv1
+		return tls.VersionTLS12
+	}
+	return 0
+}
+
+// readCookieFile 从 Cookie 文件读取 name=value 对，返回可直接用于 Cookie 头的字符串。
+// 兼容两种格式：header 行（"name=value; ..."）与 Netscape cookies.txt。
+func readCookieFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var pairs []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Netscape 格式：# domain \t flag \t path \t secure \t expiry \t name \t value
+		fields := strings.Split(line, "\t")
+		if len(fields) >= 7 {
+			name := strings.TrimSpace(fields[len(fields)-2])
+			val := strings.TrimSpace(fields[len(fields)-1])
+			if name != "" {
+				pairs = append(pairs, name+"="+val)
+			}
+			continue
+		}
+		// header 格式：name=value; ...
+		if i := strings.IndexByte(line, '='); i > 0 {
+			if j := strings.IndexByte(line, ';'); j > 0 {
+				line = line[:j]
+			}
+			pairs = append(pairs, strings.TrimSpace(line))
+		}
+	}
+	return strings.Join(pairs, "; "), nil
+}
+
+// writeCookieJar 把响应头中的 Set-Cookie 按 Netscape cookies.txt 格式写入文件。
+func writeCookieJar(path string, headers []string) {
+	var lines []string
+	lines = append(lines, "# Netscape HTTP Cookie File")
+	for _, h := range headers {
+		i := strings.IndexByte(h, ':')
+		if i <= 0 || !strings.EqualFold(strings.TrimSpace(h[:i]), "Set-Cookie") {
+			continue
+		}
+		cookie := strings.TrimSpace(h[i+1:])
+		name, cval, domain, pathv, secure, expires := "", "", "", "/", "FALSE", "0"
+		parts := strings.Split(cookie, ";")
+		for i, p := range parts {
+			p = strings.TrimSpace(p)
+			if i == 0 {
+				if eq := strings.IndexByte(p, '='); eq > 0 {
+					name = p[:eq]
+					cval = p[eq+1:]
+				}
+				continue
+			}
+			low := strings.ToLower(p)
+			switch {
+			case strings.HasPrefix(low, "path="):
+				pathv = p[5:]
+			case strings.HasPrefix(low, "domain="):
+				domain = strings.TrimPrefix(p[7:], ".")
+			case strings.HasPrefix(low, "secure"):
+				secure = "TRUE"
+			case strings.HasPrefix(low, "expires="):
+				expires = p[8:]
+			}
+		}
+		if name == "" {
+			continue
+		}
+		if domain == "" {
+			domain = "localhost"
+		}
+		lines = append(lines, strings.Join([]string{domain, "FALSE", pathv, secure, expires, name, cval}, "\t"))
+	}
+	_ = os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }

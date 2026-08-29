@@ -7,7 +7,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -215,6 +218,22 @@ func init() {
 		body, err := e.execCurlHandle(h)
 		if err != nil {
 			return NewBool(false), nil
+		}
+		// CURLOPT_HEADER：输出含响应头（响应头 + 空行 + 正文）
+		if ih, ok := h.Arr["CURLOPT_HEADER"]; ok && ih.ToBool() {
+			if hdrs := h.ArrayGet(NewString("__headers")); hdrs.Kind != KindNull && hdrs.ToString() != "" {
+				body = hdrs.ToString() + "\n\n" + body
+			}
+		}
+		// CURLOPT_FILE：把正文写入指定文件/句柄（int fd 或路径字符串）
+		if fv, ok := h.Arr["CURLOPT_FILE"]; ok {
+			if fv.Kind == KindInt {
+				if f, ok := e.files[int(fv.ToInt())]; ok {
+					_, _ = f.Write([]byte(body))
+				}
+			} else if fv.Kind == KindString && fv.ToString() != "" {
+				_ = os.WriteFile(fv.ToString(), []byte(body), 0o644)
+			}
 		}
 		// CURLOPT_RETURNTRANSFER: true 时返回内容，false 时直接输出
 		returnRaw := true
@@ -658,6 +677,83 @@ func (e *Env) execCurlHandle(h Value) (string, error) {
 	if ipr, ok := h.Arr["CURLOPT_IPRESOLVE"]; ok {
 		opts.IPResolve = int(ipr.ToInt())
 	}
+	// SSL_VERIFYHOST：0 关闭主机名校验（1/2 保持校验）
+	if hv, ok := h.Arr["CURLOPT_SSL_VERIFYHOST"]; ok {
+		opts.SkipHostVerify = hv.ToInt() == 0
+	}
+	// REFERER
+	if ref, ok := h.Arr["CURLOPT_REFERER"]; ok {
+		opts.Referer = ref.ToString()
+	}
+	// COOKIE
+	if ck, ok := h.Arr["CURLOPT_COOKIE"]; ok {
+		opts.Cookie = ck.ToString()
+	}
+	// COOKIEFILE：从文件读 Cookie（Netscape/header 格式）
+	if cf, ok := h.Arr["CURLOPT_COOKIEFILE"]; ok && cf.ToString() != "" {
+		opts.CookieFile = cf.ToString()
+	}
+	// COOKIEJAR：请求后把 Set-Cookie 写入文件
+	if cj, ok := h.Arr["CURLOPT_COOKIEJAR"]; ok && cj.ToString() != "" {
+		opts.CookieJar = cj.ToString()
+	}
+	// ENCODING（Accept-Encoding）
+	if enc, ok := h.Arr["CURLOPT_ENCODING"]; ok {
+		opts.Encoding = enc.ToString()
+	}
+	// PORT：覆盖 URL 端口
+	if po, ok := h.Arr["CURLOPT_PORT"]; ok {
+		opts.Port = int(po.ToInt())
+	}
+	// FAILONERROR
+	if foe, ok := h.Arr["CURLOPT_FAILONERROR"]; ok {
+		opts.FailOnError = foe.ToBool()
+	}
+	// HEADER：输出含响应头
+	if ih, ok := h.Arr["CURLOPT_HEADER"]; ok {
+		opts.IncludeHeader = ih.ToBool()
+	}
+	// FORBID_REUSE
+	if fr, ok := h.Arr["CURLOPT_FORBID_REUSE"]; ok {
+		opts.ForbidReuse = fr.ToBool()
+	}
+	// MAXREDIRS
+	if mr, ok := h.Arr["CURLOPT_MAXREDIRS"]; ok {
+		opts.MaxRedirects = int(mr.ToInt())
+	}
+	// SSLVERSION
+	if sv, ok := h.Arr["CURLOPT_SSLVERSION"]; ok {
+		opts.TLSVersion = curlTLSVersion(int(sv.ToInt()))
+	}
+	// CAINFO / CAPATH
+	if ca, ok := h.Arr["CURLOPT_CAINFO"]; ok {
+		opts.CAFile = ca.ToString()
+	}
+	if ca, ok := h.Arr["CURLOPT_CAPATH"]; ok {
+		opts.CAPath = ca.ToString()
+	}
+	// SSLCERT / SSLKEY
+	if sc, ok := h.Arr["CURLOPT_SSLCERT"]; ok {
+		opts.CertFile = sc.ToString()
+	}
+	if sk, ok := h.Arr["CURLOPT_SSLKEY"]; ok {
+		opts.KeyFile = sk.ToString()
+	}
+	// VERBOSE
+	if vb, ok := h.Arr["CURLOPT_VERBOSE"]; ok {
+		opts.Verbose = vb.ToBool()
+	}
+	// HTTPGET：强制 GET
+	if hg, ok := h.Arr["CURLOPT_HTTPGET"]; ok {
+		opts.HTTPGet = hg.ToBool()
+	}
+	// WRITEFUNCTION / HEADERFUNCTION 回调
+	if wf, ok := h.Arr["CURLOPT_WRITEFUNCTION"]; ok {
+		opts.WriteFunc = wf
+	}
+	if hf, ok := h.Arr["CURLOPT_HEADERFUNCTION"]; ok {
+		opts.HeaderFunc = hf
+	}
 	method := "GET"
 	if _, ok := h.Arr["CURLOPT_POST"]; ok {
 		method = "POST"
@@ -673,6 +769,27 @@ func (e *Env) execCurlHandle(h Value) (string, error) {
 	// CURLOPT_NOBODY -> HEAD
 	if nb, ok := h.Arr["CURLOPT_NOBODY"]; ok && nb.ToBool() {
 		method = "HEAD"
+	}
+	// CURLOPT_HTTPGET：强制 GET（重置 POST/CUSTOMREQUEST 等）
+	if opts.HTTPGet {
+		method = "GET"
+	}
+	// CURLOPT_PORT：覆盖 URL 中的端口（PHP curl 语义）
+	if opts.Port > 0 {
+		if pu, err := url.Parse(finalURL); err == nil {
+			pu.Host = net.JoinHostPort(pu.Hostname(), strconv.Itoa(opts.Port))
+			finalURL = pu.String()
+		}
+	}
+	// CURLOPT_COOKIEFILE：从文件读入 Cookie 并合并到 Cookie 头
+	if opts.CookieFile != "" {
+		if cookies, err := readCookieFile(opts.CookieFile); err == nil && cookies != "" {
+			if opts.Cookie != "" {
+				opts.Cookie = opts.Cookie + "; " + cookies
+			} else {
+				opts.Cookie = cookies
+			}
+		}
 	}
 	if e.proxy == nil {
 		return "", fmt.Errorf("proxy is nil")
@@ -697,7 +814,31 @@ func (e *Env) execCurlHandle(h Value) (string, error) {
 	h.ArraySet(NewString("__effective_url"), NewString(effURL))
 	h.ArraySet(NewString("__content_type"), NewString(result.ContentType))
 	h.ArraySet(NewString("__redirect_url"), NewString(result.Location))
+	// __headers 含状态行（对齐 PHP curl CURLOPT_HEADER 输出）
+	h.ArraySet(NewString("__headers"), NewString(fmt.Sprintf("HTTP/1.1 %d %s", httpCode, http.StatusText(httpCode))+"\n"+strings.Join(result.Headers, "\n")))
 	h.ArraySet(NewString("__response"), NewString(result.Body))
+	// CURLOPT_COOKIEJAR：把响应 Set-Cookie 写入文件
+	if opts.CookieJar != "" {
+		writeCookieJar(opts.CookieJar, result.Headers)
+	}
+	// 回调：CURLOPT_WRITEFUNCTION（正文）、CURLOPT_HEADERFUNCTION（响应头）
+	// PHP 语义：writefunction($ch, $data) / headerfunction($ch, $header)
+	if opts.WriteFunc.Kind != KindNull {
+		if _, err := callCallable(e, opts.WriteFunc, []Value{h, NewString(result.Body)}); err != nil {
+			return "", err
+		}
+	}
+	if opts.HeaderFunc.Kind != KindNull {
+		// 先回调状态行，再逐条回调响应头（对齐 PHP curl HEADERFUNCTION）
+		if _, err := callCallable(e, opts.HeaderFunc, []Value{h, NewString(fmt.Sprintf("HTTP/1.1 %d %s\r\n", httpCode, http.StatusText(httpCode)))}); err != nil {
+			return "", err
+		}
+		for _, hl := range result.Headers {
+			if _, err := callCallable(e, opts.HeaderFunc, []Value{h, NewString(hl + "\r\n")}); err != nil {
+				return "", err
+			}
+		}
+	}
 	return result.Body, nil
 }
 

@@ -1044,6 +1044,11 @@ func (p *Parser) parseMul() (Expr, error) {
 }
 
 func (p *Parser) parseUnary() (Expr, error) {
+	// @ 错误抑制：吞掉符号，继续解析并求值后续表达式（PHP 语义：@expr 等价于 expr）
+	if p.atVal("@") {
+		p.adv()
+		return p.parseUnary()
+	}
 	if p.at(tBang) {
 		p.adv()
 		e, err := p.parseUnary()

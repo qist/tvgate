@@ -4,20 +4,22 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
+	"net/http"
+	"net/url"
+
 	"github.com/qist/tvgate/cache"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/logger"
-	"net"
-	"net/http"
-	"net/url"
 )
 
 const (
 	maxRedirects = 10
 )
 
-func NewHTTPClient(c *config.Config, transport *http.Transport) *http.Client {
+// newTransport 构建自定义 DNS 拨号的 HTTP transport（项目 DNS 解析 + 多地址逐一拨号）。
+func newTransport(c *config.Config) *http.Transport {
 	// 获取自定义 Resolver 实例
 	resolver := dns.GetInstance()
 
@@ -27,38 +29,60 @@ func NewHTTPClient(c *config.Config, transport *http.Transport) *http.Client {
 		KeepAlive: c.HTTP.KeepAlive,
 	}
 
-	if transport == nil {
-		// ✅ 自定义 DialContext，强制走 dns.GetInstance()
-		transport = &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				host, port, err := net.SplitHostPort(addr)
-				if err != nil {
+	// ✅ 自定义 DialContext，强制走 dns.GetInstance()
+	return &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+
+			ips, err := resolver.LookupIPAddr(ctx, host)
+			if err != nil || len(ips) == 0 {
+				// logger.LogPrintf("⚠️ 自定义DNS解析失败 %s: %v, 尝试系统解析", host, err)
+				return baseDialer.DialContext(ctx, network, addr) // fallback
+			}
+
+			// 尊重 DNS 返回顺序（内部 DNS 已做"谁快返回谁"的优选），
+			// 按顺序逐个拨号，首个成功即返回；避免只取 ips[0] 撞上不可用地址后直接失败。
+			var lastErr error
+			for _, ia := range ips {
+				if network == "tcp4" && ia.IP.To4() == nil {
+					continue
+				}
+				if network == "tcp6" && ia.IP.To4() != nil {
+					continue
+				}
+				conn, err := baseDialer.DialContext(ctx, network, net.JoinHostPort(ia.IP.String(), port))
+				if err == nil {
+					return conn, nil
+				}
+				lastErr = err
+				if ctx.Err() != nil {
 					return nil, err
 				}
+			}
+			if lastErr != nil {
+				return nil, lastErr
+			}
+			return baseDialer.DialContext(ctx, network, addr)
+		},
 
-				ips, err := resolver.LookupIPAddr(ctx, host)
-				if err != nil || len(ips) == 0 {
-					// logger.LogPrintf("⚠️ 自定义DNS解析失败 %s: %v, 尝试系统解析", host, err)
-					return baseDialer.DialContext(ctx, network, addr) // fallback
-				}
+		ResponseHeaderTimeout: c.HTTP.ResponseHeaderTimeout,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: *c.HTTP.InsecureSkipVerify},
+		IdleConnTimeout:       c.HTTP.IdleConnTimeout,
+		TLSHandshakeTimeout:   c.HTTP.TLSHandshakeTimeout,
+		ExpectContinueTimeout: c.HTTP.ExpectContinueTimeout,
+		MaxIdleConns:          c.HTTP.MaxIdleConns,
+		MaxIdleConnsPerHost:   c.HTTP.MaxIdleConnsPerHost,
+		MaxConnsPerHost:       c.HTTP.MaxConnsPerHost,
+		DisableKeepAlives:     *c.HTTP.DisableKeepAlives,
+	}
+}
 
-				ip := ips[0].IP.String()
-				target := net.JoinHostPort(ip, port)
-				// logger.LogPrintf("✅ DNS解析 %s -> %s", host, ip)
-
-				return baseDialer.DialContext(ctx, network, target)
-			},
-
-			ResponseHeaderTimeout: c.HTTP.ResponseHeaderTimeout,
-			TLSClientConfig:       &tls.Config{InsecureSkipVerify: *c.HTTP.InsecureSkipVerify},
-			IdleConnTimeout:       c.HTTP.IdleConnTimeout,
-			TLSHandshakeTimeout:   c.HTTP.TLSHandshakeTimeout,
-			ExpectContinueTimeout: c.HTTP.ExpectContinueTimeout,
-			MaxIdleConns:          c.HTTP.MaxIdleConns,
-			MaxIdleConnsPerHost:   c.HTTP.MaxIdleConnsPerHost,
-			MaxConnsPerHost:       c.HTTP.MaxConnsPerHost,
-			DisableKeepAlives:     *c.HTTP.DisableKeepAlives,
-		}
+func NewHTTPClient(c *config.Config, transport *http.Transport) *http.Client {
+	if transport == nil {
+		transport = newTransport(c)
 	}
 
 	return &http.Client{
@@ -90,6 +114,25 @@ func NewHTTPClient(c *config.Config, transport *http.Transport) *http.Client {
 			}
 			logger.LogPrintf("↪️ 从 %s 重定向到 %s", previousURL, targetURL)
 
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// NewPHPHTTPClient 供 PHP 模块使用的独立 HTTP client（与代理 NewHTTPClient 分离）。
+// 复用自定义 DNS 拨号 transport；CheckRedirect 返回 ErrUseLastResponse（不自动跟随），
+// 让 phpgo 按脚本 CURLOPT_FOLLOWLOCATION 逐请求控制重定向：
+//   - FOLLOWLOCATION=false + CURLINFO_REDIRECT_URL 可拿到重定向地址（gitv.php 等依赖此语义）
+//   - FOLLOWLOCATION=true 时 phpgo 在 defaultProxy 内用 Go 默认跟随逻辑
+// 与代理专用 client 的区别：不带 m3u8 重定向统计/日志逻辑。
+func NewPHPHTTPClient(c *config.Config) *http.Client {
+	return &http.Client{
+		Timeout:   c.HTTP.Timeout,
+		Transport: newTransport(c),
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("超出最大重定向次数 (%d 次)", maxRedirects)
+			}
 			return http.ErrUseLastResponse
 		},
 	}

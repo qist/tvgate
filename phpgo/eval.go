@@ -22,7 +22,7 @@ type ProxyResult struct {
 	Headers      []string // 响应头（"Key: Value" 形式，供 get_headers 使用）
 }
 
-// CurlOptions 对应 PHP curl_setopt 的关键选项
+// CurlOptions 对应 PHP curl_setopt 的关键选项（已注册的 CURLOPT_* 常量均在此严格生效）
 type CurlOptions struct {
 	Proxy               string // CURLOPT_PROXY
 	ProxyType           string // CURLOPT_PROXYTYPE
@@ -34,9 +34,29 @@ type CurlOptions struct {
 	ConnectTimeoutFloat float64 // CURLOPT_CONNECTTIMEOUT（浮点秒）
 	UserAgent           string
 	Method              string
-	FollowRedirect      bool
-	SkipSSL             bool // CURLOPT_SSL_VERIFYPEER=false
-	IPResolve           int  // CURLOPT_IPRESOLVE（0=whatever,1=V4,2=V6）
+	FollowRedirect      bool   // CURLOPT_FOLLOWLOCATION
+	MaxRedirects        int    // CURLOPT_MAXREDIRS（>0 时限制重定向次数）
+	SkipSSL             bool   // CURLOPT_SSL_VERIFYPEER=false
+	SkipHostVerify      bool   // CURLOPT_SSL_VERIFYHOST=0（跳过主机名校验）
+	TLSVersion          uint16 // CURLOPT_SSLVERSION（映射到 tls.VersionTLSxx）
+	CAFile              string // CURLOPT_CAINFO
+	CAPath              string // CURLOPT_CAPATH
+	CertFile            string // CURLOPT_SSLCERT
+	KeyFile             string // CURLOPT_SSLKEY
+	Referer             string // CURLOPT_REFERER
+	Cookie              string // CURLOPT_COOKIE
+	CookieFile          string // CURLOPT_COOKIEFILE（从文件读 Cookie）
+	CookieJar           string // CURLOPT_COOKIEJAR（把 Set-Cookie 写入文件）
+	Encoding            string // CURLOPT_ENCODING（Accept-Encoding，""=由 Go 自动 gzip）
+	Port                int    // CURLOPT_PORT（覆盖 URL 端口）
+	FailOnError         bool   // CURLOPT_FAILONERROR（HTTP>=400 视为错误）
+	IncludeHeader       bool   // CURLOPT_HEADER（输出含响应头）
+	ForbidReuse         bool   // CURLOPT_FORBID_REUSE（Connection: close）
+	Verbose             bool   // CURLOPT_VERBOSE（打印请求信息）
+	HTTPGet             bool   // CURLOPT_HTTPGET（强制 GET）
+	WriteFunc           Value  // CURLOPT_WRITEFUNCTION 回调
+	HeaderFunc          Value  // CURLOPT_HEADERFUNCTION 回调
+	IPResolve           int    // CURLOPT_IPRESOLVE（0=whatever,1=V4,2=V6）
 }
 
 // Env 执行环境

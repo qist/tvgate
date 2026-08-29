@@ -15,10 +15,24 @@ func init() {
 		}
 		path := e.ResolvePath(a[0].ToString())
 		data := a[1].ToString()
+		flags := int64(0)
+		if len(a) >= 3 {
+			flags = a[2].ToInt()
+		}
 		// 确保目录存在
 		dir := filepath.Dir(path)
 		os.MkdirAll(dir, 0755)
-		err := os.WriteFile(path, []byte(data), 0644)
+		var err error
+		if flags&8 != 0 { // FILE_APPEND：追加而非截断
+			var f *os.File
+			f, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err == nil {
+				_, err = f.WriteString(data)
+				_ = f.Close()
+			}
+		} else {
+			err = os.WriteFile(path, []byte(data), 0644)
+		}
 		if err != nil {
 			return NewBool(false), nil
 		}
