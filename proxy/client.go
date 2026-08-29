@@ -3,7 +3,6 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -93,22 +92,11 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 			if !enableIPv6 && (network == "tcp6" || network == "tcp") {
 				network = "tcp4"
 			}
-			// Step 1: 尝试通过代理拨号
+			// 通过代理拨号
 			conn, err := dialer.DialContext(dialCtx, network, addr)
 			if err != nil {
-				// 代理拨号失败，直接返回
 				return nil, fmt.Errorf("代理拨号失败: %w", err)
 			}
-
-			// Step 2: 拨号成功，但如果 Base 内部解析目标 host 失败，则在这里兜底
-			// 例如 Base.Dial 返回某种 "host not found" 错误
-			if isResolveError(err) {
-				// SafeDialContext 兜底解析
-				safeDial := conf.SafeDialContext(&net.Dialer{Timeout: 10 * time.Second}, enableIPv6)
-				fmt.Printf("⚠️ 代理拨号成功，但目标解析失败 (%v)，尝试本地解析 %s...\n", err, addr)
-				return safeDial(dialCtx, network, addr)
-			}
-
 			return conn, nil
 		}
 	} else {
@@ -124,17 +112,8 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 				// 尝试通过代理拨号
 				conn, err := baseDialer.DialContext(dialCtx, network, addr)
 				if err != nil {
-					// 代理拨号失败，直接返回
 					return nil, fmt.Errorf("代理拨号失败: %w", err)
 				}
-
-				// 拨号成功，但如果解析失败，可以在这里判断
-				if isResolveError(err) {
-					// 目标 host 解析失败 → fallback 本地解析
-					fmt.Printf("⚠️ 代理拨号成功但目标解析失败 %s, 使用本地解析...\n", addr)
-					return safeDial(dialCtx, network, addr)
-				}
-
 				return conn, nil
 			}
 
@@ -162,12 +141,12 @@ func CreateUniqueProxyClient(ctx context.Context, cfg *config.Config, proxyConfi
 
 	// 创建一个新的transport实例，以确保连接隔离
 	transport := baseClient.Transport.(*http.Transport).Clone()
-	
+
 	// 设置更严格的连接管理参数，减少连接复用的可能性
-	transport.MaxIdleConns = 1  // 减少空闲连接数量
-	transport.MaxIdleConnsPerHost = 1  // 每主机只保留一个空闲连接
-	transport.IdleConnTimeout = 10 * time.Second  // 更短的空闲连接超时时间
-	transport.DisableKeepAlives = false  // 保持连接开启，但在必要时快速断开
+	transport.MaxIdleConns = 1                   // 减少空闲连接数量
+	transport.MaxIdleConnsPerHost = 1            // 每主机只保留一个空闲连接
+	transport.IdleConnTimeout = 10 * time.Second // 更短的空闲连接超时时间
+	transport.DisableKeepAlives = false          // 保持连接开启，但在必要时快速断开
 
 	// 创建新的客户端，使用定制的传输层
 	uniqueClient := &http.Client{
@@ -176,25 +155,4 @@ func CreateUniqueProxyClient(ctx context.Context, cfg *config.Config, proxyConfi
 	}
 
 	return uniqueClient, nil
-}
-
-// 判断错误是否属于解析失败
-func isResolveError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	// 如果是 net.DNSError
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
-		return true
-	}
-
-	// 某些拨号器可能返回字符串错误
-	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "no such host") || strings.Contains(msg, "unknown host") {
-		return true
-	}
-
-	return false
 }

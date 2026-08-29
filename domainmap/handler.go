@@ -987,18 +987,23 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	contentType := resp.Header.Get("Content-Type")
+	isM3U8 := strings.Contains(contentType, "mpegurl")
+
 	// ---------- 返回响应 ----------
 	for k, vv := range resp.Header {
 		for _, v := range vv {
 			w.Header().Add(k, v)
 		}
 	}
-	w.Header().Del("Content-Length")
+	// 仅 m3u8（内容会被重写）移除 Content-Length；普通响应保留以便 keep-alive，
+	// TS/直播流的移除由 CopyResponse 按路径处理
+	if isM3U8 {
+		w.Header().Del("Content-Length")
+	}
 	w.WriteHeader(resp.StatusCode)
 
-	contentType := resp.Header.Get("Content-Type")
 	bufSize := buffer.GetOptimalBufferSize(contentType, originalReqURL.Path)
-	isM3U8 := strings.Contains(contentType, "mpegurl")
 
 	if isM3U8 {
 		// logger.LogPrintf("DEBUG: 检测到M3U8内容，开始处理...")

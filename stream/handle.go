@@ -19,7 +19,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/qist/tvgate/utils/buffer"
 	tsync "github.com/qist/tvgate/utils/sync"
@@ -27,18 +26,6 @@ import (
 
 // 预编译的正则表达式，避免在热路径中重复编译
 var uriRegex = regexp.MustCompile(`URI="([^"]+)"`)
-
-// 定义任务结构体用于sync.Pool
-type handleTask struct {
-	f func()
-}
-
-// 创建sync.Pool用于复用任务对象
-var handleTaskPool = sync.Pool{
-	New: func() interface{} {
-		return &handleTask{}
-	},
-}
 
 // 统一处理响应（重定向、特殊类型、普通内容）
 func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, targetURL string, resp *http.Response, updateActive func()) {
@@ -63,22 +50,15 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// 检查是否为TS请求，如果是，需要提前清理可能的问题头部
+	// 解析目标 URL，用于缓冲区分档与流类型判断
 	u, err := url.Parse(targetURL)
 	if err != nil {
 		logger.LogPrintf("解析目标URL失败: %v", err)
 		return
 	}
 
-	// if strings.EqualFold(filepath.Ext(u.Path), ".ts") {
-	// 删除可能引起问题的头部，特别是Content-Length
-	// 这必须在写入任何响应数据之前完成
-	resp.Header.Del("Content-Length")
-	// }
-
-	// 复制响应头
+	// 复制响应头；Content-Length 由 CopyResponse 按路径决定保留或删除
 	CopyHeader(w.Header(), resp.Header, r.ProtoMajor)
-	w.Header().Del("Content-Length")
 	w.WriteHeader(resp.StatusCode)
 
 	// 解析URL并获取最优缓冲区大小
@@ -86,46 +66,9 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 	buf := buffer.GetBuffer(bufSize)
 	defer buffer.PutBuffer(bufSize, buf)
 
-	// 使用统一的响应复制函数
-	copyFunc := func() error {
-		return CopyResponse(ctx, w, r, resp, targetURL, buf, bufSize, updateActive, resp.StatusCode)
-	}
-
-	// 使用统一的执行函数处理复制操作
-	executeCopyWithPool(ctx, r, targetURL, copyFunc, resp)
-}
-
-// executeCopyWithPool 使用任务池执行复制操作
-func executeCopyWithPool(ctx context.Context, r *http.Request, targetURL string, copyFunc func() error, resp *http.Response) {
-	done := make(chan struct{})
-
-	// 从池中获取任务对象
-	task := handleTaskPool.Get().(*handleTask)
-	task.f = func() {
-		defer close(done)
-		if err := copyFunc(); err != nil {
-			HandleCopyError(r, err, resp)
-		}
-	}
-
-	// 在goroutine内部执行任务并确保完成后放回池中
-	var wg tsync.WaitGroup
-	wg.Go(func() {
-		defer func() {
-			// 清空任务并放回池中
-			task.f = nil
-			handleTaskPool.Put(task)
-		}()
-		task.f()
-	})
-
-	select {
-	case <-ctx.Done():
-		logger.LogPrintf("客户端断开连接: %s", targetURL)
-		// 必须等待任务真正结束，否则 http.ResponseWriter 可能会被回收导致 panic
-		<-done
-	case <-done:
-		logger.LogPrintf("响应成功完成: %s", targetURL)
+	// 直接内联复制，避免额外 goroutine/通道/任务池开销
+	if err := CopyResponse(ctx, w, r, resp, targetURL, buf, bufSize, updateActive, resp.StatusCode); err != nil {
+		HandleCopyError(r, err, resp)
 	}
 }
 
@@ -690,23 +633,22 @@ func CopyResponse(
 		return err
 	}
 
-	// TS 请求提前清理头
-	// if isTS {
-	w.Header().Del("Content-Length")
-	// }
-
 	// 🔴 关闭状态：全部退化为 Copytext
 	if !isStreamFeatureEnabled() {
 		return Copytext(ctx, w, resp.Body, buf, updateActive)
 	}
 
 	if IsTSRequest(u.Path) {
+		// TS 按块边下边发，长度不定，必须移除 Content-Length
+		w.Header().Del("Content-Length")
 		key := normalizeCacheKey(u.String())
 		logger.LogPrintf("[TS缓存] 生成缓存键，key: %s", key)
 		return CopyTSWithCache(ctx, w, resp.Body, key)
 	}
 
 	if isLiveStream(u.Path) {
+		// 直播流需要持续 flush，Content-Length 必须移除
+		w.Header().Del("Content-Length")
 		return CopyWithContext(
 			ctx,
 			w,
