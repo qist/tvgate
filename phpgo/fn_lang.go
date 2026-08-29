@@ -86,10 +86,13 @@ func isEmptyValue(v Value) bool {
 // sortArray 公共排序实现（被 sort/asort/ksort/rsort 复用）
 // byKey=true 按键排序；byVal=true 保留键名（关联数组语义）；desc=true 逆序
 func sortArray(e *Env, a []Value, byKey, desc bool) (Value, error) {
-	if len(a) == 0 || a[0].Kind != KindArray {
+	if len(a) == 0 {
 		return NewBool(false), nil
 	}
-	arr := a[0]
+	arr := deref(a[0])
+	if arr.Kind != KindArray {
+		return NewBool(false), nil
+	}
 	type kv struct {
 		k string
 		v Value

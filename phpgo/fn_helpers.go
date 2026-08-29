@@ -221,6 +221,26 @@ func phpVarDump(v Value) string {
 	return ""
 }
 
+// valuesToIface 把 []Value 转为 sprintf 用的 []interface{}
+func valuesToIface(vs []Value) []interface{} {
+	out := make([]interface{}, 0, len(vs))
+	for _, v := range vs {
+		switch v.Kind {
+		case KindInt:
+			out = append(out, v.Int)
+		case KindFloat:
+			out = append(out, v.Float)
+		case KindString:
+			out = append(out, v.Str)
+		case KindBool:
+			out = append(out, v.Bool)
+		default:
+			out = append(out, v.ToString())
+		}
+	}
+	return out
+}
+
 // mathRandIntn 返回 [0, n) 的随机整数
 func mathRandIntn(n int) int {
 	if n <= 0 {

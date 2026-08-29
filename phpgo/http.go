@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -197,8 +198,25 @@ func defaultProxy(client *http.Client) ProxyFunc {
 			Location:     resp.Header.Get("Location"),
 			ContentType:  resp.Header.Get("Content-Type"),
 			EffectiveURL: resp.Request.URL.String(),
+			Headers:      headerLines(resp.Header),
 		}, nil
 	}
+}
+
+// headerLines 把 http.Header 转为 "Key: Value" 行（按键排序，保证确定性输出）
+func headerLines(h http.Header) []string {
+	keys := make([]string, 0, len(h))
+	for k := range h {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(h))
+	for _, k := range keys {
+		for _, v := range h[k] {
+			out = append(out, k+": "+v)
+		}
+	}
+	return out
 }
 
 // NewDefaultEnv 用默认代理（Go net/http）创建执行环境。

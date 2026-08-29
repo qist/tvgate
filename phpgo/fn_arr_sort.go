@@ -4,20 +4,22 @@ import "sort"
 
 func init() {
 	builtins["ksort"] = func(e *Env, a []Value) (Value, error) {
-		if len(a) < 1 || a[0].Kind != KindArray {
+		arr := deref(a[0])
+		if len(a) < 1 || arr.Kind != KindArray {
 			return NewBool(false), nil
 		}
-		ks := append([]string{}, a[0].Keys...)
+		ks := append([]string{}, arr.Keys...)
 		sort.Strings(ks)
 		sorted := NewArray()
 		for _, k := range ks {
-			sorted.ArraySet(NewString(k), a[0].Arr[k])
+			sorted.ArraySet(NewString(k), arr.Arr[k])
 		}
 		writeRef(e, a[0], sorted)
 		return NewBool(true), nil
 	}
 	builtins["asort"] = func(e *Env, a []Value) (Value, error) {
-		if len(a) < 1 || a[0].Kind != KindArray {
+		arr := deref(a[0])
+		if len(a) < 1 || arr.Kind != KindArray {
 			return NewBool(false), nil
 		}
 		type kv struct {
@@ -25,8 +27,8 @@ func init() {
 			v Value
 		}
 		var kvs []kv
-		for _, k := range a[0].Keys {
-			kvs = append(kvs, kv{k, a[0].Arr[k]})
+		for _, k := range arr.Keys {
+			kvs = append(kvs, kv{k, arr.Arr[k]})
 		}
 		sort.Slice(kvs, func(i, j int) bool {
 			return kvs[i].v.ToString() < kvs[j].v.ToString()
@@ -39,17 +41,23 @@ func init() {
 		return NewBool(true), nil
 	}
 	builtins["sort"] = func(e *Env, a []Value) (Value, error) {
-		if len(a) < 1 || a[0].Kind != KindArray {
+		arr := deref(a[0])
+		if len(a) < 1 || arr.Kind != KindArray {
 			return NewBool(false), nil
 		}
-		vals := make([]string, 0, len(a[0].Keys))
-		for _, k := range a[0].Keys {
-			vals = append(vals, a[0].Arr[k].ToString())
+		type kv struct {
+			v Value
 		}
-		sort.Strings(vals)
+		var items []kv
+		for _, k := range arr.Keys {
+			items = append(items, kv{arr.Arr[k]})
+		}
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].v.ToString() < items[j].v.ToString()
+		})
 		sorted := NewArray()
-		for _, s := range vals {
-			sorted.ArraySet(NewInt(int64(len(sorted.Keys))), NewString(s))
+		for _, it := range items {
+			sorted.ArraySet(NewInt(int64(len(sorted.Keys))), it.v)
 		}
 		writeRef(e, a[0], sorted)
 		return NewBool(true), nil

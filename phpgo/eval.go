@@ -18,7 +18,8 @@ type ProxyResult struct {
 	StatusCode   int
 	Location     string // 重定向 URL（如果有）
 	ContentType  string
-	EffectiveURL string // 最终 URL（跟随重定向后）
+	EffectiveURL string   // 最终 URL（跟随重定向后）
+	Headers      []string // 响应头（"Key: Value" 形式，供 get_headers 使用）
 }
 
 // CurlOptions 对应 PHP curl_setopt 的关键选项
@@ -1645,6 +1646,19 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 			"preg_replace_callback": {3: true},
 			"parse_str":             {1: true},
 			"curl_multi_exec":       {1: true},
+			// 原地修改数组/变量的函数（第 0 参按引用传递，供 writeRef 写回）
+			"sort":         {0: true},
+			"rsort":        {0: true},
+			"asort":        {0: true},
+			"ksort":        {0: true},
+			"arsort":       {0: true},
+			"krsort":       {0: true},
+			"usort":        {0: true},
+			"uasort":       {0: true},
+			"uksort":       {0: true},
+			"shuffle":      {0: true},
+			"array_splice": {0: true},
+			"settype":      {0: true},
 		}
 		for i, a := range args {
 			// 特定函数的特定参数按引用传递（供 writeRef 写回）

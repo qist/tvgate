@@ -64,6 +64,14 @@
 25、真正实现 curl_multi 并发 — 多句柄 goroutine 并行拉取，标准 do/while 循环一次完成，$still_running 引用回写，getcontent/getinfo 正常读取
 26、dns_get_record TTL 查询优先使用 YAML 配置的 dns.servers — 安卓/内网可指向内网 DNS，外部公共 DNS 仅作最后兜底，避免内网域名解析失败
 27、修复 usleep 为真正睡眠 — 此前为 no-op 直接返回，现按微秒挂起当前请求（time.Sleep 按 goroutine 阻塞，不影响其他并发请求）
+28、PHP 内置函数大规模补全 — 新增约 70 个常用函数（详见下方分组）：
+   - 字符串：strcmp/strcasecmp/strncmp/strncasecmp/strnatcmp/strnatcasecmp、strrev/str_shuffle/str_rot13、substr_count/substr_replace、strip_tags/str_word_count、printf/vprintf/vsprintf、htmlentities/html_entity_decode/utf8_decode
+   - 数组：array_diff/array_intersect/array_diff_key/array_intersect_key/array_merge_recursive、array_chunk/array_splice/range/shuffle/array_fill_keys/array_pad/array_count_values/array_product/array_reduce、array_key_first/array_key_last
+   - 排序：arsort/krsort/usort/uasort/uksort；并修复既有 sort/asort/ksort/rsort 无法修改原数组的问题（补充按引用传参）
+   - 类型/调用：is_object/is_scalar/is_iterable/is_countable/is_callable/is_resource/settype/var_export/get_debug_type、call_user_func/call_user_func_array/function_exists/defined/constant/extract
+   - 文件：rename/copy/touch/readfile/fseek/ftell/rewind/fileatime/filectime
+   - HTTP：get_headers（ProxyResult 增加响应头字段）
+   - 数学/日期/正则：exp/log/log10/log2/log1p/fmod/deg2rad/rad2deg/三角函数/decoct/octdec/srand/is_finite/is_infinite/is_nan、mktime/gmmktime/checkdate/getdate/gettimeofday、preg_quote/preg_grep
 ```
 
 ### v3.0.5
