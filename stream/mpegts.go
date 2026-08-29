@@ -122,14 +122,21 @@ func HandleMpegtsStream(
 	// 向客户端推送数据
 	logger.LogRequestAndResponse(r, rtspURL, &http.Response{StatusCode: http.StatusOK})
 	w.Header().Set("Content-Type", "video/mp2t")
-	flusher, _ := w.(http.Flusher)
-	rc := http.NewResponseController(w)
 
 	// 确保 cleanup 始终被调用
 	defer cleanup()
 
 	// 直接使用 ringbuffer 的 channel，避免 PullWithContext 每包创建 goroutine
-	dataChan := clientChan.Chan()
+	return writeRTSPToClient(ctx, w, clientChan.Chan(), updateActive)
+}
+
+// writeRTSPToClient 从 ringbuffer 通道读取 TS 数据并批量写出到客户端。
+// 将多个 RTP 包攒成一块再交给底层 ResponseWriter，
+// 避免每个包都单独触发一次 TLS 记录边界与一次 write() 系统调用
+// （针对 CPU 热点 crypto/tls.writeRecordLocked / Syscall6 的关键优化）。
+func writeRTSPToClient(ctx context.Context, w http.ResponseWriter, dataChan <-chan []byte, updateActive func()) error {
+	flusher, _ := w.(http.Flusher)
+	rc := http.NewResponseController(w)
 
 	const (
 		maxFlushBytes  = 32 * 1024
@@ -137,9 +144,6 @@ func HandleMpegtsStream(
 		activeInterval = 5 * time.Second
 	)
 
-	// 批量写出缓冲：将多个 RTP 包攒成一块再交给底层 ResponseWriter，
-	// 避免每个包都单独触发一次 TLS 记录边界与一次 write() 系统调用。
-	// 针对 CPU 热点 crypto/tls.writeRecordLocked(26%) / Syscall6(30%) 的关键优化。
 	bw := bufio.NewWriterSize(w, maxFlushBytes)
 	defer bw.Flush()
 
@@ -158,10 +162,9 @@ func HandleMpegtsStream(
 			if len(data) == 0 {
 				continue
 			}
-			payload := data
 
 			_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			n, err := bw.Write(payload)
+			n, err := bw.Write(data)
 			if err != nil {
 				logger.LogPrintf("Write error: %v", err)
 				return err
@@ -178,8 +181,7 @@ func HandleMpegtsStream(
 					if len(data2) == 0 {
 						continue
 					}
-					payload2 := data2
-					n2, err := bw.Write(payload2)
+					n2, err := bw.Write(data2)
 					if err != nil {
 						logger.LogPrintf("Write error: %v", err)
 						return err
