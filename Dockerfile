@@ -34,16 +34,18 @@ RUN if [ "$TARGETARCH" = "arm" ]; then \
 # ========================================================
 # Stage: final image
 # ========================================================
-FROM debian:bookworm-slim
+FROM alpine:latest
 WORKDIR /app
 ENV TZ=Asia/Shanghai
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates tzdata bash fail2ban \
-    && rm -rf /var/lib/apt/lists/*
+# 安装必要依赖
+RUN apk add --no-cache ca-certificates tzdata bash fail2ban
 
-# 复制可执行文件（单一二进制，含纯 Go PHP runtime）
+# 复制可执行文件
 COPY --from=build /app/build/TVGate /app/TVGate
+
+# 复制配置文件
+# COPY --from=build /app/doc/config.yaml /etc/tvgate/config.yaml
 
 # 配置 fail2ban
 RUN rm -f /etc/fail2ban/jail.d/alpine-ssh.conf \
@@ -55,4 +57,3 @@ RUN rm -f /etc/fail2ban/jail.d/alpine-ssh.conf \
 RUN chmod +x /app/TVGate
 
 CMD [ "./TVGate", "-config=/etc/tvgate/config.yaml" ]
-
