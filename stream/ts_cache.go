@@ -25,6 +25,8 @@ type tsCacheItem struct {
 	bytes  int64
 	err    error
 
+	tables []byte // 首个 PAT+PMT，下发时前置（配合关键帧缓存起点）
+
 	expireAt time.Time
 	element  *list.Element
 	closed   bool
@@ -155,6 +157,22 @@ func (c *TSCache) createItem(key string) *tsCacheItem {
 	return it
 }
 
+// SetTables 设置缓存项的首个 PAT+PMT 节目表（下发时前置）。
+// 需在写入首个 chunk 之前调用，保证读取方看到 chunk 时节目表已就绪。
+func (c *TSCache) SetTables(item *tsCacheItem, tables []byte) {
+	if len(tables) == 0 || item == nil {
+		return
+	}
+	item.mutex.Lock()
+	defer item.mutex.Unlock()
+	if item.closed || len(item.tables) > 0 {
+		return
+	}
+	cp := make([]byte, len(tables))
+	copy(cp, tables)
+	item.tables = cp
+}
+
 // WriteChunkWithByteTracking 向缓存项写入数据块，并跟踪字节计数到父缓存
 func (c *TSCache) WriteChunkWithByteTracking(item *tsCacheItem, data []byte) {
 	// 检查数据是否为nil
@@ -225,6 +243,7 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 	flusher, _ := dst.(http.Flusher)
 
 	seq := 1
+	tablesWritten := false
 	waitTimer := time.NewTimer(5 * time.Second)
 	defer waitTimer.Stop()
 
@@ -255,7 +274,25 @@ func (c *tsCacheItem) ReadAll(dst io.Writer, done <-chan struct{}) error {
 		c.mutex.RLock()
 		if seq <= len(c.chunks) {
 			data := c.chunks[seq-1]
+			tables := c.tables
 			c.mutex.RUnlock()
+
+			// 首个 chunk 前前置节目表（PAT+PMT）。
+			// 下载端保证写入 chunks[0] 之前 tables 已就绪，读取端此处不会竞态。
+			if !tablesWritten {
+				tablesWritten = true
+				if len(tables) > 0 {
+					n, err := bw.Write(tables)
+					if err != nil {
+						return err
+					}
+					if n < len(tables) {
+						return io.ErrShortWrite
+					}
+					buffered += n
+				}
+			}
+
 			if len(data) > 0 {
 				n, err := bw.Write(data)
 				if err != nil {
@@ -340,6 +377,7 @@ func (c *tsCacheItem) Close() {
 	}
 
 	c.chunks = nil
+	c.tables = nil
 	c.bytes = 0
 }
 

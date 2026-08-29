@@ -996,13 +996,12 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(k, v)
 		}
 	}
-	// 仅 m3u8（内容会被重写）移除 Content-Length；普通响应保留以便 keep-alive，
-	// TS/直播流的移除由 CopyResponse 按路径处理
+	// 仅 m3u8（内容会被重写）移除 Content-Length；其余由 PrepareProxyHeaders 按路径处理：
+	// TS/直播流移除 CL，普通响应保留并处理连接关闭帧
 	if isM3U8 {
 		w.Header().Del("Content-Length")
 	} else {
-		// 普通响应后端未提供 Content-Length 时走连接关闭帧，避免下发 chunked
-		stream.SetConnectionCloseFraming(w, resp, originalReqURL.Path)
+		stream.PrepareProxyHeaders(w, resp, originalReqURL.Path)
 	}
 	w.WriteHeader(resp.StatusCode)
 

@@ -57,10 +57,9 @@ func HandleProxyResponse(ctx context.Context, w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// 复制响应头；Content-Length 由 CopyResponse 按路径决定保留或删除
+	// 复制响应头；TS/直播流移除 Content-Length，普通响应保留并处理连接关闭帧
 	CopyHeader(w.Header(), resp.Header, r.ProtoMajor)
-	// 普通响应后端未提供 Content-Length 时走连接关闭帧，避免下发 chunked
-	SetConnectionCloseFraming(w, resp, u.Path)
+	PrepareProxyHeaders(w, resp, u.Path)
 	w.WriteHeader(resp.StatusCode)
 
 	// 解析URL并获取最优缓冲区大小
@@ -328,6 +327,21 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 	buf := buffer.GetBuffer(32 * 1024)
 	defer buffer.PutBuffer(32*1024, buf)
 
+	// 关键帧扫描器：定位首个 IDR 后，缓存从关键帧开始，避免首客户端从 GOP 中间起播花屏。
+	// 找到前数据暂存于扫描器；未找到（超限/流结束）则从头缓存，行为退化为原逻辑。
+	scanner := new(tsKeyframeScanner)
+	scanDone := false
+
+	flushScanner := func() {
+		tables, start := scanner.Flush()
+		if len(tables) > 0 {
+			cache.SetTables(cacheItem, tables)
+		}
+		if len(start) > 0 {
+			cache.WriteChunkWithByteTracking(cacheItem, start)
+		}
+	}
+
 	// 将源数据写入缓存
 	for {
 		n, rErr := src.Read(buf) // 阻塞读取
@@ -343,10 +357,22 @@ func CopyTSWithCache(ctx context.Context, dst http.ResponseWriter, src io.Reader
 		}
 
 		if n > 0 {
-			cache.WriteChunkWithByteTracking(cacheItem, buf[:n])
+			if !scanDone {
+				if scanner.Feed(buf[:n]) {
+					scanDone = true
+					flushScanner()
+				}
+			} else {
+				cache.WriteChunkWithByteTracking(cacheItem, buf[:n])
+			}
 		}
 
 		if rErr != nil {
+			// 流结束仍未定位关键帧：从头缓存
+			if !scanDone {
+				scanDone = true
+				flushScanner()
+			}
 			if rErr == io.EOF {
 				cacheItem.Seal(nil)
 			} else {
@@ -633,6 +659,18 @@ func SetConnectionCloseFraming(w http.ResponseWriter, resp *http.Response, urlPa
 	w.Header().Set("Connection", "close")
 }
 
+// PrepareProxyHeaders 在 WriteHeader 之前准备响应头：
+//   - TS/直播流：必须移除 Content-Length（流式边下边发，长度不定），
+//     否则后端的 Content-Length 会在 WriteHeader 时被提交，与实际下发字节不符
+//   - 普通响应：保留 Content-Length 走 keep-alive；后端未提供 CL 时走连接关闭帧避免 chunked
+func PrepareProxyHeaders(w http.ResponseWriter, resp *http.Response, urlPath string) {
+	if IsTSRequest(urlPath) || isLiveStream(urlPath) {
+		w.Header().Del("Content-Length")
+		return
+	}
+	SetConnectionCloseFraming(w, resp, urlPath)
+}
+
 // CopyResponse 根据内容类型选择适当的复制方法
 func CopyResponse(
 	ctx context.Context,
@@ -656,16 +694,14 @@ func CopyResponse(
 	}
 
 	if IsTSRequest(u.Path) {
-		// TS 按块边下边发，长度不定，必须移除 Content-Length
-		w.Header().Del("Content-Length")
+		// 流式边下边发；Content-Length 已在 PrepareProxyHeaders 移除
 		key := normalizeCacheKey(u.String())
 		logger.LogPrintf("[TS缓存] 生成缓存键，key: %s", key)
 		return CopyTSWithCache(ctx, w, resp.Body, key)
 	}
 
 	if isLiveStream(u.Path) {
-		// 直播流需要持续 flush，Content-Length 必须移除
-		w.Header().Del("Content-Length")
+		// 直播流需要持续 flush；Content-Length 已在 PrepareProxyHeaders 移除
 		return CopyWithContext(
 			ctx,
 			w,
