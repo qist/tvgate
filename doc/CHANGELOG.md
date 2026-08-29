@@ -4,6 +4,17 @@
 
 ## Android (tvgate-android)
 
+### v3.0.6
+
+```
+1、PHP docroot 默认相对路径 www — 以配置文件所在目录为基准，安卓无需改绝对路径即可用 PHP 脚本；启动兜底创建 files/www 目录
+2、修复代码编辑器无法编辑/保存 — Android /data/user/0 → /data/data 符号链接被误判越权，归一化 root 后正常
+3、开机自启 — 新增 BootReceiver 监听 BOOT_COMPLETED，设备重启后自动启动服务（部分 ROM 需在自启动管理放行）
+4、前台服务改用 specialUse 类型 — Android 15 禁止从开机广播启动 dataSync，specialUse 无类型时限、允许开机自启
+5、体积优化 — 交叉编译叠加 -gcflags=all=-l 关闭内联，APK 每架构约省 1.1MB
+6、兼容性确认 — minSdk=21（Android 5.0+），代码全部按版本判断，arm64/arm/x86_64 三架构覆盖
+```
+
 ### v3.0.5
 
 ```
@@ -37,6 +48,15 @@
 9、TS 缓存从首个关键帧起缓存并前置 PAT/PMT — 修复首客户端花屏/关键帧问题，缓存不含 P 帧垃圾前缀
 10、放宽 HTTP 连接数默认值 — MaxIdleConns/MaxIdleConnsPerHost/MaxConnsPerHost/IdleConnTimeout 提升，修复同一源站并发第 N 路流断开重连
 11、流媒体(.ts/.flv)免疫 http.timeout 整体超时 — 修复长连接被超时掐断反复重连；普通响应超时仍生效
+12、Web 代码编辑器新增文件/目录重命名 — 区分文件与目录重命名按钮，避免与打开文件重命名混淆
+13、Web 代码编辑器新增持久化批量替换 — 纯前端编排递归处理目录文本文件，跳过 .bak/隐藏/超大(>5MB)/二进制，每文件读改存并自动备份
+14、Web 代码编辑器查找/替换弹窗化 — 小白友好弹窗(区分大小写/正则/计数/上一个下一个/替换/全部替换)，快捷键 Ctrl+F/Ctrl+H/F3；记忆上次输入并优先带入选中文本，Esc 关闭
+15、多文件上传增强 — 单文件失败不再中断整体，响应返回 uploaded/failed 明细，前端显示"X成功+Y失败"
+16、EnsureConfigFile 支持 ~ / ~/ 家目录展开 — 修复配置文件备份等全局路径在安卓/移动端(如 Termux)的路径问题
+17、tzdata 内嵌策略调整 — 仅安卓内嵌 time/tzdata，其余平台用系统时区，减小非安卓二进制体积
+18、安卓日志输出本地时区 — 读取 persist.sys.timezone 设置 time.Local，服务日志时间与设备本地一致
+19、安卓/服务器平台隐藏版本升级卡片 — 前端 UA + 后端平台双判断，修正浏览器 UA 盲区
+20、保持 /debug/pprof 调试接口禁用 — 生产环境不开放（加回后回退）
 ```
 
 ### v3.0.5
