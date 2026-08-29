@@ -1382,6 +1382,9 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 	case *SplatExpr:
 		// ...$var 在非调用上下文中返回数组本身
 		return e.evalExpr(n.Expr)
+	case *varRef:
+		// &$var 作实参：返回当前值（内置函数若在 refParams 中则由调用侧构造引用写回）
+		return e.vars[n.name], nil
 	}
 	return NewNull(), fmt.Errorf("runtime: 未知表达式节点 %T", x)
 }
@@ -1661,11 +1664,12 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 		var vs []Value
 		// 需要引用参数的内置函数：第 N 个参数（0-based）需要按引用传递
 		refParams := map[string]map[int]bool{
-			"preg_match":            {2: true},
-			"preg_match_all":        {2: true},
-			"preg_replace_callback": {3: true},
-			"parse_str":             {1: true},
-			"curl_multi_exec":       {1: true},
+			"preg_match":                  {2: true},
+			"preg_match_all":              {2: true},
+			"preg_replace_callback":       {3: true},
+			"preg_replace_callback_array": {3: true},
+			"parse_str":                   {1: true},
+			"curl_multi_exec":             {1: true},
 			// 原地修改数组/变量的函数（第 0 参按引用传递，供 writeRef 写回）
 			"sort":         {0: true},
 			"rsort":        {0: true},

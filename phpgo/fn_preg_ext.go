@@ -6,8 +6,6 @@ func init() {
 			return NewNull(), nil
 		}
 		pattern := a[0].ToString()
-		// 回调函数名或闭包
-		callbackName := a[1].ToString()
 		subj := a[2].ToString()
 
 		re, err := compilePHPRegex(pattern)
@@ -17,17 +15,13 @@ func init() {
 
 		result := re.ReplaceAllStringFunc(subj, func(match string) string {
 			subs := re.FindStringSubmatch(match)
-			// 构建参数数组
-			args := make([]Value, len(subs))
+			// PHP 语义：回调接收一个 $matches 数组（$matches[0] 为完整匹配）
+			matches := NewArray()
 			for i, s := range subs {
-				args[i] = NewString(s)
+				matches.ArraySet(NewInt(int64(i)), NewString(s))
 			}
-			var ret Value
-			if bf, ok := builtins[callbackName]; ok {
-				ret, _ = bf(e, args)
-			} else if fn, ok := e.funcs[callbackName]; ok {
-				ret, _ = e.callUserFuncValues(fn, args)
-			}
+			// 支持字符串函数名与闭包/对象方法（callCallable 统一处理）
+			ret, _ := callCallable(e, a[1], []Value{matches})
 			return ret.ToString()
 		})
 		return NewString(result), nil
@@ -51,11 +45,59 @@ func init() {
 		return result, nil
 	}
 
+	// preg_replace_callback_array：按 [pattern => callback, ...] 顺序逐条替换
+	// PHP: preg_replace_callback_array(array $patterns_and_callbacks, string|array $subject, int $limit=-1, int &$count=null)
 	builtins["preg_replace_callback_array"] = func(e *Env, a []Value) (Value, error) {
-		// 简化：不支持
-		if len(a) < 2 {
+		if len(a) < 2 || a[0].Kind != KindArray {
 			return NewNull(), nil
 		}
-		return a[1], nil
+		cbMap := a[0]
+		subj := a[1]
+		limit := int64(-1)
+		if len(a) >= 3 {
+			limit = a[2].ToInt()
+		}
+		count := int64(0)
+		replaceOne := func(s string) string {
+			out := s
+			for _, k := range cbMap.Keys {
+				re, err := compilePHPRegex(k)
+				if err != nil {
+					continue
+				}
+				if limit >= 0 && count >= limit {
+					break
+				}
+				out = re.ReplaceAllStringFunc(out, func(match string) string {
+					if limit >= 0 && count >= limit {
+						return match // 已达替换上限，保持原样
+					}
+					subs := re.FindStringSubmatch(match)
+					// PHP 语义：回调接收一个 $matches 数组
+					matches := NewArray()
+					for i, ss := range subs {
+						matches.ArraySet(NewInt(int64(i)), NewString(ss))
+					}
+					ret, _ := callCallable(e, cbMap.Arr[k], []Value{matches})
+					count++
+					return ret.ToString()
+				})
+			}
+			return out
+		}
+		var result Value
+		if subj.Kind == KindArray {
+			result = NewArray()
+			for _, k := range subj.Keys {
+				result.ArraySet(NewString(k), NewString(replaceOne(subj.Arr[k].ToString())))
+			}
+		} else {
+			result = NewString(replaceOne(subj.ToString()))
+		}
+		// 第 4 个参数 &$count 按引用写回
+		if len(a) >= 4 {
+			writeRef(e, a[3], NewInt(count))
+		}
+		return result, nil
 	}
 }

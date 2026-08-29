@@ -3,6 +3,7 @@ package phpgo
 import (
 	"strconv"
 	"strings"
+	"time"
 )
 
 func init() {
@@ -104,7 +105,76 @@ func init() {
 	builtins["session_id"] = func(e *Env, a []Value) (Value, error) {
 		return NewString(""), nil
 	}
+	// setcookie：真正发送 Set-Cookie 响应头（支持 PHP 7.3+ options 数组与传统多参数两种形式）
 	builtins["setcookie"] = func(e *Env, a []Value) (Value, error) {
+		if len(a) < 1 {
+			return NewBool(false), nil
+		}
+		name := a[0].ToString()
+		value := ""
+		if len(a) >= 2 {
+			value = a[1].ToString()
+		}
+		parts := []string{name + "=" + value}
+		if len(a) >= 3 && a[2].Kind == KindArray {
+			opts := a[2]
+			getStr := func(k string) string {
+				v := opts.ArrayGet(NewString(k))
+				if v.Kind == KindNull {
+					return ""
+				}
+				return v.ToString()
+			}
+			if exp := opts.ArrayGet(NewString("expires")); exp.Kind != KindNull && exp.ToInt() > 0 {
+				parts = append(parts, "expires="+cookieExpiresStr(exp.ToInt()))
+			}
+			if p := getStr("path"); p != "" {
+				parts = append(parts, "path="+p)
+			}
+			if d := getStr("domain"); d != "" {
+				parts = append(parts, "domain="+d)
+			}
+			if opts.ArrayGet(NewString("secure")).ToBool() {
+				parts = append(parts, "Secure")
+			}
+			if opts.ArrayGet(NewString("httponly")).ToBool() {
+				parts = append(parts, "HttpOnly")
+			}
+			if s := getStr("samesite"); s != "" {
+				parts = append(parts, "SameSite="+s)
+			}
+		} else {
+			expires := int64(0)
+			if len(a) >= 3 {
+				expires = a[2].ToInt()
+			}
+			path := "/"
+			if len(a) >= 4 && a[3].ToString() != "" {
+				path = a[3].ToString()
+			}
+			domain := ""
+			if len(a) >= 5 {
+				domain = a[4].ToString()
+			}
+			secure := len(a) >= 6 && a[5].ToBool()
+			httponly := len(a) >= 7 && a[6].ToBool()
+			if expires > 0 {
+				parts = append(parts, "expires="+cookieExpiresStr(expires))
+			}
+			if path != "" {
+				parts = append(parts, "path="+path)
+			}
+			if domain != "" {
+				parts = append(parts, "domain="+domain)
+			}
+			if secure {
+				parts = append(parts, "Secure")
+			}
+			if httponly {
+				parts = append(parts, "HttpOnly")
+			}
+		}
+		e.headers = append(e.headers, "Set-Cookie: "+strings.Join(parts, "; "))
 		return NewBool(true), nil
 	}
 
@@ -134,4 +204,9 @@ func init() {
 
 func strconvParseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
+}
+
+// cookieExpiresStr 把 unix 时间戳格式化为 HTTP Cookie Expires（PHP setcookie 语义）
+func cookieExpiresStr(ts int64) string {
+	return time.Unix(ts, 0).UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT")
 }

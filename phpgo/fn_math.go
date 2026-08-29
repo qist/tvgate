@@ -3,6 +3,7 @@ package phpgo
 import (
 	"fmt"
 	"math"
+	"strings"
 )
 
 func init() {
@@ -81,18 +82,16 @@ func init() {
 		if len(a) >= 2 {
 			dec = int(a[1].ToInt())
 		}
-		thousands := ","
+		// PHP: number_format($num, $decimals, $decimal_point='.', $thousands_sep=',')
+		decimalPoint := "."
 		if len(a) >= 3 {
-			thousands = a[2].ToString()
+			decimalPoint = a[2].ToString()
 		}
-		// 简化实现
-		format := "%.0f"
-		if dec > 0 {
-			format = "%." + intToStr(dec) + "f"
+		thousands := ","
+		if len(a) >= 4 {
+			thousands = a[3].ToString()
 		}
-		_ = format
-		s := formatFloat(f, dec, thousands)
-		return NewString(s), nil
+		return NewString(formatFloat(f, dec, thousands, decimalPoint)), nil
 	}
 	builtins["intdiv"] = func(e *Env, a []Value) (Value, error) {
 		if len(a) < 2 || a[1].ToInt() == 0 {
@@ -123,37 +122,40 @@ func intToStr(n int) string {
 	return string(b)
 }
 
-func formatFloat(f float64, dec int, thousands string) string {
-	// 用 Go 的 fmt 格式化
+func formatFloat(f float64, dec int, thousands, decimalPoint string) string {
+	// 用 Go 的 fmt 格式化（四舍五入到指定小数位）
 	format := "%." + intToStr(dec) + "f"
 	s := fmt.Sprintf(format, f)
 	if thousands == "" {
-		return s
+		thousands = ","
 	}
-	// 在整数部分插入千分位
-	dot := -1
-	for i := 0; i < len(s); i++ {
-		if s[i] == '.' {
-			dot = i
-			break
+	// 分离整数部分与小数部分
+	intPart, fracPart := s, ""
+	if dot := strings.IndexByte(s, '.'); dot >= 0 {
+		intPart, fracPart = s[:dot], s[dot:]
+		// 替换小数点为自定义 decimalPoint
+		if decimalPoint != "" && decimalPoint != "." {
+			fracPart = decimalPoint + fracPart[1:]
 		}
 	}
-	if dot < 0 {
-		dot = len(s)
+	neg := ""
+	if strings.HasPrefix(intPart, "-") {
+		neg, intPart = "-", intPart[1:]
 	}
-	var b []byte
-	b = append(b, s[:dot]...)
-	// 不处理负号前缀等复杂情况
-	for i, cnt := dot-1, 0; i > 0; i-- {
-		if s[i-1] == '-' {
-			break
-		}
+	// 整数部分从右往左每 3 位插入千分位
+	var rev []byte
+	cnt := 0
+	for i := len(intPart) - 1; i >= 0; i-- {
+		rev = append(rev, intPart[i])
 		cnt++
 		if cnt == 3 && i > 0 {
-			b = append(b, []byte(thousands)...)
+			rev = append(rev, []byte(thousands)...)
 			cnt = 0
 		}
 	}
-	// 简化：直接返回原值
-	return s
+	var out []byte
+	for i := len(rev) - 1; i >= 0; i-- {
+		out = append(out, rev[i])
+	}
+	return neg + string(out) + fracPart
 }

@@ -54,7 +54,14 @@ func ServePHP(env *Env, w http.ResponseWriter, src string) error {
 	// 写 header()
 	for _, h := range env.headers {
 		if i := strings.IndexByte(h, ':'); i > 0 {
-			w.Header().Set(strings.TrimSpace(h[:i]), strings.TrimSpace(h[i+1:]))
+			name := strings.TrimSpace(h[:i])
+			val := strings.TrimSpace(h[i+1:])
+			// setcookie 可能设置多个 Set-Cookie，需用 Add 累加（Go Header.Set 会覆盖同名）
+			if strings.EqualFold(name, "Set-Cookie") {
+				w.Header().Add(name, val)
+			} else {
+				w.Header().Set(name, val)
+			}
 		}
 	}
 	ct := w.Header().Get("Content-Type")
