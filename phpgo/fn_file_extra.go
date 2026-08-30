@@ -2,7 +2,6 @@ package phpgo
 
 import (
 	"os"
-	"syscall"
 	"time"
 )
 
@@ -133,7 +132,8 @@ func init() {
 		}
 		return NewBool(f.Sync() == nil), nil
 	}
-	// flock：文件锁（LOCK_SH=1/LOCK_EX=2/LOCK_UN=3/LOCK_NB=4）
+	// flock：文件锁（PHP 常量 LOCK_SH=1/LOCK_EX=2/LOCK_UN=3/LOCK_NB=4），
+	// 平台实现见 flock_unix.go（真锁）与 flock_other.go（无锁平台 no-op）
 	builtins["flock"] = func(e *Env, a []Value) (Value, error) {
 		if len(a) < 2 {
 			return NewBool(false), nil
@@ -142,23 +142,7 @@ func init() {
 		if !ok {
 			return NewBool(false), nil
 		}
-		op := int(a[1].ToInt())
-		var how int
-		// PHP 常量：LOCK_SH=1 LOCK_EX=2 LOCK_UN=3 LOCK_NB=4
-		switch op &^ 4 {
-		case 1:
-			how = syscall.LOCK_SH
-		case 2:
-			how = syscall.LOCK_EX
-		case 3:
-			how = syscall.LOCK_UN
-		default:
-			return NewBool(false), nil
-		}
-		if op&4 != 0 {
-			how |= syscall.LOCK_NB
-		}
-		return NewBool(syscall.Flock(int(f.Fd()), how) == nil), nil
+		return NewBool(flockFd(f.Fd(), int(a[1].ToInt())) == nil), nil
 	}
 	builtins["filectime"] = func(e *Env, a []Value) (Value, error) {
 		if len(a) < 1 {
