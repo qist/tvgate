@@ -1533,16 +1533,27 @@ func (e *Env) evalBinary(n *BinaryExpr) (Value, error) {
 			}
 			return result, nil
 		}
+		// PHP 语义：任一侧为浮点 → 浮点结果
+		if l.Kind == KindFloat || r.Kind == KindFloat {
+			return NewFloat(l.ToFloat() + r.ToFloat()), nil
+		}
 		return NewInt(l.ToInt() + r.ToInt()), nil
 	case "-", "-=":
+		if l.Kind == KindFloat || r.Kind == KindFloat {
+			return NewFloat(l.ToFloat() - r.ToFloat()), nil
+		}
 		return NewInt(l.ToInt() - r.ToInt()), nil
 	case "*", "*=":
+		if l.Kind == KindFloat || r.Kind == KindFloat {
+			return NewFloat(l.ToFloat() * r.ToFloat()), nil
+		}
 		return NewInt(l.ToInt() * r.ToInt()), nil
 	case "/", "/=":
-		if r.ToInt() == 0 {
+		if r.ToFloat() == 0 {
 			return NewInt(0), nil
 		}
-		return NewInt(l.ToInt() / r.ToInt()), nil
+		// PHP 除法恒为浮点（除非整数能整除也返回 float）
+		return NewFloat(l.ToFloat() / r.ToFloat()), nil
 	case "%":
 		if r.ToInt() == 0 {
 			return NewInt(0), nil

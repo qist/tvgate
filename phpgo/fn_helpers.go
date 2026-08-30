@@ -137,9 +137,35 @@ func isPrintfSpec(c byte) bool {
 
 // goSprintf 用 Go 的 fmt.Sprintf 代理，但对 PHP 特有的做转换
 func goSprintf(spec string, arg interface{}) string {
-	if len(spec) > 0 && spec[len(spec)-1] == 'b' {
-		n := toInt64(arg)
-		return strconv.FormatInt(n, 2)
+	if len(spec) == 0 {
+		return fmt.Sprintf(spec, arg)
+	}
+	verb := spec[len(spec)-1]
+	if verb == 'b' {
+		return strconv.FormatInt(toInt64(arg), 2)
+	}
+	// PHP sprintf 自动类型转换：%f/%e/%g 传整数/数字字符串→转 float；%d/%u/%x/%o/%c 传浮点/数字字符串→转 int
+	switch verb {
+	case 'f', 'e', 'g':
+		switch t := arg.(type) {
+		case int64:
+			arg = float64(t)
+		case int:
+			arg = float64(t)
+		case string:
+			if f, err := strconv.ParseFloat(t, 64); err == nil {
+				arg = f
+			}
+		}
+	case 'd', 'u', 'x', 'X', 'o', 'c':
+		switch t := arg.(type) {
+		case float64:
+			arg = int64(t)
+		case string:
+			if n, err := strconv.ParseInt(strings.TrimSpace(t), 0, 64); err == nil {
+				arg = n
+			}
+		}
 	}
 	return fmt.Sprintf(spec, arg)
 }

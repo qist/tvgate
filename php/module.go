@@ -195,7 +195,13 @@ func Handler() http.HandlerFunc {
 		}
 		env.SetRequestURI(r.URL.RequestURI())
 		env.SetServer("REQUEST_METHOD", r.Method)
-		env.SetServer("REMOTE_ADDR", r.RemoteAddr)
+		// REMOTE_ADDR 仅取 IP（去掉端口），与原生 PHP 一致；
+		// 否则 RemoteAddr 含随机源端口，md5(ip+ua) 类 userid 每次请求都会变，导致缓存条目不断新增
+		remoteIP := r.RemoteAddr
+		if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+			remoteIP = h
+		}
+		env.SetServer("REMOTE_ADDR", remoteIP)
 		env.SetServer("SCRIPT_NAME", r.URL.Path)
 		env.SetServer("SCRIPT_FILENAME", scriptPath)
 		env.SetServer("PHP_SELF", r.URL.Path)
