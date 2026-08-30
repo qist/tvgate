@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/qist/tvgate/config"
 )
@@ -244,5 +245,33 @@ func TestExtractArchive(t *testing.T) {
 	}
 	if string(files["a.txt"]) != "hello" || string(files["sub/b.txt"]) != "world" || string(files["sub/deep/c"]) != "deep" {
 		t.Fatalf("content mismatch: %v", files)
+	}
+}
+
+// TestManagerLoopStops 回归：配置热加载后旧管理器 stop() 必须真正停止循环，
+// 否则旧分支实例残留、多实例互相覆盖 manifest（每轮反复"更新"）。
+func TestManagerLoopStops(t *testing.T) {
+	root := t.TempDir()
+	localRoot := filepath.Join(root, "tvbox")
+	os.MkdirAll(localRoot, 0755)
+
+	fc := newFakeClient(map[string]string{"a.txt": "v1"})
+	sm := newTestManager(localRoot, fc, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	sm.cancel = cancel
+
+	done := make(chan struct{})
+	go func() {
+		sm.loop(ctx)
+		close(done)
+	}()
+	// 等首轮同步跑起来
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+		// 已停止 ✓
+	case <-time.After(3 * time.Second):
+		t.Fatal("loop did not stop after cancel (管理器残留 bug)")
 	}
 }

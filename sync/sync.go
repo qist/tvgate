@@ -63,19 +63,23 @@ func Start(c *config.Config) {
 		if sm == nil {
 			continue
 		}
+		// 每个实例独立可取消 context，旧实例 stop() 时能真正停止循环，
+		// 避免配置热加载后旧管理器残留、多实例互相覆盖 manifest
+		ctx, cancel := context.WithCancel(config.ServerCtx)
+		sm.cancel = cancel
 		managers = append(managers, sm)
-		go sm.loop(config.ServerCtx)
+		go sm.loop(ctx)
 		logger.LogPrintf("🚀 [sync] 已启动: %s (branch=%s) → %s，间隔 %s",
 			syncLabel(entry), entry.Branch, sm.localRoot, entry.Interval)
 	}
 }
 
-// syncLabel 生成仓库标识（有 name 时用 name + repo）
+// syncLabel 生成仓库标识（有 name 时用 name + repo@branch）
 func syncLabel(s *config.SyncConfig) string {
 	if s.Name != "" {
-		return s.Name + " (" + s.Repo + ")"
+		return fmt.Sprintf("%s (%s@%s)", s.Name, s.Repo, s.Branch)
 	}
-	return s.Repo
+	return fmt.Sprintf("%s@%s", s.Repo, s.Branch)
 }
 
 func newManager(entry *config.SyncConfig, githubCfg config.GithubConfig) *SyncManager {
