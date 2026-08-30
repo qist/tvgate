@@ -440,6 +440,23 @@ sync:
 >
 > **详细设计**：见 [doc/sync-dev.md](doc/sync-dev.md)（同步算法 / 归档降级 / 孤立文件 / 生命周期 / 测试计划）。
 
+### 访问同步内容
+
+同步下来的文件落在 **`docroot + local_path`** 目录（例如 `docroot/tvbox`），PHP 模块对 `/php/` 前缀下的**静态文件**按正确 MIME 直接返回（`.json` / `.txt` / `.m3u` / `.jar` / `.js` / `.py` 等），因此可直接通过 HTTP 访问，作为 TVBox 订阅 / 直播源地址：
+
+```
+http://<IP>:<port>/php/tvbox/0707.json      # TVBox 订阅配置
+http://<IP>:<port>/php/tvbox/listx.m3u      # 直播源列表
+http://<IP>:<port>/php/tvbox/jar/spider.jar # 爬虫插件
+```
+
+- 前提：PHP 模块已启用（`php.enabled: true`），`local_path` 以 `docroot` 为锚点。
+- 若 `local_path` 为其他子目录（如 `www/scripts`），则路径为 `/php/www/scripts/...`。
+- 若 `local_path` 为 `.`（同步到 docroot 根），则路径为 `/php/<文件>`。
+- 未启用 PHP 模块时，无法通过 `/php/` 访问；可将这些文件放到其他静态目录或直接经代理端口访问。
+
+> **典型用法**：在 TVBox 的"配置订阅"里填 `http://<IP>:<port>/php/tvbox/0707.json`，电视端即可自动拉取并更新订阅；多仓库各自同步到不同 `local_path` 即可管理多套配置。
+
 ---
 
 ## 配置（config.yaml）示例
