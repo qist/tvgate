@@ -3,6 +3,7 @@ package sync
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -38,8 +39,8 @@ func buildZipArchive(content map[string]string) []byte {
 
 func TestGiteeTreeAndFetch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "token gitee_token" {
-			t.Errorf("missing token header")
+		if r.URL.Query().Get("access_token") != "gitee_token" {
+			t.Errorf("missing access_token")
 		}
 		switch {
 		case r.URL.Path == "/api/v5/repos/owner/repo/branches/master":
@@ -52,8 +53,9 @@ func TestGiteeTreeAndFetch(t *testing.T) {
 					{"path": "tvbox/sub/b.txt", "type": "blob", "sha": "b2"},
 				},
 			})
-		case r.URL.Path == "/api/v5/repos/owner/repo/raw/tvbox/a.php":
-			w.Write([]byte("<?php echo 1;"))
+		case r.URL.Path == "/api/v5/repos/owner/repo/git/blobs/b1":
+			enc := base64.StdEncoding.EncodeToString([]byte("<?php echo 1;"))
+			json.NewEncoder(w).Encode(map[string]string{"content": enc, "encoding": "base64"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -68,7 +70,7 @@ func TestGiteeTreeAndFetch(t *testing.T) {
 	if len(nodes) != 2 || nodes[0].Path != "a.php" || nodes[1].Path != "sub/b.txt" {
 		t.Fatalf("nodes = %+v", nodes)
 	}
-	content, err := c.Fetch("tvbox/a.php", "master")
+	content, err := c.Fetch("tvbox/a.php", "b1")
 	if err != nil {
 		t.Fatal(err)
 	}

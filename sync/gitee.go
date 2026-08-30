@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,19 +42,17 @@ func NewGiteeClient(syncCfg config.SyncConfig) *GiteeClient {
 
 func (g *GiteeClient) RepoID() string { return g.cfg.Repo }
 
+// do 发起请求：追加 access_token 查询参数（Gitee 官方鉴权方式，兼容公开/私有仓库）
 func (g *GiteeClient) do(rawURL string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	req, err := http.NewRequest(http.MethodGet, g.authed(rawURL), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "TVGate-Sync")
-	if g.cfg.Token != "" {
-		req.Header.Set("Authorization", "token "+g.cfg.Token)
-	}
 	return g.client.Do(req)
 }
 
-// authed 追加 access_token 查询参数（归档等 web 下载地址使用）
+// authed 追加 access_token 查询参数（Gitee 使用 access_token 而非 Bearer 头）
 func (g *GiteeClient) authed(rawURL string) string {
 	if g.cfg.Token == "" {
 		return rawURL
@@ -135,9 +134,11 @@ func (g *GiteeClient) Tree(branch, prefix string) ([]FileNode, error) {
 	return nodes, nil
 }
 
-// Fetch 按路径取原始内容（ref 为分支名）。
+// Fetch 按 blob sha 取文件内容（git/blobs 公开仓库免 token，返回 base64）。
+// ref 参数为 Tree 返回的 blob sha；私有仓库自动带 access_token。
 func (g *GiteeClient) Fetch(path, ref string) ([]byte, error) {
-	u := g.host + "/api/v5/repos/" + g.cfg.Repo + "/raw/" + url.PathEscape(path) + "?ref=" + url.QueryEscape(ref)
+	// Gitee 的 raw 接口即使公开仓库也要求登录，改用 git/blobs/{sha} 即可公开读取
+	u := g.host + "/api/v5/repos/" + g.cfg.Repo + "/git/blobs/" + url.PathEscape(ref)
 	resp, err := g.do(u)
 	if err != nil {
 		return nil, err
@@ -148,9 +149,23 @@ func (g *GiteeClient) Fetch(path, ref string) ([]byte, error) {
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Gitee raw 请求失败 %s: %d %s", path, resp.StatusCode, truncate(string(body), 300))
+		return nil, fmt.Errorf("Gitee blob 请求失败 %s: %d %s", path, resp.StatusCode, truncate(string(body), 300))
 	}
-	return body, nil
+	var blob struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	if err := json.Unmarshal(body, &blob); err != nil {
+		return nil, err
+	}
+	if blob.Encoding == "base64" {
+		data, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(blob.Content, "\n", ""))
+		if err != nil {
+			return nil, err
+		}
+		return data, nil
+	}
+	return []byte(blob.Content), nil
 }
 
 // Archive 下载整仓归档（Gitee web 下载地址，返回 zip；私有仓库带 access_token）。
