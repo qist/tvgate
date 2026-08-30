@@ -232,6 +232,9 @@ func defaultPHPConsts() map[string]Value {
 	c["FILE_APPEND"] = NewInt(8)
 	c["FILE_USE_INCLUDE_PATH"] = NewInt(1)
 	c["LOCK_EX"] = NewInt(2)
+	c["LOCK_SH"] = NewInt(1)
+	c["LOCK_UN"] = NewInt(3)
+	c["LOCK_NB"] = NewInt(4)
 	// MCRYPT / OPENSSL
 	c["OPENSSL_RAW_DATA"] = NewInt(1)
 	c["OPENSSL_ZERO_PADDING"] = NewInt(3)

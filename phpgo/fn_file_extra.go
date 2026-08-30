@@ -2,6 +2,7 @@ package phpgo
 
 import (
 	"os"
+	"syscall"
 	"time"
 )
 
@@ -109,6 +110,55 @@ func init() {
 			return NewBool(false), nil
 		}
 		return NewInt(fi.ModTime().Unix()), nil
+	}
+	// ftruncate：截断文件到指定长度
+	builtins["ftruncate"] = func(e *Env, a []Value) (Value, error) {
+		if len(a) < 2 {
+			return NewBool(false), nil
+		}
+		f, ok := e.files[int(a[0].ToInt())].(*os.File)
+		if !ok {
+			return NewBool(false), nil
+		}
+		return NewBool(f.Truncate(a[1].ToInt()) == nil), nil
+	}
+	// fflush：把缓冲内容刷入磁盘（Go 直接写文件，Sync 保证落盘）
+	builtins["fflush"] = func(e *Env, a []Value) (Value, error) {
+		if len(a) < 1 {
+			return NewBool(false), nil
+		}
+		f, ok := e.files[int(a[0].ToInt())].(*os.File)
+		if !ok {
+			return NewBool(false), nil
+		}
+		return NewBool(f.Sync() == nil), nil
+	}
+	// flock：文件锁（LOCK_SH=1/LOCK_EX=2/LOCK_UN=3/LOCK_NB=4）
+	builtins["flock"] = func(e *Env, a []Value) (Value, error) {
+		if len(a) < 2 {
+			return NewBool(false), nil
+		}
+		f, ok := e.files[int(a[0].ToInt())].(*os.File)
+		if !ok {
+			return NewBool(false), nil
+		}
+		op := int(a[1].ToInt())
+		var how int
+		// PHP 常量：LOCK_SH=1 LOCK_EX=2 LOCK_UN=3 LOCK_NB=4
+		switch op &^ 4 {
+		case 1:
+			how = syscall.LOCK_SH
+		case 2:
+			how = syscall.LOCK_EX
+		case 3:
+			how = syscall.LOCK_UN
+		default:
+			return NewBool(false), nil
+		}
+		if op&4 != 0 {
+			how |= syscall.LOCK_NB
+		}
+		return NewBool(syscall.Flock(int(f.Fd()), how) == nil), nil
 	}
 	builtins["filectime"] = func(e *Env, a []Value) (Value, error) {
 		if len(a) < 1 {

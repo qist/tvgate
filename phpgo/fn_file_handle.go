@@ -28,6 +28,14 @@ func init() {
 			flag = os.O_CREATE | os.O_APPEND | os.O_WRONLY
 		case "a+":
 			flag = os.O_CREATE | os.O_APPEND | os.O_RDWR
+		case "c":
+			flag = os.O_CREATE | os.O_WRONLY
+		case "c+":
+			flag = os.O_CREATE | os.O_RDWR
+		case "x":
+			flag = os.O_CREATE | os.O_EXCL | os.O_WRONLY
+		case "x+":
+			flag = os.O_CREATE | os.O_EXCL | os.O_RDWR
 		default:
 			flag = os.O_RDONLY
 		}

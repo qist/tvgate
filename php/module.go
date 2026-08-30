@@ -197,6 +197,8 @@ func Handler() http.HandlerFunc {
 		env.SetServer("REQUEST_METHOD", r.Method)
 		env.SetServer("REMOTE_ADDR", r.RemoteAddr)
 		env.SetServer("SCRIPT_NAME", r.URL.Path)
+		env.SetServer("SCRIPT_FILENAME", scriptPath)
+		env.SetServer("PHP_SELF", r.URL.Path)
 		env.SetServer("QUERY_STRING", r.URL.RawQuery)
 		env.SetServer("REQUEST_URI", r.URL.RequestURI())
 		// HTTP headers → $_SERVER（PHP 风格：HTTP_ 前缀 + 大写 + 下划线）

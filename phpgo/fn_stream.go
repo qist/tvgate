@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"io"
 	"net"
+	"os"
 	"strconv"
 	"time"
 )
@@ -59,17 +60,25 @@ func init() {
 		}
 		return NewBool(false), nil
 	}
-	// stream_get_contents：读取流剩余全部内容
+	// stream_get_contents：读取流剩余全部内容（支持网络流与本地文件句柄）
 	builtins["stream_get_contents"] = func(e *Env, a []Value) (Value, error) {
 		if len(a) == 0 {
 			return NewString(""), nil
 		}
 		fd := int(a[0].ToInt())
 		sc, ok := e.files[fd].(*streamConn)
+		if ok {
+			data, err := io.ReadAll(sc.r)
+			if err != nil {
+				return NewString(""), nil
+			}
+			return NewString(string(data)), nil
+		}
+		f, ok := e.files[fd].(*os.File)
 		if !ok {
 			return NewString(""), nil
 		}
-		data, err := io.ReadAll(sc.r)
+		data, err := io.ReadAll(f)
 		if err != nil {
 			return NewString(""), nil
 		}
