@@ -17,6 +17,7 @@
 - [Nginx 反向代理](#nginx-反向代理配置参考)
 - [Linux 内核优化](#linux-内核优化建议)
 - [Web 代码文件管理（编辑/上传/下载/语法检测）](#web-代码文件管理编辑上传下载语法检测)
+- [仓库同步（sync）](#仓库同步sync)
 - [注意事项](#注意事项--常见问题)
 
 ---
@@ -400,6 +401,47 @@ http://<IP>:<port>/web/code
 
 ---
 
+## 仓库同步（sync）
+
+将 **GitHub / GitLab 仓库** 的内容**单向**同步到本地 `docroot` 子目录（如 `tvbox`），一处维护、多端（安卓 / Windows / Linux）自动拉取，无 git 依赖（Go HTTP 直连 API）。
+
+### 特性
+
+- **多仓库**：`sync` 为条目列表，每个 `enabled` 条目独立同步循环、独立 manifest；条目需使用互不相同的 `local_path`
+- **增量对比**：基于 `git blob sha` 对比，只拉变更（新/改），未变化跳过
+- **整仓归档**：变更多 / 首次同步时下载整仓 tar.gz（公开仓库走 codeload 直连，不占 `api.github.com` 未认证 60 次/小时限额），本地计算 git blob sha 对比；增量树 API 限流时自动降级归档
+- **protect 保护清单**：相对 `local_path` 的路径（支持目录前缀），**永不覆盖、永不删除**（设备私有文件如 `tv.txt`，`delete: true` 时也跳过）
+- **安全**：覆盖前 `simplePHPCheck` 校验 PHP 语法；`.bak.<时间戳>` 备份；路径穿越防护；归档解压防穿越
+- **孤立文件报告**：每次同步列出"本地有、远端无"的文件（跳过 protect / `.bak` / 隐藏），供核对设备私有文件
+- **Web 编辑器**：登录 `/web/sync-editor` 可视化增删多仓库（含 protect 清单）
+
+### 配置段
+
+```yaml
+# 仓库同步（支持多仓库，每项独立同步到各自 local_path）
+sync:
+  - name: tvbox               # 标识（用于日志区分多仓库，可空）
+    enabled: false            # 是否启用
+    type: github              # github | gitlab
+    repo: owner/repo          # 仓库标识（GitLab 可为 group/project）
+    branch: main              # 同步分支
+    token: ""                 # PAT（GitHub: ghp_xxx；GitLab: glpat_xxx），公开仓库可留空
+    interval: 60s             # 轮询间隔（最小 10s）
+    repo_path: .              # 仓库内源子目录（"." = 仓库根）
+    local_path: tvbox         # 本地目标：以 php docroot 为锚点；"." = docroot 根，"tvbox" = docroot/tvbox
+    only_php: false           # 是否只同步 .php/.phtml/.php3/.php4/.inc（tvbox 混合内容默认 false 全量）
+    backup: true              # 覆盖/删除前备份为 .bak.<时间戳>
+    delete: false             # 远端已删除的文件，本地是否也删除（false 则保留）
+    protect: []               # 本地保护清单（相对 local_path，支持目录前缀）：永不覆盖、永不删除（如设备私有 tv.txt）
+    timeout: 15s              # 单次 API/下载请求超时
+```
+
+> **访问令牌（token）**：Web 编辑器保存后令牌**不回显**（显示 `********`，掩码占位保存会保留原值、填新值才覆盖），避免凭据泄露。GitHub 未认证仅 60 次/小时，建议公开仓库也配置一个只读 PAT（Contents: Read）以提升到 5000 次/小时，稳定高频轮询。
+>
+> **详细设计**：见 [doc/sync-dev.md](doc/sync-dev.md)（同步算法 / 归档降级 / 孤立文件 / 生命周期 / 测试计划）。
+
+---
+
 ## 配置（config.yaml）示例
 
 > 下例为示意配置，实际字段名以程序版本为准，请将此片段改成你需要的字段结构。
@@ -519,6 +561,23 @@ global_auth:
         enable_static: false
         token: token123
         expire_hours: 1h
+
+# 仓库同步（将 GitHub/GitLab 仓库单向同步到本地 docroot 子目录，支持多仓库）
+sync:
+    - name: tvbox               # 标识（用于日志区分多仓库，可空）
+      enabled: false            # 是否启用
+      type: github              # github | gitlab
+      repo: owner/repo          # 仓库标识 owner/repo（GitLab 可为 group/project）
+      branch: main              # 同步分支
+      token: ""                 # PAT（GitHub: ghp_xxx；GitLab: glpat_xxx），公开仓库可留空
+      interval: 60s             # 轮询间隔（最小 10s）
+      repo_path: .              # 仓库内源子目录（"." = 仓库根）
+      local_path: tvbox         # 本地目标：以 php docroot 为锚点；"." = docroot 根，"tvbox" = docroot/tvbox
+      only_php: false           # 是否只同步 .php/.phtml/.php3/.php4/.inc（混合内容默认 false 全量）
+      backup: true              # 覆盖/删除前备份为 .bak.<时间戳>
+      delete: false             # 远端已删除的文件，本地是否也删除（false 则保留）
+      protect: []               # 本地保护清单（相对 local_path，支持目录前缀）：永不覆盖、永不删除（如设备私有 tv.txt）
+      timeout: 15s              # 单次 API/下载请求超时
 
 proxygroups:
   蜀小果:
