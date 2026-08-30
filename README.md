@@ -422,10 +422,11 @@ http://<IP>:<port>/web/code
 sync:
   - name: tvbox               # 标识（用于日志区分多仓库，可空）
     enabled: false            # 是否启用
-    type: github              # github | gitlab
+    type: github              # github | gitlab | gitee
+    host: ""                  # 自建实例地址（自建 GitLab https://git.内网 或 Gitee https://gitee.com），留空 = 平台默认
     repo: owner/repo          # 仓库标识（GitLab 可为 group/project）
     branch: main              # 同步分支
-    token: ""                 # PAT（GitHub: ghp_xxx；GitLab: glpat_xxx），公开仓库可留空
+    token: ""                 # PAT（GitHub: ghp_xxx；GitLab: glpat_xxx；Gitee: 私人令牌），公开仓库可留空
     interval: 60s             # 轮询间隔（最小 10s）
     repo_path: .              # 仓库内源子目录（"." = 仓库根）
     local_path: tvbox         # 本地目标：以 php docroot 为锚点；"." = docroot 根，"tvbox" = docroot/tvbox
@@ -435,6 +436,8 @@ sync:
     protect: []               # 本地保护清单（相对 local_path，支持目录前缀）：永不覆盖、永不删除（如设备私有 tv.txt）
     timeout: 15s              # 单次 API/下载请求超时
 ```
+
+> **平台支持**：`type` 支持 `github` / `gitlab` / `gitee`。`host` 留空用平台默认（gitlab.com / gitee.com）；**自建 GitLab**（内网 IP/端口）填 `host` 即可（API v4 路径一致）；**Gitee** 走 API v5，token 用 Gitee 私人令牌，归档为 zip。
 
 > **访问令牌（token）**：Web 编辑器保存后令牌**不回显**（显示 `********`，掩码占位保存会保留原值、填新值才覆盖），避免凭据泄露。GitHub 未认证仅 60 次/小时，建议公开仓库也配置一个只读 PAT（Contents: Read）以提升到 5000 次/小时，稳定高频轮询。
 >
@@ -583,10 +586,11 @@ global_auth:
 sync:
     - name: tvbox               # 标识（用于日志区分多仓库，可空）
       enabled: false            # 是否启用
-      type: github              # github | gitlab
+      type: github              # github | gitlab | gitee
+      host: ""                  # 自建实例地址（自建 GitLab https://git.内网 或 Gitee https://gitee.com），留空 = 平台默认
       repo: owner/repo          # 仓库标识 owner/repo（GitLab 可为 group/project）
       branch: main              # 同步分支
-      token: ""                 # PAT（GitHub: ghp_xxx；GitLab: glpat_xxx），公开仓库可留空
+      token: ""                 # PAT（GitHub: ghp_xxx；GitLab: glpat_xxx；Gitee: 私人令牌），公开仓库可留空
       interval: 60s             # 轮询间隔（最小 10s）
       repo_path: .              # 仓库内源子目录（"." = 仓库根）
       local_path: tvbox         # 本地目标：以 php docroot 为锚点；"." = docroot 根，"tvbox" = docroot/tvbox

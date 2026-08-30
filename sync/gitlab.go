@@ -24,16 +24,21 @@ type GitLabClient struct {
 }
 
 // NewGitLabClient 创建 GitLab 客户端。
+// host 为空时默认 gitlab.com；自建 GitLab（含内网 IP/端口）通过 sync.host 配置，API 路径一致。
 func NewGitLabClient(syncCfg config.SyncConfig) *GitLabClient {
 	timeout := syncCfg.Timeout
 	if timeout <= 0 {
 		timeout = 15 * time.Second
 	}
+	host := syncCfg.Host
+	if host == "" {
+		host = "https://gitlab.com"
+	}
 	return &GitLabClient{
 		cfg:           syncCfg,
 		client:        &http.Client{Timeout: timeout},
 		archiveClient: &http.Client{Timeout: archiveDownloadTimeout},
-		host:          "https://gitlab.com",
+		host:          strings.TrimSuffix(host, "/"),
 		projID:        url.PathEscape(syncCfg.Repo),
 	}
 }

@@ -10,6 +10,22 @@ import (
 	"github.com/qist/tvgate/config"
 )
 
+func TestGitLabCustomHost(t *testing.T) {
+	// 自建 GitLab：sync.host 指定实例地址，NewGitLabClient 应使用它而非默认 gitlab.com
+	c := NewGitLabClient(config.SyncConfig{Repo: "group/proj", Host: "https://git.example.com", Timeout: 0})
+	if c.host != "https://git.example.com" {
+		t.Fatalf("host = %q, want https://git.example.com", c.host)
+	}
+	if c.projID != "group%2Fproj" {
+		t.Fatalf("projID = %q", c.projID)
+	}
+	// 无 host 时默认 gitlab.com
+	c2 := NewGitLabClient(config.SyncConfig{Repo: "a/b"})
+	if c2.host != "https://gitlab.com" {
+		t.Fatalf("default host = %q", c2.host)
+	}
+}
+
 func TestGitLabTreePaginationAndFetch(t *testing.T) {
 	var page1 []map[string]string
 	for i := 0; i < 100; i++ {

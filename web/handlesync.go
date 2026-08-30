@@ -5,16 +5,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/updater"
 	"gopkg.in/yaml.v3"
 )
 
 // syncFieldOrder 控制保存到 YAML 时字段的固定顺序
 var syncFieldOrder = []string{
-	"name", "enabled", "type", "repo", "branch", "token",
+	"name", "enabled", "type", "host", "repo", "branch", "token",
 	"interval", "repo_path", "local_path", "only_php", "backup", "delete", "timeout",
 }
 
@@ -44,6 +47,7 @@ func (h *ConfigHandler) handleSyncConfig(w http.ResponseWriter, r *http.Request)
 			"name":       s.Name,
 			"enabled":    s.Enabled,
 			"type":       s.Type,
+			"host":       s.Host,
 			"repo":       s.Repo,
 			"branch":     s.Branch,
 			"token":      maskToken(s.Token), // 令牌不回显真值，仅掩码占位（前端填写新值可见，保存后不可再看）
@@ -211,6 +215,9 @@ func applySyncConfigFields(sync *config.SyncConfig, m map[string]interface{}) {
 	if v, ok := m["type"].(string); ok {
 		sync.Type = v
 	}
+	if v, ok := m["host"].(string); ok {
+		sync.Host = v
+	}
 	if v, ok := m["repo"].(string); ok {
 		sync.Repo = v
 	}
@@ -261,4 +268,140 @@ func boolOr(b *bool, def bool) bool {
 		return def
 	}
 	return *b
+}
+
+// handleSyncBranches 获取指定仓库的分支列表（供前端下拉选择）。
+// token 为掩码占位时从已存配置解析真实 token（只读，不回显）。
+func (h *ConfigHandler) handleSyncBranches(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	typ := q.Get("type")
+	if typ == "" {
+		typ = "github"
+	}
+	repo := q.Get("repo")
+	if repo == "" {
+		http.Error(w, "请先填写仓库标识", http.StatusBadRequest)
+		return
+	}
+	host := q.Get("host")
+	token := q.Get("token")
+	if token == credentialMask {
+		config.CfgMu.RLock()
+		for _, s := range config.Cfg.Sync {
+			if s.Repo == repo && (s.Type == typ || s.Type == "") {
+				token = s.Token
+				break
+			}
+		}
+		config.CfgMu.RUnlock()
+	}
+
+	branches, err := fetchBranches(typ, host, repo, token)
+	if err != nil {
+		http.Error(w, "获取分支失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(branches)
+}
+
+// fetchBranches 按平台拉取仓库分支列表（独立实现，避免 web ↔ sync 循环依赖）。
+// 仅 GitHub 使用 github 加速配置；GitLab/Gitee（含自建 host）一律直连，不附加加速。
+func fetchBranches(typ, host, repo, token string) ([]string, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	var urls []string
+	var headers map[string]string
+
+	switch typ {
+	case "gitlab":
+		if host == "" {
+			host = "https://gitlab.com"
+		}
+		urls = []string{strings.TrimSuffix(host, "/") + "/api/v4/projects/" + url.PathEscape(repo) + "/repository/branches?per_page=100"}
+		if token != "" {
+			headers = map[string]string{"PRIVATE-TOKEN": token}
+		}
+	case "gitee":
+		if host == "" {
+			host = "https://gitee.com"
+		}
+		u := strings.TrimSuffix(host, "/") + "/api/v5/repos/" + repo + "/branches?per_page=100"
+		if token != "" {
+			u += "&access_token=" + url.QueryEscape(token)
+		}
+		urls = []string{u}
+	default: // github —— 仅此平台使用 github 加速配置，其余平台不附加
+		apiPath := "https://api.github.com/repos/" + repo + "/branches?per_page=100"
+		urls = []string{apiPath}
+		config.CfgMu.RLock()
+		gc := config.Cfg.Github
+		config.CfgMu.RUnlock()
+		if gc.Enabled {
+			var accel []string
+			if gc.URL != "" {
+				accel = append(accel, updater.BuildURL(gc.URL, apiPath))
+			}
+			for _, b := range gc.BackupURLs {
+				if b != "" {
+					accel = append(accel, updater.BuildURL(b, apiPath))
+				}
+			}
+			urls = append(accel, urls...)
+		}
+		if token != "" {
+			headers = map[string]string{"Authorization": "Bearer " + token}
+		}
+	}
+
+	var lastErr error
+	for _, u := range urls {
+		req, err := http.NewRequest(http.MethodGet, u, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("User-Agent", "TVGate-Sync")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("请求分支失败: HTTP %d %s", resp.StatusCode, truncateBytes(body, 200))
+			continue
+		}
+		var items []struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(body, &items); err != nil {
+			lastErr = err
+			continue
+		}
+		names := make([]string, 0, len(items))
+		for _, it := range items {
+			if it.Name != "" {
+				names = append(names, it.Name)
+			}
+		}
+		return names, nil
+	}
+	return nil, lastErr
+}
+
+// truncateBytes 截断响应体用于错误信息
+func truncateBytes(b []byte, n int) string {
+	s := string(b)
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }

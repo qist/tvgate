@@ -59,10 +59,11 @@ docroot（www/ 目录）→ PHP 模块正常加载
 sync:
   - name: tvbox               # 标识（用于日志区分多仓库，可空）
     enabled: false            # 是否启用
-    type: github              # github | gitlab
+    type: github              # github | gitlab | gitee
+    host: ""                  # 自建实例地址（自建 GitLab https://git.内网 或 Gitee https://gitee.com），留空 = 平台默认
     repo: owner/repo          # 仓库标识（GitLab 可为 group/project）
     branch: main              # 同步分支
-    token: ""                 # PAT（GitHub: ghp_xxx；GitLab: glpat_xxx）。可留空仅用于公开仓库
+    token: ""                 # PAT（GitHub: ghp_xxx；GitLab: glpat_xxx；Gitee: 私人令牌）。可留空仅用于公开仓库
     interval: 60s             # 轮询间隔（最小 10s）
     repo_path: .              # 仓库内源子目录（"." = 仓库根；tvbox 内容在仓库根时用 ".")
     local_path: tvbox         # 本地目标：以 php docroot 为锚点；"." = docroot 根，"tvbox" = docroot/tvbox
@@ -73,11 +74,14 @@ sync:
     timeout: 15s              # 单次 API/下载请求超时
   # - name: php                # 可继续添加更多仓库条目，每个条目独立同步循环
   #   enabled: false
-  #   type: github
+  #   type: gitlab             # 自建 GitLab 需配 host
+  #   host: https://git.内网
   #   repo: owner/php-scripts
   #   local_path: www/scripts
   #   ...
 ```
+
+> **平台支持**：`type` 支持 `github` / `gitlab` / `gitee`；`host` 为空用平台默认（gitlab.com / gitee.com）。**自建 GitLab**（含内网 IP/端口）填 `host` 即可，API v4 路径一致；**Gitee** 走 API v5（分支 sha → 递归树、raw 取内容、web zip 归档），token 用 Gitee 私人令牌。
 
 > **实际部署示例（对应安卓 `www/tvbox`）**：仓库根存 tvbox 全部内容（json/txt/m3u/jar/py/js…），则 `repo_path: .`、`local_path: tvbox`，同步后即得到 `docroot/tvbox/*`。
 
@@ -101,7 +105,8 @@ sync:
 type SyncConfig struct {
 	Name      string        `yaml:"name"`       // 标识（用于日志区分多仓库，可空）
 	Enabled   bool          `yaml:"enabled"`
-	Type      string        `yaml:"type"`      // github | gitlab
+	Type      string        `yaml:"type"`      // github | gitlab | gitee
+	Host      string        `yaml:"host"`      // 自建实例地址（自建 GitLab/Gitee），空 = 平台默认
 	Repo      string        `yaml:"repo"`      // owner/repo
 	Branch    string        `yaml:"branch"`
 	Token     string        `yaml:"token"`

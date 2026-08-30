@@ -187,6 +187,31 @@
             margin-top: 10px;
         }
 
+        .branch-row {
+            display: flex;
+            align-items: stretch;
+            gap: 6px;
+        }
+
+        .branch-row .form-control {
+            flex: 1;
+        }
+
+        .branch-refresh {
+            width: 44px;
+            flex-shrink: 0;
+            border: 1px solid var(--win11-border);
+            background-color: var(--win11-surface);
+            color: var(--win11-text-primary);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        .branch-refresh:hover {
+            border-color: var(--win11-accent);
+        }
+
         .list-item {
             display: flex;
             margin-bottom: 10px;
@@ -304,6 +329,7 @@
                 name: '',
                 enabled: false,
                 type: 'github',
+                host: '',
                 repo: '',
                 branch: 'main',
                 token: '',
@@ -324,6 +350,8 @@
                 .then(data => {
                     entries = Array.isArray(data) && data.length ? data : [newEntry()];
                     renderEntries();
+                    // 加载后为已有仓库自动拉取分支
+                    entries.forEach((e, i) => { if (e && e.repo) fetchBranches(i); });
                 })
                 .catch(error => {
                     entries = [newEntry()];
@@ -365,8 +393,9 @@
                         <div class="form-group">
                             <label>仓库类型</label>
                             <select class="form-control type-input" data-e="${idx}">
-                                <option value="github" ${entry.type === 'gitlab' ? '' : 'selected'}>GitHub</option>
+                                <option value="github" ${entry.type === 'github' ? 'selected' : ''}>GitHub</option>
                                 <option value="gitlab" ${entry.type === 'gitlab' ? 'selected' : ''}>GitLab</option>
+                                <option value="gitee" ${entry.type === 'gitee' ? 'selected' : ''}>Gitee</option>
                             </select>
                         </div>
                     </div>
@@ -382,9 +411,19 @@
                     <div class="form-col">
                         <div class="form-group">
                             <label>同步分支</label>
-                            <input type="text" class="form-control branch-input" value="${entry.branch || 'main'}" placeholder="例如: main / master" data-e="${idx}">
+                            <div class="branch-row">
+                                <select class="form-control branch-select" data-e="${idx}" title="从仓库自动拉取，可点右侧刷新">
+                                    <option value="${entry.branch || 'main'}">${entry.branch || 'main'}</option>
+                                </select>
+                                <button type="button" class="branch-refresh" data-e="${idx}" title="刷新分支列表">↻</button>
+                            </div>
                         </div>
                     </div>
+                </div>
+
+                <div class="form-group">
+                    <label>自建实例地址（host，可选）</label>
+                    <input type="text" class="form-control host-input" value="${entry.host || ''}" placeholder="自建 GitLab: https://git.内网 或 Gitee: https://gitee.com（留空 = 平台默认）" data-e="${idx}">
                 </div>
 
                 <div class="form-group">
@@ -465,18 +504,30 @@
             });
             // 字段输入事件
             bindTextInput('.name-input', 'name');
-            bindTextInput('.repo-input', 'repo');
-            bindTextInput('.branch-input', 'branch');
-            bindTextInput('.token-input', 'token');
+            bindTextInput('.repo-input', 'repo', scheduleBranchFetch);
+            bindTextInput('.token-input', 'token', scheduleBranchFetch);
             bindTextInput('.interval-input', 'interval');
             bindTextInput('.timeout-input', 'timeout');
             bindTextInput('.repo-path-input', 'repo_path');
             bindTextInput('.local-path-input', 'local_path');
-            bindSelectInput('.type-input', 'type');
+            bindSelectInput('.type-input', 'type', scheduleBranchFetch);
+            bindTextInput('.host-input', 'host', scheduleBranchFetch);
             bindCheckInput('.enabled-input', 'enabled');
             bindCheckInput('.only-php-input', 'only_php');
             bindCheckInput('.backup-input', 'backup');
             bindCheckInput('.delete-input', 'delete');
+
+            // 分支下拉：选择更新 entries；刷新按钮立即拉取
+            document.querySelectorAll('.branch-select').forEach(sel => {
+                sel.addEventListener('change', function () {
+                    entries[parseInt(this.getAttribute('data-e'))].branch = this.value;
+                });
+            });
+            document.querySelectorAll('.branch-refresh').forEach(btn => {
+                btn.addEventListener('click', function () {
+                    fetchBranches(parseInt(this.getAttribute('data-e')));
+                });
+            });
 
             // protect 添加
             document.querySelectorAll('.add-protect').forEach(btn => {
@@ -506,20 +557,23 @@
             });
         }
 
-        function bindTextInput(selector, field) {
+        function bindTextInput(selector, field, after) {
             document.querySelectorAll(selector).forEach(input => {
                 input.addEventListener('change', function () {
                     const idx = parseInt(this.getAttribute('data-e'));
                     entries[idx][field] = this.value;
                     updateEntryTitle(idx);
+                    if (after) after(idx);
                 });
             });
         }
 
-        function bindSelectInput(selector, field) {
+        function bindSelectInput(selector, field, after) {
             document.querySelectorAll(selector).forEach(input => {
                 input.addEventListener('change', function () {
-                    entries[parseInt(this.getAttribute('data-e'))][field] = this.value;
+                    const idx = parseInt(this.getAttribute('data-e'));
+                    entries[idx][field] = this.value;
+                    if (after) after(idx);
                 });
             });
         }
@@ -540,6 +594,40 @@
             }
         }
 
+        // 分支下拉：仓库/类型/host/token 变化后防抖自动拉取
+        let branchFetchTimer = null;
+        function scheduleBranchFetch(idx) {
+            if (!entries[idx] || !entries[idx].repo) return;
+            clearTimeout(branchFetchTimer);
+            branchFetchTimer = setTimeout(() => fetchBranches(idx), 600);
+        }
+
+        function fetchBranches(idx) {
+            const e = entries[idx];
+            if (!e || !e.repo) return;
+            const params = new URLSearchParams({
+                type: e.type || 'github',
+                host: e.host || '',
+                repo: e.repo,
+                token: e.token || ''
+            });
+            fetch(webPath + 'api/sync/branches?' + params.toString())
+                .then(r => { if (!r.ok) throw new Error(''); return r.json(); })
+                .then(branches => {
+                    if (!Array.isArray(branches) || !branches.length) return;
+                    const sel = document.querySelector(`.branch-select[data-e="${idx}"]`);
+                    if (!sel) return;
+                    const cur = entries[idx].branch || branches[0];
+                    let html = branches.map(b => `<option value="${b}" ${b === cur ? 'selected' : ''}>${b}</option>`).join('');
+                    if (!branches.includes(cur)) {
+                        html += `<option value="${cur}" selected>${cur}</option>`;
+                    }
+                    sel.innerHTML = html;
+                    entries[idx].branch = sel.value;
+                })
+                .catch(() => { /* 拉取失败保留手动值 */ });
+        }
+
         function saveConfig() {
             // 收集并清理（空 repo 的条目不保存）
             const configData = entries
@@ -547,6 +635,7 @@
                     name: (e.name || '').trim(),
                     enabled: !!e.enabled,
                     type: e.type || 'github',
+                    host: (e.host || '').trim(),
                     repo: (e.repo || '').trim(),
                     branch: (e.branch || 'main').trim() || 'main',
                     token: e.token || '',

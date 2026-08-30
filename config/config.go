@@ -281,10 +281,11 @@ type GithubConfig struct {
 type SyncConfig struct {
 	Name      string        `yaml:"name"` // 标识（用于日志与区分多仓库，可空）
 	Enabled   bool          `yaml:"enabled"`
-	Type      string        `yaml:"type"` // github | gitlab
+	Type      string        `yaml:"type"` // github | gitlab | gitee
+	Host      string        `yaml:"host"` // 自建实例地址（如自建 GitLab https://git.内网 或 Gitee https://gitee.com）；空 = 平台默认
 	Repo      string        `yaml:"repo"` // owner/repo（GitLab 可为 group/project）
 	Branch    string        `yaml:"branch"`
-	Token     string        `yaml:"token"`      // PAT（GitHub: ghp_xxx；GitLab: glpat_xxx），可留空仅用于公开仓库
+	Token     string        `yaml:"token"`      // PAT（GitHub: ghp_xxx；GitLab: glpat_xxx；Gitee: 私人令牌），可留空仅用于公开仓库
 	Interval  time.Duration `yaml:"interval"`   // 轮询间隔（最小 10s）
 	RepoPath  string        `yaml:"repo_path"`  // 仓库内源子目录（"." = 仓库根）
 	LocalPath string        `yaml:"local_path"` // 本地目标，以 php docroot 为锚点；"." = docroot 根，"tvbox" = docroot/tvbox

@@ -2,6 +2,7 @@ package sync
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -104,6 +105,8 @@ func newManager(entry *config.SyncConfig, githubCfg config.GithubConfig) *SyncMa
 	switch entry.Type {
 	case "gitlab":
 		sm.client = NewGitLabClient(*entry)
+	case "gitee":
+		sm.client = NewGiteeClient(*entry)
 	default:
 		sm.client = NewGitHubClient(*entry, githubCfg)
 	}
@@ -174,7 +177,12 @@ func (s *SyncManager) syncOnce(ctx context.Context) error {
 	// 直接用整仓归档（公开仓库走 codeload 不占 API 限额）+ 本地计算 git blob sha，
 	// 完全不依赖 tree API，避免逐文件拉取触发限流。
 	if len(manifest.Files) == 0 {
-		return s.syncFromArchive(ctx, manifest)
+		if err := s.syncFromArchive(ctx, manifest); err != nil {
+			// 归档不可用（如平台无归档/私有权限不足）→ 回退增量式首次全量（tree + 逐文件）
+			logger.LogPrintf("⚠️ [sync] %s 归档同步失败(%v)，回退增量式首次全量", syncLabel(cfg), err)
+		} else {
+			return nil
+		}
 	}
 
 	// 1. 拉取远端目录树（增量对比）
@@ -421,8 +429,20 @@ func (s *SyncManager) isolatedFiles(remoteFiles map[string]string) []string {
 	return isolated
 }
 
-// extractArchive 解析仓库 tar.gz 归档，返回 相对路径(去掉顶层仓库目录前缀) → 内容。
+// extractArchive 解析仓库归档，返回 相对路径(去掉顶层仓库目录前缀) → 内容。
+// 自动识别 tar.gz（gzip 魔数）与 zip（PK 魔数），分别对应 GitHub/GitLab 与 Gitee 归档。
 func extractArchive(data []byte) (map[string][]byte, error) {
+	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+		return extractTarGz(data)
+	}
+	if len(data) >= 4 && data[0] == 'P' && data[1] == 'K' {
+		return extractZip(data)
+	}
+	return nil, fmt.Errorf("无法识别的归档格式")
+}
+
+// extractTarGz 解析 tar.gz（GitHub / GitLab 归档）
+func extractTarGz(data []byte) (map[string][]byte, error) {
 	gr, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
@@ -442,14 +462,9 @@ func extractArchive(data []byte) (map[string][]byte, error) {
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		// 去掉顶层仓库目录（如 qist-tvbox-<sha>/）
-		parts := strings.SplitN(filepath.ToSlash(hdr.Name), "/", 2)
-		if len(parts) != 2 || parts[1] == "" {
+		rel, ok := stripArchivePath(hdr.Name)
+		if !ok {
 			continue
-		}
-		rel := parts[1]
-		if filepath.IsAbs(rel) || strings.Contains(rel, "..") {
-			continue // 防归档路径穿越
 		}
 		content, err := io.ReadAll(tr)
 		if err != nil {
@@ -458,4 +473,46 @@ func extractArchive(data []byte) (map[string][]byte, error) {
 		files[rel] = content
 	}
 	return files, nil
+}
+
+// extractZip 解析 zip 归档（Gitee 归档）
+func extractZip(data []byte) (map[string][]byte, error) {
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, err
+	}
+	files := map[string][]byte{}
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		rel, ok := stripArchivePath(f.Name)
+		if !ok {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		content, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			return nil, err
+		}
+		files[rel] = content
+	}
+	return files, nil
+}
+
+// stripArchivePath 去掉顶层仓库目录（如 qist-tvbox-<sha>/），并做路径穿越防护。
+func stripArchivePath(name string) (string, bool) {
+	parts := strings.SplitN(filepath.ToSlash(name), "/", 2)
+	if len(parts) != 2 || parts[1] == "" {
+		return "", false
+	}
+	rel := parts[1]
+	if filepath.IsAbs(rel) || strings.Contains(rel, "..") {
+		return "", false // 防归档路径穿越
+	}
+	return rel, true
 }

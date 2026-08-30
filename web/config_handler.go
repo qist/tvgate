@@ -223,6 +223,7 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"sync-editor", h.cookieAuth(h.handleSyncEditor))
 	mux.HandleFunc(webPath+"api/sync/config", h.cookieAuth(h.handleSyncConfig))
 	mux.HandleFunc(webPath+"api/sync/config/save", h.cookieAuth(h.handleSyncConfigSave))
+	mux.HandleFunc(webPath+"api/sync/branches", h.cookieAuth(h.handleSyncBranches))
 
 	// 配置查看与保存路由
 	mux.HandleFunc(webPath+"config", h.cookieAuth(h.handleConfig))
