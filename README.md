@@ -321,6 +321,10 @@ php:
 >
 > 不依赖任何 PHP 扩展（如 `iconv` / `session` / `xml` 等），常见字符串、数组、日期、curl、文件、加解密等内置函数均以 Go 原生实现。
 
+> **内置函数覆盖**：phpgo 内置 300+ 个常用 PHP 函数（字符串 / 数组 / 数学 / 日期 / 文件 / JSON / URL / cURL / 正则 / 加解密 / 类型等），并含 12 个别名（如 `join`→`implode`、`mt_rand`→`rand`）。完整清单与兼容性说明见 [phpgo 函数实现清单](phpgo/php_basic_functions_go_implementation.md)。
+>
+> ⚠️ **超时注意**：phpgo 的 HTTP 栈比原生 PHP + libcurl 慢，脚本里用很短超时（如 `CURLOPT_TIMEOUT=0.1`）做链接可用性校验时容易被误判超时。建议把超时调大（如 `3s/5s`），或采用"0.1s 快速校验 + 加几秒兜底重试"；校验超时应按"无法判断"处理，用缓存兜底而不是清缓存。
+
 ### 访问方式
 
 假设服务监听 `8888`，机器 IP 为 `192.168.1.10`，脚本放在默认的 `www/huya.php`（即 `<配置文件所在目录>/www/huya.php`）：
