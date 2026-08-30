@@ -114,10 +114,14 @@ func init() {
 		if len(a) >= 2 {
 			flags = a[1].ToInt()
 		}
+		e.jsonErr = 0
+		e.jsonErrMsg = ""
 		// 自定义保序编码：关联数组按 PHP 插入顺序输出（Go map 会丢序）
 		s, err := jsonEncodeValue(a[0], flags)
 		if err != nil {
-			return NewString(""), err
+			e.jsonErr = 5 // JSON_ERROR_UTF8
+			e.jsonErrMsg = "Malformed UTF-8 characters, possibly incorrectly encoded"
+			return NewString(""), nil
 		}
 		// JSON_PRETTY_PRINT
 		if flags&128 != 0 {
@@ -134,11 +138,15 @@ func init() {
 			assoc = a[1].ToBool()
 		}
 		s := a[0].ToString()
+		e.jsonErr = 0
+		e.jsonErrMsg = ""
 		if s == "" {
 			return NewNull(), nil
 		}
 		var raw interface{}
 		if err := json.Unmarshal([]byte(s), &raw); err != nil {
+			e.jsonErr = 4 // JSON_ERROR_SYNTAX
+			e.jsonErrMsg = "Syntax error"
 			return NewNull(), nil
 		}
 		return goToPHP(raw, assoc), nil

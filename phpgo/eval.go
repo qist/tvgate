@@ -3,6 +3,7 @@ package phpgo
 import (
 	"fmt"
 	"io"
+	mathrand "math/rand"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -89,6 +90,15 @@ type Env struct {
 	nextFd        int                        // 下一个可用 fd
 	scriptPath    string                     // 当前脚本路径（用于 __DIR__/__FILE__）
 	loc           *time.Location             // 当前请求默认时区（date/strtotime 使用）
+
+	// 占位函数真实化所需的运行时状态
+	rng           *mathrand.Rand    // 可播种 PRNG（srand/mt_srand 控制，未显式播种时自动随机）
+	ini           map[string]string // ini_set/ini_get 存储
+	errorLevel    int64             // error_reporting 级别
+	jsonErr       int               // 最近一次 JSON 错误码（json_last_error）
+	jsonErrMsg    string            // 最近一次 JSON 错误信息（json_last_error_msg）
+	sessionID     string            // 会话 ID（session_id/session_start）
+	implicitFlush bool              // ob_implicit_flush 标记
 }
 
 // NewEnv 创建执行环境
@@ -106,6 +116,7 @@ func NewEnv(proxy ProxyFunc) *Env {
 		session: map[string]string{},
 		envmap:  map[string]string{},
 		ufiles:  map[string]Value{},
+		ini:     map[string]string{},
 		proxy:   proxy,
 		echoOut: &strings.Builder{},
 		files:   map[int]io.ReadWriteCloser{},
@@ -346,6 +357,11 @@ func (e *Env) Run(prog *Program) (Value, error) {
 		if _, err := e.execStmt(st); err != nil {
 			return NewNull(), err
 		}
+	}
+	// 脚本结束：把残留的输出缓冲逐层刷到最终输出（对齐 PHP 隐式 ob_end_flush）
+	for len(e.obStack) > 0 {
+		e.echoOut.WriteString(e.obStack[len(e.obStack)-1].String())
+		e.obStack = e.obStack[:len(e.obStack)-1]
 	}
 	return NewNull(), nil
 }

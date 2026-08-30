@@ -74,7 +74,7 @@
 | `exp` `log` `log10` `log2` `log1p` `fmod` `deg2rad` `rad2deg` | 指数 / 对数 |
 | `sin` `cos` `tan` `asin` `acos` `atan` `atan2` `sinh` `cosh` `tanh` `hypot` | 三角函数 |
 | `decoct` `octdec` `is_finite` `is_infinite` `is_nan` | 进制 / 数值判断 |
-| `srand` `mt_srand` | **no-op**（仅返回 null，不真正设置随机种子） |
+| `srand` `mt_srand` | 显式设置随机种子（影响 `rand`/`mt_rand`；seed=0 时自动按时间播种） |
 
 ## 4. 随机数
 
@@ -82,9 +82,8 @@
 |---|---|
 | `rand` `random_int` `mt_getrandmax` `uniqid` `random_bytes` | 随机数 |
 | `mt_rand` | **别名** → `rand` |
-| `usleep` | 真实睡眠（Go `time.Sleep`） |
-
-> ⚠️ PHP 的 `sleep()` **未实现**，目前只有 `usleep`。
+| `usleep` | 真实睡眠（微秒，Go `time.Sleep`） |
+| `sleep` | 真实睡眠（秒，Go `time.Sleep`，成功返回 0） |
 
 ## 5. 日期时间
 
@@ -133,7 +132,7 @@
 | 函数 | 说明 |
 |---|---|
 | `json_encode` `json_decode` | JSON（关联数组按 PHP 插入顺序输出） |
-| `json_last_error` `json_last_error_msg` | **stub**（固定返回 `0` / `"No error"`） |
+| `json_last_error` `json_last_error_msg` | 跟踪最近一次 `json_encode`/`json_decode` 的错误（成功为 0/"No error"） |
 | `var_export` | 变量导出 |
 
 ## 10. cURL
@@ -168,13 +167,17 @@
 | 函数 | 说明 |
 |---|---|
 | `echo` `print` | 语言结构 |
-| `ob_start` `ob_get_clean` `ob_get_contents` `ob_end_clean` `ob_get_level` | 输出缓冲（真实实现） |
-| `ob_flush` `ob_implicit_flush` `flush` | **no-op** |
+| `ob_start` `ob_get_clean` `ob_get_contents` `ob_end_clean` `ob_get_level` `ob_flush` `flush` | 输出缓冲（真实实现；脚本结束自动刷残留缓冲） |
+| `ob_implicit_flush` | 记录标记（phpgo 输出统一在脚本结束后下发，不改变收集行为） |
 | `setcookie` | 真实发送 Set-Cookie 响应头 |
-| `error_reporting` `ini_set` `ini_get` | **stub**（固定返回值，不真正生效） |
-| `php_sapi_name` `phpinfo` `session_start` `session_id` `getenv` | **stub** |
-| `error_log` | **no-op**（返回 true，不真正写日志） |
-| `set_time_limit` | **no-op**（返回 true） |
+| `error_reporting` | 设置/获取错误级别（返回旧值） |
+| `ini_set` `ini_get` | 请求内 ini 存储（返回旧值/已设值） |
+| `php_sapi_name` | 返回 `cli-server` |
+| `phpinfo` | 输出最小化 phpgo 信息 HTML |
+| `session_start` `session_id` | 最小化会话（生成/复用 PHPSESSID 并下发 Cookie，`$_SESSION` 请求内可读写） |
+| `getenv` | 返回真实进程环境变量（其次 `$_ENV`） |
+| `error_log` | 写入错误日志（默认 stderr；PHP 类型 3 可写指定文件） |
+| `set_time_limit` | 记录到 ini（纯 Go 运行时无法中途终止脚本执行，仅保留值） |
 
 ## 14. PHP 超全局变量
 
@@ -241,9 +244,13 @@ curl_setopt($ch, CURLOPT_TIMEOUT, 0.1);
 
 ### 未实现 / 占位
 
-- `sleep()` **未实现**（只有 `usleep`）。
-- `error_log` / `set_time_limit` / `srand` / `mt_srand` / `ob_flush` / `flush` / `ob_implicit_flush` 为 no-op。
-- `error_reporting` / `ini_set` / `ini_get` / `php_sapi_name` / `phpinfo` / `session_start` / `session_id` / `getenv` / `json_last_error` / `json_last_error_msg` 为 stub。
+绝大多数占位函数已真实化，剩余说明：
+
+- `set_time_limit`：仅记录到 ini，**无法真正中途终止脚本执行**（纯 Go 运行时限制）。
+- `ob_implicit_flush`：仅记录标记，phpgo 输出统一在脚本结束后下发，无真实增量推流。
+- `flush`：输出统一在脚本结束下发，调用仅合并残留缓冲，无法中途推流。
+- `error_log` / `getenv` 依赖宿主环境（stderr / 进程环境变量）。
+- `srand`/`mt_srand` 已支持显式播种；`rand`/`mt_rand` 使用可播种 PRNG（未播种时自动随机）。
 
 ---
 
