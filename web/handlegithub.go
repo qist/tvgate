@@ -179,11 +179,13 @@ func updateGithubConfigNode(node *yaml.Node, githubConfig map[string]interface{}
 		// 创建新的github键节点
 		keyNode := &yaml.Node{
 			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
 			Value: "github",
 		}
 		// 创建新的github值节点
 		githubNode = &yaml.Node{
 			Kind: yaml.MappingNode,
+			Tag:  "!!map",
 		}
 		// 添加到根节点
 		root.Content = append(root.Content, keyNode, githubNode)
@@ -229,6 +231,7 @@ func updateField(node *yaml.Node, key string, value interface{}) {
 	// 没有找到字段，创建新字段
 	keyNode := &yaml.Node{
 		Kind:  yaml.ScalarNode,
+		Tag:   "!!str",
 		Value: key,
 	}
 	valueNode := createValueNode(value)
@@ -251,17 +254,19 @@ func updateStringArrayField(node *yaml.Node, key string, values []interface{}) {
 	// 没有找到字段，创建新字段
 	keyNode := &yaml.Node{
 		Kind:  yaml.ScalarNode,
+		Tag:   "!!str",
 		Value: key,
 	}
 	valueNode := createStringArrayNode(values)
 	node.Content = append(node.Content, keyNode, valueNode)
 }
 
-// updateValueNode 更新值节点
+// updateValueNode 更新值节点（显式设置 Tag，避免手工构造节点序列化时被误判为 !!null）
 func updateValueNode(node *yaml.Node, value interface{}) {
 	switch v := value.(type) {
 	case bool:
 		node.Kind = yaml.ScalarNode
+		node.Tag = "!!bool"
 		if v {
 			node.Value = "true"
 		} else {
@@ -269,9 +274,11 @@ func updateValueNode(node *yaml.Node, value interface{}) {
 		}
 	case string:
 		node.Kind = yaml.ScalarNode
+		node.Tag = "!!str"
 		node.Value = v
 	case float64:
 		node.Kind = yaml.ScalarNode
+		node.Tag = "!!int"
 		node.Value = fmt.Sprintf("%d", int(v))
 	}
 }
@@ -286,10 +293,12 @@ func createValueNode(value interface{}) *yaml.Node {
 // updateStringArrayNode 更新字符串数组节点
 func updateStringArrayNode(node *yaml.Node, values []interface{}) {
 	node.Kind = yaml.SequenceNode
+	node.Tag = "!!seq"
 	node.Content = make([]*yaml.Node, len(values))
 	for i, v := range values {
 		itemNode := &yaml.Node{
 			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
 			Value: fmt.Sprintf("%v", v),
 		}
 		node.Content[i] = itemNode
@@ -300,6 +309,7 @@ func updateStringArrayNode(node *yaml.Node, values []interface{}) {
 func createStringArrayNode(values []interface{}) *yaml.Node {
 	node := &yaml.Node{
 		Kind: yaml.SequenceNode,
+		Tag:  "!!seq",
 	}
 	updateStringArrayNode(node, values)
 	return node

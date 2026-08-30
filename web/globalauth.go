@@ -28,17 +28,9 @@ func (h *ConfigHandler) handleGlobalAuthEditor(w http.ResponseWriter, r *http.Re
 	}
 }
 
-// 凭据掩码占位符：GET 返回给前端时用该值替代真实密钥/token，save 收到该值时保留原始配置，
-// 避免凭据明文经 API 回显泄露。
+// 凭据掩码占位符：save 收到该值时保留原始配置（不覆盖不回显）。
+// 注意：GET 现在返回真实值，由前端默认打码 + 眼睛按钮按需显示，避免小设备使用者忘记凭据。
 const credentialMask = "********"
-
-// maskCredential 返回掩码占位符（仅在已配置时）
-func maskCredential(v string) string {
-	if v == "" {
-		return ""
-	}
-	return credentialMask
-}
 
 // resolveCredential 解析保存的凭据：若提交值为掩码占位符，则保留原始配置值（不覆盖不回显）；
 // 否则返回实际提交值。
@@ -59,19 +51,19 @@ func (h *ConfigHandler) handleGlobalAuthConfig(w http.ResponseWriter, r *http.Re
 	globalAuth := config.Cfg.GlobalAuth
 	config.CfgMu.RUnlock()
 
-	// 转换为可JSON序列化的格式（密钥/token 用掩码替代真实值）
+	// 转换为可JSON序列化的格式（返回真实值；前端默认打码，点击眼睛按需显示）
 	authConfig := map[string]interface{}{
 		"tokens_enabled":   globalAuth.TokensEnabled,
 		"token_param_name": globalAuth.TokenParamName,
 		"dynamic_tokens": map[string]interface{}{
 			"enable_dynamic": globalAuth.DynamicTokens.EnableDynamic,
 			"dynamic_ttl":    formatDuration(globalAuth.DynamicTokens.DynamicTTL),
-			"secret":         maskCredential(globalAuth.DynamicTokens.Secret),
-			"salt":           maskCredential(globalAuth.DynamicTokens.Salt),
+			"secret":         globalAuth.DynamicTokens.Secret,
+			"salt":           globalAuth.DynamicTokens.Salt,
 		},
 		"static_tokens": map[string]interface{}{
 			"enable_static": globalAuth.StaticTokens.EnableStatic,
-			"token":         maskCredential(globalAuth.StaticTokens.Token),
+			"token":         globalAuth.StaticTokens.Token,
 			"expire_hours":  formatDuration(globalAuth.StaticTokens.ExpireHours),
 		},
 	}

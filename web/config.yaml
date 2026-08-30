@@ -23,6 +23,23 @@ php:
   worker_mode: false      # 是否启用 Worker 常驻模式
   workers: 4              # Worker 进程数（worker_mode 为 true 时生效）
 
+# 仓库同步（将仓库内容单向同步到本地 docroot 下 local_path；支持多仓库，见 doc/sync-dev.md）
+sync:
+  - name: tvbox               # 标识（用于日志，可空）
+    enabled: false            # 是否启用
+    type: github              # github | gitlab
+    repo: ""                  # 仓库标识 owner/repo（GitLab 可为 group/project）
+    branch: master            # 同步分支
+    token: ""                 # PAT（GitHub: ghp_xxx；GitLab: glpat_xxx），公开仓库可留空
+    interval: 60s             # 轮询间隔（最小 10s）
+    repo_path: .              # 仓库内源子目录（"." = 仓库根）
+    local_path: tvbox         # 本地目标：以 php docroot 为锚点；"." = docroot 根，"tvbox" = docroot/tvbox
+    only_php: false           # 是否只同步 .php/.phtml/.php3/.php4/.inc（tvbox 混合内容默认 false 全量）
+    backup: true              # 覆盖/删除前备份为 .bak.<时间戳>
+    delete: false             # 远端已删除的文件，本地是否也删除（false 则保留）
+    protect: []               # 本地保护清单（相对 local_path，支持目录前缀）：永不覆盖、永不删除（如设备私有 tv.txt）
+    timeout: 15s              # 单次 API/下载请求超时
+
 # 日志输出配置
 log:
   # 是否输出日志

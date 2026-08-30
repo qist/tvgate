@@ -52,7 +52,7 @@ type Release struct {
 	TagName string `json:"tag_name"`
 }
 
-func buildURL(base, target string) string {
+func BuildURL(base, target string) string {
 	if len(base) > 0 && base[len(base)-1] == '/' {
 		base = base[:len(base)-1]
 	}
@@ -68,11 +68,11 @@ func FetchGithubReleases(cfg config.GithubConfig) ([]Release, error) {
 
 	if cfg.Enabled {
 		if cfg.URL != "" {
-			urls = append(urls, buildURL(cfg.URL, apiPath))
+			urls = append(urls, BuildURL(cfg.URL, apiPath))
 		}
 		for _, b := range cfg.BackupURLs {
 			if b != "" {
-				urls = append(urls, buildURL(b, apiPath))
+				urls = append(urls, BuildURL(b, apiPath))
 			}
 		}
 	}
@@ -192,11 +192,11 @@ func getDownloadURLs(cfg config.GithubConfig, version, zipFileName string) []str
 
 	if cfg.Enabled {
 		if cfg.URL != "" {
-			urls = append(urls, buildURL(cfg.URL, origURL))
+			urls = append(urls, BuildURL(cfg.URL, origURL))
 		}
 		for _, b := range cfg.BackupURLs {
 			if b != "" {
-				urls = append(urls, buildURL(b, origURL))
+				urls = append(urls, BuildURL(b, origURL))
 			}
 		}
 	}

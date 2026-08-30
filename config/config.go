@@ -90,6 +90,9 @@ type Config struct {
 	// GitHub 加速配置
 	Github GithubConfig `yaml:"github"`
 
+	// 仓库同步（支持多仓库，每个条目独立同步到各自 local_path）
+	Sync []SyncConfig `yaml:"sync"`
+
 	// 全局认证配置
 	GlobalAuth AuthConfig `yaml:"global_auth"`
 	// 域名映射配置
@@ -272,6 +275,24 @@ type GithubConfig struct {
 	BackupURLs []string      `yaml:"backup_urls"` // 备用加速地址
 	Timeout    time.Duration `yaml:"timeout"`     // 请求超时时间
 	Retry      int           `yaml:"retry"`       // 最大重试次数
+}
+
+// SyncConfig 仓库同步配置（将仓库内容单向同步到本地 docroot 下 local_path）
+type SyncConfig struct {
+	Name      string        `yaml:"name"` // 标识（用于日志与区分多仓库，可空）
+	Enabled   bool          `yaml:"enabled"`
+	Type      string        `yaml:"type"` // github | gitlab
+	Repo      string        `yaml:"repo"` // owner/repo（GitLab 可为 group/project）
+	Branch    string        `yaml:"branch"`
+	Token     string        `yaml:"token"`      // PAT（GitHub: ghp_xxx；GitLab: glpat_xxx），可留空仅用于公开仓库
+	Interval  time.Duration `yaml:"interval"`   // 轮询间隔（最小 10s）
+	RepoPath  string        `yaml:"repo_path"`  // 仓库内源子目录（"." = 仓库根）
+	LocalPath string        `yaml:"local_path"` // 本地目标，以 php docroot 为锚点；"." = docroot 根，"tvbox" = docroot/tvbox
+	OnlyPHP   bool          `yaml:"only_php"`   // 是否只同步 PHP 文件（tvbox 混合内容默认 false 全量）
+	Backup    *bool         `yaml:"backup"`     // 覆盖/删除前备份为 .bak.<时间戳>（默认 true）
+	Delete    *bool         `yaml:"delete"`     // 远端已删除的文件本地是否也删除（默认 false 保留）
+	Protect   []string      `yaml:"protect"`    // 本地保护清单（相对 local_path，支持目录前缀），永不覆盖/删除
+	Timeout   time.Duration `yaml:"timeout"`    // 单次 API/下载请求超时
 }
 
 // AuthConfig 授权 token 配置
@@ -506,6 +527,34 @@ func (c *Config) SetDefaults() {
 	}
 	if c.Github.Retry == 0 {
 		c.Github.Retry = 3
+	}
+
+	// 仓库同步默认值（每个仓库条目独立设置）
+	for i := range c.Sync {
+		if c.Sync[i].Type == "" {
+			c.Sync[i].Type = "github"
+		}
+		if c.Sync[i].Branch == "" {
+			c.Sync[i].Branch = "main"
+		}
+		if c.Sync[i].LocalPath == "" {
+			c.Sync[i].LocalPath = "tvbox"
+		}
+		if c.Sync[i].Interval <= 0 {
+			c.Sync[i].Interval = 60 * time.Second
+		}
+		if c.Sync[i].Interval < 10*time.Second {
+			c.Sync[i].Interval = 10 * time.Second // 最小 10s
+		}
+		if c.Sync[i].Timeout <= 0 {
+			c.Sync[i].Timeout = 15 * time.Second
+		}
+		if c.Sync[i].Backup == nil {
+			c.Sync[i].Backup = ptr(true)
+		}
+		if c.Sync[i].Delete == nil {
+			c.Sync[i].Delete = ptr(false)
+		}
 	}
 
 	// PHP 模块默认值

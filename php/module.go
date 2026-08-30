@@ -85,6 +85,12 @@ func Init(c *config.Config) error {
 // Shutdown 释放资源（目前无状态，预留接口）
 func Shutdown() {}
 
+// ResolvedDocRoot 返回 docRoot 解析符号链接后的真实绝对路径。
+// 供 sync 等模块以 docroot 为锚点解析本地目标路径。
+func ResolvedDocRoot() string {
+	return resolvedDocRoot
+}
+
 // Handler 返回纯 Go PHP 的 HTTP 处理器。
 // 映射：GET/POST 参数 -> $_GET/$_POST/$_COOKIE/$_SERVER，php://input 注入请求体，
 // 执行磁盘脚本并将 echo/header/exit 映射为 HTTP 响应。

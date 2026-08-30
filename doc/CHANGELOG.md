@@ -4,6 +4,16 @@
 
 ## Android (tvgate-android)
 
+### v3.0.8
+
+```
+1、新增仓库同步模块（sync）— 将 GitHub/GitLab 仓库内容单向同步到本地 docroot 子目录；支持多仓库（sync 为条目列表，每项独立同步循环/独立 manifest）；基于 git blob sha 增量对比；.bak.<时间戳> 备份；protect 保护清单（设备私有文件永不覆盖/永不删除）；孤立文件（本地有远端无）日志报告；Web 新增"仓库同步配置"编辑器（多仓库添加/删除）
+2、整仓归档同步 — 公开仓库走 codeload 直连下载（不占 api.github.com 未认证 60 次/小时限额）+ 本地计算 git blob sha 对比；首次同步或增量树 API 限流时自动降级整仓归档，避免大仓库逐文件拉取触发 429/403；归档下载使用独立 10 分钟超时
+3、修复配置热加载 php docroot 失效 — 热加载时 php.Init 先于 SetDefaults 执行，相对 docroot 拿到未解析路径导致脚本 404；调整顺序后相对/绝对 docroot 及 php.path 修改均即时生效
+4、修复 Web 配置保存 YAML 标签错误 — 手工构造 YAML 节点未设 Tag，repo 等字符串被序列化成 `!!null xxx` 导致配置重新加载失败；显式设置 !!str/!!bool/!!int/!!seq/!!map
+5、凭据显示安全 — sync GitHub token 后端掩码返回（保存后不可回显，掩码占位保存保留原值、填新值才覆盖）；global_auth 密钥/token 默认打码 + 点击眼睛按钮按需显示
+```
+
 ### v3.0.7
 
 ```
@@ -41,6 +51,16 @@
 ---
 
 ## 服务端 (tvgate)
+
+### v3.0.8
+
+```
+1、新增仓库同步模块（sync）— 将 GitHub/GitLab 仓库内容单向同步到本地 docroot 子目录；支持多仓库（sync 为条目列表，每项独立同步循环/独立 manifest）；基于 git blob sha 增量对比；.bak.<时间戳> 备份；protect 保护清单（设备私有文件永不覆盖/永不删除）；孤立文件（本地有远端无）日志报告；Web 新增"仓库同步配置"编辑器（多仓库添加/删除）
+2、整仓归档同步 — 公开仓库走 codeload 直连下载（不占 api.github.com 未认证 60 次/小时限额）+ 本地计算 git blob sha 对比；首次同步或增量树 API 限流时自动降级整仓归档，避免大仓库逐文件拉取触发 429/403；归档下载使用独立 10 分钟超时
+3、修复配置热加载 php docroot 失效 — 热加载时 php.Init 先于 SetDefaults 执行，相对 docroot 拿到未解析路径导致脚本 404；调整顺序后相对/绝对 docroot 及 php.path 修改均即时生效
+4、修复 Web 配置保存 YAML 标签错误 — 手工构造 YAML 节点未设 Tag，repo 等字符串被序列化成 `!!null xxx` 导致配置重新加载失败；显式设置 !!str/!!bool/!!int/!!seq/!!map
+5、凭据显示安全 — sync GitHub token 后端掩码返回（保存后不可回显，掩码占位保存保留原值、填新值才覆盖）；global_auth 密钥/token 默认打码 + 点击眼睛按钮按需显示
+```
 
 ### v3.0.7
 

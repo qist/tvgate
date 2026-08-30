@@ -417,8 +417,8 @@ func (h *ConfigHandler) handleCodeUpload(w http.ResponseWriter, r *http.Request)
 	}
 
 	resp := map[string]interface{}{
-		"status":  "success",
-		"message": "上传完成",
+		"status":   "success",
+		"message":  "上传完成",
 		"uploaded": uploaded,
 		"failed":   failed,
 	}
@@ -663,7 +663,7 @@ func (h *ConfigHandler) handleCodeCheck(w http.ResponseWriter, r *http.Request) 
 		}
 		src = string(b)
 	}
-	issues := simplePHPCheck(src)
+	issues := SimplePHPCheck(src)
 	ok := true
 	for _, i := range issues {
 		if i.Level == "error" {
@@ -679,21 +679,21 @@ func (h *ConfigHandler) handleCodeCheck(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// phpIssue 简单语法问题
-type phpIssue struct {
+// PHPIssue 简单语法问题
+type PHPIssue struct {
 	Level   string `json:"level"` // error | warning
 	Message string `json:"message"`
 	Line    int    `json:"line"`
 }
 
-// simplePHPCheck 纯文本级简单语法检测（不依赖 PHP 二进制）
-func simplePHPCheck(src string) []phpIssue {
-	var issues []phpIssue
+// SimplePHPCheck 纯文本级简单语法检测（不依赖 PHP 二进制）
+func SimplePHPCheck(src string) []PHPIssue {
+	var issues []PHPIssue
 
 	// 1) 必须以 PHP 开始标签开头（忽略前导空白/BOM）
 	trimmed := strings.TrimSpace(src)
 	if !strings.HasPrefix(trimmed, "<?php") && !strings.HasPrefix(trimmed, "<?") {
-		issues = append(issues, phpIssue{"warning", "未以 <?php 或 <? 开始标签开头", 1})
+		issues = append(issues, PHPIssue{"warning", "未以 <?php 或 <? 开始标签开头", 1})
 	}
 
 	// 2) 括号 / 引号配对扫描（跳过字符串与注释）
@@ -760,27 +760,27 @@ func simplePHPCheck(src string) []phpIssue {
 			stack = append(stack, c)
 		case ')', '}', ']':
 			if len(stack) == 0 {
-				issues = append(issues, phpIssue{"error", fmt.Sprintf("多余的闭合符号 '%c'", c), lineOf})
+				issues = append(issues, PHPIssue{"error", fmt.Sprintf("多余的闭合符号 '%c'", c), lineOf})
 				continue
 			}
 			top := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			if pairs[c] != top {
-				issues = append(issues, phpIssue{"error", fmt.Sprintf("括号不匹配：'%c' 与 '%c'", top, c), lineOf})
+				issues = append(issues, PHPIssue{"error", fmt.Sprintf("括号不匹配：'%c' 与 '%c'", top, c), lineOf})
 			}
 		}
 	}
 	for _, s := range stack {
-		issues = append(issues, phpIssue{"error", fmt.Sprintf("未闭合的符号 '%c'", s), lineOf})
+		issues = append(issues, PHPIssue{"error", fmt.Sprintf("未闭合的符号 '%c'", s), lineOf})
 	}
 	if inSingle {
-		issues = append(issues, phpIssue{"error", "单引号字符串未闭合", lineOf})
+		issues = append(issues, PHPIssue{"error", "单引号字符串未闭合", lineOf})
 	}
 	if inDouble {
-		issues = append(issues, phpIssue{"error", "双引号字符串未闭合", lineOf})
+		issues = append(issues, PHPIssue{"error", "双引号字符串未闭合", lineOf})
 	}
 	if inBlockCmt {
-		issues = append(issues, phpIssue{"error", "块注释 /* 未闭合", lineOf})
+		issues = append(issues, PHPIssue{"error", "块注释 /* 未闭合", lineOf})
 	}
 
 	return issues

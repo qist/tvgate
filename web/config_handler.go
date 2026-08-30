@@ -220,6 +220,9 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"logs", h.cookieAuth(h.handleLogViewer))
 	mux.HandleFunc(webPath+"github-editor", h.cookieAuth(h.handleGithubEditor))
 	mux.HandleFunc(webPath+"php-editor", h.cookieAuth(h.handlePHPEditor))
+	mux.HandleFunc(webPath+"sync-editor", h.cookieAuth(h.handleSyncEditor))
+	mux.HandleFunc(webPath+"api/sync/config", h.cookieAuth(h.handleSyncConfig))
+	mux.HandleFunc(webPath+"api/sync/config/save", h.cookieAuth(h.handleSyncConfigSave))
 
 	// 配置查看与保存路由
 	mux.HandleFunc(webPath+"config", h.cookieAuth(h.handleConfig))

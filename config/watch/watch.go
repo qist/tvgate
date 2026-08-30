@@ -20,6 +20,7 @@ import (
 	"github.com/qist/tvgate/php"
 	"github.com/qist/tvgate/server"
 	"github.com/qist/tvgate/stream"
+	tvsync "github.com/qist/tvgate/sync"
 	tsync "github.com/qist/tvgate/utils/sync"
 )
 
@@ -104,18 +105,23 @@ func WatchConfigFile(ctx context.Context, configPath string, upgrader *tableflip
 			return
 		}
 		logger.LogPrintf("✅ 配置文件重新加载完成")
-		// 🔹 重新初始化 PHP 模块（刷新 docroot、path 等配置）
-		php.Init(&config.Cfg)
 		// 🔹 这里刷新 DNS 实例
 		dns.HandleConfigUpdate(&config.Config{}, &config.Cfg)
 		config.CfgMu.RLock()
 		update.UpdateHubsOnConfigChange(config.Cfg.Multicast.MulticastIfaces)
 		// 设置默认值 & token 管理器
 		config.Cfg.SetDefaults()
+		// 🔹 重新初始化 PHP 模块（刷新 docroot、path 等配置）
+		// 必须在 SetDefaults 之后：DocRoot 相对路径需先解析为绝对路径（相对配置文件所在目录），
+		// 否则 php 模块拿到未解析的 "www"，热加载后脚本路径解析失败（404）。
+		php.Init(&config.Cfg)
 		// 更新TS缓存配置
 		stream.InitOrUpdateTSCacheFromConfig()
 
 		config.CfgMu.RUnlock()
+
+		// 重启仓库同步（sync 配置变化时自动停止旧实例并按新配置启动）
+		tvsync.Start(&config.Cfg)
 
 		muxMu.Lock()
 		defer muxMu.Unlock()
