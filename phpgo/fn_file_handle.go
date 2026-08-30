@@ -31,7 +31,9 @@ func init() {
 		default:
 			flag = os.O_RDONLY
 		}
-		f, err := os.OpenFile(path, flag, perm)
+		// 与 file_get_contents/file_put_contents 一致：相对路径按脚本目录解析，
+		// 否则 fopen 与它们基准不同会导致"写一处读另一处"
+		f, err := os.OpenFile(e.ResolvePath(path), flag, perm)
 		if err != nil {
 			return NewBool(false), nil
 		}

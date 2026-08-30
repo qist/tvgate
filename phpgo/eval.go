@@ -1650,11 +1650,35 @@ func (e *Env) evalAssignExpr(n *AssignExpr) (Value, error) {
 					e.vars[v.Name] = elem
 					e.globals[v.Name] = elem
 				}
+				if inner, ok := arg.(*ArrayExpr); ok {
+					e.destructureArray(inner, elem)
+				}
 			}
 			return val, nil
 		}
+	case *ArrayExpr:
+		// [$a, $b] = $arr（PHP 短数组解构）
+		e.destructureArray(t, val)
+		return val, nil
 	}
 	return val, nil
+}
+
+// destructureArray 按 PHP list/短数组解构语义把数组值拆给目标变量（支持嵌套与空位跳过）
+func (e *Env) destructureArray(targets *ArrayExpr, arr Value) {
+	for i, el := range targets.Values {
+		if _, ok := el.(*ConstNull); ok {
+			continue
+		}
+		elem := arr.ArrayGet(NewInt(int64(i)))
+		if v, ok := el.(*VarExpr); ok {
+			e.vars[v.Name] = elem
+			e.globals[v.Name] = elem
+		}
+		if inner, ok := el.(*ArrayExpr); ok {
+			e.destructureArray(inner, elem)
+		}
+	}
 }
 
 // callFunc 处理函数调用（内置 + 用户函数）
