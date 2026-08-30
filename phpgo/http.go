@@ -352,7 +352,8 @@ func fileGetContents(env *Env, vs []Value) (Value, error) {
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		result, err := env.proxy("GET", path, &CurlOptions{})
 		if err != nil {
-			return NewBool(false), err
+			// PHP 语义：失败返回 false（可被 @ 抑制），而非致命错误，脚本可用 !== false 重试
+			return NewBool(false), nil
 		}
 		return NewString(result.Body), nil
 	}
@@ -363,7 +364,8 @@ func fileGetContents(env *Env, vs []Value) (Value, error) {
 	path = env.ResolvePath(path)
 	data, err := os_ReadFile(path)
 	if err != nil {
-		return NewBool(false), err
+		// PHP 语义：文件不存在/不可读返回 false（可被 @ 抑制）
+		return NewBool(false), nil
 	}
 	return NewString(string(data)), nil
 }

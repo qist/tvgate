@@ -4,6 +4,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,8 +191,24 @@ func Handler() http.HandlerFunc {
 			env.SetGet(k, vs[0])
 			env.SetPost(k, vs[0])
 		}
-		for _, c := range r.Cookies() {
-			env.SetCookie(c.Name, c.Value)
+		// 宽松解析 Cookie（PHP 语义）：Go 的 r.Cookies() 会丢弃含 " 等字符的 JSON
+		// cookie 值（如 pys.php 的 playurl_cache={"..."}），导致 $_COOKIE 读不到、基于
+		// Cookie 的缓存永不命中。改为按 ';'/'=' 手工切分 + URL 解码。
+		for _, pair := range strings.Split(r.Header.Get("Cookie"), ";") {
+			pair = strings.TrimSpace(pair)
+			if pair == "" {
+				continue
+			}
+			eq := strings.Index(pair, "=")
+			if eq < 0 {
+				continue
+			}
+			name := strings.TrimSpace(pair[:eq])
+			val := strings.TrimSpace(pair[eq+1:])
+			if unescaped, err := url.QueryUnescape(val); err == nil {
+				val = unescaped
+			}
+			env.SetCookie(name, val)
 		}
 		env.SetRequestURI(r.URL.RequestURI())
 		env.SetServer("REQUEST_METHOD", r.Method)
