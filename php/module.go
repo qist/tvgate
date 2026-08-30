@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/phpgo"
 	utilshttp "github.com/qist/tvgate/utils/http"
 )
@@ -120,6 +122,19 @@ func Handler() http.HandlerFunc {
 			query.Del(tokenParam)
 			r.URL.RawQuery = query.Encode()
 		}
+
+		// 注册活跃客户端（与其他 handler 一致），使全局 token 会话过期判断能拿到
+		// conn.LastActive（auth.go 通过 ActiveClients.GetConnectionByID 取最后活跃时间），
+		// 且监控页能统计到 PHP 连接。HTTP 类连接由 Cleaner 按 10s 延迟清理。
+		monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
+			IP:             clientIP,
+			URL:            r.URL.Path,
+			UserAgent:      r.UserAgent(),
+			ConnectionType: "HTTP",
+			ConnectedAt:    time.Now(),
+			LastActive:     time.Now(),
+		})
+		defer monitor.ActiveClients.Unregister(connID, "HTTP")
 
 		// 解析脚本路径（防目录穿越）。先剥掉路由前缀（如 /php/）
 		p := r.URL.Path
