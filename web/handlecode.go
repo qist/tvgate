@@ -786,11 +786,13 @@ func SimplePHPCheck(src string) []PHPIssue {
 	return issues
 }
 
-// decodeFilename 尝试将文件名从 GBK 转为 UTF-8。
-// 某些 GBK 字节序列恰好也是合法 UTF-8（但会被解码成希腊/亚美尼亚等字符，
-// 而非中文），所以不能仅靠 utf8.ValidString 判断。
-// 策略：如果有非 ASCII 字节，先尝试 GBK→UTF-8，如果结果含 CJK 字符就优先用；
-// 如果 GBK 解码失败，再看原始是否合法 UTF-8。
+// decodeFilename 将磁盘文件名转换为 UTF-8 显示。
+// 磁盘文件名可能是 UTF-8（从 GitHub/Gitee 同步、PHP 以 UTF-8 创建等），
+// 也可能是 GBK/GB18030（如 Windows 以 GBK 上传的旧文件）。
+// 策略：原始字节是合法 UTF-8 → 直接返回（主流场景）；
+// 非合法 UTF-8 → 尝试 GBK/GB18030 转 UTF-8（旧文件兼容）。
+// 注意不能先做 GBK 解码：中文 UTF-8 字节序列按 GBK 解码后往往也含 CJK 字符
+// （如"可可影院"→"鍙�鍙�褰遍櫌"），会误转成乱码。
 func decodeFilename(name string) string {
 	// 全 ASCII 直接返回
 	isAllASCII := true
@@ -804,35 +806,20 @@ func decodeFilename(name string) string {
 		return name
 	}
 
-	// 有非 ASCII 字节，先尝试 GBK 解码
-	decoder := simplifiedchinese.GBK.NewDecoder()
-	if gbkUTF8, err := decoder.String(name); err == nil && utf8.ValidString(gbkUTF8) {
-		if containsCJK(gbkUTF8) {
-			return gbkUTF8
-		}
-	}
-
-	// GBK 失败或不含 CJK，尝试 GB18030
-	gb18030Decoder := simplifiedchinese.GB18030.NewDecoder()
-	if gb18030UTF8, err := gb18030Decoder.String(name); err == nil && utf8.ValidString(gb18030UTF8) {
-		if containsCJK(gb18030UTF8) {
-			return gb18030UTF8
-		}
-	}
-
-	// 如果 GBK/GB18030 解码结果不含 CJK，但原始是合法 UTF-8，用原始
+	// 原始字节是合法 UTF-8：文件系统保存的本身就是 UTF-8 文件名，直接返回
 	if utf8.ValidString(name) {
 		return name
 	}
 
-	// 最后兜底：返回 GBK 解码结果（即使不含 CJK）
-	if gbkUTF8, err := decoder.String(name); err == nil {
+	// 原始字节不是合法 UTF-8：说明磁盘上是 GBK/GB18030 编码的旧文件名，转成 UTF-8
+	decoder := simplifiedchinese.GBK.NewDecoder()
+	if gbkUTF8, err := decoder.String(name); err == nil && utf8.ValidString(gbkUTF8) && containsCJK(gbkUTF8) {
 		return gbkUTF8
 	}
-	if gb18030UTF8, err := gb18030Decoder.String(name); err == nil {
+	gb18030Decoder := simplifiedchinese.GB18030.NewDecoder()
+	if gb18030UTF8, err := gb18030Decoder.String(name); err == nil && utf8.ValidString(gb18030UTF8) && containsCJK(gb18030UTF8) {
 		return gb18030UTF8
 	}
-
 	return name
 }
 
