@@ -426,9 +426,18 @@ func (r *Resolver) createResolverFromClients(clients []dnsClient) *net.Resolver 
 				}
 			}
 
-			// 如果没有plainDNSClient或者都失败了，使用系统解析器
+			// 配置的明文解析器都失败后：先试系统 nameserver（纯 Go 从 resolv.conf 推导），
+			// 再回落到内置公共 DNS，与 LookupIP/LookupIPAddr 的主线兜底链保持一致
 			d := &net.Dialer{Timeout: timeout}
-			return d.DialContext(ctx, network, address)
+			if conn, err := d.DialContext(ctx, network, address); err == nil {
+				return conn, nil
+			}
+			for _, pub := range fallbackPublicDNSServers {
+				if conn, err := d.DialContext(ctx, network, net.JoinHostPort(pub, "53")); err == nil {
+					return conn, nil
+				}
+			}
+			return nil, fmt.Errorf("no reachable DNS server")
 		},
 	}
 }

@@ -172,8 +172,9 @@ func init() {
 				}
 				return true
 			}
-			// 解析失败兜底：net.LookupIP 拿 IP（ttl 记 0）
-			if ips, err := net.LookupIP(host); err == nil {
+			// 解析失败兜底：走项目解析器（配置→系统→公共DNS 兜底）拿 IP（ttl 记 0）
+			// 与主线一致，避免裸 net.LookupIP 绕过公共 DNS 兜底
+			if ips, err := pgdns.LookupIP(host); err == nil {
 				for _, ip := range ips {
 					v4 := ip.To4()
 					if wantAAAA {
