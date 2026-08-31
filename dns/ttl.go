@@ -125,7 +125,10 @@ func systemLookupTTL(ctx context.Context, host string, wantAAAA bool, timeout ti
 				}
 			}
 		}
-		return out, nil
+		// RcodeSuccess 但无匹配记录（如仅有 CNAME 别名段被分流），继续尝试下一个 NS 而非返回空结果
+		if len(out) > 0 {
+			return out, nil
+		}
 	}
 	return nil, lastErr
 }
