@@ -19,7 +19,6 @@ import (
 	"github.com/jedisct1/go-dnsstamps"
 	"github.com/miekg/dns"
 	"github.com/qist/tvgate/config"
-	"github.com/qist/tvgate/logger"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 )
@@ -217,11 +216,6 @@ func (r *Resolver) LookupIP(host string) ([]net.IP, error) {
 	defer cancel()
 
 	// 首先尝试配置的DNS解析器
-	if len(clients) == 0 {
-		if logger.IsEnabled() {
-			logger.LogPrintf("[dns] LookupIP(%s): 未配置 dns.servers，走系统解析", host)
-		}
-	}
 	for _, client := range clients {
 		ips, err := client.LookupIPAddr(ctx, host)
 		if err == nil {
@@ -232,9 +226,6 @@ func (r *Resolver) LookupIP(host string) ([]net.IP, error) {
 			return result, nil
 		}
 		// 即使有错误也继续尝试下一个解析器
-		if logger.IsEnabled() {
-			logger.LogPrintf("[dns] LookupIP(%s): 配置解析器 %T 失败: %v", host, client, err)
-		}
 	}
 
 	// 如果配置的DNS解析失败或超时，回退到系统解析器
@@ -242,18 +233,12 @@ func (r *Resolver) LookupIP(host string) ([]net.IP, error) {
 	systemCtx := context.Background()
 	ips, err := r.systemResolver.LookupIPAddr(systemCtx, host)
 	if err != nil {
-		if logger.IsEnabled() {
-			logger.LogPrintf("[dns] LookupIP(%s): 系统解析也失败: %v", host, err)
-		}
 		// 最终兜底：安卓等环境 /etc/resolv.conf 为空，系统解析不可用，
 		// 用内置公共 DNS 做最后尝试，避免纯 Go 解析彻底失败。
 		if fallbackIPs, ferr := fallbackLookupIP(host, timeout); ferr == nil {
 			return fallbackIPs, nil
 		}
 		return nil, fmt.Errorf("both configured and system DNS resolvers failed: %v", err)
-	}
-	if logger.IsEnabled() {
-		logger.LogPrintf("[dns] LookupIP(%s): 系统解析成功 %v", host, ips)
 	}
 
 	result := make([]net.IP, len(ips))
@@ -286,9 +271,6 @@ func (r *Resolver) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr,
 	// 使用原始context（可能不带超时）来调用系统解析器
 	ips, err := r.systemResolver.LookupIPAddr(ctx, host)
 	if err != nil {
-		if logger.IsEnabled() {
-			logger.LogPrintf("[dns] LookupIPAddr(%s): 系统解析也失败: %v", host, err)
-		}
 		// 最终兜底：内置公共 DNS
 		if fallbackIPs, ferr := fallbackLookupIP(host, timeout); ferr == nil {
 			out := make([]net.IPAddr, 0, len(fallbackIPs))
@@ -485,7 +467,6 @@ func parseDNSResponse(respBytes []byte) ([]net.IPAddr, error) {
 	if len(addrs) == 0 {
 		return nil, fmt.Errorf("DNS查询成功但未返回任何IP地址")
 	}
-	// logger.LogPrintf("DNS query via %v returned %d addresses", respMsg.Question, len(addrs))
 	return addrs, nil
 }
 
