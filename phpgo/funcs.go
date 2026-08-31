@@ -271,6 +271,7 @@ func init() {
 		info.ArraySet(NewString("effective_url"), h.ArrayGet(NewString("__effective_url")))
 		info.ArraySet(NewString("content_type"), h.ArrayGet(NewString("__content_type")))
 		info.ArraySet(NewString("redirect_url"), h.ArrayGet(NewString("__redirect_url")))
+		info.ArraySet(NewString("primary_ip"), h.ArrayGet(NewString("__primary_ip")))
 		// 单一选项模式: curl_getinfo($ch, CURLINFO_HTTP_CODE)
 		if len(a) >= 2 {
 			opt := a[1].ToString()
@@ -283,6 +284,8 @@ func init() {
 				return info.ArrayGet(NewString("content_type")), nil
 			case "3145744": // CURLINFO_REDIRECT_URL
 				return info.ArrayGet(NewString("redirect_url")), nil
+			case "1769476": // CURLINFO_PRIMARY_IP
+				return info.ArrayGet(NewString("primary_ip")), nil
 			}
 			return info.ArrayGet(a[1]), nil
 		}
@@ -825,6 +828,7 @@ func (e *Env) execCurlHandle(h Value) (string, error) {
 	// __headers 含状态行（对齐 PHP curl CURLOPT_HEADER 输出）
 	h.ArraySet(NewString("__headers"), NewString(fmt.Sprintf("HTTP/1.1 %d %s", httpCode, http.StatusText(httpCode))+"\n"+strings.Join(result.Headers, "\n")))
 	h.ArraySet(NewString("__response"), NewString(result.Body))
+	h.ArraySet(NewString("__primary_ip"), NewString(result.PrimaryIP))
 	// CURLOPT_COOKIEJAR：把响应 Set-Cookie 写入文件
 	if opts.CookieJar != "" {
 		writeCookieJar(opts.CookieJar, result.Headers)

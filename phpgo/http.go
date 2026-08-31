@@ -183,6 +183,30 @@ func defaultProxy(client *http.Client) ProxyFunc {
 		if err != nil {
 			return nil, err
 		}
+		// 捕获实际连接的对端 IP（CURLINFO_PRIMARY_IP）：
+		// 包裹 transport 的 DialContext，记录每次拨号目标的对端 IP。
+		var primaryIP string
+		if c != nil {
+			if tr, ok := c.Transport.(*http.Transport); ok {
+				origDial := tr.DialContext
+				tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					var conn net.Conn
+					var err error
+					if origDial != nil {
+						conn, err = origDial(ctx, network, addr)
+					} else {
+						conn, err = (&net.Dialer{}).DialContext(ctx, network, addr)
+					}
+					if err == nil && conn != nil {
+						if ra := conn.RemoteAddr(); ra != nil {
+							primaryIP = ra.String()
+						}
+					}
+					return conn, err
+				}
+				defer func() { tr.DialContext = origDial }() // 请求结束后还原，避免影响其它并发请求
+			}
+		}
 		if opts != nil {
 			for _, h := range opts.Headers {
 				if i := strings.IndexByte(h, ':'); i > 0 {
@@ -271,6 +295,7 @@ func defaultProxy(client *http.Client) ProxyFunc {
 			ContentType:  resp.Header.Get("Content-Type"),
 			EffectiveURL: resp.Request.URL.String(),
 			Headers:      headerLines(resp.Header),
+			PrimaryIP:    primaryIP,
 		}, nil
 	}
 }

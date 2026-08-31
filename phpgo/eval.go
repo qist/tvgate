@@ -21,6 +21,7 @@ type ProxyResult struct {
 	ContentType  string
 	EffectiveURL string   // 最终 URL（跟随重定向后）
 	Headers      []string // 响应头（"Key: Value" 形式，供 get_headers 使用）
+	PrimaryIP    string   // 实际连接的对端 IP（CURLINFO_PRIMARY_IP）
 }
 
 // CurlOptions 对应 PHP curl_setopt 的关键选项（已注册的 CURLOPT_* 常量均在此严格生效）
@@ -191,6 +192,7 @@ func defaultPHPConsts() map[string]Value {
 	c["CURLINFO_TOTAL_TIME"] = NewInt(3145731)
 	c["CURLINFO_URL"] = NewInt(1048577)
 	c["CURLINFO_REDIRECT_URL"] = NewInt(3145744)
+	c["CURLINFO_PRIMARY_IP"] = NewInt(1769476)
 	// DNS（dns_get_record 类型常量，PHP 语义）
 	c["DNS_A"] = NewInt(1)
 	c["DNS_NS"] = NewInt(2)

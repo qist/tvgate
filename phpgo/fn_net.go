@@ -100,7 +100,7 @@ func init() {
 		if net.ParseIP(host) != nil {
 			return NewString(host), nil
 		}
-		ips, err := net.LookupIP(host)
+		ips, err := pgdns.LookupIP(host)
 		if err != nil || len(ips) == 0 {
 			return NewString(host), nil
 		}
@@ -120,7 +120,7 @@ func init() {
 		if net.ParseIP(host) != nil {
 			return NewBool(false), nil
 		}
-		ips, err := net.LookupIP(host)
+		ips, err := pgdns.LookupIP(host)
 		if err != nil || len(ips) == 0 {
 			return NewBool(false), nil
 		}
