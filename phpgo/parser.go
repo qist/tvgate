@@ -7,8 +7,8 @@ import (
 
 // Parser 递归下降解析器
 type Parser struct {
-	toks  []Tok
-	pos   int
+	toks      []Tok
+	pos       int
 	constsMap map[string]Value // 预定义常量
 }
 
@@ -17,10 +17,12 @@ func NewParser(toks []Tok) *Parser {
 	return &Parser{toks: toks, constsMap: defaultPHPConsts()}
 }
 
-func (p *Parser) cur() Tok  { return p.toks[p.pos] }
-func (p *Parser) adv() Tok  { t := p.toks[p.pos]; p.pos++; return t }
+func (p *Parser) cur() Tok          { return p.toks[p.pos] }
+func (p *Parser) adv() Tok          { t := p.toks[p.pos]; p.pos++; return t }
 func (p *Parser) at(k tokKind) bool { return p.cur().Kind == k }
-func (p *Parser) atVal(v string) bool { return p.cur().Kind == tIdent && strings.EqualFold(p.cur().Val, v) }
+func (p *Parser) atVal(v string) bool {
+	return p.cur().Kind == tIdent && strings.EqualFold(p.cur().Val, v)
+}
 
 func (p *Parser) expect(k tokKind) (Tok, error) {
 	if p.cur().Kind != k {
@@ -1137,17 +1139,17 @@ func (p *Parser) parsePostfixFrom(e Expr) (Expr, error) {
 			e = &IndexExpr{Arr: e, Key: key}
 			continue
 		}
-	if p.at(tLParen) {
-		name := ""
-		switch v := e.(type) {
-		case *VarExpr:
-			name = v.Name
-		case *ScalarStr:
-			name = v.Val
-		case *ConstExpr:
-			name = v.Name
-		default:
-			return nil, fmt.Errorf("parse: 不可调用的表达式 at %d", p.cur().Pos)
+		if p.at(tLParen) {
+			name := ""
+			switch v := e.(type) {
+			case *VarExpr:
+				name = v.Name
+			case *ScalarStr:
+				name = v.Val
+			case *ConstExpr:
+				name = v.Name
+			default:
+				return nil, fmt.Errorf("parse: 不可调用的表达式 at %d", p.cur().Pos)
 			}
 			args, err := p.parseArgs()
 			if err != nil {
@@ -1612,12 +1614,43 @@ func unescapeStr(s string, double bool) string {
 				b.WriteByte('\t')
 			case 'r':
 				b.WriteByte('\r')
+			case 'v':
+				b.WriteByte('\v')
+			case 'f':
+				b.WriteByte('\f')
+			case 'e':
+				b.WriteByte(0x1b)
 			case '\\':
 				b.WriteByte('\\')
 			case '"':
 				b.WriteByte('"')
 			case '$':
 				b.WriteByte('$')
+			case 'x', 'X':
+				// PHP \xHH：恰好两个十六进制位
+				if i+3 < len(s) {
+					if hi, ok1 := unescapeHexDigit(s[i+2]); ok1 {
+						if lo, ok2 := unescapeHexDigit(s[i+3]); ok2 {
+							b.WriteByte(byte(hi<<4 | lo))
+							i += 3 // 消耗 xHH；底部 i++ 再前进 1
+							continue
+						}
+					}
+				}
+				b.WriteByte('\\')
+				b.WriteByte(s[i+1])
+			case '0', '1', '2', '3', '4', '5', '6', '7':
+				// PHP 八进制 \0..\777（最多 3 位）
+				val := 0
+				k := 1
+				base := i + 1
+				for k <= 3 && base+k <= len(s) && s[base+k-1] >= '0' && s[base+k-1] <= '7' {
+					val = val*8 + int(s[base+k-1]-'0')
+					k++
+				}
+				b.WriteByte(byte(val))
+				i += k - 1 // 跳过已消费的八进制位（配合 continue 仅执行 for 的 i++）
+				continue
 			default:
 				b.WriteByte('\\')
 				b.WriteByte(s[i+1])
@@ -1628,6 +1661,19 @@ func unescapeStr(s string, double bool) string {
 		}
 	}
 	return b.String()
+}
+
+// unescapeHexDigit 解析十六进制字符（0-9 a-f A-F），非法返回 false。
+func unescapeHexDigit(c byte) (int, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0'), true
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10, true
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10, true
+	}
+	return 0, false
 }
 
 // parseDeclare 解析 declare(strict_types=1); 语句（直接跳过）
