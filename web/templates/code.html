@@ -460,6 +460,69 @@
         font-size: 12px;
       }
     }
+
+    /* 基础移动端适配：更窄屏进一步压缩，保证手机上文件树/工具栏/按钮可操作 */
+    @media (max-width: 480px) {
+      .main-container {
+        height: calc(100vh - 40px);
+      }
+
+      .sidebar {
+        width: 132px;
+      }
+
+      .sidebar-header {
+        padding: 8px 8px;
+      }
+
+      .breadcrumb {
+        padding: 4px 8px;
+        font-size: 11px;
+      }
+
+      .toolbar {
+        padding: 6px;
+      }
+
+      .toolbar button,
+      .toolbar label.btn {
+        padding: 4px 7px;
+        font-size: 11px;
+      }
+
+      .file-item {
+        padding: 5px 8px;
+        font-size: 12px;
+      }
+
+      .topbar {
+        padding: 6px 8px;
+        gap: 6px;
+      }
+
+      .topbar h1 {
+        font-size: 13px;
+      }
+
+      .topbar a {
+        font-size: 11px;
+        padding: 3px 8px;
+      }
+
+      .editor-bar {
+        padding: 6px 8px;
+        gap: 6px;
+      }
+
+      .editor-bar .path {
+        font-size: 12px;
+      }
+
+      #status {
+        padding: 5px 8px;
+        font-size: 12px;
+      }
+    }
   </style>
 </head>
 
@@ -703,6 +766,16 @@
       return '';
     }
 
+    // 判断是否为二进制文件：这类文件不可在编辑器打开（大二进制读入会卡顿），
+    // 点击只选中，提示为二进制，可正常下载/删除
+    function isBinaryFile(name) {
+      const ext = (name || '').toLowerCase().split('.').pop();
+      const binExts = ['zip', 'jar', 'apk', 'exe', 'dll', 'so', 'bin', 'dat', 'db', 'sqlite', 'key', 'pem', 'crt'];
+      const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico'];
+      const mediaExts = ['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'ttf', 'otf', 'woff', 'woff2'];
+      return binExts.includes(ext) || imgExts.includes(ext) || mediaExts.includes(ext);
+    }
+
     // ========== 面包屑导航 ==========
     function renderBreadcrumb() {
       const bc = document.getElementById("breadcrumb");
@@ -788,6 +861,15 @@
               selectedDir = '';
               loadList();
               setStatus("已选中 ZIP：" + it.name + "，点击「解压」按钮解压到当前目录（覆盖模式）", "warn");
+            } else if (isBinaryFile(it.name)) {
+              // 二进制文件：不加载进编辑器（避免读入大二进制导致卡顿），仅选中以便下载/删除
+              currentPath = fullPath;
+              document.getElementById("curPath").textContent = it.name;
+              editor.setValue("");
+              document.getElementById("btnUnzip").style.display = "none";
+              selectedDir = '';
+              loadList();
+              setStatus("📦 二进制文件「" + it.name + "」不可编辑，可下载或删除", "warn");
             } else {
               openFile(fullPath, it.name);
             }
