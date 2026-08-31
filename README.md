@@ -385,6 +385,7 @@ http://<IP>:<port>/web/code
 | 新建 | 新建文件或目录（相对路径，如 `sub/test.php`） |
 | 编辑/保存 | 在线编辑并保存到磁盘（保存前自动备份为 `.bak.<时间戳>`） |
 | 上传 | 多选上传文件到指定子目录，自动防路径穿越 |
+| 上传解压 | 上传 `.zip` 并按配套 `.zip.md5` 自动解压，或手动 `/api/code/unzip` 解压 |
 | 下载 | 以附件形式下载文件 |
 | 删除 | 删除文件或整个目录 |
 | 语法检测 | 对 PHP 源码做纯文本级简单检测（无需 PHP 运行时） |
@@ -398,6 +399,23 @@ http://<IP>:<port>/web/code
 - 单/双引号字符串未闭合、块注释 `/*` 未闭合（error）
 
 > 该检测为轻量级静态检查，不能替代完整 PHP 解释器；真正执行仍由 phpgo 运行时完成。所有写操作限制在 `docroot` 内，防止 `../` 目录穿越。
+
+### ZIP 上传解压（自动 / 手动）
+
+代码管理支持 **ZIP 上传 + 自动解压**，方便整包部署 PHP/js 等代码。
+
+- **上传入口**：`POST <webPath>api/code/upload`（需登录），`multipart` 字段 `file`（可多选）+ 可选 `dir`（目标子目录，默认 `docroot` 根）。
+- **自动解压触发条件**：上传完成后，后端自动扫描同目录下是否存在配对文件 `xxx.zip` 与 `xxx.zip.md5`。若存在且 `.zip.md5` 内容里第一个字段与 `xxx.zip` 的**实际 MD5** 一致，则立即将该 zip 解压到同目录（**覆盖模式**）。
+  - `xxx.zip.md5` 格式：首字段为期望 MD5（`md5sum` 输出如 `d41d8cd98f00b204e9800998ecf8427e`，后续字段如文件名会忽略）。示例：
+    ```
+    echo -n "$(md5sum xxx.zip | awk '{print $1}')" > xxx.zip.md5
+    ```
+  - **没有 `.zip.md5` 文件不算错**，此时该 `.zip` 仅作为普通文件上传，不会自动解压。
+  - MD5 不匹配（`mismatch`）或解压失败会逐项在响应 `unzip` 数组里回报，不会中断整体上传。
+- **手动解压**：`POST <webPath>api/code/unzip`（需登录），两种模式：
+  1. 指定磁盘已有 zip：`?path=xxx.zip&dir=目标目录`（`dir` 省略则解压到 zip 所在目录）。
+  2. 上传并解压：`multipart file=xxx.zip&dir=目标目录`，可选 `flatten=true` 展平子目录。
+- **安全**：解压统一走 `extractZip`，含**路径穿越防护**（归档内 `../` 或绝对路径条目被丢弃）+ `assertInside` 约束在 `docroot` 内；所有代码接口均需 `cookieAuth` 登录。
 
 ---
 
