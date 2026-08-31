@@ -19,17 +19,17 @@ import (
 	"github.com/jedisct1/go-dnsstamps"
 	"github.com/miekg/dns"
 	"github.com/qist/tvgate/config"
-	// "github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/logger"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 )
 
 // 缓存本地 IP，避免每次 DNS 查询都创建 UDP 连接
 var (
-	cachedLocalIP    net.IP
-	cachedLocalIPAt  time.Time
-	cachedLocalIPMu  sync.RWMutex
-	localIPCacheTTL  = 5 * time.Minute
+	cachedLocalIP   net.IP
+	cachedLocalIPAt time.Time
+	cachedLocalIPMu sync.RWMutex
+	localIPCacheTTL = 5 * time.Minute
 )
 
 // --------------------------- DNS 客户端接口 ---------------------------
@@ -107,7 +107,8 @@ func GetInstance() *Resolver {
 	once.Do(func() {
 		instance = &Resolver{
 			systemResolver: &net.Resolver{
-				PreferGo:     true,
+				// 不使用 PreferGo: 兼容安卓系统。安卓 resolv.conf 常为空，
+				// DNS 由系统 netd 经 libc getaddrinfo 提供；强制纯 Go 解析会绕开它导致解析失败。
 				StrictErrors: false,
 			},
 		}
@@ -129,7 +130,7 @@ func (r *Resolver) loadConfig() {
 	if r.timeout == 0 {
 		r.timeout = 5 * time.Second
 	}
-	
+
 	if r.maxConns <= 0 {
 		r.maxConns = 10 // 默认最大连接数
 	}
@@ -216,6 +217,11 @@ func (r *Resolver) LookupIP(host string) ([]net.IP, error) {
 	defer cancel()
 
 	// 首先尝试配置的DNS解析器
+	if len(clients) == 0 {
+		if logger.IsEnabled() {
+			logger.LogPrintf("[dns] LookupIP(%s): 未配置 dns.servers，走系统解析", host)
+		}
+	}
 	for _, client := range clients {
 		ips, err := client.LookupIPAddr(ctx, host)
 		if err == nil {
@@ -226,6 +232,9 @@ func (r *Resolver) LookupIP(host string) ([]net.IP, error) {
 			return result, nil
 		}
 		// 即使有错误也继续尝试下一个解析器
+		if logger.IsEnabled() {
+			logger.LogPrintf("[dns] LookupIP(%s): 配置解析器 %T 失败: %v", host, client, err)
+		}
 	}
 
 	// 如果配置的DNS解析失败或超时，回退到系统解析器
@@ -233,7 +242,18 @@ func (r *Resolver) LookupIP(host string) ([]net.IP, error) {
 	systemCtx := context.Background()
 	ips, err := r.systemResolver.LookupIPAddr(systemCtx, host)
 	if err != nil {
+		if logger.IsEnabled() {
+			logger.LogPrintf("[dns] LookupIP(%s): 系统解析也失败: %v", host, err)
+		}
+		// 最终兜底：安卓等环境 /etc/resolv.conf 为空，系统解析不可用，
+		// 用内置公共 DNS 做最后尝试，避免纯 Go 解析彻底失败。
+		if fallbackIPs, ferr := fallbackLookupIP(host, timeout); ferr == nil {
+			return fallbackIPs, nil
+		}
 		return nil, fmt.Errorf("both configured and system DNS resolvers failed: %v", err)
+	}
+	if logger.IsEnabled() {
+		logger.LogPrintf("[dns] LookupIP(%s): 系统解析成功 %v", host, ips)
 	}
 
 	result := make([]net.IP, len(ips))
@@ -266,6 +286,17 @@ func (r *Resolver) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr,
 	// 使用原始context（可能不带超时）来调用系统解析器
 	ips, err := r.systemResolver.LookupIPAddr(ctx, host)
 	if err != nil {
+		if logger.IsEnabled() {
+			logger.LogPrintf("[dns] LookupIPAddr(%s): 系统解析也失败: %v", host, err)
+		}
+		// 最终兜底：内置公共 DNS
+		if fallbackIPs, ferr := fallbackLookupIP(host, timeout); ferr == nil {
+			out := make([]net.IPAddr, 0, len(fallbackIPs))
+			for _, ip := range fallbackIPs {
+				out = append(out, net.IPAddr{IP: ip})
+			}
+			return out, nil
+		}
 		return nil, fmt.Errorf("both configured and system DNS resolvers failed: %v", err)
 	}
 
@@ -450,6 +481,41 @@ func parseDNSResponse(respBytes []byte) ([]net.IPAddr, error) {
 }
 
 // --------------------------- plainDNSClient ---------------------------
+
+// fallbackPublicDNSServers 是系统解析（安卓 pure-Go /etc/resolv.conf 缺失）不可用时的内置公共 DNS 兜底。
+var fallbackPublicDNSServers = []string{"223.5.5.5", "119.29.29.29"}
+
+// fallbackLookupIP 用内置公共 DNS 做 UDP 查询兜底，返回 IPv4 地址。
+// 作为配置解析器 + 系统解析器都失败后的最后手段。
+func fallbackLookupIP(host string, timeout time.Duration) ([]net.IP, error) {
+	msg := &dns.Msg{}
+	msg.SetQuestion(dns.Fqdn(host), dns.TypeA)
+	queryBytes, err := msg.Pack()
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for _, svr := range fallbackPublicDNSServers {
+		respBytes, err := executeDNSQuery(context.Background(), svr, queryBytes, timeout)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		addrs, err := parseDNSResponse(respBytes)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		out := make([]net.IP, 0, len(addrs))
+		for _, a := range addrs {
+			out = append(out, a.IP)
+		}
+		if len(out) > 0 {
+			return out, nil
+		}
+	}
+	return nil, lastErr
+}
 
 func (c *plainDNSClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
 	// 创建DNS查询
