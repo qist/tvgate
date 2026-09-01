@@ -43,7 +43,10 @@ type segOrigin struct {
 }
 
 // resMap 记录某频道的 token->上游URL 映射，带过期时间。
+// 同一频道（key）会被多个并发请求读写（多个观众/切台/分片+清单并发），
+// 必须用 mu 保护 m，否则并发 map 写会触发 runtime "fatal error: concurrent map writes" 直接崩溃进程。
 type resMap struct {
+	mu    sync.Mutex
 	m     map[string]string
 	until time.Time
 }
@@ -395,26 +398,24 @@ const segOriginTTL = 30 * time.Minute
 const tokenTTL = 30 * time.Minute
 
 // storeResources 登记某频道的 token->上游URL 映射（带过期，超量时惰性清理）。
+// 用 LoadOrStore + 每 key 一把锁，保证并发登记/读取同一频道不产生 map 数据竞争。
 func (h *Handler) storeResources(key string, tokens map[string]string) {
 	if len(tokens) == 0 {
 		return
 	}
 	now := time.Now()
-	v, ok := h.resources.Load(key)
-	if ok {
-		rm := v.(*resMap)
-		if time.Now().After(rm.until) || rm.m == nil {
-			rm = &resMap{m: make(map[string]string, len(tokens)+64), until: now.Add(tokenTTL)}
-		} else {
-			for k, vv := range tokens {
-				rm.m[k] = vv
-			}
-			rm.until = now.Add(tokenTTL)
-		}
-		h.resources.Store(key, rm)
-		return
+	newRm := &resMap{m: make(map[string]string, len(tokens)+64), until: now.Add(tokenTTL)}
+	actual, _ := h.resources.LoadOrStore(key, newRm)
+	rm := actual.(*resMap)
+	rm.mu.Lock()
+	if now.After(rm.until) || rm.m == nil {
+		rm.m = make(map[string]string, len(tokens)+64)
 	}
-	h.resources.Store(key, &resMap{m: tokens, until: now.Add(tokenTTL)})
+	for k, vv := range tokens {
+		rm.m[k] = vv
+	}
+	rm.until = now.Add(tokenTTL)
+	rm.mu.Unlock()
 }
 
 // resolveToken 返回某频道 token 对应的真实上游 URL（未登记/过期为空）。
@@ -424,6 +425,8 @@ func (h *Handler) resolveToken(key, token string) string {
 		return ""
 	}
 	rm := v.(*resMap)
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 	if time.Now().After(rm.until) {
 		h.resources.Delete(key)
 		return ""
