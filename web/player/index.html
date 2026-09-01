@@ -30,10 +30,9 @@ body{background:var(--bg); color:var(--text); font-family:system-ui,-apple-syste
 #groups .chn.active{color:var(--accent);}
 /* 右：播放区 */
 #stage{display:flex; flex-direction:column; min-height:0;}
-#videoWrap{position:relative; flex:1; background:#000; display:flex; align-items:center; justify-content:center;}
-video{width:100%; height:100%; object-fit:contain; background:#000;}
-#loading{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--dim); background:rgba(0,0,0,.5);}
-#err{position:absolute; inset:0; display:none; align-items:center; justify-content:center; color:#ff8080; text-align:center; background:rgba(0,0,0,.6);}
+#videoWrap{position:relative; flex:1; background:#000;}
+#artbox{position:absolute; inset:0;}
+#err{position:absolute; inset:0; display:none; align-items:center; justify-content:center; color:#ff8080; text-align:center; background:rgba(0,0,0,.6); z-index:60;}
 #err.show{display:flex;}
 #bar{height:56px; border-top:1px solid var(--line); display:flex; align-items:center; gap:16px; padding:0 20px; background:var(--panel);}
 #nowTitle{font-size:18px; font-weight:600;}
@@ -56,8 +55,7 @@ video{width:100%; height:100%; object-fit:contain; background:#000;}
   </div>
   <div id="stage">
     <div id="videoWrap">
-      <video id="video" autoplay controls playsinline></video>
-      <div id="loading">加载中…</div>
+      <div id="artbox"></div>
       <div id="err"><div>播放失败<br><span id="errmsg"></span></div></div>
     </div>
     <div id="bar">
@@ -71,6 +69,7 @@ video{width:100%; height:100%; object-fit:contain; background:#000;}
 
 <script src="./hls.min.js"></script>
 <script src="./mpegts.js"></script>
+<script src="./artplayer.js"></script>
 <script>
 (function(){
   'use strict';
@@ -79,14 +78,13 @@ video{width:100%; height:100%; object-fit:contain; background:#000;}
   var idx = -1;           // 当前频道的展平下标
   var expanded = {};      // 分组 gi -> 是否展开（下拉）
   var focus = {gi:0, ci:-1}; // 当前焦点：gi=分组，ci=-1 表示选中分组头
-  var video = document.getElementById('video');
-  var loading, errBox, errMsg, nowTitle, epgBox;
-  loading = document.getElementById('loading');
+  var art = null;         // Artplayer 实例
+  var engine = null;      // 底层引擎实例（hls / mpegts）
+  var video = null;       // art.video 快捷引用（遥控/音量等用）
+  var errBox, errMsg, nowTitle, epgBox;
   errBox = document.getElementById('err'); errMsg = document.getElementById('errmsg');
   nowTitle = document.getElementById('nowTitle'); epgBox = document.getElementById('epg');
   var ORIGIN = location.origin;
-
-  var current = null; // {kind, inst}
 
   function qs(k){ return new URLSearchParams(location.search).get(k); }
   function tokenStr(){ var t = qs('my_token'); return t ? 'my_token='+encodeURIComponent(t) : ''; }
@@ -187,52 +185,69 @@ video{width:100%; height:100%; object-fit:contain; background:#000;}
     curKey=c.key; epgMode=false; // 换台退出 EPG 列表
     nowTitle.textContent=c.name;
     setEpg(c);
-    stopCurrent();
-    loading.style.display='flex'; errBox.classList.remove('show');
-    // scheme 决定引擎
+    errBox.classList.remove('show');
+    // scheme 决定引擎：http(s)→HLS(m3u8)；udp/rtp/rtsp→服务端出 video/mp2t（mpegts.js）
     if(c.scheme==='http'||c.scheme==='https'){
-      playHttp(c);
+      artCreate(mk(ORIGIN+'/player/'+c.key), 'm3u8', true);
     } else {
-      playTs(c); // udp/rtp/rtsp → 服务端出 video/mp2t
+      artCreate(mk(ORIGIN+'/player/'+c.key), 'mpegts', true);
     }
   }
 
-  function playTs(c){
-    var inst = null;
-    if(typeof mpegts !== 'undefined' && mpegts.isSupported && mpegts.isSupported()){
-      inst = mpegts.createPlayer({ type:'mpegts', isLive:true, url: mk(ORIGIN+'/player/'+c.key), enableStashBuffer:true, stashInitialSize:256*1024 });
-      inst.attachMediaElement(video); // mpegts.js API：attachMediaElement
-      inst.load();
-      inst.on(mpegts.Events.ERROR, onErr);
-      video.addEventListener('playing', hidLoading, {once:true});
-      // 8s 起播超时兜底
-      var t = setTimeout(function(){ if(video.readyState===0){ loading.style.display='none'; } }, 8000);
-      video.addEventListener('playing', function(){ clearTimeout(t); }, {once:true});
-    } else {
-      vplay(video, mk(ORIGIN+'/player/'+c.key)); // 原生 video 播 TS（浏览器多不支持）
-    }
-    current={kind:'ts', inst:inst};
+  // Artplayer 播放（直播 isLive=true 隐藏进度条；回看 VOD 式窗口可拖动）
+  function artCreate(url, type, isLive){
+    stopCurrent();
+    art = new Artplayer({
+      container: '#artbox',
+      url: url,
+      type: type,
+      isLive: !!isLive,
+      autoplay: true,
+      theme: '#2b80ff',
+      keyboard: false,          // 方向键留给频道导航，避免冲突
+      setting: false,
+      playbackRate: !isLive,
+      aspectRatio: false,
+      flip: false,
+      screenshot: false,
+      pip: false,
+      mutex: false,
+      miniProgressBar: !isLive,
+      moreVideoAttr: { playsInline: true, 'webkit-playsinline': true, 'x5-playsinline': true },
+      customType: {
+        m3u8: function(v, u){
+          if(window.Hls && Hls.isSupported()){
+            var hls = new Hls({ lowLatencyMode:true, maxBufferLength:30 });
+            hls.loadSource(u);
+            hls.attachMedia(v);
+            hls.on(Hls.Events.ERROR, onErr);
+            engine = hls;
+          } else {
+            v.src = u; // Safari 原生 HLS
+          }
+        },
+        mpegts: function(v, u){
+          if(window.mpegts && mpegts.isSupported && mpegts.isSupported()){
+            var inst = mpegts.createPlayer({ type:'mpegts', isLive:true, url:u, enableStashBuffer:true, stashInitialSize:256*1024 });
+            inst.attachMediaElement(v);
+            inst.load();
+            inst.on(mpegts.Events.ERROR, onErr);
+            engine = inst;
+          } else {
+            v.src = u; // 原生兜底（多数浏览器不支持 TS）
+          }
+        }
+      }
+    });
+    video = art.video; // 遥控 OK 播放/暂停用
+    // video 元素级错误（MediaError）：转成可读文本，避免“未知错误”
+    art.on('video:error', function(){
+      var v = video && video.error;
+      var codes = {1:'取流中断', 2:'网络错误', 3:'解码错误', 4:'格式/编码不支持'};
+      onErr({message: v ? (codes[v.code] || ('错误码 '+v.code)) : '视频错误'});
+    });
+    return art;
   }
-
-  function playHttp(c){
-    // http(s) 源：服务端隐藏真实地址，前端只有 key → HLS/原生直接走受控 /player/<key>
-    if(typeof Hls !== 'undefined' && Hls.isSupported()){
-      var hls = new Hls({ lowLatencyMode:true, maxBufferLength:30 });
-      hls.attachMedia(video);       // hls.js API：attachMedia
-      hls.loadSource(mk(ORIGIN+'/player/'+c.key)); // hls.js 用 loadSource
-      hls.on(Hls.Events.ERROR, onErr);
-      video.addEventListener('playing', hidLoading, {once:true});
-      current={kind:'hls', inst:hls};
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')){
-      video.src = mk(ORIGIN+'/player/'+c.key);
-      current={kind:'native', inst:null};
-    } else {
-      onErr(new Error('浏览器不支持 HLS'));
-    }
-  }
-
-  function vplay(v,u){ v.src=u; v.play().catch(function(){}); }
-  function hidLoading(){ loading.style.display='none'; }
 
   function onErr(e){
     // hls.js/mpegts.js 的 ERROR 事件带 fatal 标记；直播边缘常发非致命错误
@@ -240,16 +255,14 @@ video{width:100%; height:100%; object-fit:contain; background:#000;}
     // 忽略它们，避免画面在播却一直弹“播放失败”。
     if(e && e.fatal===false) return;
     errMsg.textContent = (e && (e.details||e.message)) ? (e.details||e.message) : '未知错误';
-    errBox.classList.add('show'); loading.style.display='none';
+    errBox.classList.add('show');
   }
 
   function stopCurrent(){
-    if(current && current.kind==='ts' && current.inst){ try{ current.inst.destroy(); }catch(e){} }
-    if(current && current.kind==='hls' && current.inst){ try{ current.inst.destroy(); }catch(e){} }
-    video.removeAttribute('src'); video.load();
-    try{ video.pause(); }catch(e){}
-    current=null;
-    loading.style.display='none';
+    if(engine){ try{ engine.destroy(); }catch(e){} engine=null; }
+    if(art){ try{ art.destroy(false); }catch(e){} art=null; } // false=保留容器 DOM，便于重建
+    video=null;
+    errBox.classList.remove('show');
   }
 
   // EPG
@@ -315,18 +328,11 @@ video{width:100%; height:100%; object-fit:contain; background:#000;}
 
   function showGoes(msg){ errMsg.textContent=msg; errBox.classList.add('show'); }
 
-  // 通用 HLS 播放（直播/回看），按给定受控 URL
+  // 通用播放（直播/回看），按给定受控 URL
   function playURL(u, tag){
-    stopCurrent(); nowTitle.innerHTML=(tag?tag+' · ':'')+escapeHtml((list[idx]?list[idx].name:''));
-    loading.style.display='flex'; errBox.classList.remove('show');
-    if(typeof Hls !== 'undefined' && Hls.isSupported()){
-      var hls=new Hls({lowLatencyMode:true, maxBufferLength:30});
-      hls.attachMedia(video); hls.loadSource(mk(u)); hls.on(Hls.Events.ERROR, onErr);
-      video.addEventListener('playing', hidLoading, {once:true});
-      current={kind:'hls', inst:hls};
-    } else {
-      vplay(video, mk(u)); current={kind:'native', inst:null};
-    }
+    nowTitle.innerHTML=(tag?tag+' · ':'')+escapeHtml((list[idx]?list[idx].name:''));
+    errBox.classList.remove('show');
+    artCreate(mk(u), 'm3u8', false); // 回看窗口可拖动进度
   }
 
   function escapeHtml(s){ return (s||'').replace(/[<>&"]/g,function(ch){return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[ch];}); }
@@ -365,7 +371,11 @@ video{width:100%; height:100%; object-fit:contain; background:#000;}
   document.addEventListener('keyup', function(ev){
     if(ev.key==='MediaPlayPause'||ev.key==='MediaPlay'||ev.key==='MediaPause'){ toggle(); }
   });
-  function toggle(){ if(video.paused) video.play(); else video.pause(); }
+  function toggle(){
+    if(!video) return;
+    if(video.paused){ try{ video.play().catch(function(){}); }catch(e){} }
+    else { try{ video.pause(); }catch(e){} }
+  }
 
   loadChannels();
 })();
