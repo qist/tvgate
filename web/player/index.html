@@ -757,19 +757,37 @@
       }
 
       // ============ 全屏 ============
-      // 入口：底栏 ⛶ 按钮 / 双击视频 / F 键；再按或 Esc 退出
+      // 入口：底栏 ⛶ 按钮 / 双击视频 / F 键；再按或 Esc 退出。
+      // 手机端：进入全屏后锁定横屏（Android 支持 screen.orientation.lock；
+      // iOS 走系统播放器 webkitEnterFullscreen 自动随视频转横屏），退出时解锁。
+      function lockLandscape() {
+        try {
+          if (screen.orientation && screen.orientation.lock) {
+            var p = screen.orientation.lock('landscape');
+            if (p && p.catch) p.catch(function () { }); // 不支持/被拒则忽略，保持竖屏全屏
+          }
+        } catch (e) { }
+      }
+      function unlockOrientation() {
+        try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) { }
+      }
       function toggleFS() {
         var el = document.getElementById('videoWrap');
         if (document.fullscreenElement) { if (document.exitFullscreen) document.exitFullscreen(); return; }
-        if (el.requestFullscreen) el.requestFullscreen();
-        else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-        else if (video && video.webkitEnterFullscreen) video.webkitEnterFullscreen(); // iOS Safari
+        if (el.requestFullscreen) {
+          var p = el.requestFullscreen();
+          if (p && p.then) p.then(lockLandscape).catch(function () { });
+          else lockLandscape();
+        }
+        else if (el.webkitRequestFullscreen) { el.webkitRequestFullscreen(); lockLandscape(); }
+        else if (video && video.webkitEnterFullscreen) video.webkitEnterFullscreen(); // iOS Safari：系统全屏自动横屏
       }
       var fsbtn = document.getElementById('fsbtn');
       fsbtn.addEventListener('click', toggleFS);
       document.addEventListener('fullscreenchange', function () {
         fsbtn.textContent = document.fullscreenElement ? '⛶' : '⛶'; // 图标不变，留接口
         fsbtn.style.color = document.fullscreenElement ? 'var(--accent)' : '';
+        if (!document.fullscreenElement) unlockOrientation(); // 退出全屏恢复系统自动旋转
       });
 
       // 视频区域：单击=收起/呼出频道列表，双击=全屏（260ms 区分单击与双击）
