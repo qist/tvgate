@@ -44,20 +44,30 @@ func TestParseTXT(t *testing.T) {
 }
 
 func TestParseTXTUA(t *testing.T) {
-	// txt 行尾 ua= 段：应剥离且只作用于该频道；无 ua= 的频道留空（回退 player.ua 默认）
-	content := []byte("组,#genre#\n" +
-		"CCTV2,http://192.168.100.1/live/ahbst.php?id=cctv2,ua=okhttp/3.8.1\n" +
-		"CCTV1,http://192.168.100.1/live/akmg.php?id=cctv1\n" +
-		"CCTV3,http://h/live/x.m3u8\n")
+	// 行尾 ua= 优先；组级 ua= 行作用于后续所有频道；ua= 空值恢复默认
+	content := []byte("蜀小果,#genre#\n" +
+		"ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) Edg/152\n" +
+		"峨眉电影4K,http://192.168.100.1/live/xg.php?id=emdy4k\n" +
+		"CCTV1,http://192.168.100.1/live/xg.php?id=cctv1\n" +
+		"特例,http://192.168.100.1/live/ahbst.php?id=cctv2,ua=okhttp/3.8.1\n" +
+		"ua=\n" +
+		"百视通,#genre#\n" +
+		"CCTV3,http://192.168.100.1/live/ahbst.php?id=cctv3\n")
 	chans, _ := parseSubscription(content, "sub")
-	if len(chans) != 3 {
-		t.Fatalf("期望 3 频道, got %d", len(chans))
+	if len(chans) != 4 {
+		t.Fatalf("期望 4 频道, got %d", len(chans))
 	}
-	if chans[0].RawURL != "http://192.168.100.1/live/ahbst.php?id=cctv2" || chans[0].UA != "okhttp/3.8.1" {
-		t.Fatalf("ua 频道解析不对: url=%q ua=%q", chans[0].RawURL, chans[0].UA)
+	if chans[0].UA != "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Edg/152" {
+		t.Fatalf("组级 ua= 未生效: %+v", chans[0])
 	}
-	if chans[1].UA != "" || chans[2].UA != "" {
-		t.Fatalf("无 ua= 的频道 UA 应为空: %+v %+v", chans[1], chans[2])
+	if chans[1].UA != "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Edg/152" {
+		t.Fatalf("组级 ua= 未延续到后续频道: %+v", chans[1])
+	}
+	if chans[2].UA != "okhttp/3.8.1" {
+		t.Fatalf("行尾 ,ua= 应覆盖组级: %+v", chans[2])
+	}
+	if chans[3].UA != "" {
+		t.Fatalf("ua= 空值应恢复默认(空): %+v", chans[3])
 	}
 }
 

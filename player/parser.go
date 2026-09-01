@@ -93,6 +93,7 @@ func parseTXT(content []byte, src string) ([]*Channel, EPGSource) {
 	var chans []*Channel
 	es := EPGSource{Type: "none"}
 	group := ""
+	curUA := "" // 当前生效的组/文件级 UA（ua= 行设置，作用于后续频道；空 = 回落 player.ua 默认）
 	lines := strings.Split(string(content), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
@@ -130,8 +131,13 @@ func parseTXT(content []byte, src string) ([]*Channel, EPGSource) {
 				continue
 			}
 		}
-		// 每频道可选 UA：`名称,URL,ua=okhttp/3.8.1`（末尾 ua= 段，缺省用 player.ua 默认）
-		cUA := ""
+		// 组/文件级默认 UA：独立 `ua=xxx` 行，作用于后续所有频道（再次出现覆盖；ua= 空值恢复默认）。
+		if strings.HasPrefix(line, "ua=") {
+			curUA = strings.TrimSpace(strings.TrimPrefix(line, "ua="))
+			continue
+		}
+		// 每频道可选 UA：`名称,URL,ua=okhttp/3.8.1`（行尾 ua= 段，优先于组级 ua=）
+		cUA := curUA
 		if i := strings.LastIndex(line, ",ua="); i >= 0 {
 			cUA = strings.TrimSpace(line[i+4:])
 			line = line[:i]
