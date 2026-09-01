@@ -107,6 +107,9 @@ type Config struct {
 
 	// PHP 模块配置（纯 Go phpgo runtime，从磁盘读取脚本解释执行）
 	PHP PHPConfig `yaml:"php"`
+
+	// H5 播放器模块配置（订阅源 + 受控拉流）
+	Player PlayerConfig `yaml:"player"`
 }
 
 type MulticastConfig struct {
@@ -134,6 +137,16 @@ type PHPConfig struct {
 	Index      []string `yaml:"index"`       // 目录索引文件列表，如 [index.php, index.html]
 	WorkerMode bool     `yaml:"worker_mode"` // 是否启用 Worker 常驻模式
 	Workers    int      `yaml:"workers"`     // Worker 进程数（worker_mode 为 true 时生效）
+}
+
+// PlayerConfig 表示 H5 播放器的订阅源配置
+type PlayerConfig struct {
+	Enabled        bool          `yaml:"enabled"`         // 是否启用播放器模块
+	Subscription   string        `yaml:"subscription"`    // 订阅源：HTTP(S) URL，或本地文件（支持绝对路径 / file:// / php://相对docroot / docroot相对路径）
+	Epg            string        `yaml:"epg"`             // 逗号TXT 订阅的 EPG 模板（含 {name}/{date} 占位符）
+	Logo           string        `yaml:"logo"`            // 逗号TXT 订阅的台标模板（含 {name} 占位符），如 https://logo.<your-domain>/{name}.png
+	LogoDir        string        `yaml:"logo_dir"`        // 本地台标目录（如 /opt/TVLogo），频道 logo 用该目录下 <频道名>.png，经 /player/logo/ 服务
+	UpdateInterval time.Duration `yaml:"update_interval"` // 订阅定时刷新间隔，默认 2h
 }
 
 // PublisherConfig represents the publisher configuration structure
@@ -581,6 +594,11 @@ func (c *Config) SetDefaults() {
 	}
 	if c.PHP.Workers < 0 {
 		c.PHP.Workers = 0
+	}
+
+	// H5 播放器默认值
+	if c.Player.UpdateInterval <= 0 {
+		c.Player.UpdateInterval = 2 * time.Hour
 	}
 }
 

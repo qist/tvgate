@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+
 	// "net/http/pprof" // pprof 调试接口已禁用
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/php"
+	"github.com/qist/tvgate/player"
 	"github.com/qist/tvgate/publisher"
 	httpclient "github.com/qist/tvgate/utils/http"
 	tsync "github.com/qist/tvgate/utils/sync"
@@ -132,13 +134,13 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 			TLSConfig:   tlsConfig,
 			IdleTimeout: 120 * time.Second,
 			QUICConfig: &quic.Config{
-				Allow0RTT:          false, // 禁用 0-RTT 防止重放攻击
-				MaxIdleTimeout:     120 * time.Second,
-				KeepAlivePeriod:    20 * time.Second,
-				MaxIncomingStreams: 65535,  // 最大并发流
-				MaxIncomingUniStreams: 65535,
-				EnableDatagrams:    true,
-				InitialStreamReceiveWindow:     512 * 1024, // 512KB 初始流接收窗口
+				Allow0RTT:                      false, // 禁用 0-RTT 防止重放攻击
+				MaxIdleTimeout:                 120 * time.Second,
+				KeepAlivePeriod:                20 * time.Second,
+				MaxIncomingStreams:             65535, // 最大并发流
+				MaxIncomingUniStreams:          65535,
+				EnableDatagrams:                true,
+				InitialStreamReceiveWindow:     512 * 1024,      // 512KB 初始流接收窗口
 				InitialConnectionReceiveWindow: 2 * 1024 * 1024, // 2MB 初始连接接收窗口
 			},
 		}
@@ -165,7 +167,7 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 			_ = http2.ConfigureServer(srv, &http2.Server{
 				MaxConcurrentStreams: 256,
 				MaxReadFrameSize:     1 << 14, // 16KB，匹配 TS/FLV 包大小
-				IdleTimeout:         60 * time.Second,
+				IdleTimeout:          60 * time.Second,
 			})
 			logger.LogPrintf("🚀 启动 HTTPS H1/H2 %s", addr)
 			if err := srv.ServeTLS(ln, certFile, keyFile); err != nil && err != http.ErrServerClosed {
@@ -341,6 +343,20 @@ func RegisterJXAndProxyMux(mux *http.ServeMux, cfg *config.Config) {
 		jxPath = "/jx"
 	}
 	mux.Handle(jxPath, SecurityHeaders(http.HandlerFunc(jxHandler.Handle)))
+
+	// 播放器模块（H5 直播：订阅白名单 + 受控拉流 player/<key> + EPG）
+	if cfg.Player.Enabled {
+		ph := player.EnsureHandler(&cfg.Player)
+		mux.Handle("/api/player/channels", SecurityHeaders(http.HandlerFunc(ph.ServeChannels)))
+		mux.Handle("/api/player/epg", SecurityHeaders(http.HandlerFunc(ph.ServeEPG)))
+		mux.Handle("/api/player/catchup", SecurityHeaders(http.HandlerFunc(ph.ServeCatchup)))
+		mux.Handle("/player/", SecurityHeaders(http.HandlerFunc(ph.ServePull)))
+		mux.Handle("/pp/", SecurityHeaders(http.StripPrefix("/pp/", web.PlayerPageHandler())))
+		mux.Handle("/pp", SecurityHeaders(http.RedirectHandler("/pp/", http.StatusMovedPermanently)))
+		if cfg.Player.LogoDir != "" {
+			mux.Handle("/player/logo/", SecurityHeaders(http.StripPrefix("/player/logo/", http.FileServer(http.Dir(cfg.Player.LogoDir)))))
+		}
+	}
 
 	// 添加 publisher 路由（如果配置了publisher）
 	if cfg.Publisher != nil && cfg.Publisher.Path != "" {

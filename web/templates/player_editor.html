@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>H5 播放器配置 - TVGate Web管理</title>
+<link rel="stylesheet" href="{{.webPath}}static/common.css">
+<link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+<link rel="stylesheet" href="{{.webPath}}static/version.css">
+<script src="{{.webPath}}static/js/theme.js"></script>
+<style>
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;margin:0;padding:20px;background-color:var(--win11-bg);color:var(--win11-text-primary);}
+  .container{max-width:900px;margin:0 auto;background-color:var(--win11-surface);padding:24px;border-radius:8px;border:1px solid var(--win11-border);}
+  h1{color:var(--win11-text-primary);text-align:center;font-weight:600;}
+  .auth-section{text-align:right;margin-bottom:20px;}
+  .auth-section a{display:inline-block;padding:8px 16px;background-color:var(--win11-success);color:#fff;text-decoration:none;border-radius:4px;margin-left:10px;}
+  .auth-section a.logout{background-color:var(--win11-danger);}
+  .section{background-color:var(--win11-card);padding:20px;margin-bottom:20px;border-radius:8px;border:1px solid var(--win11-border);}
+  .section-title{color:var(--win11-text-primary);margin-top:0;padding-bottom:10px;border-bottom:1px solid var(--win11-border);}
+  .form-group{margin-bottom:16px;}
+  .form-group label{display:block;margin-bottom:6px;font-weight:600;color:var(--win11-text-secondary);}
+  .form-control{width:100%;padding:10px;background-color:var(--win11-card);border:1px solid var(--win11-border);border-radius:4px;color:var(--win11-text-primary);}
+  .form-control:focus{outline:none;border-color:var(--win11-accent);}
+  .checkbox-group{display:flex;align-items:center;gap:8px;}
+  .checkbox-group input[type="checkbox"]{width:20px;height:20px;cursor:pointer;}
+  .checkbox-group label{margin-bottom:0;cursor:pointer;}
+  .btn{display:inline-block;padding:10px 20px;background-color:var(--win11-accent);color:#fff;text-decoration:none;border-radius:4px;border:none;cursor:pointer;font-size:14px;font-weight:600;}
+  .btn-success{background-color:var(--win11-success);}
+  .btn-warning{background-color:var(--win11-warning);color:#000;}
+  .form-buttons{text-align:center;margin:20px 0;}
+  .alert{padding:12px;margin-bottom:16px;border-radius:4px;}
+  .alert-success{background-color:rgba(102,194,102,.2);color:var(--win11-success);border:1px solid var(--win11-success);}
+  .alert-danger{background-color:rgba(232,17,35,.2);color:var(--win11-danger);border:1px solid var(--win11-danger);}
+  .hidden{display:none;}
+  .hint{font-size:12px;color:var(--win11-text-secondary);margin-top:4px;}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="auth-section">
+    <a href="{{.webPath}}code" class="btn">代码编辑</a>
+    <a href="{{.webPath}}backup" class="btn">备份中心</a>
+    <a href="{{.webPath}}logout" class="logout">退出</a>
+  </div>
+  <h1>H5 播放器配置</h1>
+  <div id="alert-container" class="hidden"></div>
+  <div class="form-buttons">
+    <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+    <button class="btn btn-warning" onclick="loadConfig()">重新加载</button>
+    <a href="{{.webPath}}" class="btn">返回首页</a>
+  </div>
+
+  <form id="playerForm">
+    <div class="section">
+      <h2 class="section-title">基本配置</h2>
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input type="checkbox" id="enabled">
+          <label for="enabled">启用播放器模块</label>
+        </div>
+        <div class="hint">开启后挂载 /api/player/channels、/player/&lt;key&gt;、/api/player/epg 与播放页 /pp/</div>
+      </div>
+      <div class="form-group">
+        <label for="subscription">订阅源</label>
+        <input type="text" id="subscription" class="form-control" placeholder="https://<your-domain>/sub.m3u 或本地文件路径">
+        <div class="hint">M3U 或 逗号TXT；此地址 = 允许拉取的源白名单，真实流地址不外露</div>
+      </div>
+      <div class="form-group">
+        <label for="epg">txt 订阅的 EPG 模板（可选）</label>
+        <input type="text" id="epg" class="form-control" placeholder="https://epg.<your-domain>/?ch={name}&date={date}">
+        <div class="hint">含 {name}=频道名、{date}=日期；M3U 订阅用 x-tvg-url 的 XMLTV，无需填此项</div>
+      </div>
+      <div class="form-group">
+        <label for="logo">台标模板（可选，M3U/txt 无 tvg-logo 时兜底）</label>
+        <input type="text" id="logo" class="form-control" placeholder="https://logo.<your-domain>/{name}.png">
+        <div class="hint">含 {name}=频道名；M3U 自带 tvg-logo 优先</div>
+      </div>
+      <div class="form-group">
+        <label for="logo_dir">本地台标目录（可选）</label>
+        <input type="text" id="logo_dir" class="form-control" placeholder="/opt/TVLogo">
+        <div class="hint">填此目录则频道 logo 取 <频道名>.png（经 /player/logo/ 服务），优先于上方模板</div>
+      </div>
+      <div class="form-group">
+        <label for="update_interval">订阅刷新间隔</label>
+        <input type="text" id="update_interval" class="form-control" placeholder="2h">
+        <div class="hint">如 2h / 30m，留空用默认 2h</div>
+      </div>
+    </div>
+  </form>
+
+  <div class="form-buttons">
+    <button class="btn btn-success" onclick="saveConfig()">保存配置</button>
+    <button class="btn btn-warning" onclick="loadConfig()">重新加载</button>
+    <a href="{{.webPath}}" class="btn">返回首页</a>
+  </div>
+</div>
+
+<script>
+  const webPath = '{{.webPath}}';
+  function showAlert(msg, type){
+    const c = document.getElementById('alert-container');
+    c.className = 'alert alert-' + type;
+    c.textContent = msg;
+    c.classList.remove('hidden');
+    setTimeout(()=>c.classList.add('hidden'), 5000);
+  }
+  async function loadConfig(){
+    try{
+      const resp = await fetch(webPath + 'config/player');
+      if(!resp.ok) throw new Error('HTTP '+resp.status);
+      const d = await resp.json();
+      document.getElementById('enabled').checked = !!d.enabled;
+      document.getElementById('subscription').value = d.subscription || '';
+      document.getElementById('epg').value = d.epg || '';
+      document.getElementById('logo').value = d.logo || '';
+      document.getElementById('logo_dir').value = d.logo_dir || '';
+      document.getElementById('update_interval').value = (d.update_interval && d.update_interval!=='2h0m0s') ? d.update_interval : '';
+    }catch(e){ console.error(e); showAlert('加载配置失败: '+e.message, 'danger'); }
+  }
+  async function saveConfig(){
+    const cfg = {
+      enabled: document.getElementById('enabled').checked,
+      subscription: document.getElementById('subscription').value.trim(),
+      epg: document.getElementById('epg').value.trim(),
+      logo: document.getElementById('logo').value.trim(),
+      logo_dir: document.getElementById('logo_dir').value.trim(),
+      update_interval: document.getElementById('update_interval').value.trim()
+    };
+    if(cfg.enabled && !cfg.subscription){ showAlert('启用时必须填写订阅源', 'danger'); return; }
+    try{
+      const resp = await fetch(webPath + 'config/save-player', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)
+      });
+      if(resp.ok) showAlert('配置保存成功，热加载将自动刷新', 'success');
+      else showAlert(await resp.text(), 'danger');
+    }catch(e){ showAlert('保存失败: '+e.message, 'danger'); }
+  }
+  document.addEventListener('DOMContentLoaded', loadConfig);
+</script>
+</body>
+</html>
