@@ -235,6 +235,10 @@ video{width:100%; height:100%; object-fit:contain; background:#000;}
   function hidLoading(){ loading.style.display='none'; }
 
   function onErr(e){
+    // hls.js/mpegts.js 的 ERROR 事件带 fatal 标记；直播边缘常发非致命错误
+    // （bufferStalledError/bufferSeekOverHole 等，fatal=false，hls.js 内部会重试/跳洞），
+    // 忽略它们，避免画面在播却一直弹“播放失败”。
+    if(e && e.fatal===false) return;
     errMsg.textContent = (e && (e.details||e.message)) ? (e.details||e.message) : '未知错误';
     errBox.classList.add('show'); loading.style.display='none';
   }
