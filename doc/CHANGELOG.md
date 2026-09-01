@@ -10,8 +10,6 @@
 1、停用自动注入 DNS，默认走系统/本地 DNS — 服务端移除 PreferGo + CGO 链接，系统解析经
    getaddrinfo→netd 取设备本地 DNS，公网/内网域名无需再注入；TVGateService.kt 相关注入代码
    整块注释保留（稳定后可清理），网络变化不再改 config 并重启
-2、测试构建改出 workflow artifact — 注释 releases 上传/打 tag，CI 构建产物以 artifact 供下载，
-   不发布 release 上线
 ```
 
 ### v3.0.9
