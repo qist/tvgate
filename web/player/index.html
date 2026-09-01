@@ -271,15 +271,36 @@
       }
     }
 
-    /* 频道列表隐藏模式：视频铺满整行 */
+    /* 频道列表隐藏模式：视频铺满整行（rows 必须保持 100vh，否则 stage 会塌缩） */
     body.hide-list #app {
       grid-template-columns: 1fr;
-      grid-template-rows: 1fr;
+      grid-template-rows: 100vh;
       grid-template-areas: "stage";
     }
 
     body.hide-list #side {
       display: none;
+    }
+
+    /* 列表隐藏时的悬浮入口，避免找不到频道列表 */
+    #listbtn {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      z-index: 70;
+      cursor: pointer;
+      background: rgba(18, 22, 26, .85);
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 14px;
+      display: none;
+      user-select: none;
+    }
+
+    body.hide-list #listbtn {
+      display: block;
     }
 
     /* 全屏 */
@@ -322,6 +343,7 @@
         <div id="err">
           <div>播放失败<br><span id="errmsg"></span></div>
         </div>
+        <div id="listbtn">☰ 频道</div>
       </div>
       <div id="bar">
         <div id="nowTitle"></div>
@@ -800,6 +822,11 @@
       videoWrap.addEventListener('dblclick', function () {
         if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
         toggleFS();
+      });
+      // 悬浮「☰ 频道」按钮：列表隐藏时点击呼出（阻止冒泡，避免触发视频区的再次收起）
+      document.getElementById('listbtn').addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        setListHidden(false);
       });
 
       // 遥控
