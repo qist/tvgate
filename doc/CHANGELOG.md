@@ -4,15 +4,6 @@
 
 ## Android (tvgate-android)
 
-### v3.11.0
-
-```
-1、新增在线 APK 更新 — 启动/前台对比 GitHub Latest release，发现新版本可在线下载升级；无网络时跳过
-2、CI 支持手动触发构建时覆盖版本号（workflow_dispatch 输入 VERSION，用于在线更新测试）
-3、兼容修复 — 本地版本号显示前统一去掉 v 前缀；匹配 release 资源名时兼容带/不带 v 前缀
-4、CI 恢复上传 GitHub Release（移除测试期 artifact 步骤），构建产物合并到对应版本 release
-```
-
 ### v3.0.10
 
 ```
