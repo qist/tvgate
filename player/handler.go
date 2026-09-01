@@ -346,9 +346,9 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 		return
 	}
 	if ch.UA != "" {
-		req.Header.Set("User-Agent", ch.UA)
+		req.Header.Set("User-Agent", ch.UA) // 频道订阅里的 ua= 优先
 	} else {
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 Chrome/91")
+		req.Header.Set("User-Agent", h.mgr.DefaultUA()) // 否则用 player.ua 默认（缺省内置浏览器 UA）
 	}
 	resp, err := h.stream.Do(req) // 播放器上游跟随重定向（h.stream）
 	if err != nil {

@@ -72,6 +72,7 @@ func parseEXTINF(line string) *Channel {
 	c.TVGName = attrValue(attrs, "tvg-name")
 	c.TVGLogo = attrValue(attrs, "tvg-logo")
 	c.Group = attrValue(attrs, "group-title")
+	c.UA = attrValue(attrs, "ua")
 	if c.TVGName == "" {
 		c.TVGName = c.TVGID
 	}
@@ -129,6 +130,12 @@ func parseTXT(content []byte, src string) ([]*Channel, EPGSource) {
 				continue
 			}
 		}
+		// 每频道可选 UA：`名称,URL,ua=okhttp/3.8.1`（末尾 ua= 段，缺省用 player.ua 默认）
+		cUA := ""
+		if i := strings.LastIndex(line, ",ua="); i >= 0 {
+			cUA = strings.TrimSpace(line[i+4:])
+			line = line[:i]
+		}
 		comma := strings.LastIndex(line, ",")
 		if comma <= 0 {
 			continue
@@ -144,6 +151,7 @@ func parseTXT(content []byte, src string) ([]*Channel, EPGSource) {
 			Group:   group,
 			Scheme:  sch,
 			RawURL:  u,
+			UA:      cUA,
 			EpgType: "txt",
 		})
 	}

@@ -115,6 +115,14 @@ func (m *Manager) Enabled() bool {
 	return m.cfg != nil && m.cfg.Enabled && m.cfg.Subscription != ""
 }
 
+// DefaultUA 返回当前配置的默认 User-Agent（热重载后重新读取）；未配置时用内置浏览器 UA。
+func (m *Manager) DefaultUA() string {
+	if ua := readPlayerCfg().UA; ua != "" {
+		return ua
+	}
+	return "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 Chrome/91"
+}
+
 // readPlayerCfg 返回当前全局配置的播放器段（加锁读取热重载后的最新值）。
 func readPlayerCfg() config.PlayerConfig {
 	config.CfgMu.RLock()

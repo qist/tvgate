@@ -147,6 +147,7 @@ type PlayerConfig struct {
 	Logo           string        `yaml:"logo"`            // 逗号TXT 订阅的台标模板（含 {name} 占位符），如 https://logo.<your-domain>/{name}.png
 	LogoDir        string        `yaml:"logo_dir"`        // 本地台标目录（如 /opt/TVLogo），频道 logo 用该目录下 <频道名>.png，经 /player/logo/ 服务
 	UpdateInterval time.Duration `yaml:"update_interval"` // 订阅定时刷新间隔，默认 2h
+	UA             string        `yaml:"ua"`              // 默认 User-Agent；频道未指定 ua= 时请求上游使用（部分源限制浏览器 UA）
 }
 
 // PublisherConfig represents the publisher configuration structure

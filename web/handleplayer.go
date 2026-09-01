@@ -37,6 +37,7 @@ func (h *ConfigHandler) handlePlayerConfig(w http.ResponseWriter, r *http.Reques
 		"logo":            p.Logo,
 		"logo_dir":        p.LogoDir,
 		"update_interval": p.UpdateInterval.String(),
+		"ua":              p.UA,
 	})
 }
 
@@ -144,6 +145,14 @@ func buildPlayerNode(cfg map[string]interface{}) *yaml.Node {
 		if s != "" && s != "2h0m0s" && s != "0s" {
 			node.Content = append(node.Content,
 				&yaml.Node{Kind: yaml.ScalarNode, Value: "update_interval"},
+				&yaml.Node{Kind: yaml.ScalarNode, Value: s})
+		}
+	}
+	if v, ok := cfg["ua"]; ok {
+		s := strings.TrimSpace(fmt.Sprintf("%v", v))
+		if s != "" {
+			node.Content = append(node.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "ua"},
 				&yaml.Node{Kind: yaml.ScalarNode, Value: s})
 		}
 	}

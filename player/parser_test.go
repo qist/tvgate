@@ -43,6 +43,42 @@ func TestParseTXT(t *testing.T) {
 	}
 }
 
+func TestParseTXTUA(t *testing.T) {
+	// txt 行尾 ua= 段：应剥离且只作用于该频道；无 ua= 的频道留空（回退 player.ua 默认）
+	content := []byte("组,#genre#\n" +
+		"CCTV2,http://192.168.100.1/live/ahbst.php?id=cctv2,ua=okhttp/3.8.1\n" +
+		"CCTV1,http://192.168.100.1/live/akmg.php?id=cctv1\n" +
+		"CCTV3,http://h/live/x.m3u8\n")
+	chans, _ := parseSubscription(content, "sub")
+	if len(chans) != 3 {
+		t.Fatalf("期望 3 频道, got %d", len(chans))
+	}
+	if chans[0].RawURL != "http://192.168.100.1/live/ahbst.php?id=cctv2" || chans[0].UA != "okhttp/3.8.1" {
+		t.Fatalf("ua 频道解析不对: url=%q ua=%q", chans[0].RawURL, chans[0].UA)
+	}
+	if chans[1].UA != "" || chans[2].UA != "" {
+		t.Fatalf("无 ua= 的频道 UA 应为空: %+v %+v", chans[1], chans[2])
+	}
+}
+
+func TestParseM3UUA(t *testing.T) {
+	content := []byte("#EXTM3U\n" +
+		"#EXTINF:-1 tvg-id=\"1\" ua=\"okhttp/3.8.1\",CCTV1\n" +
+		"http://x/live/a.m3u8\n" +
+		"#EXTINF:-1,CCTV2\n" +
+		"http://x/live/b.m3u8\n")
+	chans, _ := parseSubscription(content, "sub")
+	if len(chans) != 2 {
+		t.Fatalf("期望 2 频道, got %d", len(chans))
+	}
+	if chans[0].UA != "okhttp/3.8.1" {
+		t.Fatalf("M3U ua 属性解析不对: %+v", chans[0])
+	}
+	if chans[1].UA != "" {
+		t.Fatalf("无 ua 的 M3U 频道 UA 应为空: %+v", chans[1])
+	}
+}
+
 func TestResolveSub(t *testing.T) {
 	abs, ok := resolveSub("https://a.com/live/master.m3u8?token=1", "dir/seg1.ts")
 	if !ok || abs != "https://a.com/live/dir/seg1.ts" {

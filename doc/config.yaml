@@ -62,6 +62,9 @@ php:
 #   logo: "https://logo.<your-domain>/{name}.png"             # 台标模板（M3U/txt 无 tvg-logo 时兜底）
 #   logo_dir: "/opt/TVLogo"                                     # 本地台标目录（<频道名>.png，经 /player/logo/ 服务，优先于模板）
 #   update_interval: 2h      # 订阅定时刷新
+#   # 默认 User-Agent（请求上游 m3u8/分片用；频道在 txt 里带 ua=xxx 则优先生效，缺省用内置浏览器 UA）
+#   # 部分源限制浏览器 UA（如百视通需要 okhttp/3.8.1），此时填这里即可全频道生效：
+#   ua: "okhttp/3.8.1"
 
 # 仓库同步（将仓库内容单向同步到本地 docroot 下 local_path；支持多仓库，每个条目独立同步，见 doc/sync-dev.md）
 # sync:

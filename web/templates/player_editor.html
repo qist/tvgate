@@ -86,6 +86,11 @@
         <input type="text" id="update_interval" class="form-control" placeholder="2h">
         <div class="hint">如 2h / 30m，留空用默认 2h</div>
       </div>
+      <div class="form-group">
+        <label for="ua">默认 User-Agent（可选）</label>
+        <input type="text" id="ua" class="form-control" placeholder="okhttp/3.8.1">
+        <div class="hint">请求上游（m3u8/分片）用；频道在 txt 里带 <code>ua=xxx</code> 则优先生效，否则用此默认。留空用内置浏览器 UA</div>
+      </div>
     </div>
   </form>
 
@@ -116,6 +121,7 @@
       document.getElementById('logo').value = d.logo || '';
       document.getElementById('logo_dir').value = d.logo_dir || '';
       document.getElementById('update_interval').value = (d.update_interval && d.update_interval!=='2h0m0s') ? d.update_interval : '';
+      document.getElementById('ua').value = d.ua || '';
     }catch(e){ console.error(e); showAlert('加载配置失败: '+e.message, 'danger'); }
   }
   async function saveConfig(){
@@ -125,7 +131,8 @@
       epg: document.getElementById('epg').value.trim(),
       logo: document.getElementById('logo').value.trim(),
       logo_dir: document.getElementById('logo_dir').value.trim(),
-      update_interval: document.getElementById('update_interval').value.trim()
+      update_interval: document.getElementById('update_interval').value.trim(),
+      ua: document.getElementById('ua').value.trim()
     };
     if(cfg.enabled && !cfg.subscription){ showAlert('启用时必须填写订阅源', 'danger'); return; }
     try{
