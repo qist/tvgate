@@ -4,6 +4,16 @@
 
 ## Android (tvgate-android)
 
+### v3.0.10
+
+```
+1、停用自动注入 DNS，默认走系统/本地 DNS — 服务端移除 PreferGo + CGO 链接，系统解析经
+   getaddrinfo→netd 取设备本地 DNS，公网/内网域名无需再注入；TVGateService.kt 相关注入代码
+   整块注释保留（稳定后可清理），网络变化不再改 config 并重启
+2、测试构建改出 workflow artifact — 注释 releases 上传/打 tag，CI 构建产物以 artifact 供下载，
+   不发布 release 上线
+```
+
 ### v3.0.9
 
 ```
@@ -57,6 +67,27 @@
 ---
 
 ## 服务端 (tvgate)
+
+### v3.0.10
+
+```
+1、DNS 解析统一兜底链 — 配置 dns.servers → 系统解析 → 内置公共DNS(223.5.5.5/119.29.29.29)；
+   gethostbyname/gethostbynamel/dns_get_record/curl/各 dialer 全部一致；配置的 DNS 强制优先，失败才回落系统
+2、安卓系统解析走本地 DNS — systemResolver 移除 PreferGo，CGO 链接下经 getaddrinfo→netd 取设备本地 DNS，
+   公网/内网域名无需再注入
+3、curl 暴露 CURLINFO_PRIMARY_IP — 回显实际连接对端 IP，便于诊断
+4、清理每查询 [dns] 调试日志 — 避免多次解析疯狂刷屏（保留配置错误级 WARNING）
+5、修复 TTL 查询空结果直接返回 — RcodeSuccess 但无匹配记录（如 CNAME 别名）时继续尝试下一个 NS
+6、phpgo 新增函数 — sys_get_temp_dir + bcmath(bcadd/bcsub/bcmul/bcdiv/bcmod/bcpow/bcpowmod/bccomp，
+   math/big 实现、默认 scale=0)，供 wxty 等直播解析脚本 RSA 解密
+7、修复 phpgo 双引号字符串转义 — 补 \xHH/八进制\0..\777/\v/\f/\e；此前 "\x02" 被解析成 4 字符，
+   使 rsaAsn1Integers 扫不出 N/E（返回0），直播解析脚本报"获取直播地址失败"
+8、代码文件管理：二进制文件点击不打开编辑器（避免读入大二进制卡顿），仅选中并提示可下载/删除；
+   @media 480px 移动端适配
+9、代码管理中 ZIP 上传自动解压 — xxx.zip + 配套 xxx.zip.md5（MD5 一致即自动解压，覆盖模式）+
+   手动解压接口，文档同步
+10、README 补备份机制章节与 ZIP 解压说明；新增 DNS 路径 / phpgo bcmath/RSA 单元测试
+```
 
 ### v3.0.9
 
