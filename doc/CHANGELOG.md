@@ -10,6 +10,10 @@
 1、停用自动注入 DNS，默认走系统/本地 DNS — 服务端移除 PreferGo + CGO 链接，系统解析经
    getaddrinfo→netd 取设备本地 DNS，公网/内网域名无需再注入；TVGateService.kt 相关注入代码
    整块注释保留（稳定后可清理），网络变化不再改 config 并重启
+2、新增在线 APK 更新 — 启动/前台对比 GitHub Latest release，发现新版本可在线下载升级；无网络时跳过
+3、CI 支持手动触发构建时覆盖版本号（workflow_dispatch 输入 VERSION，用于在线更新测试）
+4、兼容修复 — 本地版本号显示前统一去掉 v 前缀；匹配 release 资源名时兼容带/不带 v 前缀
+5、CI 恢复上传 GitHub Release（移除测试期 artifact 步骤），构建产物合并到对应版本 release
 ```
 
 ### v3.0.9
