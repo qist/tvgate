@@ -189,6 +189,13 @@
             background-color: var(--win11-secondary);
         }
 
+        .editor-footer {
+            display: flex;
+            gap: 12px;
+            padding-top: 8px;
+            border-top: 1px solid var(--win11-border);
+        }
+
         .form-group {
             margin-bottom: 16px;
         }
@@ -574,11 +581,14 @@
                     render();
                 });
             });
-            document.querySelectorAll('.cancel-edit').forEach(btn => {
+            document.querySelectorAll('.cancel-edit, .close-edit').forEach(btn => {
                 btn.addEventListener('click', function () {
                     delete editingSet[parseInt(this.getAttribute('data-e'))];
                     render();
                 });
+            });
+            document.querySelectorAll('.save-current').forEach(btn => {
+                btn.addEventListener('click', saveConfig);
             });
             bindTextInput('.name-input', 'name', updateEntryTitle);
             bindTextInput('.group-input', 'group', refreshGroupFilter);
@@ -783,6 +793,11 @@
                 <div class="form-group">
                     <label>备注（可选）</label>
                     <input type="text" class="form-control notes-input" value="${escapeAttr(entry.notes || '')}" placeholder="该任务的用途说明" data-e="${idx}">
+                </div>
+
+                <div class="form-group editor-footer">
+                    <button type="button" class="btn save-current" data-e="${idx}">保存全部配置</button>
+                    <button type="button" class="btn btn-secondary close-edit" data-e="${idx}">关闭返回（不保存）</button>
                 </div>
             </div>`;
         }
