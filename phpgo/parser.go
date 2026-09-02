@@ -365,7 +365,18 @@ func (p *Parser) parseAssignOrExpr() (Stmt, error) {
 						return nil, err
 					}
 					p.skipSemis()
-					return &ArrayPushStmt{Arr: &VarExpr{Name: name}, Val: val}, nil
+					if len(indices) == 0 {
+						// $arr[] = val —— 纯追加（无前置下标）
+						return &ArrayPushStmt{Arr: &VarExpr{Name: name}, Val: val}, nil
+					}
+					// $arr[$k1][$k2][] = val —— 嵌套追加：末尾 nil 标记“追加”，
+					// 前面下标保留，交由 NestedArrayAssignStmt 处理（execNestedArrayAssign 已支持）
+					indices = append(indices, nil)
+					return &NestedArrayAssignStmt{
+						Base:    &VarExpr{Name: name},
+						Indices: indices,
+						Val:     val,
+					}, nil
 				}
 				indices = append(indices, nil)
 				continue
