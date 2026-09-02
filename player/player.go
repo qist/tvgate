@@ -1,16 +1,17 @@
 package player
 
 import (
-	"bytes"
 	"crypto/md5"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -154,25 +155,28 @@ func (m *Manager) Reload() {
 	m.cfg = &copyCfg
 
 	src := copyCfg.Subscription
-	content := m.fetch(src)
-	if content == nil {
+	files := m.fetchAll(src)
+	if len(files) == 0 {
 		logger.LogPrintf("❌ [player] 订阅拉取失败: %s", src)
 		return
 	}
-	chans, epgSrc := parseSubscription(content, src)
-	// txt 订阅的 EPG：内容内嵌 `epg=...` 优先；否则用配置 `player.epg`（含 { 占位符→template，否则固定 XMLTV→xml）
-	if !bytes.HasPrefix(bytes.TrimLeft(content, "\xef\xbb\xbf \t\r\n"), []byte("#EXTM3U")) {
-		if p.Epg != "" && epgSrc.Type == "none" {
-			if strings.Contains(p.Epg, "{") {
-				epgSrc = EPGSource{Type: "template", URL: p.Epg, Logo: epgSrc.Logo}
-			} else if strings.HasPrefix(p.Epg, "http") {
-				epgSrc = EPGSource{Type: "xml", URL: p.Epg, Logo: epgSrc.Logo}
-			}
+	// 多文件（目录订阅）：逐文件独立识别格式解析后合并；EPG/台标取第一个非空来源
+	var chans []*Channel
+	epgSrc := EPGSource{Type: "none"}
+	for _, f := range files {
+		cs, es := parseSubscription(f.content, f.name)
+		chans = append(chans, cs...)
+		if epgSrc.Type == "none" && es.Type != "none" {
+			epgSrc = es
 		}
 	}
-	// 非 M3U 时也可用配置提供固定 XMLTV（pp.xml 等），覆盖无 x-tvg-url 的场景
-	if bytes.HasPrefix(bytes.TrimLeft(content, "\xef\xbb\xbf \t\r\n"), []byte("#EXTM3U")) && p.Epg != "" && epgSrc.Type == "none" && !strings.Contains(p.Epg, "{") && strings.HasPrefix(p.Epg, "http") {
-		epgSrc = EPGSource{Type: "xml", URL: p.Epg}
+	// EPG 兜底：所有文件均未内嵌来源时，用配置 `player.epg`（含 { 占位符→template，否则固定 XMLTV→xml）
+	if p.Epg != "" && epgSrc.Type == "none" {
+		if strings.Contains(p.Epg, "{") {
+			epgSrc = EPGSource{Type: "template", URL: p.Epg, Logo: epgSrc.Logo}
+		} else if strings.HasPrefix(p.Epg, "http") {
+			epgSrc = EPGSource{Type: "xml", URL: p.Epg, Logo: epgSrc.Logo}
+		}
 	}
 	// 台标模板：内容内嵌 `logo=...`（txt）优先，否则用配置 `player.logo`；M3U/txt 的频道 logo 为空时兜底填充
 	logoTpl := epgSrc.Logo
@@ -221,13 +225,93 @@ func (m *Manager) Reload() {
 	m.epgSource = epgSrc
 	m.mu.Unlock()
 
-	logger.LogPrintf("✅ [player] 订阅加载完成: %d 频道 / %d 分组", len(newOrder), len(newGroups))
+	if len(files) > 1 {
+		logger.LogPrintf("✅ [player] 订阅加载完成: %d 频道 / %d 分组（目录合并 %d 个文件）", len(newOrder), len(newGroups), len(files))
+	} else {
+		logger.LogPrintf("✅ [player] 订阅加载完成: %d 频道 / %d 分组", len(newOrder), len(newGroups))
+	}
 
 	// EPG：M3U XMLTV 由服务端拉取解析
 	if epgSrc.Type == "xml" && epgSrc.URL != "" {
 		go m.epg.Load(epgSrc.URL)
 		m.epg.startRefresh(epgSrc.URL, m.cfg.UpdateInterval)
 	}
+}
+
+// subFile 订阅源解析出的单个文件（name 用于日志与按文件解析）。
+type subFile struct {
+	name    string
+	content []byte
+}
+
+// fetchAll 把订阅源展开为文件列表：
+//   - http(s) URL / 单文件：返回单个元素；
+//   - 目录（支持绝对路径 / file://dir / php://dir）：递归收集其中 .txt/.m3u/.m3u8，
+//     跳过隐藏文件/目录，按路径名排序保证合并顺序稳定。
+func (m *Manager) fetchAll(src string) []subFile {
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		b := m.fetch(src)
+		if b == nil {
+			return nil
+		}
+		return []subFile{{name: src, content: b}}
+	}
+	path := src
+	switch {
+	case strings.HasPrefix(path, "file://"):
+		path = strings.TrimPrefix(path, "file://")
+	case strings.HasPrefix(path, "php://"):
+		path = filepath.Join(docroot(), strings.TrimPrefix(path, "php://"))
+	default:
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(docroot(), path)
+		}
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	if !st.IsDir() {
+		b := m.fetch(src) // 单文件复用原逻辑（含 file://、php:// 解析）
+		if b == nil {
+			return nil
+		}
+		return []subFile{{name: path, content: b}}
+	}
+	// 目录：递归收集订阅文件
+	var out []subFile
+	_ = filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // 单个不可读项跳过，不影响其余文件
+		}
+		if d.IsDir() {
+			if p != path && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir // 隐藏目录整体跳过
+			}
+			return nil
+		}
+		name := d.Name()
+		if strings.HasPrefix(name, ".") {
+			return nil
+		}
+		switch strings.ToLower(filepath.Ext(name)) {
+		case ".txt", ".m3u", ".m3u8":
+		default:
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil || len(b) == 0 {
+			return nil
+		}
+		if len(b) > 64<<20 {
+			logger.LogPrintf("⚠️ [player] 订阅文件过大跳过(>64MB): %s", p)
+			return nil
+		}
+		out = append(out, subFile{name: p, content: b})
+		return nil
+	})
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out
 }
 
 // fetch 支持本地文件路径与 http(s) URL。

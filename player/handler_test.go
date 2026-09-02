@@ -140,7 +140,56 @@ func TestFetchSubscriptionSources(t *testing.T) {
 	}
 }
 
-// TestReloadPicksUpConfigChange 模拟后台改订阅后，Reload 从热重载后的全局配置取到新源。
+// TestFetchAllDir 目录订阅：递归收集 .txt/.m3u，跳过隐藏/无关文件，按名排序合并；单文件与 http 委托原逻辑。
+func TestFetchAllDir(t *testing.T) {
+	b := false
+	config.Cfg.HTTP.InsecureSkipVerify = &b
+	config.Cfg.HTTP.DisableKeepAlives = &b
+
+	tmp := t.TempDir()
+	sub := filepath.Join(tmp, "tv")
+	if err := os.MkdirAll(filepath.Join(sub, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(p, c string) {
+		if err := os.WriteFile(p, []byte(c), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(sub, "b_mig.txt"), "咪咕,#genre#\nCCTV1,rtsp://10.0.0.1/c1\n")
+	write(filepath.Join(sub, "a_bestv.txt"), "百视通,#genre#\nCCTV2,http://10.0.0.2/c2\n")
+	write(filepath.Join(sub, "sub", "c_iptv.m3u"), "#EXTM3U\n#EXTINF:-1,CCTV3\nhttp://10.0.0.3/c3\n")
+	write(filepath.Join(sub, "ignored.md"), "不是订阅")
+	write(filepath.Join(sub, ".hidden.txt"), "咪咕,#genre#\nX,http://10.0.0.9/x\n")
+	write(filepath.Join(sub, "empty.txt"), "")
+
+	m := NewManager(&config.PlayerConfig{Enabled: true})
+	files := m.fetchAll(sub)
+	if len(files) != 3 {
+		t.Fatalf("期望 3 个订阅文件（跳过隐藏/空/无关），got %d: %+v", len(files), files)
+	}
+	// 排序：a_bestv.txt < b_mig.txt < sub/c_iptv.m3u
+	if !strings.HasSuffix(files[0].name, "a_bestv.txt") || !strings.HasSuffix(files[1].name, "b_mig.txt") || !strings.HasSuffix(files[2].name, "c_iptv.m3u") {
+		t.Fatalf("排序不符: %v", []string{files[0].name, files[1].name, files[2].name})
+	}
+
+	// Reload 合并：3 频道、3 分组、按文件序
+	m.cfg = &config.PlayerConfig{Enabled: true, Subscription: sub}
+	config.Cfg.Player = *m.cfg
+	t.Cleanup(func() { config.Cfg.Player = config.PlayerConfig{} })
+	m.Reload()
+	cs := m.Channels()
+	if len(cs) != 3 {
+		t.Fatalf("期望合并 3 频道, got %d", len(cs))
+	}
+	if cs[0].Name != "CCTV2" || cs[1].Name != "CCTV1" || cs[2].Name != "CCTV3" {
+		t.Fatalf("合并顺序不符: %s, %s, %s", cs[0].Name, cs[1].Name, cs[2].Name)
+	}
+	if gs := m.Groups(); len(gs) != 3 {
+		t.Fatalf("期望 3 分组, got %v", gs)
+	}
+}
+
 func TestReloadPicksUpConfigChange(t *testing.T) {
 	b := false
 	config.Cfg.HTTP.InsecureSkipVerify = &b

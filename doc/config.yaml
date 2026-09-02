@@ -57,6 +57,8 @@ php:
 #   #   本地绝对路径：  "/www/channels.txt"
 #   #   file:// 路径：  "file:///www/channels.txt"
 #   #   php:// 相对 docroot： "php://channels.txt"   （相对 php.docroot）
+#   #   目录（合并加载）："/www/tv/"、"file:///www/tv/"、"php://tv/"   —— 递归收集其中
+#   #     .txt/.m3u/.m3u8（跳过隐藏文件），按路径名排序逐文件解析后合并，同 URL 自动去重
 #   subscription: "php://channels.txt"
 #   epg: "https://epg.<your-domain>/?ch={name}&date={date}"  # 逗号TXT 订阅的 EPG 模板（{name}=频道名 {date}=日期）
 #   logo: "https://logo.<your-domain>/{name}.png"             # 台标模板（M3U/txt 无 tvg-logo 时兜底）
