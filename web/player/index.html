@@ -492,10 +492,18 @@
       // 按服务端 /player/<key> 实际返回的 Content-Type 判定播放引擎：
       // 服务端对 m3u8 回 application/vnd.apple.mpegurl，对 TS/FLV 连流回 video/mp2t、video/x-flv。
       // 不能只凭 scheme 猜——广东联通等 RTSP-over-HTTPS 源回 video/mp2t 却会被误当 m3u8 播不了。
-      // 同源探测：拿到响应头即可，body 最多读 512 字节用于 CT 不明确时嗅探（#EXTM3U / TS 0x47），随即取消，避免误读直播流。
+      // 优化：Content-Type 明确时直接返回，不读 body（避免探测请求消耗直播 m3u8 内容）；
+      // 仅 CT 不明确时才读前 512 字节嗅探（#EXTM3U / TS 0x47），随即取消。
       function detectType(url) {
         var ctrl = new AbortController();
         return fetch(url, { signal: ctrl.signal }).then(function (r) {
+          var cls = (r.headers.get('content-type') || '').toLowerCase();
+          // Content-Type 明确：直接返回，不读 body
+          if (cls.indexOf('mpegurl') >= 0 || cls.indexOf('m3u8') >= 0) { ctrl.abort(); return 'm3u8'; }
+          if (cls.indexOf('mp2t') >= 0 || cls.indexOf('mpegts') >= 0) { ctrl.abort(); return 'mpegts'; }
+          if (cls.indexOf('flv') >= 0) { ctrl.abort(); return 'mpegts'; }
+          if (cls.indexOf('mp4') >= 0) { ctrl.abort(); return 'native'; }
+          // CT 不明确：读前 512 字节嗅探
           var rd = null;
           try { if (r.body && r.body.getReader) rd = r.body.getReader(); } catch (e) { }
           var chunkStr = function (a) {
@@ -525,11 +533,6 @@
           return sniff().then(function (s) {
             try { if (rd && rd.cancel) rd.cancel(); } catch (e) { }
             try { ctrl.abort(); } catch (e) { }
-            var cls = (r.headers.get('content-type') || '').toLowerCase();
-            if (cls.indexOf('mpegurl') >= 0 || cls.indexOf('m3u8') >= 0) return 'm3u8';
-            if (cls.indexOf('mp2t') >= 0 || cls.indexOf('mpegts') >= 0) return 'mpegts';
-            if (cls.indexOf('flv') >= 0) return 'mpegts';
-            if (cls.indexOf('mp4') >= 0) return 'native';
             return s || 'm3u8'; // CT 不明确时交给嗅探结果，再兜底 m3u8
           });
         }, function () { return 'm3u8'; });
@@ -587,22 +590,27 @@
             m3u8: function (v, u) {
               if (window.Hls && Hls.isSupported()) {
                 var hls = new Hls({
-                  lowLatencyMode: true,
+                  lowLatencyMode: false,
                   // 90s：Chrome/Edge 后台标签定时器节流到 1 次/分钟，缓冲须能撑过 60s 空档
                   // （上游 live 窗口 10×10s=100s，90s 可拉满），否则后台必然断流
                   maxBufferLength: 90,
                   backBufferLength: 30,      // 裁剪已播缓冲，长时播放降低内存压力
                   liveSyncDurationCount: 3,  // 直播追赶点：落后边缘 3 个分片起播/续播
+                  liveMaxLatencyDurationCount: 8, // 超过 8 片延迟自动追赶
                   startFragPrefetch: true,   // manifest 解析中预取首个分片，加快起播
                   maxBufferHole: 0.5,        // 允许跳过的缓冲洞（s）
-                  nudgeMaxRetry: 10          // 卡顿微调（currentTime nudge）重试上限，默认 3 偏少
+                  nudgeMaxRetry: 10,         // 卡顿微调（currentTime nudge）重试上限，默认 3 偏少
+                  fragLoadingMaxRetry: 6,    // 分片加载重试次数，默认 6
+                  manifestLoadingMaxRetry: 3, // 清单加载重试次数
+                  levelLoadingMaxRetry: 4    // 级别清单加载重试
                 });
                 var retries = 0;
+                var fallBackMpegts = false; // 是否已降级到 mpegts.js
                 hls.loadSource(u);
                 hls.attachMedia(v);
                 // hls.js 签名 (event, data)：details/fatal 都在 data 里，必须取第 2 参。
                 // 致命错误先自动恢复（上游偶发脏清单 manifestParsingError/网络抖动很常见），
-                // 重试 3 次仍失败才弹“播放失败”，避免用户看到一闪而过的报错。
+                // 重试 3 次仍失败才弹"播放失败"，避免用户看到一闪而过的报错。
                 hls.on(Hls.Events.ERROR, function (ev, data) {
                   if (mySeq !== createSeq) return;
                   if (data && data.fatal && retries < 3) {
@@ -613,6 +621,34 @@
                   }
                   onInstErr(data);
                 });
+                // 降级检测：hls.js 加载 m3u8 + 分片后，如果 8 秒内 video 的 readyState
+                // 一直未提升到 2（HAVE_CURRENT_DATA），说明 MSE 无法解码该流（如 mp2 音频），
+                // 自动降级到 mpegts.js（直接 TS remux，不依赖 MSE codec 支持）。
+                var stallCheck = 0;
+                var stallTimer = setInterval(function () {
+                  if (mySeq !== createSeq || fallBackMpegts) { clearInterval(stallTimer); return; }
+                  stallCheck++;
+                  if (v.readyState >= 2) { clearInterval(stallTimer); return; } // 已就绪，正常
+                  if (stallCheck >= 5) { // 5 秒后仍未就绪，降级
+                    clearInterval(stallTimer);
+                    fallBackMpegts = true;
+                    console.warn('[player] hls.js 加载 8s 未就绪 (readyState=' + v.readyState + ')，降级到 mpegts.js');
+                    try { hls.destroy(); } catch (e) { }
+                    engine = null;
+                    // 用 mpegts.js 重新加载（mpegts.js 用 MSE 直传 video/mp2t 容器，
+                    // 不做 TS→fMP4 转封装，所以 mp2 等非 AAC 音频也能播）
+                    if (window.mpegts && mpegts.isSupported && mpegts.isSupported()) {
+                      var inst = mpegts.createPlayer({ type: 'm3u8', isLive: true, url: u, enableStashBuffer: true, stashInitialSize: 256 * 1024 });
+                      inst.attachMediaElement(v);
+                      inst.load();
+                      inst.on(mpegts.Events.ERROR, function (et, detail) { onInstErr(et, detail); });
+                      engine = inst;
+                      try { v.play(); } catch (e) { }
+                    } else {
+                      v.src = u; // 原生兜底
+                    }
+                  }
+                }, 1000);
                 engine = hls;
               } else {
                 v.src = u; // Safari 原生 HLS
@@ -646,21 +682,22 @@
             try { video.muted = false; autoMuted = false; } catch (e) { }
           }
         });
-        // 自动播放兼容：只有被浏览器“自动播放策略”拦截（NotAllowedError）才静音重试，
-        // 保证首屏出画面；用户随便点一下屏幕即恢复声音（见下方 pointerdown 解锁）。
-        // 注意：切台时 play() 常因加载打断 reject AbortError，这是无害的，绝不能静音。
-        if (video) {
-          var _p = video.play();
-          if (_p && _p.catch) _p.catch(function (err) {
+        // 起播兜底（关键）：Chrome/Edge 的自动播放策略在媒体就绪（canplay）后拦截“有声 play()”
+        // 抛 NotAllowedError。注意兜底必须挂在 canplay —— 创建实例时 hls/mpegts 尚未挂载媒体源，
+        // 此时 play() 只会抛 NotSupportedError，时机不对的兜底永远不会生效（表现为一直黑屏不播）。
+        art.on('video:canplay', function () {
+          if (mySeq !== createSeq || !video || !video.paused) return;
+          var p = video.play();
+          if (p && p.catch) p.catch(function (err) {
             if (!err || err.name !== 'NotAllowedError') return; // 非策略拦截，保持有声
             try {
               video.muted = true; autoMuted = true;
               var p2 = video.play(); if (p2 && p2.catch) p2.catch(function () { });
-              // 让用户知道为什么没声音：Chrome/Edge 自动播放策略拦了有声起播
+              // 让用户知道为什么没声音：浏览器拦了有声自动播放
               if (art && art.notice) try { art.notice.show = '浏览器拦截了自动播放：已静音起播，点音量图标恢复声音'; } catch (e3) { }
             } catch (e2) { }
           });
-        }
+        });
         // video 元素级错误（MediaError）：转成可读文本，避免“未知错误”
         art.on('video:error', function () {
           if (mySeq !== createSeq) return;
@@ -675,8 +712,9 @@
         // hls.js 正确传法是 onErr(data)；mpegts.js 是 (errorType, detail) 两个参数——
         // 之前直接把 onErr 挂上去导致 details/fatal 全丢，任何错误都显示“未知错误”。
         if (typeof e === 'string') { e = { message: e + (d2 ? ' ' + d2 : '') }; }
-        // hls.js/mpegts.js 的非致命错误（fatal=false，如 bufferStalledError）内部会重试，忽略
-        if (e && e.fatal === false) return;
+        // 诊断：所有引擎错误都打到控制台（非致命 warn / 致命 error），便于用户 F12 排查
+        if (e && e.fatal === false) { console.warn('[hls] 非致命(自动恢复):', e.details || e.message || e); return; }
+        console.error('[player] 致命错误:', (e && (e.details || e.message)) || e);
         errMsg.textContent = (e && (e.details || e.message)) ? (e.details || e.message) : '未知错误';
         errBox.classList.add('show');
       }
