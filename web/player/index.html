@@ -586,7 +586,14 @@
           customType: {
             m3u8: function (v, u) {
               if (window.Hls && Hls.isSupported()) {
-                var hls = new Hls({ lowLatencyMode: true, maxBufferLength: 30 });
+                var hls = new Hls({
+                  lowLatencyMode: true,
+                  maxBufferLength: 30,       // 前向缓冲 30s
+                  liveSyncDurationCount: 3,  // 直播追赶点：落后边缘 3 个分片起播/续播
+                  startFragPrefetch: true,   // manifest 解析中预取首个分片，加快起播
+                  maxBufferHole: 0.5,        // 允许跳过的缓冲洞（s）
+                  nudgeMaxRetry: 10          // 卡顿微调（currentTime nudge）重试上限，默认 3 偏少
+                });
                 var retries = 0;
                 hls.loadSource(u);
                 hls.attachMedia(v);
