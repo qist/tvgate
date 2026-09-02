@@ -27,6 +27,7 @@ import (
 	"github.com/qist/tvgate/server"
 	"github.com/qist/tvgate/stream"
 	tvsync "github.com/qist/tvgate/sync"
+	"github.com/qist/tvgate/tasks"
 	tsync "github.com/qist/tvgate/utils/sync"
 	"github.com/qist/tvgate/utils/upgrade"
 	"github.com/qist/tvgate/web"
@@ -241,6 +242,11 @@ func main() {
 	// 启动仓库同步（tvbox 目录，可选；配置热加载时在 watch 中重启）
 	// -------------------------
 	tvsync.Start(&config.Cfg)
+
+	// -------------------------
+	// 启动定时任务（Cron 调度执行 Shell 命令，可选；配置热加载时在 watch 中重启）
+	// -------------------------
+	tasks.Start(&config.Cfg)
 
 	// -------------------------
 	// 捕获系统退出信号

@@ -21,6 +21,7 @@ import (
 	"github.com/qist/tvgate/server"
 	"github.com/qist/tvgate/stream"
 	tvsync "github.com/qist/tvgate/sync"
+	"github.com/qist/tvgate/tasks"
 	tsync "github.com/qist/tvgate/utils/sync"
 )
 
@@ -122,6 +123,9 @@ func WatchConfigFile(ctx context.Context, configPath string, upgrader *tableflip
 
 		// 重启仓库同步（sync 配置变化时自动停止旧实例并按新配置启动）
 		tvsync.Start(&config.Cfg)
+
+		// 重启定时任务（tasks 配置变化时自动停止旧实例并按新配置重启调度）
+		tasks.Start(&config.Cfg)
 
 		muxMu.Lock()
 		defer muxMu.Unlock()

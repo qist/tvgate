@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>定时任务配置编辑器 - TVGate Web管理</title>
+    <link rel="stylesheet" href="{{.webPath}}static/common.css">
+    <link rel="stylesheet" href="{{.webPath}}static/mobile.css">
+    <link rel="stylesheet" href="{{.webPath}}static/version.css">
+    <script src="{{.webPath}}static/js/theme.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--win11-bg);
+            color: var(--win11-text-primary);
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            background-color: var(--win11-surface);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px var(--win11-shadow);
+            border: 1px solid var(--win11-border);
+            transition: background-color 0.3s, box-shadow 0.3s;
+        }
+
+        h1 {
+            color: var(--win11-text-primary);
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .auth-section {
+            text-align: right;
+            margin-bottom: 20px;
+        }
+
+        .auth-section a {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: var(--win11-success);
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            margin-left: 10px;
+        }
+
+        .auth-section a.logout {
+            background-color: var(--win11-danger);
+        }
+
+        .auth-section a:hover {
+            opacity: 0.9;
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .group-filter {
+            min-width: 200px;
+        }
+
+        .entry {
+            border: 1px solid var(--win11-border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 24px;
+            background-color: var(--win11-card);
+        }
+
+        .entry-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .entry-header h2 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--win11-text-primary);
+        }
+
+        .entry-header .badge {
+            display: inline-block;
+            margin-left: 10px;
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-size: 12px;
+            color: white;
+            vertical-align: middle;
+        }
+
+        .entry-header .badge.group-badge {
+            background-color: var(--win11-secondary);
+        }
+
+        .entry-header .status-badge.badge-ok {
+            background-color: var(--win11-success);
+        }
+
+        .entry-header .status-badge.badge-fail {
+            background-color: var(--win11-danger);
+        }
+
+        .entry-header .status-badge.badge-pending {
+            background-color: var(--win11-disabled);
+        }
+
+        .card-body {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .card-row {
+            display: flex;
+            gap: 12px;
+            font-size: 14px;
+        }
+
+        .card-row .card-label {
+            width: 84px;
+            flex-shrink: 0;
+            color: var(--win11-text-secondary);
+        }
+
+        .card-row .card-value {
+            word-break: break-all;
+            color: var(--win11-text-primary);
+        }
+
+        .card-value.dim, .dim {
+            color: var(--win11-text-secondary);
+        }
+
+        .entry-header .entry-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .remove-entry {
+            background-color: var(--win11-danger);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 8px 14px;
+        }
+
+        .run-entry {
+            background-color: var(--win11-success);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 8px 14px;
+        }
+
+        .run-entry:disabled {
+            background-color: var(--win11-disabled);
+            cursor: not-allowed;
+        }
+
+        .edit-entry, .cancel-edit {
+            background-color: var(--win11-accent);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 8px 14px;
+        }
+
+        .cancel-edit {
+            background-color: var(--win11-secondary);
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 600;
+            color: var(--win11-text-secondary);
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 10px;
+            background-color: var(--win11-surface);
+            border: 1px solid var(--win11-border);
+            border-radius: 4px;
+            color: var(--win11-text-primary);
+            box-sizing: border-box;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--win11-accent);
+            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            margin-right: 8px;
+            transform: scale(1.4);
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: var(--win11-accent);
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .btn:hover {
+            background-color: var(--win11-accent-hover);
+        }
+
+        .btn:disabled {
+            background-color: var(--win11-disabled);
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background-color: var(--win11-secondary);
+        }
+
+        .btn-secondary:hover {
+            background-color: var(--win11-secondary-hover);
+        }
+
+        .add-entry {
+            background-color: var(--win11-success);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 12px 20px;
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 15px;
+        }
+
+        .form-row .form-col {
+            flex: 1;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                flex-direction: column;
+                gap: 0;
+            }
+        }
+
+        .hint {
+            font-size: 13px;
+            color: var(--win11-text-secondary);
+            margin-top: 6px;
+            line-height: 1.6;
+        }
+
+        .cron-preview {
+            margin-top: 8px;
+            font-size: 13px;
+        }
+
+        .mode-switch {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 12px;
+            padding: 8px 12px;
+            background-color: var(--win11-bg);
+            border: 1px solid var(--win11-border);
+            border-radius: 4px;
+        }
+
+        .mode-switch label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: 500;
+            color: var(--win11-text-primary);
+            cursor: pointer;
+        }
+
+        .mode-switch input[type="radio"] {
+            transform: scale(1.2);
+            cursor: pointer;
+        }
+
+        .visual-panel .form-col label,
+        .weekday-box {
+            font-size: 13px;
+            color: var(--win11-text-secondary);
+        }
+
+        .visual-panel .form-col > label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+
+        .weekday-box {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding-top: 4px;
+        }
+
+        .weekday-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            padding: 3px 8px;
+            border: 1px solid var(--win11-border);
+            border-radius: 4px;
+            color: var(--win11-text-primary);
+            background-color: var(--win11-surface);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .weekday-item input {
+            margin: 0;
+            transform: scale(1.1);
+            cursor: pointer;
+        }
+
+        .cron-preview .ok {
+            color: var(--win11-success);
+        }
+
+        .cron-preview .bad {
+            color: var(--win11-danger);
+        }
+
+        .notification {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .notification.success {
+            background-color: var(--win11-success);
+            color: white;
+            display: block;
+        }
+
+        .notification.error {
+            background-color: var(--win11-danger);
+            color: white;
+            display: block;
+        }
+
+        .empty-tip {
+            text-align: center;
+            color: var(--win11-text-secondary);
+            padding: 40px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>定时任务配置编辑器</h1>
+
+        <div class="auth-section">
+            <a href="{{.webPath}}" class="btn btn-secondary">返回主界面</a>
+            <a href="{{.webPath}}logout" class="btn logout">退出登录</a>
+        </div>
+
+        <div id="notification" class="notification"></div>
+
+        <div class="toolbar">
+            <button type="button" class="add-entry" id="addEntryBtn" style="margin-bottom:0;">+ 添加任务</button>
+            <select class="form-control group-filter" id="groupFilter" title="按分组筛选显示">
+                <option value="">全部任务</option>
+            </select>
+        </div>
+
+        <div id="entryContainer">
+            <!-- 定时任务条目将通过 JavaScript 动态渲染 -->
+        </div>
+
+        <div class="form-group">
+            <button type="button" class="btn" id="saveBtn">保存全部配置</button>
+            <button type="button" class="btn btn-secondary" id="resetBtn">重置</button>
+        </div>
+    </div>
+
+    <script>
+        const webPath = "{{.webPath}}";
+        window.webPath = webPath;
+        let allEntries = [];
+        let editingSet = {}; // idx -> true 表示该条目正在编辑中
+        let statuses = [];   // 运行时状态（来自 /api/tasks/status）
+        let activeGroup = '';
+
+        document.addEventListener('DOMContentLoaded', function () {
+            loadConfig();
+            document.getElementById('saveBtn').addEventListener('click', saveConfig);
+            document.getElementById('resetBtn').addEventListener('click', loadConfig);
+            document.getElementById('addEntryBtn').addEventListener('click', () => {
+                const e = newEntry();
+                buildCronFromVisual(e); // 为新任务生成默认表达式（每天 00:00）
+                allEntries.push(e);
+                editingSet[allEntries.length - 1] = true; // 新建自动进入编辑
+                render();
+            });
+            document.getElementById('groupFilter').addEventListener('change', function () {
+                activeGroup = this.value;
+                render();
+            });
+            syncTheme();
+            // 定时刷新运行时状态（下次执行 / 最近结果）
+            setInterval(pollStatus, 5000);
+        });
+
+        function newEntry() {
+            return {
+                name: '',
+                enabled: false,
+                group: '',
+                cron: '',
+                command: '',
+                timeout: '',
+                notes: '',
+                // 前端可视化辅助字段（不保存到后端）
+                mode: 'visual',       // visual=可视化配置 expr=Cron表达式
+                freq: 'daily',        // daily|weekly|monthly
+                weekdays: [],         // [1..6] 周一~周六, 0=周日
+                monthDay: 1,
+                time: '00:00'
+            };
+        }
+
+        function loadConfig() {
+            fetch('{{.webPath}}api/tasks/config')
+                .then(response => response.json())
+                .then(data => {
+                    const list = Array.isArray(data) && data.length ? data : [newEntry()];
+                    allEntries = list.map(e => Object.assign(newEntry(), e));
+                    allEntries.forEach(initVisualFields);
+                    editingSet = {};
+                    updateGroupFilter();
+                    render();
+                    pollStatus();
+                })
+                .catch(error => {
+                    allEntries = [newEntry()];
+                    render();
+                    showNotification('加载配置失败: ' + error.message, 'error');
+                });
+        }
+
+        // 拉取所有任务的运行时状态
+        function pollStatus() {
+            fetch('{{.webPath}}api/tasks/status')
+                .then(r => r.json())
+                .then(data => {
+                    statuses = Array.isArray(data) ? data : [];
+                    updateStatusDisplays();
+                })
+                .catch(() => {});
+        }
+
+        // 就地刷新卡片上的时间/结果（不重建整卡），减少闪烁
+        function updateStatusDisplays() {
+            document.querySelectorAll('.entry-card').forEach(card => {
+                const idx = parseInt(card.getAttribute('data-e'));
+                const st = statuses[idx];
+                if (!st) return;
+                const stBadge = card.querySelector('.status-badge');
+                const lastRunEl = card.querySelector('.last-run');
+                const msgEl = card.querySelector('.last-message');
+                if (!stBadge) return;
+                if (st.ran) {
+                    stBadge.className = 'badge status-badge ' + (st.success ? 'badge-ok' : 'badge-fail');
+                    stBadge.textContent = st.success ? '成功' : '失败';
+                    if (lastRunEl) lastRunEl.textContent = formatTime(st.last_run) + (st.last_duration ? ' | ' + st.last_duration : '');
+                    if (msgEl) msgEl.textContent = (st.last_message || '').slice(0, 120);
+                } else {
+                    stBadge.className = 'badge status-badge badge-pending';
+                    stBadge.textContent = '未执行';
+                }
+                const nextEl = card.querySelector('.next-run');
+                if (nextEl) nextEl.textContent = formatTime(st.next_run);
+            });
+        }
+
+        function formatTime(t) {
+            if (!t) return '—';
+            const d = new Date(t);
+            if (isNaN(d.getTime()) || d.getFullYear() < 2000) return '—';
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+        }
+
+        // 从全部条目收敛分组下拉选项
+        function updateGroupFilter() {
+            const sel = document.getElementById('groupFilter');
+            const groups = [...new Set(allEntries.map(e => (e.group || '').trim()).filter(g => g !== ''))];
+            const current = sel.value;
+            let html = '<option value="">全部任务</option>';
+            groups.forEach(g => {
+                html += `<option value="${g}" ${g === current ? 'selected' : ''}>${g}</option>`;
+            });
+            sel.innerHTML = html;
+            activeGroup = sel.value;
+        }
+
+        function render() {
+            // 分组筛选后仍需映射到 allEntries 的真实下标，保证删除/编辑操作定位正确
+            const shown = activeGroup
+                ? allEntries.filter(e => (e.group || '').trim() === activeGroup)
+                : allEntries;
+            const container = document.getElementById('entryContainer');
+            container.innerHTML = shown.length
+                ? shown.map(e => entryHtml(e, allEntries.indexOf(e))).join('')
+                : '<div class="empty-tip">当前分组下没有任务，点击右上角“添加任务”新建。</div>';
+
+            document.querySelectorAll('.remove-entry').forEach(btn => {
+                btn.addEventListener('click', function () {
+                    const idx = parseInt(this.getAttribute('data-e'));
+                    allEntries.splice(idx, 1);
+                    updateGroupFilter();
+                    render();
+                });
+            });
+            document.querySelectorAll('.run-entry').forEach(btn => {
+                btn.addEventListener('click', function () {
+                    runTask(parseInt(this.getAttribute('data-e')), this);
+                });
+            });
+            document.querySelectorAll('.edit-entry').forEach(btn => {
+                btn.addEventListener('click', function () {
+                    const idx = parseInt(this.getAttribute('data-e'));
+                    editingSet[idx] = true;
+                    render();
+                });
+            });
+            document.querySelectorAll('.cancel-edit').forEach(btn => {
+                btn.addEventListener('click', function () {
+                    delete editingSet[parseInt(this.getAttribute('data-e'))];
+                    render();
+                });
+            });
+            bindTextInput('.name-input', 'name', updateEntryTitle);
+            bindTextInput('.group-input', 'group', refreshGroupFilter);
+            bindTextInput('.cron-input', 'cron', updateCronPreview);
+            bindTextInput('.command-input', 'command', updateEntryTitle);
+            bindTextInput('.timeout-input', 'timeout');
+            bindTextInput('.notes-input', 'notes');
+            bindCheckInput('.enabled-input', 'enabled');
+
+            // 模式切换：可视化 / 表达式
+            document.querySelectorAll('.mode-input').forEach(radio => {
+                radio.addEventListener('change', function () {
+                    const idx = parseInt(this.closest('.entry').getAttribute('data-e'));
+                    allEntries[idx].mode = this.value;
+                    render();
+                });
+            });
+            // 可视化配置控件
+            document.querySelectorAll('.freq-input').forEach(sel => {
+                sel.addEventListener('change', function () {
+                    const idx = parseInt(this.getAttribute('data-e'));
+                    allEntries[idx].freq = this.value;
+                    syncVisualCron(idx);
+                    render();
+                });
+            });
+            document.querySelectorAll('.time-input').forEach(inp => {
+                inp.addEventListener('input', function () {
+                    const idx = parseInt(this.getAttribute('data-e'));
+                    allEntries[idx].time = this.value || '00:00';
+                    syncVisualCron(idx);
+                });
+            });
+            document.querySelectorAll('.monthday-input').forEach(inp => {
+                inp.addEventListener('input', function () {
+                    const idx = parseInt(this.getAttribute('data-e'));
+                    let d = parseInt(this.value, 10);
+                    if (isNaN(d) || d < 1) d = 1;
+                    if (d > 31) { d = 31; this.value = 31; }
+                    allEntries[idx].monthDay = d;
+                    syncVisualCron(idx);
+                });
+            });
+            document.querySelectorAll('.weekday-input').forEach(cb => {
+                cb.addEventListener('change', function () {
+                    const idx = parseInt(this.getAttribute('data-e'));
+                    const d = parseInt(this.getAttribute('data-w'), 10);
+                    const set = allEntries[idx].weekdays;
+                    if (this.checked) {
+                        if (!set.includes(d)) set.push(d);
+                    } else {
+                        const pos = set.indexOf(d);
+                        if (pos >= 0) set.splice(pos, 1);
+                    }
+                    syncVisualCron(idx);
+                });
+            });
+            // 按模式显示/隐藏面板，并刷新可视化预览与解析提示
+            shown.forEach((e) => {
+                const i = allEntries.indexOf(e);
+                document.querySelectorAll(`.visual-panel[data-e="${i}"]`).forEach(p => {
+                    p.style.display = e.mode !== 'expr' ? '' : 'none';
+                });
+                document.querySelectorAll(`.expr-panel[data-e="${i}"]`).forEach(p => {
+                    p.style.display = e.mode === 'expr' ? '' : 'none';
+                });
+                const vp = document.querySelector(`.visual-panel[data-e="${i}"] .visual-preview`);
+                if (vp) vp.textContent = e.cron || '';
+                // 按频率隐藏无关列：非每周隐藏星期列，非每月隐藏每月几号列
+                document.querySelectorAll(`.weekday-col[data-e="${i}"]`).forEach(c => {
+                    c.style.display = e.freq === 'weekly' ? '' : 'none';
+                });
+                document.querySelectorAll(`.monthday-col[data-e="${i}"]`).forEach(c => {
+                    c.style.display = e.freq === 'monthly' ? '' : 'none';
+                });
+            });
+        }
+
+        // 分发：只读卡片（默认） 或 编辑表单
+        function entryHtml(entry, idx) {
+            return editingSet[idx] ? entryFormHtml(entry, idx) : entryViewHtml(entry, idx);
+        }
+
+        // 只读卡片：展示名字、执行命令、Cron、下次执行、最近执行结果
+        function entryViewHtml(entry, idx) {
+            const st = statuses[idx] || {};
+            const stClass = st.ran ? (st.success ? 'badge-ok' : 'badge-fail') : 'badge-pending';
+            const stText = st.ran ? (st.success ? '成功' : '失败') : '未执行';
+            return `
+            <div class="entry entry-card" data-e="${idx}">
+                <div class="entry-header">
+                    <h2>${escapeHtml(entry.name || entry.command || '(未命名)')}<span class="badge group-badge">${escapeHtml((entry.group || '').trim() || '未分组')}</span><span class="badge status-badge ${stClass}">${stText}</span></h2>
+                    <div class="entry-actions">
+                        <button type="button" class="run-entry" data-e="${idx}" title="立即执行该任务">立即执行</button>
+                        <button type="button" class="edit-entry" data-e="${idx}">编辑</button>
+                        <button type="button" class="remove-entry" data-e="${idx}">删除</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="card-row"><span class="card-label">执行命令</span><span class="card-value">${entry.command ? escapeHtml(entry.command) : '<span class="dim">未设置</span>'}</span></div>
+                    <div class="card-row"><span class="card-label">Cron</span><span class="card-value">${escapeHtml(entry.cron) || '—'}</span></div>
+                    <div class="card-row"><span class="card-label">下次执行</span><span class="card-value next-run">${formatTime(st.next_run)}</span></div>
+                    <div class="card-row"><span class="card-label">最近执行</span><span class="card-value last-run">${st.ran ? formatTime(st.last_run) + (st.last_duration ? ' | ' + st.last_duration : '') : '—'}</span></div>
+                    <div class="card-row"><span class="card-label">执行结果</span><span class="card-value last-message">${escapeHtml((st.last_message || '').slice(0, 120)) || '—'}</span></div>
+                </div>
+            </div>`;
+        }
+
+        // 编辑表单
+        function entryFormHtml(entry, idx) {
+            return `
+            <div class="entry" data-e="${idx}">
+                <div class="entry-header">
+                    <h2>编辑任务 ${idx + 1}：${entry.name || entry.command || '(未命名)'}<span class="badge group-badge">${(entry.group || '').trim() || '未分组'}</span></h2>
+                    <div class="entry-actions">
+                        <button type="button" class="run-entry" data-e="${idx}" title="立即执行该任务的命令一次">立即执行</button>
+                        <button type="button" class="cancel-edit" data-e="${idx}">取消编辑</button>
+                        <button type="button" class="remove-entry" data-e="${idx}">删除该任务</button>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-col">
+                        <div class="form-group">
+                            <label>任务名称（可选）</label>
+                            <input type="text" class="form-control name-input" value="${escapeAttr(entry.name || '')}" placeholder="例如: 更新 EPG 缓存" data-e="${idx}">
+                        </div>
+                    </div>
+                    <div class="form-col">
+                        <div class="form-group">
+                            <label>分组（可选，用于列表分类）</label>
+                            <input type="text" class="form-control group-input" value="${escapeAttr(entry.group || '')}" placeholder="例如: 日常维护" data-e="${idx}">
+                        </div>
+                    </div>
+                    <div class="form-col">
+                        <div class="form-group checkbox-group">
+                            <label>启用</label>
+                            <input type="checkbox" class="enabled-input" ${entry.enabled ? 'checked' : ''} data-e="${idx}">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-col">
+                        <div class="form-group">
+                            <label>执行时间设置</label>
+                            <div class="mode-switch">
+                                <label><input type="radio" class="mode-input" name="mode-${idx}" value="visual" ${entry.mode === 'expr' ? '' : 'checked'}> 可视化配置</label>
+                                <label><input type="radio" class="mode-input" name="mode-${idx}" value="expr" ${entry.mode === 'expr' ? 'checked' : ''}> Cron 表达式</label>
+                            </div>
+
+                            <div class="visual-panel" data-e="${idx}">
+                                <div class="form-row">
+                                    <div class="form-col">
+                                        <label>频率</label>
+                                        <select class="form-control freq-input" data-e="${idx}">
+                                            <option value="daily" ${entry.freq === 'daily' ? 'selected' : ''}>每天</option>
+                                            <option value="weekly" ${entry.freq === 'weekly' ? 'selected' : ''}>每周</option>
+                                            <option value="monthly" ${entry.freq === 'monthly' ? 'selected' : ''}>每月</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-col">
+                                        <label>执行时间</label>
+                                        <input type="time" class="form-control time-input" value="${escapeAttr(entry.time || '00:00')}" data-e="${idx}">
+                                    </div>
+                                    <div class="form-col weekday-col" data-e="${idx}">
+                                        <label>每周几执行</label>
+                                        <div class="weekday-box weekday-container" data-e="${idx}">
+                                            ${weekdaysHtml(entry, idx)}
+                                        </div>
+                                    </div>
+                                    <div class="form-col monthday-col" data-e="${idx}">
+                                        <label>每月第几天</label>
+                                        <input type="number" class="form-control monthday-input" min="1" max="31" value="${entry.monthDay || 1}" data-e="${idx}">
+                                    </div>
+                                </div>
+                                <div class="hint">生成表达式：<code class="visual-preview">${escapeHtml(entry.cron || '')}</code></div>
+                            </div>
+
+                            <div class="expr-panel" data-e="${idx}">
+                                <input type="text" class="form-control cron-input" value="${escapeAttr(entry.cron || '')}" placeholder="例如: 0 */6 * * *（每6小时）" data-e="${idx}">
+                                <div class="cron-preview" data-e="${idx}">
+                                    <span class="cron-preview-text">${entry.cron ? '是否合法请查看提示' : '示例：0 2 * * *（每天 02:00）；0 */6 * * *（每 6 小时）'}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-col">
+                        <div class="form-group">
+                            <label>执行超时（可选，例: 60s，留空不限制）</label>
+                            <input type="text" class="form-control timeout-input" value="${escapeAttr(entry.timeout || '')}" placeholder="例如: 60s" data-e="${idx}">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>执行命令（Shell 命令，可调用 PHP 脚本）</label>
+                    <textarea class="form-control command-input" rows="3" placeholder="例如: /usr/bin/php /path/script.php&#10;或：wget -q -O /dev/null 'http://127.0.0.1/php/api.php'" data-e="${idx}">${escapeHtml(entry.command || '')}</textarea>
+                    <div class="hint">任务到点后由系统 shell 执行整段命令（sh -c）。执行 PHP 脚本请写完整调用命令。</div>
+                </div>
+
+                <div class="form-group">
+                    <label>备注（可选）</label>
+                    <input type="text" class="form-control notes-input" value="${escapeAttr(entry.notes || '')}" placeholder="该任务的用途说明" data-e="${idx}">
+                </div>
+            </div>`;
+        }
+
+        function bindTextInput(selector, field, after) {
+            document.querySelectorAll(selector).forEach(input => {
+                input.addEventListener('input', function () {
+                    const idx = parseInt(this.getAttribute('data-e'));
+                    allEntries[idx][field] = this.value;
+                    if (after) after(idx, this.value);
+                });
+            });
+        }
+
+        function bindCheckInput(selector, field) {
+            document.querySelectorAll(selector).forEach(input => {
+                input.addEventListener('change', function () {
+                    allEntries[parseInt(this.getAttribute('data-e'))][field] = this.checked;
+                });
+            });
+        }
+
+        function updateEntryTitle(idx) {
+            const header = document.querySelector(`.entry[data-e="${idx}"] .entry-header h2`);
+            if (header && header.firstChild) {
+                const e = allEntries[idx];
+                const prefix = editingSet[idx] ? '编辑任务' : '任务';
+                header.firstChild.textContent = `${prefix} ${idx + 1}：${e.name || e.command || '(未命名)'}`;
+                const badge = header.querySelector('.group-badge');
+                if (badge) badge.textContent = (e.group || '').trim() || '未分组';
+            }
+        }
+
+        // 分组输入变化后联动更新筛选下拉
+        function refreshGroupFilter(idx, val) {
+            updateEntryTitle(idx);
+            const prev = activeGroup;
+            updateGroupFilter();
+            if (prev && activeGroup !== prev && allEntries[idx] && (allEntries[idx].group || '').trim() === prev) {
+                document.getElementById('groupFilter').value = prev;
+            }
+            document.getElementById('groupFilter').value = activeGroup;
+        }
+
+        // cron 预览：简单校验是否合法
+        function updateCronPreview(idx, val) {
+            const box = document.querySelector(`.cron-preview[data-e="${idx}"] .cron-preview-text`);
+            if (!box) return;
+            if (!val.trim()) {
+                box.className = 'cron-preview-text';
+                box.textContent = '示例：0 2 * * *（每天 02:00）；0 */6 * * *（每 6 小时）';
+                return;
+            }
+            const fields = val.trim().split(/\s+/);
+            if (fields.length === 5) {
+                box.className = 'cron-preview-text ok';
+                box.textContent = '✓ 5 段格式正确，保存后生效';
+            } else {
+                box.className = 'cron-preview-text bad';
+                box.textContent = '✗ 需为 5 段（分 时 日 月 周）';
+            }
+        }
+
+        const WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+        // 星期多选控件（cron 星期 0=周日, 1-6=周一~周六）
+        function weekdaysHtml(entry, idx) {
+            const set = entry.weekdays || [];
+            let html = '';
+            for (let d = 0; d <= 6; d++) {
+                html += `<label class="weekday-item"><input type="checkbox" class="weekday-input" data-e="${idx}" data-w="${d}" ${set.includes(d) ? 'checked' : ''}>${WEEKDAY_NAMES[d]}</label>`;
+            }
+            return html;
+        }
+
+        function pad0(n) { return String(n).padStart(2, '0'); }
+
+        // 由可视化字段生成 cron 表达式并写回 entry.cron
+        function buildCronFromVisual(entry) {
+            const parts = (entry.time || '00:00').split(':');
+            let mm = parts[0], h = parts[1] || '0';
+            if (!/^\d+$/.test(mm) || +mm > 59) mm = '0';
+            if (!/^\d+$/.test(h) || +h > 23) h = '0';
+            const mmf = pad0(+mm), hf = pad0(+h);
+
+            if (entry.freq === 'weekly') {
+                const ws = (entry.weekdays || []).slice().sort((a, b) => a - b);
+                const dows = ws.length ? ws.join(',') : '*';
+                entry.cron = `${mmf} ${hf} * * ${dows}`;
+            } else if (entry.freq === 'monthly') {
+                const d = Math.min(Math.max(parseInt(entry.monthDay, 10) || 1, 1), 31);
+                entry.cron = `${mmf} ${hf} ${d} * *`;
+            } else {
+                entry.cron = `${mmf} ${hf} * * *`;
+            }
+        }
+
+        // 可视化控件变化后：重新生成 cron 并刷新预览
+        function syncVisualCron(idx) {
+            const e = allEntries[idx];
+            if (!e) return;
+            buildCronFromVisual(e);
+            const vp = document.querySelector(`.visual-panel[data-e="${idx}"] .visual-preview`);
+            if (vp) vp.textContent = e.cron || '';
+        }
+
+        // 反向解析表达式：识别简单的 每天/每周/每月 格式，填充可视化字段
+        function parseCronVisual(cron) {
+            const f = (cron || '').trim().split(/\s+/);
+            if (f.length !== 5) return null;
+            const [mm, h, dd, mo, dw] = f;
+            if (!/^\d+$/.test(mm) || !/^\d+$/.test(h) || mo !== '*') {
+                if (mm !== '*') return null;
+            }
+            // 需要时分均为具体数字才可表达为可视化
+            if (!/^\d+$/.test(mm) || !/^\d+$/.test(h)) return null;
+            const time = `${pad0(+h)}:${pad0(+mm)}`;
+            if (dd === '*' && dw === '*') {
+                return { freq: 'daily', time: time, weekdays: [], monthDay: 1 };
+            }
+            if (dd === '*' && /^[\d,]+$/.test(dw)) {
+                const weekdays = dw.split(',').map(s => +s);
+                return { freq: 'weekly', time: time, weekdays: weekdays, monthDay: 1 };
+            }
+            if (/^\d+$/.test(dd) && dw === '*') {
+                return { freq: 'monthly', time: time, weekdays: [], monthDay: +dd };
+            }
+            return null;
+        }
+
+        // 初始化可视化字段：默认从表达式反解；若反解失败则进入表达式模式
+        function initVisualFields(e) {
+            const parsed = parseCronVisual(e.cron);
+            if (parsed) {
+                e.mode = 'visual';
+                e.freq = parsed.freq;
+                e.time = parsed.time;
+                e.weekdays = parsed.weekdays;
+                e.monthDay = parsed.monthDay;
+            } else {
+                e.mode = 'expr';
+                e.freq = 'daily';
+                e.time = '00:00';
+                e.weekdays = [];
+                e.monthDay = 1;
+            }
+        }
+
+        // 立即执行单个任务的命令一次
+        function runTask(idx, btn) {
+            const e = allEntries[idx];
+            const command = ((e && e.command) || '').trim();
+            if (!command) {
+                showNotification('该任务还没有执行命令，请先填写', 'error');
+                return;
+            }
+            if (btn) { btn.disabled = true; btn.textContent = '执行中...'; }
+            fetch('{{.webPath}}api/tasks/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command, timeout: (e.timeout || '').trim(), key: (e.name || e.command || '').trim() })
+            })
+                .then(r => r.json())
+                .then(d => {
+                    const head = d.success ? '执行成功' : '执行失败';
+                    const dur = d.duration ? `（耗时 ${d.duration}）` : '';
+                    let msg = `${head}${dur}`;
+                    if (d.output) msg += '\n输出：' + d.output.slice(0, 400);
+                    if (d.error) msg += '\n错误：' + d.error;
+                    showNotification(msg, d.success ? 'success' : 'error');
+                    setTimeout(pollStatus, 500);
+                })
+                .catch(err => showNotification('调用失败: ' + err.message, 'error'))
+                .finally(() => {
+                    if (btn) { btn.disabled = false; btn.textContent = '立即执行'; }
+                });
+        }
+
+        function saveConfig() {
+            // 收集并清理（空 command 的任务不保存）
+            const configData = allEntries
+                .map(e => ({
+                    name: (e.name || '').trim(),
+                    enabled: !!e.enabled,
+                    group: (e.group || '').trim(),
+                    cron: (e.cron || '').trim(),
+                    command: (e.command || '').trim(),
+                    timeout: (e.timeout || '').trim(),
+                    notes: (e.notes || '').trim()
+                }))
+                .filter(e => e.command !== '');
+
+            const saveBtn = document.getElementById('saveBtn');
+            const originalText = saveBtn.textContent;
+            saveBtn.textContent = '保存中...';
+            saveBtn.disabled = true;
+
+            fetch('{{.webPath}}api/tasks/config/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(configData)
+            })
+                .then(response => {
+                    if (response.ok) return response.json();
+                    throw new Error('保存失败');
+                })
+                .then(() => {
+                    showNotification('配置保存成功，定时任务模块将自动重启', 'success');
+                })
+                .catch(error => {
+                    showNotification('保存配置失败: ' + error.message, 'error');
+                })
+                .finally(() => {
+                    saveBtn.textContent = originalText;
+                    saveBtn.disabled = false;
+                });
+        }
+
+        function showNotification(message, type) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = 'notification ' + type;
+            setTimeout(() => { notification.className = 'notification'; }, 4000);
+        }
+
+        function escapeHtml(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function escapeAttr(s) {
+            return escapeHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function syncTheme() {
+            fetch('{{.webPath}}sync-theme', { method: 'GET' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.theme) document.documentElement.setAttribute('data-theme', data.theme);
+                })
+                .catch(() => { });
+        }
+    </script>
+</body>
+
+</html>

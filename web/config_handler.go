@@ -225,6 +225,12 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"api/sync/config", h.cookieAuth(h.handleSyncConfig))
 	mux.HandleFunc(webPath+"api/sync/config/save", h.cookieAuth(h.handleSyncConfigSave))
 	mux.HandleFunc(webPath+"api/sync/branches", h.cookieAuth(h.handleSyncBranches))
+	// 定时任务模块
+	mux.HandleFunc(webPath+"tasks-editor", h.cookieAuth(h.handleTasksEditor))
+	mux.HandleFunc(webPath+"api/tasks/config", h.cookieAuth(h.handleTasksConfig))
+	mux.HandleFunc(webPath+"api/tasks/config/save", h.cookieAuth(h.handleTasksConfigSave))
+	mux.HandleFunc(webPath+"api/tasks/status", h.cookieAuth(h.handleTasksStatus))
+	mux.HandleFunc(webPath+"api/tasks/run", h.cookieAuth(h.handleTasksRun))
 
 	// 播放器模块配置（JSON 读写）
 	mux.HandleFunc(webPath+"config/player", h.cookieAuth(h.handlePlayerConfig))

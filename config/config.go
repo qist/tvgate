@@ -93,6 +93,9 @@ type Config struct {
 	// 仓库同步（支持多仓库，每个条目独立同步到各自 local_path）
 	Sync []SyncConfig `yaml:"sync"`
 
+	// 定时任务（扁平列表，按 group 分组展示，Cron 表达式调度执行 Shell 命令）
+	Tasks []TaskConfig `yaml:"tasks"`
+
 	// 全局认证配置
 	GlobalAuth AuthConfig `yaml:"global_auth"`
 	// 域名映射配置
@@ -308,6 +311,17 @@ type SyncConfig struct {
 	Delete    *bool         `yaml:"delete"`     // 远端已删除的文件本地是否也删除（默认 false 保留）
 	Protect   []string      `yaml:"protect"`    // 本地保护清单（相对 local_path，支持目录前缀），永不覆盖/删除
 	Timeout   time.Duration `yaml:"timeout"`    // 单次 API/下载请求超时
+}
+
+// TaskConfig 定时任务条目（类似 Linux crontab，Cron 表达式触发执行 Shell 命令）
+type TaskConfig struct {
+	Name    string        `yaml:"name"`    // 任务名称（标识用途）
+	Enabled bool          `yaml:"enabled"` // 是否启用
+	Group   string        `yaml:"group"`   // 分组（仅用于前端列表分类展示，扁平结构）
+	Cron    string        `yaml:"cron"`    // Cron 表达式（标准 5 段：分 时 日 月 周）
+	Command string        `yaml:"command"` // 要执行的 Shell 命令（可调用 PHP 脚本），经系统 shell 执行
+	Timeout time.Duration `yaml:"timeout"` // 单次执行超时（0 = 不限）
+	Notes   string        `yaml:"notes"`   // 备注（可选，仅展示说明）
 }
 
 // AuthConfig 授权 token 配置
@@ -600,6 +614,16 @@ func (c *Config) SetDefaults() {
 	// H5 播放器默认值
 	if c.Player.UpdateInterval <= 0 {
 		c.Player.UpdateInterval = 2 * time.Hour
+	}
+
+	// 定时任务默认值（每条独立）
+	for i := range c.Tasks {
+		if c.Tasks[i].Cron == "" {
+			c.Tasks[i].Cron = "0 0 * * *" // 默认每天 0 点
+		}
+		if c.Tasks[i].Timeout <= 0 {
+			c.Tasks[i].Timeout = 0 // 0 = 不限制执行时长
+		}
 	}
 }
 
