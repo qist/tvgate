@@ -588,7 +588,10 @@
               if (window.Hls && Hls.isSupported()) {
                 var hls = new Hls({
                   lowLatencyMode: true,
-                  maxBufferLength: 30,       // 前向缓冲 30s
+                  // 90s：Chrome/Edge 后台标签定时器节流到 1 次/分钟，缓冲须能撑过 60s 空档
+                  // （上游 live 窗口 10×10s=100s，90s 可拉满），否则后台必然断流
+                  maxBufferLength: 90,
+                  backBufferLength: 30,      // 裁剪已播缓冲，长时播放降低内存压力
                   liveSyncDurationCount: 3,  // 直播追赶点：落后边缘 3 个分片起播/续播
                   startFragPrefetch: true,   // manifest 解析中预取首个分片，加快起播
                   maxBufferHole: 0.5,        // 允许跳过的缓冲洞（s）
@@ -653,6 +656,8 @@
             try {
               video.muted = true; autoMuted = true;
               var p2 = video.play(); if (p2 && p2.catch) p2.catch(function () { });
+              // 让用户知道为什么没声音：Chrome/Edge 自动播放策略拦了有声起播
+              if (art && art.notice) try { art.notice.show = '浏览器拦截了自动播放：已静音起播，点音量图标恢复声音'; } catch (e3) { }
             } catch (e2) { }
           });
         }
@@ -882,6 +887,17 @@
         if (video.paused) { try { video.play().catch(function () { }); } catch (e) { } }
         else { try { video.pause(); } catch (e) { } }
       }
+
+      // 后台返回自动恢复：Chrome/Edge 对后台标签页定时器节流（最长 1 次/分钟），
+      // 缓冲耗尽会卡住；回前台时主动续载+续播（90s 缓冲已在后台尽量撑住，这里是兜底）。
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState !== 'visible' || !video) return;
+        if (video.paused && !video.ended) { try { var p = video.play(); if (p && p.catch) p.catch(function () { }); } catch (e) { } }
+        if (video.readyState < 3 && engine) {
+          if (typeof engine.startLoad === 'function') { try { engine.startLoad(); } catch (e) { } }
+          else if (typeof engine.load === 'function') { try { engine.load(); } catch (e) { } } // mpegts.js
+        }
+      });
 
       loadChannels();
     })();
