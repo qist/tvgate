@@ -328,6 +328,7 @@
       color: var(--text);
       border-color: var(--dim);
     }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 
@@ -339,6 +340,9 @@
     </div>
     <div id="stage">
       <div id="videoWrap">
+        <div id="loadingOverlay" style="position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5);z-index:55;">
+          <div style="width:42px;height:42px;border:3px solid rgba(255,255,255,.15);border-top-color:#2b80ff;border-radius:50%;animation:spin 1s linear infinite;"></div>
+        </div>
         <div id="artbox"></div>
         <div id="err">
           <div>播放失败<br><span id="errmsg"></span></div>
@@ -358,6 +362,7 @@
   <script src="./hls.min.js"></script>
   <script src="./mpegts.js"></script>
   <script src="./artplayer.js"></script>
+  <script src="./tvgate-playback.js"></script>
   <script>
     (function () {
       'use strict';
@@ -564,6 +569,13 @@
       function markUserActive() { userActive = true; }
       document.addEventListener('pointerdown', markUserActive, true);
       document.addEventListener('keydown', markUserActive, true);
+
+      // 加载状态指示
+      var loadingEl = document.getElementById('loadingOverlay');
+      function showLoadingOverlay() { if (loadingEl) loadingEl.style.display = 'flex'; }
+      function hideLoadingOverlay() { if (loadingEl) loadingEl.style.display = 'none'; }
+
+
       function artCreate(url, type, isLive) {
         stopCurrent();
         var mySeq = ++createSeq;
@@ -588,70 +600,167 @@
           moreVideoAttr: { playsInline: true, 'webkit-playsinline': true, 'x5-playsinline': true },
           customType: {
             m3u8: function (v, u) {
-              if (window.Hls && Hls.isSupported()) {
+              // 智能播放策略（不写死任何分组/频道名，按实际播放状态自动切换）：
+              // 1) 原生 <video src=m3u8> 优先：手机端 Safari/iOS/Edge 原生支持 HLS，零开销
+              //    桌面 Chrome 不支持 → canPlayType 返回 '' → 跳过，直接进第 2 级
+              // 2) 播放引擎：秒开，内置 TS demux+WASM mp2/AAC 解码+fMP4 remux
+              // 3) 5 秒 readyState<2 → hls.js 兜底：标准 MSE+fMP4
+              var stage = 0; // 0=native 1=engine 2=hls
+              var destroyed = false;
+
+              function cleanupVideo() {
+                try { v.pause(); } catch (e) {}
+                v.removeAttribute('src');
+                v.srcObject = null;
+                v.load();
+              }
+
+              // --- 第 3 级：hls.js 兜底 ---
+              function startHlsFallback() {
+                if (destroyed || mySeq !== createSeq) return;
+                stage = 2;
+                console.log('[player] 切 hls.js 兜底');
+                if (!(window.Hls && Hls.isSupported())) {
+                  hideLoadingOverlay();
+                  onErr({ detail: '所有播放方式均不可用' });
+                  return;
+                }
                 var hls = new Hls({
                   lowLatencyMode: false,
-                  // 90s：Chrome/Edge 后台标签定时器节流到 1 次/分钟，缓冲须能撑过 60s 空档
-                  // （上游 live 窗口 10×10s=100s，90s 可拉满），否则后台必然断流
-                  maxBufferLength: 90,
-                  backBufferLength: 30,      // 裁剪已播缓冲，长时播放降低内存压力
-                  liveSyncDurationCount: 3,  // 直播追赶点：落后边缘 3 个分片起播/续播
-                  liveMaxLatencyDurationCount: 8, // 超过 8 片延迟自动追赶
-                  startFragPrefetch: true,   // manifest 解析中预取首个分片，加快起播
-                  maxBufferHole: 0.5,        // 允许跳过的缓冲洞（s）
-                  nudgeMaxRetry: 10,         // 卡顿微调（currentTime nudge）重试上限，默认 3 偏少
-                  fragLoadingMaxRetry: 6,    // 分片加载重试次数，默认 6
-                  manifestLoadingMaxRetry: 3, // 清单加载重试次数
-                  levelLoadingMaxRetry: 4    // 级别清单加载重试
+                  maxBufferLength: 90, backBufferLength: 30,
+                  liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 8,
+                  startFragPrefetch: true, maxBufferHole: 0.5,
+                  nudgeMaxRetry: 10, fragLoadingMaxRetry: 6,
+                  manifestLoadingMaxRetry: 3, levelLoadingMaxRetry: 4
                 });
                 var retries = 0;
-                var fallBackMpegts = false; // 是否已降级到 mpegts.js
                 hls.loadSource(u);
                 hls.attachMedia(v);
-                // hls.js 签名 (event, data)：details/fatal 都在 data 里，必须取第 2 参。
-                // 致命错误先自动恢复（上游偶发脏清单 manifestParsingError/网络抖动很常见），
-                // 重试 3 次仍失败才弹"播放失败"，避免用户看到一闪而过的报错。
                 hls.on(Hls.Events.ERROR, function (ev, data) {
-                  if (mySeq !== createSeq) return;
+                  if (mySeq !== createSeq || destroyed) return;
                   if (data && data.fatal && retries < 3) {
                     retries++;
-                    if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { try { hls.recoverMediaError(); return; } catch (e) { } }
-                    try { hls.startLoad(); return; }
-                    catch (e) { }
+                    if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { try { hls.recoverMediaError(); return; } catch (e) {} }
+                    try { hls.startLoad(); return; } catch (e) {}
                   }
                   onInstErr(data);
                 });
-                // 降级检测：hls.js 加载 m3u8 + 分片后，如果 8 秒内 video 的 readyState
-                // 一直未提升到 2（HAVE_CURRENT_DATA），说明 MSE 无法解码该流（如 mp2 音频），
-                // 自动降级到 mpegts.js（直接 TS remux，不依赖 MSE codec 支持）。
-                var stallCheck = 0;
-                var stallTimer = setInterval(function () {
-                  if (mySeq !== createSeq || fallBackMpegts) { clearInterval(stallTimer); return; }
-                  stallCheck++;
-                  if (v.readyState >= 2) { clearInterval(stallTimer); return; } // 已就绪，正常
-                  if (stallCheck >= 5) { // 5 秒后仍未就绪，降级
-                    clearInterval(stallTimer);
-                    fallBackMpegts = true;
-                    console.warn('[player] hls.js 加载 8s 未就绪 (readyState=' + v.readyState + ')，降级到 mpegts.js');
-                    try { hls.destroy(); } catch (e) { }
+                var sc = setInterval(function () {
+                  if (mySeq !== createSeq || destroyed) { clearInterval(sc); return; }
+                  if (v.readyState >= 2) { clearInterval(sc); hideLoadingOverlay(); return; }
+                }, 500);
+                engine = hls;
+              }
+
+              // --- 第 2 级：播放引擎（秒开）---
+              function startEngine() {
+                if (destroyed || mySeq !== createSeq) return;
+                stage = 1;
+                console.log('[player] 试播放引擎');
+                var tgp = window.TvgatePlayback;
+                if (!tgp || typeof tgp.isMSEPlaybackSupported !== 'function' || !tgp.isMSEPlaybackSupported()) {
+                  console.log('[player] 播放引擎不可用 → hls.js');
+                  startHlsFallback();
+                  return;
+                }
+                var cfg = Object.assign({}, tgp.defaultConfig, {
+                  wasmDecoders: { mp2: ORIGIN + '/pp/mp2_decoder.wasm' }
+                });
+                try {
+                  var backend = tgp.createMSEPlaybackBackend(v, cfg);
+                  backend.on('error', function (err) {
+                    if (mySeq !== createSeq) return;
+                    console.warn('[player] 播放引擎 error:', err, '→ hls.js');
+                    try { backend.destroy(); } catch (e) {}
                     engine = null;
-                    // 用 mpegts.js 重新加载（mpegts.js 用 MSE 直传 video/mp2t 容器，
-                    // 不做 TS→fMP4 转封装，所以 mp2 等非 AAC 音频也能播）
-                    if (window.mpegts && mpegts.isSupported && mpegts.isSupported()) {
-                      var inst = mpegts.createPlayer({ type: 'm3u8', isLive: true, url: u, enableStashBuffer: true, stashInitialSize: 256 * 1024 });
-                      inst.attachMediaElement(v);
-                      inst.load();
-                      inst.on(mpegts.Events.ERROR, function (et, detail) { onInstErr(et, detail); });
-                      engine = inst;
-                      try { v.play(); } catch (e) { }
+                    cleanupVideo();
+                    startHlsFallback();
+                  });
+                  showLoadingOverlay();
+                  fetch(u).then(function (r) { return r.text(); }).then(function (text) {
+                    if (mySeq !== createSeq) return;
+                    var pl = tgp.parseM3U8(text, u);
+                    if (pl && pl.kind === 'media' && pl.segments && pl.segments.length) {
+                      var segs = pl.segments.map(function (s) { return { url: s.url, duration: s.duration }; });
+                      backend.loadSegments(segs);
+                      backend.play().catch(function (e) {
+                        console.warn('[player] playback play failed:', e, '→ hls.js');
+                        try { backend.destroy(); } catch (e2) {}
+                        engine = null;
+                        cleanupVideo();
+                        startHlsFallback();
+                      });
+                      console.log('[player] loaded', segs.length, 'segments');
+                      // 5 秒检测：readyState<2 → hls.js
+                      var sc0 = 0;
+                      var st0 = setInterval(function () {
+                        if (mySeq !== createSeq || destroyed || stage !== 1) { clearInterval(st0); return; }
+                        if (v.readyState >= 2) { clearInterval(st0); hideLoadingOverlay(); return; }
+                        if (++sc0 >= 5) {
+                          clearInterval(st0);
+                          console.log('[player] 播放引擎 5s 未就绪 → hls.js');
+                          try { backend.destroy(); } catch (e) {}
+                          engine = null;
+                          cleanupVideo();
+                          startHlsFallback();
+                        }
+                      }, 1000);
                     } else {
-                      v.src = u; // 原生兜底
+                      hideLoadingOverlay();
+                      console.log('[player] m3u8 parse failed → hls.js');
+                      try { backend.destroy(); } catch (e) {}
+                      engine = null;
+                      cleanupVideo();
+                      startHlsFallback();
                     }
+                  }).catch(function (e) {
+                    hideLoadingOverlay();
+                    console.log('[player] m3u8 fetch failed → hls.js');
+                    try { backend.destroy(); } catch (e2) {}
+                    engine = null;
+                    cleanupVideo();
+                    startHlsFallback();
+                  });
+                  engine = {
+                    destroy: function () { try { backend.destroy(); } catch (e) {} },
+                    detachMedia: function () { try { backend.stop(); } catch (e) {} },
+                    detachMediaElement: function () { try { backend.stop(); } catch (e) {} },
+                    unload: function () { try { backend.stop(); } catch (e) {} }
+                  };
+                } catch (e) {
+                  console.error('[player] playback init failed:', e, '→ hls.js');
+                  startHlsFallback();
+                }
+              }
+
+              // --- 第 1 级：原生 <video src=m3u8> ---
+              // 手机端 Safari/iOS/Edge 原生支持 HLS，零开销秒开
+              // 桌面 Chrome canPlayType 返回 '' → 跳过，直接进播放引擎
+              var canNativeHls = v.canPlayType('application/vnd.apple.mpegurl') !== '';
+              if (canNativeHls) {
+                stage = 0;
+                console.log('[player] 试原生播放');
+                v.src = u;
+                v.play().catch(function () {});
+                engine = {
+                  destroy: function () { try { v.pause(); } catch (e) {} v.removeAttribute('src'); v.load(); },
+                  detachMedia: function () {}, detachMediaElement: function () {}, unload: function () { try { v.pause(); } catch (e) {} }
+                };
+                // 5 秒检测：readyState<2 → 播放引擎
+                var sc0 = 0;
+                var st0 = setInterval(function () {
+                  if (mySeq !== createSeq || destroyed || stage !== 0) { clearInterval(st0); return; }
+                  if (v.readyState >= 2) { clearInterval(st0); return; } // 原生正常
+                  if (++sc0 >= 5) {
+                    clearInterval(st0);
+                    console.log('[player] 原生 5s 未就绪 → 播放引擎');
+                    cleanupVideo();
+                    startEngine();
                   }
                 }, 1000);
-                engine = hls;
               } else {
-                v.src = u; // Safari 原生 HLS
+                // 桌面 Chrome 不支持原生 HLS，直接播放引擎
+                startEngine();
               }
             },
             mpegts: function (v, u) {
@@ -731,6 +840,7 @@
         if (art) { try { art.destroy(false); } catch (e) { } art = null; } // false=保留容器 DOM，便于重建
         video = null;
         errBox.classList.remove('show');
+        hideLoadingOverlay();
       }
 
       // EPG
@@ -926,15 +1036,102 @@
         else { try { video.pause(); } catch (e) { } }
       }
 
-      // 后台返回自动恢复：Chrome/Edge 对后台标签页定时器节流（最长 1 次/分钟），
-      // 缓冲耗尽会卡住；回前台时主动续载+续播（90s 缓冲已在后台尽量撑住，这里是兜底）。
-      document.addEventListener('visibilitychange', function () {
-        if (document.visibilityState !== 'visible' || !video) return;
-        if (video.paused && !video.ended) { try { var p = video.play(); if (p && p.catch) p.catch(function () { }); } catch (e) { } }
-        if (video.readyState < 3 && engine) {
-          if (typeof engine.startLoad === 'function') { try { engine.startLoad(); } catch (e) { } }
-          else if (typeof engine.load === 'function') { try { engine.load(); } catch (e) { } } // mpegts.js
+      // ====== 后台持续播放保活 ======
+      // 浏览器对后台标签页限流/暂停媒体播放。方案：
+      // 1) Web Audio 静音 oscillator 保持 AudioContext 活跃，阻止浏览器挂起
+      // 2) visibilitychange 回前台时强力恢复（play + 续载 + 播放引擎特殊处理）
+      // 3) 后台期间用定时器（即使被节流到 1 次/分钟）检测并续播
+
+      // --- Web Audio 保活：静音 oscillator ---
+      var bgAudioCtx = null;
+      var bgOscillator = null;
+      var bgGain = null;
+      function initBgKeepAlive() {
+        try {
+          if (bgAudioCtx) return; // 已初始化
+          var AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return;
+          bgAudioCtx = new AC();
+          bgGain = bgAudioCtx.createGain();
+          bgGain.gain.value = 0; // 完全静音
+          bgOscillator = bgAudioCtx.createOscillator();
+          bgOscillator.frequency.value = 1; // 1Hz 极低频
+          bgOscillator.connect(bgGain);
+          bgGain.connect(bgAudioCtx.destination);
+          bgOscillator.start();
+          console.log('[player] 后台保活 AudioContext 已启动');
+        } catch (e) {
+          console.warn('[player] AudioContext 保活失败:', e);
         }
+      }
+      // 首次用户交互后启动 AudioContext（浏览器要求用户手势）
+      function tryStartBgKeepAlive() {
+        if (!bgAudioCtx) initBgKeepAlive();
+        if (bgAudioCtx && bgAudioCtx.state === 'suspended') {
+          bgAudioCtx.resume().catch(function () {});
+        }
+      }
+      document.addEventListener('pointerdown', tryStartBgKeepAlive, true);
+      document.addEventListener('keydown', tryStartBgKeepAlive, true);
+
+      // --- 后台定时检测续播 ---
+      // 即使被浏览器节流到 1 次/分钟，也要在回调时尝试续播
+      var bgCheckTimer = null;
+      function startBgCheck() {
+        if (bgCheckTimer) return;
+        bgCheckTimer = setInterval(function () {
+          if (!video || document.visibilityState === 'visible') return;
+          // 后台且视频暂停了 → 尝试恢复
+          if (video.paused && !video.ended) {
+            try { var p = video.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+          }
+          // 播放引擎续载
+          if (video.readyState < 3 && engine) {
+            if (typeof engine.startLoad === 'function') { try { engine.startLoad(); } catch (e) {} }
+            else if (typeof engine.load === 'function') { try { engine.load(); } catch (e) {} }
+          }
+        }, 3000); // 3 秒检查一次（后台会被节流但不会完全停）
+      }
+      startBgCheck();
+
+      // --- visibilitychange：回前台强力恢复 ---
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState !== 'visible') return;
+        tryStartBgKeepAlive();
+        if (!video) return;
+        // 视频暂停了 → 恢复播放
+        if (video.paused && !video.ended) {
+          try { var p = video.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+        }
+        // readyState 太低 → 续载
+        if (video.readyState < 3 && engine) {
+          if (typeof engine.startLoad === 'function') { try { engine.startLoad(); } catch (e) {} }
+          else if (typeof engine.load === 'function') { try { engine.load(); } catch (e) {} }
+        }
+        // 播放引擎特殊处理：如果有 startLoad 方法（TvgatePlayback backend）
+        if (video.readyState < 2 && engine && typeof engine.startLoad === 'function') {
+          try { engine.startLoad(); } catch (e) {}
+        }
+        // readyState 极低（0 或 1）且停滞超过 2 秒 → 尝试重建
+        if (video.readyState < 2) {
+          setTimeout(function () {
+            if (document.visibilityState !== 'visible' || !video) return;
+            if (video.readyState < 2 && !video.paused) {
+              // 视频在"播"但实际没有数据 → 强制 seek 到 live edge
+              try { video.currentTime = 0; } catch (e) {}
+              try { var p = video.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+            }
+          }, 2000);
+        }
+      });
+
+      // --- 页面可见性变化时管理 AudioContext ---
+      document.addEventListener('visibilitychange', function () {
+        if (!bgAudioCtx) return;
+        if (document.visibilityState === 'visible') {
+          if (bgAudioCtx.state === 'suspended') bgAudioCtx.resume().catch(function () {});
+        }
+        // 后台时保持 resume 状态（不主动 suspend），让浏览器尽量不暂停
       });
 
       loadChannels();

@@ -10,3 +10,7 @@ ffmpeg/
 src/
 .codebuddy/
 tvgate.pid
+node_modules/
+package.json
+package-lock.json
+test_*.js
