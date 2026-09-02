@@ -1479,7 +1479,7 @@ func (e *Env) evalVar(name string) (Value, error) {
 func (e *Env) evalBinary(n *BinaryExpr) (Value, error) {
 	// 短路逻辑运算
 	switch n.Op {
-	case "&&":
+	case "and", "&&":
 		l, err := e.evalExpr(n.Left)
 		if err != nil {
 			return l, err
@@ -1492,7 +1492,7 @@ func (e *Env) evalBinary(n *BinaryExpr) (Value, error) {
 			return r, err
 		}
 		return NewBool(r.ToBool()), nil
-	case "||":
+	case "or", "||":
 		l, err := e.evalExpr(n.Left)
 		if err != nil {
 			return l, err
@@ -1597,6 +1597,8 @@ func (e *Env) evalBinary(n *BinaryExpr) (Value, error) {
 		return NewBool(l.ToInt() >= r.ToInt()), nil
 	case "^", "^=":
 		return NewInt(l.ToInt() ^ r.ToInt()), nil
+	case "xor":
+		return NewBool(l.ToBool() != r.ToBool()), nil
 	case "&":
 		return NewInt(l.ToInt() & r.ToInt()), nil
 	case "|":

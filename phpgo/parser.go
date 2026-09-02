@@ -808,8 +808,29 @@ func (p *Parser) parseSwitch() (Stmt, error) {
 }
 
 // parseExpr 解析表达式（入口）
+// PHP 中 and/or/xor 优先级最低（低于赋值），包裹整个表达式：
+// $a = f() or die(...)  等价于 ($a = f()) or die(...)。
+// 不能按普通二元运算符处理（"or" 等被 lexer 视为 tIdent），故在表达式解析完成后处理。
 func (p *Parser) parseExpr() (Expr, error) {
-	return p.parseAssignExpr()
+	left, err := p.parseAssignExpr()
+	if err != nil {
+		return nil, err
+	}
+	for p.atWord("or") || p.atWord("and") || p.atWord("xor") {
+		op := strings.ToLower(p.cur().Val)
+		p.adv()
+		right, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Op: op, Left: left, Right: right}
+	}
+	return left, nil
+}
+
+// atWord 判断当前 token 是否为 tIdent 且值（忽略大小写）等于 v。
+func (p *Parser) atWord(v string) bool {
+	return p.cur().Kind == tIdent && strings.EqualFold(p.cur().Val, v)
 }
 
 func (p *Parser) parseAssignExpr() (Expr, error) {
@@ -972,16 +993,30 @@ func (p *Parser) parseCompare() (Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	// instanceof 运算符：$a instanceof MyClass
+	// instanceof 运算符：$a instanceof MyClass（类名可能含命名空间 \Foo\Bar）
 	if p.at(tInstanceOf) {
 		p.adv()
 		// 右侧是类名（可能是 tIdent 或 StaticCall）
 		var className string
-		if p.at(tIdent) {
+		if p.atVal("\\") {
+			for p.atVal("\\") {
+				p.adv()
+				className += "\\"
+			}
+			if p.at(tIdent) {
+				className += p.adv().Val
+			}
+		} else if p.at(tIdent) {
 			className = p.adv().Val
 		} else {
 			// 无法解析类名，返回 true 作为安全默认值
 			return left, nil
+		}
+		for p.atVal("\\") {
+			p.adv()
+			if p.at(tIdent) {
+				className += "\\" + p.adv().Val
+			}
 		}
 		left = &InstanceOfExpr{Expr: left, Class: className}
 		return left, nil
@@ -1177,6 +1212,34 @@ func (p *Parser) parsePostfixFrom(e Expr) (Expr, error) {
 		}
 		if p.at(tDoubleColon) {
 			p.adv()
+			// 静态属性访问：self::$prop / ClassName::$prop
+			if p.at(tVar) {
+				prop := p.adv().Val
+				class := ""
+				if s, ok := e.(*ScalarStr); ok {
+					class = s.Val
+				} else if v, ok := e.(*VarExpr); ok {
+					class = v.Name
+				} else if c, ok := e.(*ConstExpr); ok {
+					class = c.Name
+				}
+				e = &PropertyAccess{Receiver: &ConstExpr{Name: class}, Prop: prop}
+				continue
+			}
+			// Foo::class → 类名字符串
+			if p.at(tClass) {
+				p.adv()
+				class := ""
+				if s, ok := e.(*ScalarStr); ok {
+					class = s.Val
+				} else if v, ok := e.(*VarExpr); ok {
+					class = v.Name
+				} else if c, ok := e.(*ConstExpr); ok {
+					class = c.Name
+				}
+				e = &ScalarStr{Val: class}
+				continue
+			}
 			m, err := p.expect(tIdent)
 			if err != nil {
 				return nil, err
@@ -1313,9 +1376,22 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		p.expect(tRParen)
 		return e, nil
 	case tIdent:
-		// 先查预定义常量
-		if cv, ok := p.constsMap[t.Val]; ok {
+		p.adv()
+		name := t.Val
+		// 前导 \（全限定函数/类名）：\count(...) / \Foo\Bar
+		if name == "\\" && p.at(tIdent) {
+			name += p.adv().Val
+		}
+		// 后续命名空间段：Foo\Bar\Baz
+		for p.atVal("\\") {
 			p.adv()
+			name += "\\"
+			if p.at(tIdent) {
+				name += p.adv().Val
+			}
+		}
+		// 先查预定义常量
+		if cv, ok := p.constsMap[name]; ok {
 			switch cv.Kind {
 			case KindInt:
 				return &ScalarInt{Val: cv.Int}, nil
@@ -1328,14 +1404,12 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			}
 		}
 		// 特殊处理 __DIR__ 等魔术常量
-		switch t.Val {
+		switch name {
 		case "__DIR__", "__FILE__", "__LINE__", "__FUNCTION__", "__CLASS__", "__METHOD__", "__NAMESPACE__":
-			p.adv()
-			return &MagicConstExpr{Name: t.Val}, nil
+			return &MagicConstExpr{Name: name}, nil
 		}
 		// 未定义常量：运行时查 e.consts（define 注册的），找不到则当字符串名
-		p.adv()
-		return &ConstExpr{Name: t.Val}, nil
+		return &ConstExpr{Name: name}, nil
 	case tFunc:
 		// 闭包 function($a) use($b) { ... }
 		return p.parseClosure()
@@ -1770,10 +1844,14 @@ func (p *Parser) parseTry() (Stmt, error) {
 // parseNew 解析 new ClassName(args...)
 func (p *Parser) parseNew() (Expr, error) {
 	p.adv() // new
-	// 类名
+	// 类名（支持命名空间：\Foo\Bar 或 Foo\Bar）
 	className := ""
+	for p.atVal("\\") {
+		p.adv()
+		className += "\\"
+	}
 	if p.at(tIdent) {
-		className = p.adv().Val
+		className += p.adv().Val
 	}
 	for p.atVal("\\") {
 		p.adv()

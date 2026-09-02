@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Tok 词法记号
@@ -16,12 +17,12 @@ type Tok struct {
 type tokKind int
 
 const (
-	tEOF tokKind = iota
-	tVar       // $name
-	tIdent     // functionName / constant
+	tEOF   tokKind = iota
+	tVar           // $name
+	tIdent         // functionName / constant
 	tInt
 	tFloat
-	tStr       // "..." 或 '...'  （单引号/双引号区分在 parser）
+	tStr // "..." 或 '...'  （单引号/双引号区分在 parser）
 	tSingleStr
 	tDoubleStr
 	tLParen
@@ -32,14 +33,14 @@ const (
 	tRBracket
 	tSemi
 	tComma
-	tArrow     // ->
+	tArrow       // ->
 	tDoubleArrow // ->
-	tEquals    // =
-	tEqEq      // ==
-	tEqEqEq    // ===
-	tNotEq     // !=
-	tNotEqEq   // !==
-	tConcat    // .
+	tEquals      // =
+	tEqEq        // ==
+	tEqEqEq      // ===
+	tNotEq       // !=
+	tNotEqEq     // !==
+	tConcat      // .
 	tPlus
 	tMinus
 	tStar
@@ -55,21 +56,21 @@ const (
 	tDoubleColon // ::
 	tLT
 	tGT
-	tLE         // <=
-	tGE         // >=
-	tQuestion  // ?
+	tLE           // <=
+	tGE           // >=
+	tQuestion     // ?
 	tNullCoalesce // ??
 	tPlusEq
 	tMinusEq    // -=
 	tStarEq     // *=
 	tSlashEq    // /=
-	tConcatEq  // .=
-	tAmp       // &
-	tAmpAmp    // &&
-	tPipe      // |
-	tPipePipe  // ||
+	tConcatEq   // .=
+	tAmp        // &
+	tAmpAmp     // &&
+	tPipe       // |
+	tPipePipe   // ||
 	tBang       // !
-	tPlusPlus  // ++
+	tPlusPlus   // ++
 	tMinusMinus // --
 	tFunc
 	tIf
@@ -82,7 +83,7 @@ const (
 	tTrue
 	tFalse
 	tNull
-	tArray     // array(
+	tArray // array(
 	tForeach
 	tFor
 	tWhile
@@ -148,6 +149,61 @@ func (l *Lexer) next() byte {
 
 func isIdentRune(r byte) bool {
 	return unicode.IsLetter(rune(r)) || unicode.IsDigit(rune(r)) || r == '_'
+}
+
+// utf8RuneWidth 返回以 s[k] 开头的字符（含多字节 UTF-8）的字节宽度。
+// k 越界返回 0；非法 UTF-8 序列按单字节处理。
+func utf8RuneWidth(s string, k int) int {
+	if k < 0 || k >= len(s) {
+		return 0
+	}
+	if s[k] < 0x80 {
+		return 1
+	}
+	if _, w := utf8.DecodeRuneInString(s[k:]); w > 1 {
+		return w
+	}
+	return 1
+}
+
+// identStartWidthAt 返回 s[k] 处可作为标识符开头（ASCII 字母/下划线或多字节字母）的宽度；0 表示不是。
+func identStartWidthAt(s string, k int) int {
+	w := utf8RuneWidth(s, k)
+	if w == 0 {
+		return 0
+	}
+	if s[k] < 0x80 {
+		b := s[k]
+		if b == '_' || unicode.IsLetter(rune(b)) {
+			return 1
+		}
+		return 0
+	}
+	r, _ := utf8.DecodeRuneInString(s[k:])
+	if unicode.IsLetter(r) {
+		return w
+	}
+	return 0
+}
+
+// isIdentRuneAt 返回 s[k] 处字符作为标识符组成部分（字母/数字/下划线，含多字节）时的宽度；0 表示不是。
+func isIdentRuneAt(s string, k int) int {
+	w := utf8RuneWidth(s, k)
+	if w == 0 {
+		return 0
+	}
+	if s[k] < 0x80 {
+		b := s[k]
+		if b == '_' || unicode.IsLetter(rune(b)) || unicode.IsDigit(rune(b)) {
+			return 1
+		}
+		return 0
+	}
+	r, _ := utf8.DecodeRuneInString(s[k:])
+	if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		return w
+	}
+	return 0
 }
 
 func isHexDigit(r byte) bool {
@@ -225,13 +281,14 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 		switch {
 		case c == '$':
 			l.pos++
-			for isIdentRune(l.peek()) {
-				l.pos++
+			for w := isIdentRuneAt(l.src, l.pos); w > 0; w = isIdentRuneAt(l.src, l.pos) {
+				l.pos += w
 			}
 			toks = append(toks, Tok{tVar, l.src[start:l.pos], start})
-		case isIdentStart(c):
-			for isIdentRune(l.peek()) {
-				l.pos++
+		case identStartWidthAt(l.src, l.pos) > 0:
+			l.pos += identStartWidthAt(l.src, l.pos)
+			for w := isIdentRuneAt(l.src, l.pos); w > 0; w = isIdentRuneAt(l.src, l.pos) {
+				l.pos += w
 			}
 			word := l.src[start:l.pos]
 			lower := strings.ToLower(word)
@@ -288,25 +345,25 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 				toks = append(toks, Tok{tList, word, start})
 			case "print":
 				toks = append(toks, Tok{tPrint, word, start})
-		case "const":
-			toks = append(toks, Tok{tConst, word, start})
-		case "declare":
-			toks = append(toks, Tok{tDeclare, word, start})
-		case "try":
-			toks = append(toks, Tok{tTry, word, start})
-		case "catch":
-			toks = append(toks, Tok{tCatch, word, start})
-		case "throw":
-			toks = append(toks, Tok{tThrow, word, start})
-		case "finally":
-			toks = append(toks, Tok{tFinally, word, start})
-		case "new":
-			toks = append(toks, Tok{tNew, word, start})
-		case "class":
-			toks = append(toks, Tok{tClass, word, start})
-		case "instanceof":
-			toks = append(toks, Tok{tInstanceOf, word, start})
-		default:
+			case "const":
+				toks = append(toks, Tok{tConst, word, start})
+			case "declare":
+				toks = append(toks, Tok{tDeclare, word, start})
+			case "try":
+				toks = append(toks, Tok{tTry, word, start})
+			case "catch":
+				toks = append(toks, Tok{tCatch, word, start})
+			case "throw":
+				toks = append(toks, Tok{tThrow, word, start})
+			case "finally":
+				toks = append(toks, Tok{tFinally, word, start})
+			case "new":
+				toks = append(toks, Tok{tNew, word, start})
+			case "class":
+				toks = append(toks, Tok{tClass, word, start})
+			case "instanceof":
+				toks = append(toks, Tok{tInstanceOf, word, start})
+			default:
 				toks = append(toks, Tok{tIdent, word, start})
 			}
 		case unicode.IsDigit(rune(c)) || (c == '.' && unicode.IsDigit(rune(l.peekAt(1)))):
@@ -399,11 +456,11 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 				castKind = tBoolCast
 			} else if strings.HasPrefix(lower, "string)") {
 				castKind = tStringCast
-		} else if strings.HasPrefix(lower, "array)") {
-			castKind = tArrayCast
-		} else if strings.HasPrefix(lower, "object)") {
-			castKind = tObjectCast
-		}
+			} else if strings.HasPrefix(lower, "array)") {
+				castKind = tArrayCast
+			} else if strings.HasPrefix(lower, "object)") {
+				castKind = tObjectCast
+			}
 			if castKind > 0 {
 				// 跳过 ( + 内容 + )
 				// 计算 rest 中的前缀长度（含空格）
@@ -536,31 +593,31 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 			} else {
 				toks = append(toks, Tok{tColon, ":", start})
 			}
-	case c == '<':
-		l.pos++
-		if l.peek() == '=' {
+		case c == '<':
 			l.pos++
-			toks = append(toks, Tok{tLE, "<=", start})
-		} else if l.peek() == '<' {
+			if l.peek() == '=' {
+				l.pos++
+				toks = append(toks, Tok{tLE, "<=", start})
+			} else if l.peek() == '<' {
+				l.pos++
+				toks = append(toks, Tok{ShiftLeft, "<<", start})
+			} else if l.peek() == '>' {
+				l.pos++
+				toks = append(toks, Tok{tNotEq, "<>", start}) // PHP 的 <> 也是不等
+			} else {
+				toks = append(toks, Tok{tLT, "<", start})
+			}
+		case c == '>':
 			l.pos++
-			toks = append(toks, Tok{ShiftLeft, "<<", start})
-		} else if l.peek() == '>' {
-			l.pos++
-			toks = append(toks, Tok{tNotEq, "<>", start}) // PHP 的 <> 也是不等
-		} else {
-			toks = append(toks, Tok{tLT, "<", start})
-		}
-	case c == '>':
-		l.pos++
-		if l.peek() == '=' {
-			l.pos++
-			toks = append(toks, Tok{tGE, ">=", start})
-		} else if l.peek() == '>' {
-			l.pos++
-			toks = append(toks, Tok{ShiftRight, ">>", start})
-		} else {
-			toks = append(toks, Tok{tGT, ">", start})
-		}
+			if l.peek() == '=' {
+				l.pos++
+				toks = append(toks, Tok{tGE, ">=", start})
+			} else if l.peek() == '>' {
+				l.pos++
+				toks = append(toks, Tok{ShiftRight, ">>", start})
+			} else {
+				toks = append(toks, Tok{tGT, ">", start})
+			}
 		case c == '?':
 			l.pos++
 			if l.peek() == '?' {
@@ -593,13 +650,22 @@ func (l *Lexer) Tokenize() ([]Tok, error) {
 			} else {
 				toks = append(toks, Tok{Caret, "^", start})
 			}
-	case c == '~':
-		l.pos++
-		toks = append(toks, Tok{tIdent, "~", start})
+		case c == '~':
+			l.pos++
+			toks = append(toks, Tok{tIdent, "~", start})
 		case c == '@':
 			l.pos++
 			toks = append(toks, Tok{tIdent, "@", start}) // 错误抑制符，parser 跳过
+		case c == '\\':
+			l.pos++
+			toks = append(toks, Tok{tIdent, "\\", start}) // 命名空间分隔符（parser 已有 atVal("\\") 支持）
 		default:
+			// 非 ASCII 字符（全角标点、损坏的多字节字节等宽容跳过），
+			// 避免含中文/乱码的脚本整体解析失败（500）
+			if c >= 0x80 {
+				l.pos += utf8RuneWidth(l.src, l.pos)
+				continue
+			}
 			return nil, fmt.Errorf("lexer: 无法识别字符 %q at %d", c, start)
 		}
 	}
