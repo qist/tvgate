@@ -485,7 +485,7 @@ export function CodePage() {
               </Button>
             </div>
             <div className="min-h-0 flex-1 overflow-auto p-3">
-              <p className="mb-2 text-xs text-muted-foreground">当前文件夹的子目录（点击进入，文件请在左侧文件树打开）：</p>
+              <p className="mb-2 text-xs text-muted-foreground">当前文件夹的子目录（点击进入）：</p>
               {items.filter((it) => it.isDir).length === 0 && <p className="text-sm text-muted-foreground">（无子目录）</p>}
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                 {items
@@ -503,6 +503,25 @@ export function CodePage() {
                       >
                         <Folder className="h-5 w-5 shrink-0 text-primary" />
                         <span className="truncate font-mono text-xs">{it.name}</span>
+                      </button>
+                    );
+                  })}
+              </div>
+              <p className="mb-2 mt-5 text-xs text-muted-foreground">当前文件夹的文件（点击打开编辑）：</p>
+              {items.filter((it) => !it.isDir).length === 0 && <p className="text-sm text-muted-foreground">（无文件）</p>}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                {items
+                  .filter((it) => !it.isDir)
+                  .map((it) => {
+                    return (
+                      <button
+                        key={it.name}
+                        className="flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm hover:bg-accent/50"
+                        onClick={() => openItem(it)}
+                      >
+                        {isZip(it.name) ? <Package className="h-5 w-5 shrink-0 text-amber-500" /> : <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />}
+                        <span className="truncate font-mono text-xs">{it.name}</span>
+                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{fmtSize(it.size)}</span>
                       </button>
                     );
                   })}
