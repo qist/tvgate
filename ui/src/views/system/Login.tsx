@@ -15,7 +15,7 @@ const schema = z.object({
 
 type Form = z.infer<typeof schema>;
 
-/** 登录页（白名单，不做任何认证请求，由 AppShell 守卫决定进出） */
+/** 登录页（白名单，无品牌特征，不做任何认证请求，由 AppShell 守卫决定进出） */
 export function Login() {
   const navigate = useNavigate();
   const [error, setError] = useState("");
@@ -33,16 +33,15 @@ export function Login() {
 
   return (
     <div className="w-full max-w-sm rounded-[var(--radius-lg)] border bg-card p-6 shadow-sm">
-      <h1 className="mb-1 text-xl font-semibold text-card-foreground">TVGate 登录</h1>
-      <p className="mb-6 text-sm text-muted-foreground">登录管理后台</p>
+      <h1 className="mb-6 text-center text-lg font-semibold text-card-foreground">登录</h1>
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="username">用户名</Label>
-          <Input id="username" placeholder="用户名" autoFocus {...register("username")} />
+          <Input id="username" placeholder="请输入用户名" autoFocus autoComplete="username" {...register("username")} />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="password">密码</Label>
-          <Input id="password" type="password" placeholder="密码" {...register("password")} />
+          <Input id="password" type="password" placeholder="请输入密码" autoComplete="current-password" {...register("password")} />
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button type="submit" className="w-full">
