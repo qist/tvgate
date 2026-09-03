@@ -305,11 +305,18 @@ function ProxyEditor({
   const setHeaders = (map: Record<string, string>) => onChange({ headers: map });
   return (
     <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
-      <div className="flex items-center gap-1">
-        <GripVertical className="h-4 w-4 text-muted-foreground" />
-        <Input value={proxy.name} className="flex-1" placeholder="代理名称" onChange={(e) => onChange({ name: e.target.value })} />
-        <Input value={proxy.server} className="flex-1" placeholder="服务器地址" onChange={(e) => onChange({ server: e.target.value })} />
-        <Input type="number" value={proxy.port} className="w-24" onChange={(e) => onChange({ port: +e.target.value || 0 })} />
+      {/* 名称 / 服务器地址 / 端口 用网格布局，避免 w-full 与定宽类冲突导致输入框塌缩 */}
+      <div className="grid grid-cols-[auto_minmax(120px,1fr)_minmax(180px,1.6fr)_88px_auto] items-center gap-2">
+        <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <div>
+          <Input value={proxy.name} placeholder="代理名称" onChange={(e) => onChange({ name: e.target.value })} />
+        </div>
+        <div>
+          <Input value={proxy.server} className="font-mono" placeholder="服务器地址（IP 或域名）" onChange={(e) => onChange({ server: e.target.value })} />
+        </div>
+        <div>
+          <Input type="number" value={proxy.port} placeholder="端口" onChange={(e) => onChange({ port: +e.target.value || 0 })} />
+        </div>
         <Button size="icon" variant="ghost" onClick={onRemove}><Trash2 className="h-4 w-4" /></Button>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -322,8 +329,12 @@ function ProxyEditor({
         <label className="flex items-center gap-1.5 text-sm">
           <Switch checked={proxy.udp} onCheckedChange={(v) => onChange({ udp: v })} /> UDP
         </label>
-        <Input value={proxy.username} className="w-40" placeholder="用户名（可选）" onChange={(e) => onChange({ username: e.target.value })} />
-        <Input type="password" value={proxy.password} className="w-40" placeholder="密码（可选）" onChange={(e) => onChange({ password: e.target.value })} />
+        <div className="min-w-[180px] flex-1">
+          <Input value={proxy.username} placeholder="用户名（可选）" onChange={(e) => onChange({ username: e.target.value })} />
+        </div>
+        <div className="min-w-[180px] flex-1">
+          <Input type="password" value={proxy.password} placeholder="密码（可选）" onChange={(e) => onChange({ password: e.target.value })} />
+        </div>
       </div>
       <HeadersEditor headers={headers} onChange={setHeaders} />
     </div>
