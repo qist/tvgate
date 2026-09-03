@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
+  Archive,
   ArrowUp,
   Box,
   Download,
@@ -83,6 +85,7 @@ function findMatches(text: string, needle: string, caseFold: boolean, isRegex: b
 // ================= 页面 =================
 
 export function CodePage() {
+  const navigate = useNavigate();
   const [dir, setDir] = useState("");
   const [items, setItems] = useState<CodeItem[]>([]);
   const [search, setSearch] = useState("");
@@ -365,6 +368,9 @@ export function CodePage() {
           </Button>
           <Button size="icon" variant="ghost" className="h-7 w-7" onClick={refresh} title="刷新">
             <RefreshCw className="h-4 w-4" />
+          </Button>
+          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => navigate("/backup-center")} title="打开备份中心">
+            <Archive className="h-4 w-4" />
           </Button>
           <div className="relative ml-auto">
             <Search className="pointer-events-none absolute left-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
