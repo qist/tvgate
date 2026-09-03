@@ -60,6 +60,20 @@ export function downloadUrl(path: string): string {
   return `${base()}api/code/download?path=${encodeURIComponent(path)}`;
 }
 
+export interface PhpIssue {
+  level: "error" | "warning";
+  message: string;
+  line: number;
+}
+
+/** PHP 语法检测（后端纯文本级扫描，检测编辑器当前内容） */
+export async function check(content: string): Promise<{ ok: boolean; issues: PhpIssue[] }> {
+  const r = await fetch(`${base()}api/code/check`, { method: "POST", credentials: "same-origin", body: content });
+  if (!r.ok) throw new Error(await r.text());
+  const d = await r.json();
+  return { ok: !!d.ok, issues: d.issues || [] };
+}
+
 export async function uploadFiles(dir: string, files: FileList): Promise<void> {
   const fd = new FormData();
   fd.append("dir", dir);

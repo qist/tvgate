@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Replace,
   Save,
+  ScanSearch,
   Search,
   Trash2,
   Upload,
@@ -249,6 +250,29 @@ export function CodePage() {
     }
   };
 
+  // PHP 语法检测（检测编辑器当前内容，含未保存修改）
+  const checkSyntax = async () => {
+    if (!current) return;
+    setBusy("语法检测中…");
+    try {
+      const r = await code.check(content);
+      if (r.ok) {
+        const warns = r.issues.map((i) => `  ⚠ 第 ${i.line} 行: ${i.message}`).join("\n");
+        notify("ok", warns ? `✅ 语法检测通过（含提示）：\n${warns}` : "✅ 语法检测通过，未发现问题");
+      } else {
+        const lines = r.issues
+          .slice(0, 20)
+          .map((i) => `${i.level === "error" ? "✖" : "⚠"} 第 ${i.line} 行: ${i.message}`)
+          .join("\n");
+        notify("err", `❌ 检测到语法问题：\n${lines}${r.issues.length > 20 ? `\n  … 共 ${r.issues.length} 条` : ""}`);
+      }
+    } catch (e) {
+      notify("err", "检测失败: " + (e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+
   // 注释/取消注释（Ctrl+Q / Ctrl+/）
   const toggleComment = () => {
     const ta = taRef.current;
@@ -449,6 +473,11 @@ export function CodePage() {
                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={toggleComment} title="注释/取消注释 (Ctrl+Q 或 Ctrl+/)">
                   <FileCode className="h-3.5 w-3.5" /> 注释
                 </Button>
+                {current.toLowerCase().endsWith(".php") && (
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={checkSyntax} title="PHP 语法检测（检测当前编辑内容）">
+                    <ScanSearch className="h-3.5 w-3.5" /> 检测
+                  </Button>
+                )}
                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setReplOpen(true)} title="批量替换当前目录及子目录">
                   <Replace className="h-3.5 w-3.5" /> 批量替换
                 </Button>
