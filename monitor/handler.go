@@ -52,6 +52,11 @@ func handleJSONRequest(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(data)
 }
 
+// GetStatusData 返回状态数据快照（供 /web/api/v1/status 等 JSON API 复用）
+func GetStatusData(r *http.Request) StatusData {
+	return prepareStatusData(r)
+}
+
 func handleHTMLRequest(w http.ResponseWriter, r *http.Request) {
 	data := prepareStatusData(r)
 

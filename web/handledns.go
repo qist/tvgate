@@ -190,7 +190,10 @@ func updateDnsConfigNode(node *yaml.Node, dnsConfig map[string]interface{}) erro
 	}
 
 	// 更新dns配置字段
-	updateField(dnsNode, "timeout", dnsConfig["timeout"])
+	// 空 duration 字符串不写入，避免 YAML "" 无法反序列化为 time.Duration
+	if tStr, ok := dnsConfig["timeout"].(string); ok && tStr != "" {
+		updateField(dnsNode, "timeout", tStr)
+	}
 	updateField(dnsNode, "max_conns", dnsConfig["max_conns"])
 
 	// 特殊处理servers数组

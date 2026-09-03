@@ -10,12 +10,14 @@
 
 | 项 | 结论 |
 |---|---|
-| **推荐技术栈** | **Vue 3.5 + TypeScript + Vite 7 + Naive UI + Pinia + Vue Router 4**，构建产物 `go:embed` 进现有单二进制 |
+| **推荐技术栈** | **React 19 + TypeScript + Vite + Tailwind CSS 4 + shadcn 手写组件 + lucide-react**（与 `/opt/rtp2httpd/web-ui` 完全同栈；体积小、卡片式）、`react-hook-form + zod`、`react-router`（hash）、`zustand`，构建产物 `go:embed` 进现有单二进制 |
 | **迁移方式** | **渐进式（Strangler Fig）4 期迁移，不做一次性重写**；旧模板随 Phase 2 逐页删除，Phase 3 清理残余，无 `web.ui` 开关 |
 | **最先做的一步** | **Phase 0：设计系统 + 布局壳（AppShell）**，把 28 个旧页面套上统一导航与主题 —— 成本最低、当天可见效 |
 | **后端改造量** | 小。现有 ~60 个 JSON API 可直接复用，只需新增 `/web/api/v1/*` 命名空间与 SPA fallback 路由，业务逻辑不动 |
 | **风险** | 中低。最大风险是**配置表单迁移**（node/proxygroups/publisher 三页合计 8000+ 行），对策是最后迁移 + 双轨并行 |
 | **预估工期** | 4 期共 **18~25 人日**（含自测），每期均可独立上线 |
+
+> **技术栈变更记录**：本文档早期/历史进度段落（§8 各 Phase 的"已落地"）沿用了 **Vue 3 + Naive UI** 的写法与组件名（`App.vue`、`n-card`、`n-form`、`NDynamicInput`、`themeOverrides` 等）。**最终已拍板为 React 19 + Tailwind 4 + shadcn（同 `/opt/rtp2httpd/web-ui`，见 §4 与决策 #1/#14）**；历史段落中的 Vue/Naive 字样按"其功能在 React+Tailwind+shadcn 下的等价实现"理解（如 `n-card`→shadcn `Card`、`NDynamicInput`→自建 `ListEditor`、`n-form`→`react-hook-form+zod`、`.vue`→`.tsx`、`vue-tsc`→`tsc --noEmit`）。新代码一律按 §4 的 React 栈编写。
 
 ---
 
@@ -101,46 +103,61 @@
 
 | 方案 | 复杂表单能力 | 暗色主题 | 产物体积(gzip) | 离线 | 与 embed 集成 | 迁移成本 | 综合 |
 |---|---|---|---|---|---|---|---|
-| **A. 现状修补**（Go template + 统一 CSS 变量） | ❌ 差 | ⚠️ 靠人肉 | 0（无新增） | ✅ | ✅ 无变化 | 低 | ⭐⭐ 治标不治本，3 个月后又乱 |
-| **B. Go template + HTMX + Alpine** | ⚠️ 中 | ⚠️ 需自建 | ~40KB | ✅ | ✅ 无变化 | 中 | ⭐⭐⭐ 渐进友好，但复杂表单（动态增删行/嵌套代理组）仍会失控 |
-| **C. Go + templ + Tailwind（本地编译）** | ⚠️ 中 | ⚠️ 需自建 | ~30KB | ✅ | ⚠️ 需引入 templ 代码生成到 Go 构建链 | 高 | ⭐⭐⭐ Go 味最浓，但组件库生态≈0，表格/表单要全手写 |
-| **D. ✅ Vue3 + Naive UI** | ✅ 强 | ✅ 开箱 | 120~180KB | ✅ | ✅ 纯静态产物 | 中 | ⭐⭐⭐⭐⭐ **推荐** |
-| **E. React 18 + Ant Design** | ✅ 强 | ⚠️ 一般（需大量 token 覆写） | 300~450KB | ✅ | ✅ 纯静态产物 | 中 | ⭐⭐⭐⭐ antd 暗色主题质量不如 Naive，体积翻倍，低端设备吃力 |
-| **F. Svelte 5 + shadcn-svelte** | ✅ 强 | ✅ 好 | 60~100KB | ✅ | ✅ 纯静态产物 | 中 | ⭐⭐⭐⭐ 体积最优，但中文资料与组件完备度弱于 Naive，招人/维护成本高 |
+| **A. 现状修补**（Go template + 统一 CSS 变量） | ❌ 差 | ⚠️ 靠人肉 | 0（无新增） | ✅ | ✅ 无变化 | 低 | ⭐⭐ 治标不治本 |
+| **B. Go template + HTMX + Alpine** | ⚠️ 中 | ⚠️ 需自建 | ~40KB | ✅ | ✅ 无变化 | 中 | ⭐⭐⭐ 复杂表单仍易失控 |
+| **C. Go + templ + Tailwind（本地编译）** | ⚠️ 中 | ⚠️ 需自建 | ~30KB | ✅ | ⚠️ 引入 templ 生成 | 高 | ⭐⭐⭐ 组件库生态≈0 |
+| **D. ✅ React 19 + Tailwind 4 + shadcn（同 rtp2httpd）** | ✅ 强 | ✅ 语义色类 | **~100~160KB** | ✅ | ✅ 纯静态产物 | 中 | ⭐⭐⭐⭐⭐ **推荐（React 生态体积最优）** |
+| **E. React + Ant Design** | ✅ 强 | ⚠️ 需大量覆写 | 300~450KB | ✅ | ✅ 纯静态产物 | 中 | ⭐⭐⭐⭐ 体积大，不合"体积小"约束 |
+| **F. Svelte 5 + shadcn-svelte** | ✅ 强 | ✅ 好 | 60~100KB | ✅ | ✅ 纯静态产物 | 中 | ⭐⭐⭐⭐ 体积**绝对最小**，但用户已定 React 同栈 → 作为体积压力过大时的 fallback |
 
-**选择 D 的核心理由：**
+**选择 D（React + Tailwind + shadcn）的核心理由：**
 
-1. **复杂表单是本项目的主体**：`node_editor`(3195)、`publisher_editor`(2274)、`proxygroups_editor`(1542)、`jx_editor`(1308)、`domainmap_editor`(1051) 合计近万行，全是"动态数组 + 嵌套对象 + 条件显隐"的表单。这类需求只有成熟组件库的 `Form/FormItem + 动态校验 + 表格内联编辑` 能扛住，方案 A/B/C 会重演今天的困境。
-2. **Naive UI 是唯一"暗色主题一等公民"的中文生态组件库**：`darkTheme` + `themeOverrides` 直接对接 design tokens，不需要像 antd 那样覆写几百个 Less 变量。本项目后台默认深色，这点权重很高。
-3. **体积可控**：Naive UI tree-shaking 良好，实测同类后台首屏 gzip 120~180KB，配合路由懒加载完全可在 mips 设备运行。
-4. **Vue 3 单文件组件 + TS**：把 3195 行 HTML 拆成 20 个 `<200` 行组件，可读性收益最大；`defineModel`/`script setup` 对表单绑定极为友好。
+1. **与 `/opt/rtp2httpd/web-ui` 完全同栈**：直接复用其已打磨的 `components/ui/*`（Card/Button/Badge/Table/Switch/Select/Progress/Separator）、Tailwind 4 `@theme` 语义色 + `.dark` 双主题、`lucide-react` 按需图标这套成熟模式，交接顺畅、零新学习成本。
+2. **体积小（用户强约束）**：shadcn 是"源码复制 + tree-shaking"，Tailwind 4 只编译实际用到的类，**无大型组件库全量打包**，比 Ant(300~450KB) 小得多，首屏可压到 ~100~160KB gzip，配合路由懒加载 + 代码分割在 mips/armv5 可用。绝对更小的 Svelte 列为 fallback。
+3. **复杂表单能力**：shadcn 提供受控基础组件，配置页主体用 `Card`/`Table`/`Dialog` 呈现；动态增删行/嵌套/条件显隐用 `react-hook-form + zod`（或手写受控 state）实现。
+4. **暗色主题零硬编码**：`@theme` 定义语义色（background/foreground/card/muted/border/ring…），`.dark` 只改变量，修掉现 `theme.js` 遍历 DOM 重排的 hack。
 5. **纯静态产物，与 Go embed 零摩擦**：`vite build` → `web/dist/` → `//go:embed all:dist`，不引入任何 Go 侧代码生成。
 
 ### 4.2 推荐技术栈清单
 
 | 层 | 选型 | 版本 | 用途 | 备注 |
 |---|---|---|---|---|
-| 构建 | **Vite** | 7.x | dev server + 生产构建 | dev 用 `server.proxy` 代理到 Go，保持同源 Cookie |
+| 构建 | **Vite** | 7/8 | dev server + 生产构建 | dev 用 `server.proxy` 代理到 Go 保持同源；`@tailwindcss/vite` 插件 |
 | 语言 | **TypeScript** | 5.7+ | strict 模式 | API 类型从 Go 结构体半自动生成（见 §5.5） |
-| 框架 | **Vue 3** | 3.5+ | `<script setup>` + Composition API | |
-| 组件库 | **Naive UI** | 2.40+ | 表单/表格/弹窗/导航/反馈 | 暗色 `darkTheme` + 自定义 `themeOverrides` |
-| 路由 | **Vue Router** | 4.x | history 模式，base 运行时注入 | 路由级懒加载 |
-| 状态 | **Pinia** | 2.x | 系统状态/日志/配置草稿 | 替代现有散落的全局 var |
-| 请求 | **自封装 fetch wrapper** | — | 统一 base、credentials、错误Toast、401 跳转 | ~80 行，零依赖（不引 axios） |
-| 编辑器 | **CodeMirror 6** | 6.x | YAML / PHP / ini 语法高亮 + lint | 替换现有 CodeMirror 5；按需 import 语言包 |
-| 图表 | **uPlot** 或自绘 SVG | uPlot 1.6 | 实时流量/CPU 曲线 | uPlot ~45KB min，比 ECharts(300KB+) 小一个数量级；环形进度条自绘 SVG（~30 行） |
-| 图标 | **@vicons/lucide** | — | 按需引入 | tree-shaking，避免全量图标包 |
-| 工具 | **@vueuse/core** | 12.x | `useLocalStorage`/`useIntervalFn`/`useDark` | 体积按函数摇树 |
-| 日期 | **date-fns**（按需） | 4.x | 日志时间格式化 | 仅 `format`，避免 dayjs locale 冗余 |
-| 代码规范 | ESLint + Prettier + vue-tsc | — | CI 卡口 | |
+| 框架 | **React** | 19.x | 函数组件 + Hooks | 与 rtp2httpd 同款 |
+| 样式 | **Tailwind CSS** | 4.x | 原子工具类 + `@theme` 语义色 | 深浅主题 `@custom-variant dark` + `.dark`（同 rtp2httpd） |
+| UI 组件 | **shadcn 风格手写组件** | — | Card/Button/Badge/Table/Switch/Select/Dialog/Toast | 源码复制进 `ui/src/components/ui/*`；基底 `class-variance-authority + clsx`（Radix 按需） |
+| 表单 | **react-hook-form + zod** | — | 动态校验/列表编辑 | 简单表单可手写受控 state |
+| 路由 | **React Router** | 7.x | hash 路由，base 运行时注入 | 路由级懒加载 |
+| 状态 | **Zustand**（或自管 Context） | — | 系统状态/日志/配置草稿 | ~1KB，替代分散的全局 var |
+| 请求 | **自封装 fetch wrapper** | — | 统一 base、credentials、错误 Toast、401 跳转 | ~80 行，零依赖 |
+| 编辑器 | **CodeMirror 6** | 6.x | YAML / PHP / ini 高亮 + lint | 按需 import 语言包 |
+| 图表 | **uPlot** 或自绘 SVG | uPlot 1.6 | 实时流量/CPU 曲线 | ~45KB min，比 ECharts(300KB+) 小一个量级 |
+| 图标 | **lucide-react** | — | 按需引入 | tree-shaking，避免全量图标包 |
+| 日期 | **date-fns**（按需） | 4.x | 日志时间格式化 | 仅 `format` |
+| 代码规范 | ESLint + Prettier + `tsc --noEmit`（也可用 biome） | — | CI 卡口 | 可复用 rtp2httpd 的 biome 配置 |
 
 ### 4.3 明确不用的东西
 
-- ❌ **Tailwind CDN**（离线不可用；且本项目 90% 是组件库覆盖的场景，Tailwind 增量价值低）
-  - *若团队强烈偏好，可本地编译 Tailwind v4 作为「布局/间距」补充，与 Naive UI 共存，但需配置 `prefix` 避免类名冲突 —— 列为待决事项*
-- ❌ **ECharts 全量包**（300KB+，低端设备首屏灾难；实时曲线用 uPlot 足够）
-- ❌ **Ant Design**（暗色主题需大量覆写，体积约为 Naive 的 2 倍）
+- ❌ **Vue / Naive UI / Pinia / Vue Router**（已拍板换栈为 React + Tailwind + shadcn）
+- ❌ **Ant Design**（300~450KB，体积翻倍，违反"体积小"约束）
+- ❌ **ECharts 全量包**（300KB+，实时曲线用 uPlot 足够）
+- ❌ **Tailwind 运行时 CDN**（离线不可用；一律本地编译，构建期 `@tailwindcss/vite`）
 - ❌ **任何外部 CDN / 在线字体**（离线部署是硬约束；字体用 `-apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`）
+
+### 4.4 视觉与组件：直接采用 rtp2httpd 的 React + Tailwind + shadcn 范式
+
+**结论：技术栈直接采用 `/opt/rtp2httpd/web-ui` 同款（React 19 + TypeScript + Vite + Tailwind 4 + shadcn 手写组件 + lucide-react），不再引入第二套栈。**
+
+| 组件/能力 | rtp2httpd 现成实现 | tvgate 直接复用/对齐 |
+|---|---|---|
+| 卡片式布局 | shadcn `Card`（`rounded-2xl border`，CardHeader/Title/Content/Footer） | 复制 `components/ui/card.tsx` 等整组原子组件为底座 |
+| 深浅主题 | `@theme` 语义色变量 + `.dark` 只改变量 | 对齐 §6 tokens；删除 `theme.js` 全量重排 hack |
+| 原子组件集 | button/badge/table/switch/select-box/progress/separator/labeled-switch | 直接拷入 tvgate `ui/src/components/ui/*` |
+| 图标 | `lucide-react` 按需 | 直接采用 |
+| 配置表单 | rtp2httpd 无复杂表单 | tvgate 在 shadcn 基础上自建 `ListEditor`/`KeyValueEditor`/`DurationInput`，配合 `react-hook-form + zod` 实现动态增删/嵌套/条件显隐 |
+
+> 体积策略：shadcn 把组件源码拷进项目、Tailwind 按需编译，**首屏 ~100~160KB gzip，是 React 生态里体积最优的做法**，满足"体积小"硬约束；若后续体积压力过大，fallback 为 Svelte + shadcn-svelte（§4.1 F）。
 
 ---
 
@@ -156,22 +173,23 @@
 │   ├── tsconfig.json
 │   ├── index.html               # 含 window.__TVGATE_BASE__ 占位，构建时被 Go 覆写
 │   └── src/
-│       ├── main.ts
-│       ├── App.vue
+│       ├── main.tsx
+│       ├── App.tsx
 │       ├── router/              # 路由表 + 守卫（401 → login）
 │       ├── layouts/
-│       │   ├── AppShell.vue     # 侧栏 + 顶栏 + 内容区 + 移动端抽屉
-│       │   └── BlankLayout.vue  # login / 全屏日志
+│       │   ├── AppShell.tsx     # 侧栏 + 顶栏 + 内容区 + 移动端抽屉
+│       │   └── BlankLayout.tsx  # login / 全屏日志
 │       ├── styles/
-│       │   ├── tokens.css       # ★ design tokens（唯一色彩真源）
+│       │   ├── tokens.css       # ★ design tokens（唯一色彩真源，Tailwind @theme + 语义色）
 │       │   └── global.css
 │       ├── api/                 # 每个后端 API 一个模块 + TS 类型
 │       │   ├── http.ts          # fetch wrapper（base/credentials/错误/401）
 │       │   ├── system.ts        # /web/api/v1/status（系统状态聚合，替代独立 /status 页）
 │       │   ├── config.ts        # config/* 各段
 │       │   ├── code.ts  backup.ts  logs.ts  sync.ts  github.ts  dns.ts ...
-│       ├── stores/              # system / logs / ui(主题) / configDraft
+│       ├── stores/              # system / logs / ui(主题) / configDraft（zustand）
 │       ├── components/
+│       │   ├── ui/              # ★ 复刻 rtp2httpd 的 shadcn 原子组件（Card/Button/Badge/Table/Switch/Select/Dialog/Toast）
 │       │   ├── common/          # PageHeader / Card / EmptyState / StatCard / RingGauge / ConfirmButton
 │       │   ├── form/            # KeyValueEditor / ListEditor / DurationInput / YamlEditor
 │       │   └── table/           # DataTable（排序/分页/空态/加载）
@@ -196,7 +214,7 @@
 
 | 项 | 做法 |
 |---|---|
-| 源码入口 | `ui/`（Vite 7 + Vue 3 + TS），`vite.config.ts` 中 `base:'./'`、`build.outDir:'../web/dist'` |
+| 源码入口 | `ui/`（Vite + React 19 + TypeScript + Tailwind 4 + shadcn），`vite.config.ts` 中 `base:'./'`、`build.outDir:'../web/dist'` |
 | 产物 | `web/dist/`（index.html + assets/），由 `go:embed all:dist` 编入单二进制 |
 | 进 Git 吗 | **不进**。`.gitignore` 忽略 `web/dist/assets/`、`*.js`、`*.css` 等；仅保留 `web/dist/index.html`（占位提示页）+ `.gitkeep`，使 `go:embed` 永远非空，`clone` 后可直接 `go build` |
 | 本地构建 | `make web-ui`（缺 `node_modules` 时先 `npm install`，再 `npm run build`；产物不重建用 `web/dist/.built` 时间戳戳）／或 `make ui-install` 仅安装依赖 |
@@ -296,7 +314,7 @@ type APIResp struct {
 
 ### 6.1 Design Tokens（`ui/src/styles/tokens.css` —— 唯一色彩真源）
 
-现状 `--win11-*` 变量体系断裂（`--win11-text` 未定义），新体系命名扁平化，且**同时给 CSS 与 Naive UI 使用**：
+现状 `--win11-*` 变量体系断裂（`--win11-text` 未定义），新体系命名扁平化、语义化（background/foreground/card/muted/border/ring…），与 **Tailwind 4 `@theme` + shadcn 语义色**对齐：
 
 ```css
 :root {
@@ -339,40 +357,69 @@ type APIResp struct {
 }
 ```
 
-**Naive UI 对接**：`themeOverrides` 直接引用 CSS 变量：
+**Tailwind 4 对接**（同 rtp2httpd `index.css`）：用 `@theme` 把语义色注册为 Tailwind 色彩，深浅主题用 `@custom-variant dark` + `.dark`，组件直接消费 `bg-background / text-card-foreground / border-border` 等工具类：
 
-```ts
-const themeOverrides: GlobalThemeOverrides = {
-  common: {
-    primaryColor: 'var(--accent)',
-    bodyColor: 'var(--bg-base)',
-    cardColor: 'var(--bg-surface)',
-    textColorBase: 'var(--text-1)',
-    borderRadius: 'var(--radius)',
-    fontFamily: 'var(--font)',
-  },
+```css
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter Variable", "SF Pro Display", "Segoe UI Variable", "Segoe UI",
+               "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --color-border:     hsl(var(--border));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-primary:    hsl(var(--primary));
+  --color-card:       hsl(var(--card));
+  --color-muted:      hsl(var(--muted));
+  --color-destructive: hsl(var(--destructive));
+  --radius: 0.875rem;
+}
+
+:root {
+  --background: 226 44% 97%;
+  --foreground: 229 36% 14%;
+  --card: 0 0% 100%;
+  --primary: 252 82% 59%;
+  --muted: 225 31% 93%;
+  --muted-foreground: 226 15% 43%;
+  --border: 226 27% 86%;
+  --ring: 234 89% 64%;
+}
+
+.dark {
+  --background: 231 46% 7%;
+  --foreground: 220 32% 96%;
+  --card: 229 37% 11%;
+  --primary: 252 92% 70%;
+  --muted: 228 25% 17%;
+  --muted-foreground: 224 16% 66%;
+  --border: 228 23% 22%;
+  --ring: 234 89% 64%;
 }
 ```
 
 **铁律（写入 ESLint 规则 + CR checklist）**：
-- 业务代码（`.vue` 的 `<style>`、`global.css`）**禁止出现十六进制色值**，一律 `var(--xxx)`。
-- 主题切换只改 `<html data-theme>`，**绝不允许**遍历 DOM 强制重排（修掉 `theme.js` 的 `querySelectorAll('*')` 性能问题）。
+- 业务代码（`.tsx` 组件的 className、`global.css`）**禁止出现十六进制色值**，一律用语义 token（`bg-*`/`text-*`/`border-*` 或 `var(--xxx)`）。
+- 主题切换只改 `<html class="dark">`，**绝不允许**遍历 DOM 强制重排（修掉 `theme.js` 的 `querySelectorAll('*')` 性能问题）。
 
 ### 6.2 关键组件规范
 
 | 组件 | 规范 |
 |---|---|
-| `AppShell` | 左侧固定导航（可折叠/记忆状态）+ 顶栏（面包屑 / 主题切换 / 用户菜单 / 版本徽标）。`< 992px` 自动转抽屉（`n-drawer`），顶栏出现汉堡按钮 |
+| `AppShell` | 左侧固定导航（可折叠/记忆状态）+ 顶栏（面包屑 / 主题切换 / 用户菜单 / 版本徽标）。`< 992px` 自动转抽屉（shadcn `Sheet`/`Drawer`），顶栏出现汉堡按钮 |
 | `PageHeader` | 标题 + 描述 + 右侧操作区（保存/重置/帮助链接）。统一 24px 下边距 |
-| `Card` | 复用 `n-card`，`size="small"`，统一 `--radius` 与 `--space-4` 内边距；标题 15px/600 |
-| `DataTable` | `n-data-table` 封装：统一 `size="small"`、斑马纹关闭、hover 高亮、空状态 `EmptyState`、加载用 `n-spin` 包裹。**禁止固定像素列宽**，改用 `min-width` + `ellipsis` + `tooltip`（修掉现有 `400px` IP 列） |
-| `FormPage` | 表单页统一"区块分组 + 右上保存条"，保存中 loading、成功后 `n-message` + 脏值提示；离开页面前拦截（未保存提醒） |
+| `Card` | 复刻自 rtp2httpd 的 shadcn `Card`（`rounded-2xl border`，CardHeader/Title/Content/Footer），统一 `--radius` 与内边距；标题 15px/600 |
+| `DataTable` | shadcn `Table` + TanStack Table（可选用）封装：统一紧凑行距、hover 高亮、空状态 `EmptyState`、加载覆盖层。**禁止固定像素列宽**，改用 `min-width` + `truncate` + `title/tooltip`（修掉现有 `400px` IP 列） |
+| `FormPage` | 表单页统一"区块分组 + 右上保存条"，保存中 loading、成功后 Toast + 脏值提示；离开页面前拦截（未保存提醒）。校验用 `react-hook-form + zod` |
 | `ListEditor` | 动态数组编辑（节点/代理组/订阅源通用）：支持增/删/复制/拖拽排序/上移下移。这是消灭 `node_editor` 3195 行的核心组件 |
 | `KeyValueEditor` | 通用 KV（HTTP 头、参数映射） |
 | `DurationInput` | `30s / 5m / 1h` 时长输入（后端用 `time.ParseDuration`，前端需校验格式） |
 | `YamlEditor` | CodeMirror 6 封装，带 YAML lint（js-yaml 解析报错高亮） |
 | `RingGauge` | 纯 SVG 环形进度（CPU/内存/磁盘），替代现有 4 段重复 SVG 代码 |
 | `EmptyState / ErrorState` | 统一插画位（用内联 SVG，不外链）+ 文案 + 主操作 |
+| `Dialog / Toast / ConfirmButton` | shadcn `Dialog`/`Toast`（`sonner` 或自建）+ `ConfirmButton`（二次确认），全站统一 |
 
 ### 6.3 响应式断点
 
@@ -381,7 +428,7 @@ const themeOverrides: GlobalThemeOverrides = {
 | `≥1440px` | 侧栏展开 232px，内容区最大宽 1440px 居中 |
 | `992~1439px` | 侧栏展开 |
 | `768~991px` | 侧栏自动折叠为图标态 |
-| `<768px` | 侧栏转抽屉；表格转卡片流（`n-data-table` 的 `scroll-x` + 关键列优先）；表单单列；保存条吸底 |
+| `<768px` | 侧栏转抽屉；表格转卡片流（`overflow-x-auto` + 关键列优先）；表单单列；保存条吸底 |
 
 ---
 
@@ -584,8 +631,8 @@ const themeOverrides: GlobalThemeOverrides = {
 
 | # | 决策项 | 结论 |
 |---|---|---|
-| 1 | 技术栈 | **Vue 3.5 + TS + Vite 7 + Naive UI + Pinia + Vue Router 4**（hash 路由） |
-| 2 | Tailwind | **不引入**（Naive UI + 少量 CSS 变量即可） |
+| 1 | 技术栈 | **React 19 + TypeScript + Vite + Tailwind CSS 4 + shadcn 手写组件 + lucide-react**（与 `/opt/rtp2httpd/web-ui` 同栈）、`react-hook-form + zod`、`react-router`（hash）、`zustand`（见 §4） |
+| 2 | Tailwind | **采用**：Tailwind 4 本地编译（`@tailwindcss/vite`），`@theme` 语义色 + `.dark` 双主题 |
 | 3 | 产物进 Git | **不进**；`web/dist` 由 CI（`make web-ui`）生成，仓库仅占位 `index.html` + `.gitkeep` |
 | 4 | 图表 | **uPlot**（实时曲线）+ **自绘 SVG**（环形仪表）；不用 ECharts 全量 |
 | 5 | 移动端优先级 | **高**（安卓 Termux / 手机浏览器完整可用） |
@@ -597,6 +644,7 @@ const themeOverrides: GlobalThemeOverrides = {
 | 11 | 独立 `/status` 监控页 | **废弃**：状态数据统一走登录后的 SPA（`/web/api/v1/status`，需认证）；`monitor.path` 配置项随之弃用，`server-monitor-editor` 配置页与 `system-stats.js` 在 Phase 3 删除；不单独设计状态前端，**不对外部暴露任何无认证只读/探活端点（如 `/api/healthz`），状态全部内部化** |
 | 12 | 前端风格 | **全站视觉重新设计做美观，全部页面/模块都可用新的组件库与布局**；重设计只改变视觉与排版 |
 | 13 | 组件与展示 | **展示统一用卡片形式**（统一 Card/区块卡片、卡片式列表/表格、统一弹窗与 Toast），不用像素固定布局；**现有参数全部保留**——编辑表单的字段/配置项与现有实现一致，不得删减/改名/改语义任何现有参数 |
+| 14 | 视觉与技术栈 | **技术栈直接采用 `/opt/rtp2httpd/web-ui` 同款 React 19 + Tailwind 4 + shadcn**（体积小、卡片式、深浅主题，见 §4）；全站视觉重设计美观，**现有参数一个都不能少** |
 
 ---
 
@@ -619,3 +667,56 @@ const themeOverrides: GlobalThemeOverrides = {
 | `web/log_stream.go` | 212 | 日志 SSE |
 | `config/config.go` | — | `Web` 配置结构（L80-85，需新增 `ui` 字段） |
 | `Makefile` / `Dockerfile` | — | 需增加 Node 构建步骤 |
+
+---
+
+## 13. 进度快照（React 全量迁移 · 2026-09-02 夜 → 09-03 待续）
+
+> 说明：上面 §8 的 Vue/NaiveUI 进度是早期方案的历史记录；后续已**整体改用 React 19 + Tailwind 4 + shadcn**（与 `/opt/rtp2httpd/web-ui` 同栈，§12 #1/#14）。本节记录 React 迁移的真实进度与剩余工作。
+
+### 已完成（React 原生页，全部模块已接入 SPA 导航）
+
+侧栏所有入口均已指向 `hash` 路由的原生 React 页，无任何 `legacy` 指向旧模板。
+
+> **2026-09-03 补充**：排查确认**最后一个未迁移模块 = H5 播放器配置**（旧 `player_editor.html` + `/web/player-editor`/`/web/config/player`/`/web/config/save-player`）。已新增 `api/player.ts` + `views/config/Player.tsx`（enabled/subscription/epg/logo/logo_dir/update_interval/ua 七字段与旧版完全一致，update_interval 为 `2h0m0s` 时显示空=默认 2h），注册 `/player` 路由与侧栏「配置 → 播放器」入口。后端零改动，保存→热重载→读回经 curl 冒烟通过。至此**所有功能模块已全部迁移到 SPA，无未迁移模块**。
+
+- 概览：`/` 仪表盘
+- 配置：`/tasks` `proxygroups` `jx` `publisher` `player` `domainmap` `global-auth` `group-config` `multicast` `ts` `config`(查看)
+- 服务：`server` `http` `dns` `php` `reload` `web` `log-config` `monitor`
+- 内容：`code` `sync` `github`
+- 运维：`logs` `config-backup` `backup-center`
+- 工具：`yaml`
+
+新建文件（`ui/`）：`api/{publisher,sync,yaml,github,configBackup,backupCenter,group,code}.ts`、`views/config/{Publisher,Sync,YAMLEditor,ConfigView,Logs,Github,ConfigBackup,BackupCenter,GroupConfig,Code}.tsx`、`views/config/FFmpegEditor.tsx`、`views/config/Checkbox.tsx`、`components/ErrorBoundary.tsx`。
+
+### 今日已修正的问题
+
+- `spa.go`：`/web`（无尾斜杠）此前下发 SPA 但相对资源 `./assets/*` 解析到根路径 → JS/CSS 404/403、整站空白；已改为 `301 → /web/`。
+- `AppShell.tsx`：新增 `ErrorBoundary` 包裹路由出口，单模块渲染崩溃不再拉垮整站侧栏。
+
+### 2026-09-03 浏览器冒烟实测（✅ 全部通过，含修复）
+
+全模块浏览器回归（登录/仪表盘/播放器/推流/组配置/定时任务/代理组/DNS/配置查看/YAML/日志/主题切换），**无白屏、无报错、console 零错误**。过程中发现并修复 3 个真实问题：
+
+1. **未认证 API 返回登录页 HTML → 前端崩溃**：`cookieAuth` 对未认证请求一律 `302 → /web/login`，SPA fetch 自动跟随拿到 HTML → `proxygroups`/`dns` 报 `.length` 崩溃、`publisher` 报 `Unexpected token '<'`、`config`/`yaml` 显示登录页 HTML。
+   - 修复：cookieAuth 对 **`Accept: application/json` / JSON Content-Type** 的请求返回 `401 {"code":401,"msg":"未认证"}`（不再 302）；前端 `api/http.ts` 统一带 `Accept: application/json` 并处理 401/302。
+2. **`GET /web/api/v1/status` 从未注册**（文档 §5.5 规划、Vue 时代历史段落声称已落地，实际 React 迁移未实现）→ 仪表盘永远 "—"。已新建 `web/api_v1.go` 注册该端点（CPU/内存/磁盘/负载/网络/运行时长/活跃连接/代理组数等，复用 `monitor.GetStatusData`，经 cookieAuth）；前端 `system.ts` 扩展类型、`Dashboard.tsx` 升级为真实数值 + 资源/网络卡片。
+3. **认证守卫**：AppShell 改为 SPA 内守卫（未认证 `navigate('/login')`，登录前不渲染子页）；登录页已登录自动回仪表盘。未登录访问任何页面统一进登录。
+
+### 构建链补齐（§5.2 实际落地）
+
+- `Makefile`：新增 `web-ui` / `ui-install` / `go-only` 目标，`all` 依赖 `web-ui`（无 npm 时静默跳过，占位 dist 保证 `go build` 可编译）。
+- `Dockerfile`：新增 `node:20-alpine` 的 `ui` 阶段（`npm ci && npm run build`），build 阶段 `COPY --from=ui` 覆盖占位 dist。
+- `release.yml`：新增 `setup-node` + `make web-ui` 步骤。
+- `.gitignore`：`ui/package.json`/`package-lock.json` 不再误忽略（改为 `/` 锚定根目录）；`web/dist/*` 忽略但保留 `web/dist/.gitkeep` 占位（保证 clone 后 `go:embed` 非空、可直接 `go build`）。
+
+### 剩余 / 待办（按优先级）
+
+1. **git 提交**（进行中）：spa.go 尾斜杠修复 + 全部 React 页面 + 播放器迁移 + 本轮 3 项修复 + 构建链 + 文档改动。
+2. **收尾清理**（浏览器冒烟已通过，可执行）：
+   - `web/templates/*` 30 个旧模板 + 对应 `handle*Editor`/`handle*Config` 孤儿 handler 已不被 SPA 使用（仍保留可编译），按 Phase 3 纪律删除；保留 code/backup/github/sync/logs 相关 API 与登录。
+   - `vite build` chunk > 500KB（gzip 约 158KB）：可做路由懒加载/代码分割，使首屏仪表盘 < 150KB（§11 验收项）。
+   - `static/js/codemirror` vendor：若未再被保留页面引用，冒烟后清理。
+3. **验收核对**：对照 §11 验收清单，特别是浅深主题、375px 无横向滚动、全站 `credentials: 'same-origin'` 与 CSRF（冒烟已确认请求正常、401/CSRF 纵深保留）。
+
+> 备注：React 迁移主体未改动既有 JSON 契约（配置读写仍走 `config/*` 与 `api/*` 原端点，保存/热重载逻辑零改动）；仅新增 `/web/api/v1/status` 一个 SPA 专属状态端点，并调整 cookieAuth 对 JSON 请求的未认证响应（302 → 401），不影响页面请求与旧接口。

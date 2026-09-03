@@ -1,0 +1,110 @@
+import { useCallback, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { getPlayer, savePlayer, type PlayerConfig } from "@/api/player";
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      {children}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+export function PlayerPage() {
+  const [cfg, setCfg] = useState<PlayerConfig | null>(null);
+  const [notice, setNotice] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
+
+  const refresh = useCallback(async () => setCfg(await getPlayer()), []);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  if (!cfg) return <div className="text-sm text-muted-foreground">加载中…</div>;
+
+  const save = async () => {
+    if (cfg.enabled && !cfg.subscription.trim()) {
+      setNotice({ type: "err", msg: "启用时必须填写订阅源" });
+      setTimeout(() => setNotice(null), 4000);
+      return;
+    }
+    try {
+      await savePlayer({ ...cfg, subscription: cfg.subscription.trim(), epg: cfg.epg.trim(), logo: cfg.logo.trim(), logo_dir: cfg.logo_dir.trim(), update_interval: cfg.update_interval.trim(), ua: cfg.ua.trim() });
+      setNotice({ type: "ok", msg: "配置保存成功，热加载将自动刷新" });
+      setTimeout(refresh, 6500);
+    } catch (e) {
+      setNotice({ type: "err", msg: (e as Error).message });
+    }
+    setTimeout(() => setNotice(null), 4000);
+  };
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-xl font-semibold">H5 播放器配置</h1>
+      {notice && (
+        <div className={`rounded-lg border px-3 py-2 text-sm ${notice.type === "ok" ? "border-primary/30 bg-primary/10 text-primary" : "border-destructive/30 bg-destructive/10 text-destructive"}`}>
+          {notice.msg}
+        </div>
+      )}
+      <Card>
+        <CardHeader><CardTitle className="text-base">基本配置</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Switch checked={cfg.enabled} onCheckedChange={(v) => setCfg({ ...cfg, enabled: v })} />
+            <span className="text-sm">启用播放器模块</span>
+          </div>
+          <p className="text-xs text-muted-foreground">开启后挂载 /api/player/channels、/player/&lt;key&gt;、/api/player/epg 与播放页 /pp/</p>
+          <Field label="订阅源" hint="M3U 或 逗号TXT；此地址 = 允许拉取的源白名单，真实流地址不外露">
+            <Input
+              className="font-mono"
+              value={cfg.subscription}
+              onChange={(e) => setCfg({ ...cfg, subscription: e.target.value })}
+              placeholder="https://&lt;your-domain&gt;/sub.m3u 或本地文件路径"
+            />
+          </Field>
+          <Field label="txt 订阅的 EPG 模板（可选）" hint="含 {name}=频道名、{date}=日期；M3U 订阅用 x-tvg-url 的 XMLTV，无需填此项">
+            <Input
+              className="font-mono"
+              value={cfg.epg}
+              onChange={(e) => setCfg({ ...cfg, epg: e.target.value })}
+              placeholder="https://epg.&lt;your-domain&gt;/?ch={name}&date={date}"
+            />
+          </Field>
+          <Field label="台标模板（可选，M3U/txt 无 tvg-logo 时兜底）" hint="含 {name}=频道名；M3U 自带 tvg-logo 优先">
+            <Input
+              className="font-mono"
+              value={cfg.logo}
+              onChange={(e) => setCfg({ ...cfg, logo: e.target.value })}
+              placeholder="https://logo.&lt;your-domain&gt;/{name}.png"
+            />
+          </Field>
+          <Field label="本地台标目录（可选）" hint="填此目录则频道 logo 取 &lt;频道名&gt;.png（经 /player/logo/ 服务），优先于上方模板">
+            <Input
+              className="font-mono"
+              value={cfg.logo_dir}
+              onChange={(e) => setCfg({ ...cfg, logo_dir: e.target.value })}
+              placeholder="/opt/TVLogo"
+            />
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="订阅刷新间隔" hint="如 2h / 30m，留空用默认 2h">
+              <Input value={cfg.update_interval} onChange={(e) => setCfg({ ...cfg, update_interval: e.target.value })} placeholder="2h" />
+            </Field>
+            <Field label="默认 User-Agent（可选）" hint="请求上游（m3u8/分片）用；频道在 txt 里带 ua=xxx 则优先生效，否则用此默认。留空用内置浏览器 UA">
+              <Input className="font-mono" value={cfg.ua} onChange={(e) => setCfg({ ...cfg, ua: e.target.value })} placeholder="okhttp/3.8.1" />
+            </Field>
+          </div>
+        </CardContent>
+      </Card>
+      <div className="flex gap-2">
+        <Button onClick={save}>保存配置</Button>
+        <Button variant="secondary" onClick={refresh}>重新加载</Button>
+      </div>
+    </div>
+  );
+}

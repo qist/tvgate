@@ -233,11 +233,11 @@ func (h *ConfigHandler) handleGlobalAuthConfigSave(w http.ResponseWriter, r *htt
 				}
 			}
 
-			// 如果没有找到global_auth节点，则创建一个新的
+			// 如果没有找到global_auth节点，则创建新的并填充本次提交的配置
 			if !globalAuthFound {
 				doc.Content = append(doc.Content,
 					&yaml.Node{Kind: yaml.ScalarNode, Value: "global_auth"},
-					&yaml.Node{Kind: yaml.MappingNode})
+					buildGlobalAuthYamlNode(authConfig, globalAuth))
 			}
 		}
 	}
@@ -268,4 +268,90 @@ func (h *ConfigHandler) handleGlobalAuthConfigSave(w http.ResponseWriter, r *htt
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("配置保存成功"))
+}
+
+// buildGlobalAuthYamlNode 将前端提交的 global_auth 配置构建为 yaml 节点。
+// 凭据字段（secret/salt/静态 token）提交为掩码占位时用 resolveCredential 保留原值。
+func buildGlobalAuthYamlNode(authConfig map[string]interface{}, globalAuth config.AuthConfig) *yaml.Node {
+	authNode := &yaml.Node{Kind: yaml.MappingNode}
+
+	if tokensEnabled, ok := authConfig["tokens_enabled"]; ok {
+		authNode.Content = append(authNode.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "tokens_enabled"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", tokensEnabled)})
+	}
+	if tokenParamName, ok := authConfig["token_param_name"]; ok && tokenParamName != "" {
+		authNode.Content = append(authNode.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "token_param_name"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", tokenParamName)})
+	}
+
+	if dynamicTokens, ok := authConfig["dynamic_tokens"]; ok {
+		if dtMap, ok := dynamicTokens.(map[string]interface{}); ok {
+			dtNode := &yaml.Node{Kind: yaml.MappingNode}
+			if enableDynamic, ok := dtMap["enable_dynamic"]; ok {
+				dtNode.Content = append(dtNode.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: "enable_dynamic"},
+					&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", enableDynamic)})
+			}
+			if dynamicTTL, ok := dtMap["dynamic_ttl"]; ok && dynamicTTL != "" {
+				if ttlStr, ok := dynamicTTL.(string); ok && ttlStr != "" {
+					formattedTTL := formatDurationString(ttlStr)
+					if _, err := time.ParseDuration(formattedTTL); err == nil {
+						dtNode.Content = append(dtNode.Content,
+							&yaml.Node{Kind: yaml.ScalarNode, Value: "dynamic_ttl"},
+							&yaml.Node{Kind: yaml.ScalarNode, Value: formattedTTL})
+					}
+				}
+			}
+			if secret, ok := dtMap["secret"]; ok && secret != "" {
+				dtNode.Content = append(dtNode.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: "secret"},
+					&yaml.Node{Kind: yaml.ScalarNode, Value: resolveCredential(secret, globalAuth.DynamicTokens.Secret)})
+			}
+			if salt, ok := dtMap["salt"]; ok && salt != "" {
+				dtNode.Content = append(dtNode.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: "salt"},
+					&yaml.Node{Kind: yaml.ScalarNode, Value: resolveCredential(salt, globalAuth.DynamicTokens.Salt)})
+			}
+			if len(dtNode.Content) > 0 {
+				authNode.Content = append(authNode.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: "dynamic_tokens"},
+					dtNode)
+			}
+		}
+	}
+
+	if staticTokens, ok := authConfig["static_tokens"]; ok {
+		if stMap, ok := staticTokens.(map[string]interface{}); ok {
+			stNode := &yaml.Node{Kind: yaml.MappingNode}
+			if enableStatic, ok := stMap["enable_static"]; ok {
+				stNode.Content = append(stNode.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: "enable_static"},
+					&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", enableStatic)})
+			}
+			if token, ok := stMap["token"]; ok && token != "" {
+				stNode.Content = append(stNode.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: "token"},
+					&yaml.Node{Kind: yaml.ScalarNode, Value: resolveCredential(token, globalAuth.StaticTokens.Token)})
+			}
+			if expireHours, ok := stMap["expire_hours"]; ok && expireHours != "" {
+				if expireStr, ok := expireHours.(string); ok && expireStr != "" {
+					formattedExpire := formatDurationString(expireStr)
+					if _, err := time.ParseDuration(formattedExpire); err == nil {
+						stNode.Content = append(stNode.Content,
+							&yaml.Node{Kind: yaml.ScalarNode, Value: "expire_hours"},
+							&yaml.Node{Kind: yaml.ScalarNode, Value: formattedExpire})
+					}
+				}
+			}
+			if len(stNode.Content) > 0 {
+				authNode.Content = append(authNode.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: "static_tokens"},
+					stNode)
+			}
+		}
+	}
+
+	return authNode
 }

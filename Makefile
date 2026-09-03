@@ -23,6 +23,27 @@ BUILD    = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) $(if $(3),GOARM=$(3) )go build -l
 # PHP 模块：纯 Go 自研 runtime（phpgo），不依赖 CGO / FrankenPHP / 外部 PHP 库。
 # 单一静态二进制，PHP 脚本从磁盘读取（默认 www，相对配置文件所在目录，见 config.PHP.DocRoot）。
 
+# ==================== 前端（React SPA）====================
+# 产物由 go:embed 编入单二进制；无 npm 环境时静默跳过（web/dist 占位保证 go build 可编译）
+UI_DIR      := ui
+DIST_STAMP  := web/dist/.built
+
+.PHONY: web-ui ui-install go-only
+web-ui: $(DIST_STAMP)
+
+$(DIST_STAMP): $(UI_DIR)/package.json $(UI_DIR)/package-lock.json
+	@command -v npm >/dev/null 2>&1 || { echo "⚠️ 未检测到 npm，跳过前端构建"; exit 0; }
+	@test -d $(UI_DIR)/node_modules || (cd $(UI_DIR) && npm install)
+	cd $(UI_DIR) && npm run build
+	@touch $@
+
+ui-install:
+	@cd $(UI_DIR) && npm install
+
+# 纯 Go 编译（前端为占位 dist，仅编译/升级场景使用）
+go-only:
+	@echo "仅编译 Go（SPA 为占位页）。正常构建请用 make all/linux-64（自动触发 make web-ui）。"
+
 # ==================== Linux ====================
 
 linux-64: $(OUT_DIR)/TVGate-linux-64
@@ -146,7 +167,7 @@ ALL_TARGETS := \
 	macos-64 macos-arm64-v8a \
 	android-arm64-v8a
 
-all: $(OUT_DIR)/TVGate-linux-64 \
+all: web-ui $(OUT_DIR)/TVGate-linux-64 \
 	$(OUT_DIR)/TVGate-linux-arm64-v8a \
 	$(OUT_DIR)/TVGate-linux-arm32-v7a \
 	$(OUT_DIR)/TVGate-linux-arm32-v6 \

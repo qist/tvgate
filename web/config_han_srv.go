@@ -197,6 +197,56 @@ func (h *ConfigHandler) handleServerConfigSave(w http.ResponseWriter, r *http.Re
 						}
 					}
 
+					// 添加 tls 子对象（缺省会丢失全部 TLS 配置）
+					if tlsRaw, ok := serverConfig["tls"]; ok {
+						if tlsMap, ok := tlsRaw.(map[string]interface{}); ok {
+							tlsNode := &yaml.Node{Kind: yaml.MappingNode}
+							if v, ok := tlsMap["https_port"]; ok {
+								s := fmt.Sprintf("%v", v)
+								if s != "" && s != "0" {
+									tlsNode.Content = append(tlsNode.Content,
+										&yaml.Node{Kind: yaml.ScalarNode, Value: "https_port"},
+										&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", v)})
+								}
+							}
+							if v, ok := tlsMap["certfile"]; ok && fmt.Sprintf("%v", v) != "" {
+								tlsNode.Content = append(tlsNode.Content,
+									&yaml.Node{Kind: yaml.ScalarNode, Value: "certfile"},
+									&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", v), Style: yaml.DoubleQuotedStyle})
+							}
+							if v, ok := tlsMap["keyfile"]; ok && fmt.Sprintf("%v", v) != "" {
+								tlsNode.Content = append(tlsNode.Content,
+									&yaml.Node{Kind: yaml.ScalarNode, Value: "keyfile"},
+									&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", v), Style: yaml.DoubleQuotedStyle})
+							}
+							if v, ok := tlsMap["ssl_protocols"]; ok && fmt.Sprintf("%v", v) != "" {
+								tlsNode.Content = append(tlsNode.Content,
+									&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_protocols"},
+									&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", v), Style: yaml.DoubleQuotedStyle})
+							}
+							if v, ok := tlsMap["ssl_ciphers"]; ok && fmt.Sprintf("%v", v) != "" {
+								tlsNode.Content = append(tlsNode.Content,
+									&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_ciphers"},
+									&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", v), Style: yaml.DoubleQuotedStyle})
+							}
+							if v, ok := tlsMap["ssl_ecdh_curve"]; ok && fmt.Sprintf("%v", v) != "" {
+								tlsNode.Content = append(tlsNode.Content,
+									&yaml.Node{Kind: yaml.ScalarNode, Value: "ssl_ecdh_curve"},
+									&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", v), Style: yaml.DoubleQuotedStyle})
+							}
+							if v, ok := tlsMap["enable_h3"].(bool); ok && v {
+								tlsNode.Content = append(tlsNode.Content,
+									&yaml.Node{Kind: yaml.ScalarNode, Value: "enable_h3"},
+									&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
+							}
+							if len(tlsNode.Content) > 0 {
+								newServerNode.Content = append(newServerNode.Content,
+									&yaml.Node{Kind: yaml.ScalarNode, Value: "tls"},
+									tlsNode)
+							}
+						}
+					}
+
 					// 替换server节点
 					doc.Content[i+1] = newServerNode
 					serverFound = true

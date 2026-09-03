@@ -5,7 +5,18 @@
 #       ★ 单一静态二进制：PHP 解释器(phpgo)静态编入，运行时无外部依赖
 #       PHP 脚本从磁盘读取，默认目录 /www（部署时把 PHP 代码放该路径）。
 # ========================================================
+# Stage: ui —— React 管理后台（Vite 构建，产物给 go:embed）
+# ========================================================
+FROM node:20-alpine AS ui
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
+# ========================================================
 # Stage: build —— 纯 Go 编译，无需 CGO
+# ========================================================
 FROM --platform=$BUILDPLATFORM golang:alpine AS build
 WORKDIR /app
 
@@ -20,6 +31,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+# 用前端真实构建产物覆盖占位 dist（go:embed 编入单二进制）
+COPY --from=ui /ui/dist /app/web/dist
 
 # 针对 ARM 处理 GOARM
 RUN if [ "$TARGETARCH" = "arm" ]; then \

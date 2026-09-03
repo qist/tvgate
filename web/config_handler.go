@@ -109,7 +109,15 @@ func (h *ConfigHandler) cookieAuth(handler http.HandlerFunc) http.HandlerFunc {
 
 		// 检查用户是否已认证
 		if !h.isAuthenticated(r) {
-			// 未认证用户重定向到登录页面
+			// API/JSON 请求：返回 401 JSON（SPA fetch 会拿到 body，不能 302 到登录页 HTML）
+			if strings.HasPrefix(r.Header.Get("Accept"), "application/json") ||
+				strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"code": 401, "msg": "未认证"})
+				return
+			}
+			// 页面请求：重定向到登录页面
 			webPath := h.getWebPath()
 			http.Redirect(w, r, webPath+"login", http.StatusFound)
 			return
@@ -190,7 +198,8 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle(webPath+"static/", http.StripPrefix(webPath+"static/", http.FileServer(http.FS(subFS))))
 
 	// 注册不需要认证的路由
-	mux.HandleFunc(webPath, h.handleWeb)
+	registerSPARoutes(mux, webPath)  // /web/ 返回前端 SPA（含 /web/assets/*）
+	h.registerV1Routes(webPath, mux) // /web/api/v1/* 规范化 JSON API
 	mux.HandleFunc(webPath+"login", h.handleLogin)
 	mux.HandleFunc(webPath+"logout", h.handleLogout)
 	mux.HandleFunc(webPath+"auth-status", h.handleAuthStatus)
