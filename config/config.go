@@ -73,10 +73,6 @@ type Config struct {
 		InsecureSkipVerify  *bool `yaml:"insecure_skip_verify"`    // 是否跳过TLS验证
 	} `yaml:"http"`
 
-	Monitor struct {
-		Path string `yaml:"path"` // 监控路径
-	} `yaml:"monitor"`
-
 	Web struct {
 		Enabled  bool   `yaml:"enabled"`  // 启用Web管理界面
 		Username string `yaml:"username"` // Web管理用户名

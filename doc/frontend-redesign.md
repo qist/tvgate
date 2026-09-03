@@ -710,12 +710,20 @@ type APIResp struct {
 - `release.yml`：新增 `setup-node` + `make web-ui` 步骤。
 - `.gitignore`：`ui/package.json`/`package-lock.json` 不再误忽略（改为 `/` 锚定根目录）；`web/dist/*` 忽略但保留 `web/dist/.gitkeep` 占位（保证 clone 后 `go:embed` 非空、可直接 `go build`）。
 
+### 2026-09-03 监控全量迁移 + 旧监控接口清理
+
+用户要求：监控能力全部迁入 SPA 仪表盘，旧前端不保留、旧 http 接口删除、`monitor.path` 配置项移除。已完成：
+
+- **`/web/api/v1/status` 全量承载原 `/status` 能力**：活跃连接完整列表（IP/URL/类型/UA/接入时间）、存储分区（过滤 tmpfs/overlay/squashfs/rootfs 等伪文件系统与安卓 /system /vendor /odm 碎片分区，只显示系统盘与正常分区盘）、网卡表（含实时带宽）、进程 App 统计、代理组流量统计、负载/温度/SWAP/连接数/goroutines/client_ip，仪表盘新增「运行时长」「访问地址」卡片 + 活跃连接表 + 存储分区表 + 网卡表 + 代理组统计卡。
+- **删除旧监控**：`monitor.HandleMonitor`/`handleHTMLRequest`（大段内嵌 HTML 模板）/`handleJSONRequest` 从 [handler.go](file:///opt/tvgate/monitor/handler.go) 物理清除，只保留 `StatusData`/`GetStatusData`/`prepareStatusData`/`GetClientIP`（v1/status 与 player 继续用）；`server/http.go` 移除 `/status` 路由注册（含 `registerMonitorWebMux` 内监控挂载，monitor import 移除）。
+- **移除 `monitor.path` 配置项**：`config.Monitor` 结构整体删除；旧 `server-monitor` 配置页（`web/config_monitor.go` 整文件、`config/server-monitor`/`config/save-server-monitor`/`server-monitor-editor` 路由）、SPA `/monitor` 路由 + `Monitor.tsx` + `api/monitor.ts` + 侧栏「监控」入口全部清理；`config.yaml` 中 `monitor:` 段从部署配置删除；`handleNode`/`handleWeb`/`handleEditor`/`handleProxyGroupsEditor` 中的 monitorPath 装配移除。
+- 移动端导航修复：AppShell 汉堡按钮在 `<768px` 打开抽屉式侧栏（此前只切换桌面折叠态，移动端侧栏完全不可见）；桌面固定 240px 侧栏。
+- 首屏体积：路由懒加载 + vendor 分包（react/router/forms/ui 四 chunk），首屏 gzip ≈107KB（原 158KB 单文件），达成 §11「首屏 JS < 150KB」验收项。
+
 ### 剩余 / 待办（按优先级）
 
-1. **git 提交**（进行中）：spa.go 尾斜杠修复 + 全部 React 页面 + 播放器迁移 + 本轮 3 项修复 + 构建链 + 文档改动。
-2. **收尾清理**（浏览器冒烟已通过，可执行）：
-   - `web/templates/*` 30 个旧模板 + 对应 `handle*Editor`/`handle*Config` 孤儿 handler 已不被 SPA 使用（仍保留可编译），按 Phase 3 纪律删除；保留 code/backup/github/sync/logs 相关 API 与登录。
-   - `vite build` chunk > 500KB（gzip 约 158KB）：可做路由懒加载/代码分割，使首屏仪表盘 < 150KB（§11 验收项）。
+1. **git 提交**（待推送）：`8e78c99` 已本地提交；本轮监控迁移/清理/移动端/体积优化/播放器改动待 commit 后一并推送。
+2. **收尾清理（剩余）**：`web/templates/*` 30 个旧模板 + 对应 `handle*Editor`/`handle*Config` 孤儿 handler 已被 SPA 取代（monitor/status 相关已随本轮清理），按 Phase 3 纪律删除；保留 code/backup/github/sync/logs 相关 API 与登录。
    - `static/js/codemirror` vendor：若未再被保留页面引用，冒烟后清理。
 3. **验收核对**：对照 §11 验收清单，特别是浅深主题、375px 无横向滚动、全站 `credentials: 'same-origin'` 与 CSRF（冒烟已确认请求正常、401/CSRF 纵深保留）。
 

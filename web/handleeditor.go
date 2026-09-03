@@ -41,16 +41,6 @@ func (h *ConfigHandler) handleEditor(w http.ResponseWriter, r *http.Request) {
 		// 检查proxygroups是否配置了有效内容
 		hasProxyGroups := len(config.Cfg.ProxyGroups) > 0
 		config.CfgMu.RUnlock()
-		// 获取监控路径，默认为/status
-		monitorPath := config.Cfg.Monitor.Path
-		if monitorPath == "" {
-			monitorPath = "/status"
-		} else {
-			// 确保monitorPath以/开头
-			if !strings.HasPrefix(monitorPath, "/") {
-				monitorPath = "/" + monitorPath
-			}
-		}
 		// 渲染编辑器模板
 		data := map[string]interface{}{
 			"title":          "TVGate 配置编辑器",
@@ -58,7 +48,6 @@ func (h *ConfigHandler) handleEditor(w http.ResponseWriter, r *http.Request) {
 			"hasDomainMap":   hasDomainMap,
 			"hasProxyGroups": hasProxyGroups,
 			"configPath":     *config.ConfigFilePath, // 添加配置文件路径到模板数据
-			"monitorPath":    monitorPath,
 			// "uptime":         uptime,
 		}
 

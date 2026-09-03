@@ -20,7 +20,6 @@ import (
 	h "github.com/qist/tvgate/handler"
 	"github.com/qist/tvgate/jx"
 	"github.com/qist/tvgate/logger"
-	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/php"
 	"github.com/qist/tvgate/player"
 	"github.com/qist/tvgate/publisher"
@@ -309,14 +308,8 @@ func RegisterMux(addr string, cfg *config.Config) *http.ServeMux {
 // 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 // }
 
-// monitor + web
+// web 管理
 func RegisterMonitorWebMux(mux *http.ServeMux, cfg *config.Config) {
-	monitorPath := cfg.Monitor.Path
-	if monitorPath == "" {
-		monitorPath = "/status"
-	}
-	mux.Handle(monitorPath, SecurityHeaders(http.HandlerFunc(monitor.HandleMonitor)))
-
 	if cfg.Web.Enabled {
 		webConfig := web.WebConfig{
 			Username: cfg.Web.Username,

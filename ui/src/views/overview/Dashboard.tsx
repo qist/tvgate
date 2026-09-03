@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getStatus, type SystemStatus } from "@/api/system";
 
 function fmtUptime(sec?: number): string {
@@ -25,7 +26,15 @@ function fmtBytes(b?: number): string {
   return `${v.toFixed(1)}${u[i]}`;
 }
 
-/** 概览仪表盘 */
+function fmtTime(iso?: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime()) || d.getFullYear() < 2000) return "—";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** 概览仪表盘：系统实时状态（含活跃连接/分区/网卡，替代原独立 /status 监控页） */
 export function Dashboard() {
   const [status, setStatus] = useState<SystemStatus>({});
 
@@ -43,6 +52,13 @@ export function Dashboard() {
     };
   }, []);
 
+  // 访问地址：当前 origin + web 路径（web_path 可能为 /web/ 或自定义）
+  let accessUrl = "—";
+  if (typeof window !== "undefined") {
+    const wp = status.web_path || "/web/";
+    accessUrl = window.location.origin + (wp.startsWith("/") ? "" : "/") + wp;
+  }
+
   const items = [
     { label: "版本", value: status.version || "—" },
     { label: "系统", value: status.os || "—" },
@@ -50,7 +66,13 @@ export function Dashboard() {
     { label: "内存", value: status.mem != null ? `${status.mem}%` : "—" },
     { label: "活跃连接", value: status.clients != null ? String(status.clients) : "—" },
     { label: "运行时长", value: fmtUptime(status.uptime) },
+    { label: "访问地址", value: accessUrl, mono: true },
   ];
+
+  const partitions = status.disk_partitions || [];
+  const ifaces = status.interfaces || [];
+  const clients = status.active_clients || [];
+  const groups = Object.entries(status.proxy_group_stats || {});
 
   return (
     <div className="space-y-4">
@@ -61,7 +83,7 @@ export function Dashboard() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">{it.label}</CardTitle>
             </CardHeader>
-            <CardContent className="text-2xl font-bold">{it.value}</CardContent>
+            <CardContent className={`text-2xl font-bold ${it.mono ? "font-mono text-sm truncate" : ""}`}>{it.value}</CardContent>
           </Card>
         ))}
       </div>
@@ -72,7 +94,12 @@ export function Dashboard() {
             <Row label="磁盘" value={status.disk != null ? `${status.disk}% (${fmtBytes(status.disk_used)} / ${fmtBytes(status.disk_total)})` : "—"} />
             <Row label="负载" value={status.load ? `${status.load.load1 ?? "—"} / ${status.load.load5 ?? "—"} / ${status.load.load15 ?? "—"}` : "—"} />
             <Row label="内存用量" value={status.mem_used != null ? fmtBytes(status.mem_used) : "—"} />
+            <Row label="交换分区" value={status.swap != null ? `${status.swap}%` : "—"} />
             <Row label="CPU 温度" value={status.cpu_temperature != null ? `${status.cpu_temperature}℃` : "—"} />
+            <Row label="Goroutines" value={status.goroutines != null ? String(status.goroutines) : "—"} />
+            <Row label="客户端 IP" value={status.client_ip || "—"} />
+            <Row label="进程 CPU" value={status.app?.cpu_percent != null ? `${status.app.cpu_percent}%` : "—"} />
+            <Row label="进程内存" value={status.app?.memory_usage != null ? fmtBytes(status.app.memory_usage) : "—"} />
           </CardContent>
         </Card>
         <Card>
@@ -82,9 +109,146 @@ export function Dashboard() {
             <Row label="实时上行" value={status.out_bandwidth != null ? `${fmtBytes(status.out_bandwidth)}/s` : "—"} />
             <Row label="累计下行" value={fmtBytes(status.in_bytes)} />
             <Row label="累计上行" value={fmtBytes(status.out_bytes)} />
+            <Row label="连接数" value={status.connections != null ? String(status.connections) : "—"} />
+            <Row label="总连接数" value={status.total_connections != null ? String(status.total_connections) : "—"} />
+            <Row label="进程累计" value={status.app?.total_bytes != null ? fmtBytes(status.app.total_bytes) : "—"} />
           </CardContent>
         </Card>
       </div>
+
+      {/* 活跃连接 */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base">活跃连接（{clients.length}）</CardTitle></CardHeader>
+        <CardContent className="overflow-x-auto">
+          {clients.length === 0 ? (
+            <p className="text-sm text-muted-foreground">暂无活跃连接</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="min-w-[120px]">IP</TableHead>
+                  <TableHead className="min-w-[180px]">URL</TableHead>
+                  <TableHead>类型</TableHead>
+                  <TableHead className="min-w-[160px]">User-Agent</TableHead>
+                  <TableHead>接入时间</TableHead>
+                  <TableHead>最近活跃</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {clients.map((c, i) => (
+                  <TableRow key={c.id || i}>
+                    <TableCell className="font-mono text-xs">{c.ip}</TableCell>
+                    <TableCell className="max-w-[260px] truncate font-mono text-xs" title={c.url}>{c.url}</TableCell>
+                    <TableCell>{c.connection_type}</TableCell>
+                    <TableCell className="max-w-[200px] truncate text-xs" title={c.user_agent}>{c.user_agent}</TableCell>
+                    <TableCell className="text-xs">{fmtTime(c.connected_at)}</TableCell>
+                    <TableCell className="text-xs">{fmtTime(c.last_active)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 存储分区 + 网卡 */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">存储分区</CardTitle></CardHeader>
+          <CardContent className="overflow-x-auto">
+            {partitions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">暂无数据</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>挂载点</TableHead>
+                    <TableHead>文件系统</TableHead>
+                    <TableHead>总量</TableHead>
+                    <TableHead>已用</TableHead>
+                    <TableHead>使用率</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {partitions.map((p, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="font-mono text-xs">{p.mount_point || p.path}</TableCell>
+                      <TableCell className="text-xs">{p.fs_type}</TableCell>
+                      <TableCell className="text-xs">{fmtBytes(p.total)}</TableCell>
+                      <TableCell className="text-xs">{fmtBytes(p.used)}</TableCell>
+                      <TableCell className="text-xs">{p.used_percent != null ? `${p.used_percent}%` : "—"}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">网卡</CardTitle></CardHeader>
+          <CardContent className="overflow-x-auto">
+            {ifaces.length === 0 ? (
+              <p className="text-sm text-muted-foreground">暂无数据</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>名称</TableHead>
+                    <TableHead>下行</TableHead>
+                    <TableHead>上行</TableHead>
+                    <TableHead>实时下行</TableHead>
+                    <TableHead>实时上行</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {ifaces.map((n, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="font-mono text-xs">{n.name}</TableCell>
+                      <TableCell className="text-xs">{fmtBytes(n.bytes_recv)}</TableCell>
+                      <TableCell className="text-xs">{fmtBytes(n.bytes_sent)}</TableCell>
+                      <TableCell className="text-xs">{fmtBytes(n.recv_bandwidth)}/s</TableCell>
+                      <TableCell className="text-xs">{fmtBytes(n.send_bandwidth)}/s</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* 代理组流量统计 */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base">代理组统计（{status.proxy_groups ?? "—"} 组，{groups.length} 组有实时数据）</CardTitle></CardHeader>
+        <CardContent className="overflow-x-auto">
+          {groups.length === 0 ? (
+            <p className="text-sm text-muted-foreground">暂无代理组实时数据</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>组名</TableHead>
+                  <TableHead>连接数</TableHead>
+                  <TableHead>流量</TableHead>
+                  <TableHead>活跃流</TableHead>
+                  <TableHead>最近活动</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {groups.map(([name, g]) => (
+                  <TableRow key={name}>
+                    <TableCell className="font-mono text-xs">{name}</TableCell>
+                    <TableCell className="text-xs">{g.connections ?? 0}</TableCell>
+                    <TableCell className="text-xs">{fmtBytes(g.bytes_transferred)}</TableCell>
+                    <TableCell className="text-xs">{g.active_streams ?? 0}</TableCell>
+                    <TableCell className="text-xs">{fmtTime(g.last_activity)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

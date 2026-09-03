@@ -22,5 +22,15 @@ export default defineConfig(() => ({
     outDir: resolve(__dirname, "../web/dist"),
     emptyOutDir: true,
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-dom/client"],
+          "vendor-router": ["react-router-dom"],
+          "vendor-forms": ["react-hook-form", "zod", "@hookform/resolvers"],
+          "vendor-ui": ["class-variance-authority", "clsx", "lucide-react"],
+        },
+      },
+    },
   },
 }));

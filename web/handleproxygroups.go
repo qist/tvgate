@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/qist/tvgate/config"
@@ -17,21 +16,10 @@ import (
 // handleProxyGroupsEditor 处理代理组编辑器页面
 func (h *ConfigHandler) handleProxyGroupsEditor(w http.ResponseWriter, r *http.Request) {
 	webPath := h.getWebPath()
-	// 获取监控路径，默认为/status
-	monitorPath := config.Cfg.Monitor.Path
-	if monitorPath == "" {
-		monitorPath = "/status"
-	} else {
-		// 确保monitorPath以/开头
-		if !strings.HasPrefix(monitorPath, "/") {
-			monitorPath = "/" + monitorPath
-		}
-	}
 
 	data := map[string]interface{}{
-		"title":       "TVGate 代理组编辑器",
-		"webPath":     webPath,
-		"monitorPath": monitorPath,
+		"title":   "TVGate 代理组编辑器",
+		"webPath": webPath,
 	}
 
 	if err := h.renderTemplate(w, r, "proxygroups_editor", "templates/proxygroups_editor.html", data); err != nil {

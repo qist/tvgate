@@ -218,7 +218,6 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"global-auth-editor", h.cookieAuth(h.handleGlobalAuthEditor))
 	mux.HandleFunc(webPath+"jx-editor", h.cookieAuth(h.handleJXEditor))
 	mux.HandleFunc(webPath+"publisher-editor", h.cookieAuth(h.handlePublisherEditor))
-	mux.HandleFunc(webPath+"server-monitor-editor", h.cookieAuth(h.handleServerMonitorEditor))
 	mux.HandleFunc(webPath+"server-editor", h.cookieAuth(h.handleServerEditor))
 	mux.HandleFunc(webPath+"multicast-editor", h.cookieAuth(h.handleMulticastEditor))
 	mux.HandleFunc(webPath+"ts-editor", h.cookieAuth(h.handleTSEditor))
@@ -227,10 +226,6 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"http-editor", h.cookieAuth(h.handleHTTPEditor))
 	mux.HandleFunc(webPath+"log-editor", h.cookieAuth(http.HandlerFunc(h.handleLogEditor)))
 	mux.HandleFunc(webPath+"logs", h.cookieAuth(h.handleLogViewer))
-	mux.HandleFunc(webPath+"github-editor", h.cookieAuth(h.handleGithubEditor))
-	mux.HandleFunc(webPath+"php-editor", h.cookieAuth(h.handlePHPEditor))
-	mux.HandleFunc(webPath+"player-editor", h.cookieAuth(h.handlePlayerEditor))
-	mux.HandleFunc(webPath+"sync-editor", h.cookieAuth(h.handleSyncEditor))
 	mux.HandleFunc(webPath+"api/sync/config", h.cookieAuth(h.handleSyncConfig))
 	mux.HandleFunc(webPath+"api/sync/config/save", h.cookieAuth(h.handleSyncConfigSave))
 	mux.HandleFunc(webPath+"api/sync/branches", h.cookieAuth(h.handleSyncBranches))
@@ -268,8 +263,6 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/jx", h.cookieAuth(h.handleJXConfig))
 	mux.HandleFunc(webPath+"config/save-jx", h.cookieAuth(h.handleJXConfigSave))
 	mux.HandleFunc(webPath+"config/test-endpoint", h.cookieAuth(h.TestAPIEndpoint))
-	mux.HandleFunc(webPath+"config/server-monitor", h.cookieAuth(h.handleServerMonitorConfig))
-	mux.HandleFunc(webPath+"config/save-server-monitor", h.cookieAuth(h.handleServerMonitorConfigSave))
 	mux.HandleFunc(webPath+"config/server", h.cookieAuth(h.handleServerConfig))
 	mux.HandleFunc(webPath+"config/save-server", h.cookieAuth(h.handleServerConfigSave))
 	mux.HandleFunc(webPath+"config/multicast", h.cookieAuth(h.handleMulticastConfig))
@@ -347,17 +340,6 @@ func (h *ConfigHandler) handleNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 获取监控路径，默认为/status
-	monitorPath := config.Cfg.Monitor.Path
-	if monitorPath == "" {
-		monitorPath = "/status"
-	} else {
-		// 确保monitorPath以/开头
-		if !strings.HasPrefix(monitorPath, "/") {
-			monitorPath = "/" + monitorPath
-		}
-	}
-
 	// 从monitor模块获取系统状态数据
 	config.CfgMu.RLock()
 	trafficStats := monitor.GlobalTrafficStats.GetTrafficStats()
@@ -401,9 +383,6 @@ func (h *ConfigHandler) handleNode(w http.ResponseWriter, r *http.Request) {
 	// 检查是否有JX配置
 	hasJXConfig := hasJXConfiguration(&config.Cfg.JX)
 
-	// 检查是否有服务器监控配置
-	hasServerMonitorConfig := config.Cfg.Monitor.Path != ""
-
 	// 获取客户端IP
 	clientIP := r.RemoteAddr
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
@@ -418,33 +397,31 @@ func (h *ConfigHandler) handleNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"title":                  "TVGate 功能面板",
-		"webPath":                h.getWebPath(),
-		"monitorPath":            monitorPath,
-		"hasDomainMap":           hasDomainMap,
-		"hasDomainMapAuth":       hasDomainMapAuth,
-		"hasGlobalAuth":          hasGlobalAuth,
-		"hasProxyGroups":         hasProxyGroups,
-		"hasJXConfig":            hasJXConfig,
-		"hasServerMonitorConfig": hasServerMonitorConfig,
-		"uptime":                 uptime,
-		"cpuUsage":               int(trafficStats.CPUUsage),
-		"memoryUsage":            0,
-		"memoryUsed":             trafficStats.MemoryUsage,
-		"memoryTotal":            trafficStats.MemoryTotal,
-		"swapUsage":              uint64(0),
-		"swapTotal":              uint64(0),
-		"swapUsagePercent":       0,
-		"diskUsage":              uint64(0),
-		"diskTotal":              uint64(0),
-		"diskUsagePercent":       0,
-		"activeConnections":      len(activeConns),
-		"os":                     trafficStats.HostInfo.Platform,
-		"kernelVersion":          trafficStats.HostInfo.KernelVersion,
-		"cpuArch":                trafficStats.HostInfo.KernelArch,
-		"version":                config.Version,
-		"goroutines":             runtime.NumGoroutine(),
-		"clientIP":               clientIP,
+		"title":             "TVGate 功能面板",
+		"webPath":           h.getWebPath(),
+		"hasDomainMap":      hasDomainMap,
+		"hasDomainMapAuth":  hasDomainMapAuth,
+		"hasGlobalAuth":     hasGlobalAuth,
+		"hasProxyGroups":    hasProxyGroups,
+		"hasJXConfig":       hasJXConfig,
+		"uptime":            uptime,
+		"cpuUsage":          int(trafficStats.CPUUsage),
+		"memoryUsage":       0,
+		"memoryUsed":        trafficStats.MemoryUsage,
+		"memoryTotal":       trafficStats.MemoryTotal,
+		"swapUsage":         uint64(0),
+		"swapTotal":         uint64(0),
+		"swapUsagePercent":  0,
+		"diskUsage":         uint64(0),
+		"diskTotal":         uint64(0),
+		"diskUsagePercent":  0,
+		"activeConnections": len(activeConns),
+		"os":                trafficStats.HostInfo.Platform,
+		"kernelVersion":     trafficStats.HostInfo.KernelVersion,
+		"cpuArch":           trafficStats.HostInfo.KernelArch,
+		"version":           config.Version,
+		"goroutines":        runtime.NumGoroutine(),
+		"clientIP":          clientIP,
 	}
 
 	// 设置响应头
@@ -544,17 +521,6 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 	// log.Printf("路径匹配结果: %t (请求路径: %s, 配置路径: %s)", pathMatch, r.URL.Path, webPath)
 
 	if pathMatch {
-		// 获取监控路径，默认为/status
-		monitorPath := config.Cfg.Monitor.Path
-		if monitorPath == "" {
-			monitorPath = "/status"
-		} else {
-			// 确保monitorPath以/开头
-			if !strings.HasPrefix(monitorPath, "/") {
-				monitorPath = "/" + monitorPath
-			}
-		}
-
 		// 从monitor模块获取系统状态数据
 		config.CfgMu.RLock()
 		trafficStats := monitor.GlobalTrafficStats.GetTrafficStats()
@@ -597,9 +563,6 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 
 		// 检查是否有JX配置
 		hasJXConfig := hasJXConfiguration(&config.Cfg.JX)
-
-		// 检查是否有服务器监控配置
-		hasServerMonitorConfig := config.Cfg.Monitor.Path != ""
 
 		// 计算内存使用率
 		memoryUsagePercent := 0
@@ -648,36 +611,34 @@ func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
 		}
 
 		data := map[string]interface{}{
-			"title":                  "TVGate Web管理",
-			"webPath":                webPath,
-			"monitorPath":            monitorPath,
-			"hasDomainMap":           hasDomainMap,
-			"hasDomainMapAuth":       hasDomainMapAuth,
-			"hasGlobalAuth":          hasGlobalAuth,
-			"hasProxyGroups":         hasProxyGroups,
-			"hasJXConfig":            hasJXConfig,
-			"hasServerMonitorConfig": hasServerMonitorConfig,
-			"uptime":                 uptime,
-			"cpuUsage":               int(trafficStats.CPUUsage),
-			"memoryUsage":            memoryUsagePercent,
-			"memoryUsed":             trafficStats.MemoryUsage,
-			"memoryTotal":            trafficStats.MemoryTotal,
-			"swapUsage":              swapUsage,
-			"swapTotal":              swapTotal,
-			"cpuTemp":                trafficStats.CPUTemperature,
-			"swapUsagePercent":       swapUsagePercent,
-			"diskUsage":              diskUsage,
-			"diskTotal":              diskTotal,
-			"diskUsagePercent":       diskUsagePercent,
-			"activeConnections":      len(activeConns),
-			"os":                     trafficStats.HostInfo.Platform,
-			"kernelVersion":          trafficStats.HostInfo.KernelVersion,
-			"cpuArch":                trafficStats.HostInfo.KernelArch,
-			"version":                config.Version,
-			"goroutines":             runtime.NumGoroutine(),
-			"clientIP":               clientIP,
-			"isWindows":              strings.Contains(strings.ToLower(trafficStats.HostInfo.Platform), "windows"),
-			"isAndroid":              strings.Contains(strings.ToLower(trafficStats.HostInfo.Platform), "android"),
+			"title":             "TVGate Web管理",
+			"webPath":           webPath,
+			"hasDomainMap":      hasDomainMap,
+			"hasDomainMapAuth":  hasDomainMapAuth,
+			"hasGlobalAuth":     hasGlobalAuth,
+			"hasProxyGroups":    hasProxyGroups,
+			"hasJXConfig":       hasJXConfig,
+			"uptime":            uptime,
+			"cpuUsage":          int(trafficStats.CPUUsage),
+			"memoryUsage":       memoryUsagePercent,
+			"memoryUsed":        trafficStats.MemoryUsage,
+			"memoryTotal":       trafficStats.MemoryTotal,
+			"swapUsage":         swapUsage,
+			"swapTotal":         swapTotal,
+			"cpuTemp":           trafficStats.CPUTemperature,
+			"swapUsagePercent":  swapUsagePercent,
+			"diskUsage":         diskUsage,
+			"diskTotal":         diskTotal,
+			"diskUsagePercent":  diskUsagePercent,
+			"activeConnections": len(activeConns),
+			"os":                trafficStats.HostInfo.Platform,
+			"kernelVersion":     trafficStats.HostInfo.KernelVersion,
+			"cpuArch":           trafficStats.HostInfo.KernelArch,
+			"version":           config.Version,
+			"goroutines":        runtime.NumGoroutine(),
+			"clientIP":          clientIP,
+			"isWindows":         strings.Contains(strings.ToLower(trafficStats.HostInfo.Platform), "windows"),
+			"isAndroid":         strings.Contains(strings.ToLower(trafficStats.HostInfo.Platform), "android"),
 		}
 
 		// 从嵌入的文件系统读取模板

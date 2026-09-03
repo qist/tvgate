@@ -1,46 +1,64 @@
+import { lazy, Suspense } from "react";
 import { createHashRouter, Navigate } from "react-router-dom";
 import { AppShell } from "@/layouts/AppShell";
 import { BlankLayout } from "@/layouts/BlankLayout";
-import { Dashboard } from "@/views/overview/Dashboard";
-import { TasksPage } from "@/views/config/Tasks";
-import { ProxyGroupsPage } from "@/views/config/ProxyGroups";
-import { DomainMapPage } from "@/views/config/DomainMap";
-import { GlobalAuthPage } from "@/views/config/GlobalAuth";
-import { PublisherPage } from "@/views/config/Publisher";
-import { PlayerPage } from "@/views/config/Player";
-import { SyncPage } from "@/views/config/Sync";
-import { YAMLEditorPage } from "@/views/config/YAMLEditor";
-import { ConfigViewPage } from "@/views/config/ConfigView";
-import { LogsPage } from "@/views/config/Logs";
-import { GithubPage } from "@/views/config/Github";
-import { ConfigBackupPage } from "@/views/config/ConfigBackup";
-import { BackupCenterPage } from "@/views/config/BackupCenter";
-import { GroupConfigPage } from "@/views/config/GroupConfig";
-import { JXPage } from "@/views/config/JX";
-import { MulticastPage } from "@/views/config/Multicast";
-import { TSPage } from "@/views/config/TS";
-import { DNSPage } from "@/views/config/DNS";
-import { ServerPage } from "@/views/config/Server";
-import { HTTPPage } from "@/views/config/HTTP";
-import { PHPPage } from "@/views/config/PHP";
-import { ReloadPage } from "@/views/config/Reload";
-import { WebPage } from "@/views/config/Web";
-import { LogConfigPage } from "@/views/config/LogConfig";
-import { MonitorPage } from "@/views/config/Monitor";
-import { CodePage } from "@/views/content/Code";
-import { OpsIndex } from "@/views/ops/Index";
-import { Login } from "@/views/system/Login";
-import { LegacyPage } from "@/views/legacy/LegacyPage";
+
+// 路由级懒加载：首屏只加载当前模块，超大表单页单独 chunk
+const lazyLoad = (factory: () => Promise<{ [k: string]: unknown }>, name: string) =>
+  lazy(() => factory().then((m) => ({ default: m[name as keyof typeof m] as React.ComponentType })));
+
+const Dashboard = lazyLoad(() => import("@/views/overview/Dashboard"), "Dashboard");
+const TasksPage = lazyLoad(() => import("@/views/config/Tasks"), "TasksPage");
+const ProxyGroupsPage = lazyLoad(() => import("@/views/config/ProxyGroups"), "ProxyGroupsPage");
+const DomainMapPage = lazyLoad(() => import("@/views/config/DomainMap"), "DomainMapPage");
+const GlobalAuthPage = lazyLoad(() => import("@/views/config/GlobalAuth"), "GlobalAuthPage");
+const PublisherPage = lazyLoad(() => import("@/views/config/Publisher"), "PublisherPage");
+const PlayerPage = lazyLoad(() => import("@/views/config/Player"), "PlayerPage");
+const SyncPage = lazyLoad(() => import("@/views/config/Sync"), "SyncPage");
+const YAMLEditorPage = lazyLoad(() => import("@/views/config/YAMLEditor"), "YAMLEditorPage");
+const ConfigViewPage = lazyLoad(() => import("@/views/config/ConfigView"), "ConfigViewPage");
+const LogsPage = lazyLoad(() => import("@/views/config/Logs"), "LogsPage");
+const GithubPage = lazyLoad(() => import("@/views/config/Github"), "GithubPage");
+const ConfigBackupPage = lazyLoad(() => import("@/views/config/ConfigBackup"), "ConfigBackupPage");
+const BackupCenterPage = lazyLoad(() => import("@/views/config/BackupCenter"), "BackupCenterPage");
+const GroupConfigPage = lazyLoad(() => import("@/views/config/GroupConfig"), "GroupConfigPage");
+const JXPage = lazyLoad(() => import("@/views/config/JX"), "JXPage");
+const MulticastPage = lazyLoad(() => import("@/views/config/Multicast"), "MulticastPage");
+const TSPage = lazyLoad(() => import("@/views/config/TS"), "TSPage");
+const DNSPage = lazyLoad(() => import("@/views/config/DNS"), "DNSPage");
+const ServerPage = lazyLoad(() => import("@/views/config/Server"), "ServerPage");
+const HTTPPage = lazyLoad(() => import("@/views/config/HTTP"), "HTTPPage");
+const PHPPage = lazyLoad(() => import("@/views/config/PHP"), "PHPPage");
+const ReloadPage = lazyLoad(() => import("@/views/config/Reload"), "ReloadPage");
+const WebPage = lazyLoad(() => import("@/views/config/Web"), "WebPage");
+const LogConfigPage = lazyLoad(() => import("@/views/config/LogConfig"), "LogConfigPage");
+const CodePage = lazyLoad(() => import("@/views/content/Code"), "CodePage");
+const OpsIndex = lazyLoad(() => import("@/views/ops/Index"), "OpsIndex");
+const Login = lazyLoad(() => import("@/views/system/Login"), "Login");
+const LegacyPage = lazyLoad(() => import("@/views/legacy/LegacyPage"), "LegacyPage");
+
+/** 路由出口放在 Suspense 中（AppShell 内已包 ErrorBoundary） */
+export function RouteFallback() {
+  return (
+    <Suspense fallback={<div className="py-12 text-center text-sm text-muted-foreground">加载中…</div>}>
+      <AppShell />
+    </Suspense>
+  );
+}
 
 export const router = createHashRouter([
   {
     path: "/login",
-    element: <BlankLayout />,
+    element: (
+      <Suspense fallback={<div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">加载中…</div>}>
+        <BlankLayout />
+      </Suspense>
+    ),
     children: [{ index: true, element: <Login /> }],
   },
   {
     path: "/",
-    element: <AppShell />,
+    element: <RouteFallback />,
     children: [
       { index: true, element: <Dashboard /> },
       { path: "tasks", element: <TasksPage /> },
@@ -67,7 +85,6 @@ export const router = createHashRouter([
       { path: "reload", element: <ReloadPage /> },
       { path: "web", element: <WebPage /> },
       { path: "log-config", element: <LogConfigPage /> },
-      { path: "monitor", element: <MonitorPage /> },
       { path: "code", element: <CodePage /> },
       { path: "ops", element: <OpsIndex /> },
       { path: "legacy", element: <LegacyPage /> },
@@ -75,3 +92,5 @@ export const router = createHashRouter([
     ],
   },
 ]);
+
+export default router;

@@ -9,7 +9,6 @@ import {
   FileCode,
   FileJson,
   FolderTree,
-  Gauge,
   Github,
   Globe,
   HardDrive,
@@ -66,7 +65,6 @@ const navGroups = [
       { key: "reload", to: "/reload", icon: RotateCcw, label: "重载" },
       { key: "web", to: "/web", icon: Palette, label: "Web 设置" },
       { key: "log-config", to: "/log-config", icon: SlidersHorizontal, label: "日志配置" },
-      { key: "monitor", to: "/monitor", icon: Gauge, label: "监控" },
     ],
   },
   {
@@ -95,7 +93,7 @@ export function AppShell() {
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
-  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   // 认证守卫：未认证前不渲染任何子页面，统一跳登录
   const [authed, setAuthed] = useState<boolean | null>(null);
 
@@ -122,41 +120,55 @@ export function AppShell() {
 
   return (
     <div className="flex min-h-screen">
-      {/* 侧栏 */}
-        <aside className={`hidden md:flex flex-col border-r bg-card transition-[width] ${collapsed ? "w-16" : "w-60"}`}>
-          <div className="flex h-14 items-center gap-2 border-b px-4">
-            <span className="font-bold text-primary">TVGate</span>
-          </div>
-          <nav className="flex-1 space-y-4 overflow-y-auto p-3">
-            {navGroups.map((g) => (
-              <div key={g.label}>
-                {!collapsed && <div className="px-2 pb-1 text-xs font-semibold text-muted-foreground">{g.label}</div>}
-                {g.items.map((it) => {
-                    const active = location.pathname + location.search === it.to;
-                    return (
-                      <button
-                        key={it.to}
-                        onClick={() => navigate(it.to)}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm ${
-                          active ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent/50"
-                        }`}
-                      >
-                        <it.icon className="h-4 w-4 shrink-0" />
-                        {!collapsed && <span>{it.label}</span>}
-                      </button>
-                    );
-                  })}
-              </div>
-            ))}
-          </nav>
-        </aside>
-
-        {/* 主区 */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex h-14 items-center gap-2 border-b bg-card px-4">
-            <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setCollapsed((c) => !c)}>
+      {/* 移动端遮罩 */}
+      {mobileOpen && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setMobileOpen(false)} />}
+      {/* 侧栏：桌面常驻（可折叠）；移动端为抽屉 */}
+      <aside
+        className={`flex w-60 flex-col border-r bg-card ${
+          mobileOpen ? "fixed inset-y-0 left-0 z-40 shadow-lg" : "hidden md:flex"
+        }`}
+      >
+        <div className="flex h-14 items-center gap-2 border-b px-4">
+          {mobileOpen && (
+            <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileOpen(false)}>
               <Menu className="h-4 w-4" />
             </Button>
+          )}
+          <span className="font-bold text-primary">TVGate</span>
+        </div>
+        <nav className="flex-1 space-y-4 overflow-y-auto p-3">
+          {navGroups.map((g) => (
+            <div key={g.label}>
+                <div className="px-2 pb-1 text-xs font-semibold text-muted-foreground">{g.label}</div>
+                {g.items.map((it) => {
+                  const active = location.pathname + location.search === it.to;
+                  return (
+                    <button
+                      key={it.to}
+                      onClick={() => {
+                        navigate(it.to);
+                        setMobileOpen(false);
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm ${
+                        active ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent/50"
+                      }`}
+                    >
+                      <it.icon className="h-4 w-4 shrink-0" />
+                      <span>{it.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+          ))}
+        </nav>
+      </aside>
+
+      {/* 主区 */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-14 items-center gap-2 border-b bg-card px-4">
+          <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileOpen(true)}>
+            <Menu className="h-4 w-4" />
+          </Button>
             <div className="flex-1" />
             <Button
               variant="ghost"
