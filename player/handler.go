@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,8 +33,17 @@ type Handler struct {
 	stream     *http.Client // 播放器上游用：服务端跟随重定向，避免 302 Location 回流到浏览器泄露源地址
 	// segOrigins: 每个频道的分片 CDN origin（scheme://host），由 m3u8 重写时学到，供 /player/<key>/<rel> 回拉。
 	segOrigins sync.Map // key -> *segOrigin
+	// segGroups: 每个频道最近一次成功使用的代理组。分片 CDN 常是规则覆盖不到的 IP/内网
+	// 地址，需沿用与播放列表相同的代理出口（会话/CDN 亲和）。
+	segGroups sync.Map // key -> *segGroup
 	// resources: 每个频道的「短 token -> 真实上游 URL」（m3u8 重写时登记），前端只见短令牌。
 	resources sync.Map // key -> *resMap
+}
+
+// segGroup 记录某频道的代理组，带过期时间（超时后重新按域名规则匹配，跟进配置变更）。
+type segGroup struct {
+	pg    *config.ProxyGroupConfig
+	until time.Time
 }
 
 // segOrigin 记录某频道的分片源，带过期时间。
@@ -53,7 +63,8 @@ type resMap struct {
 
 func NewHandler(mgr *Manager) *Handler {
 	sc := httpclient.NewHTTPClient(&config.Cfg, nil)
-	// 播放器上游跟随重定向（最多 10 次），且不设整体超时（流媒体长连接）
+	// 播放器上游：服务端跟随重定向（最多 10 次），避免 302 Location 回流到浏览器泄露源地址；
+	// 且不设整体超时（流媒体长连接）
 	sc.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return fmt.Errorf("too many redirects")
@@ -343,21 +354,44 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, abs, nil)
-	if err != nil {
-		http.Error(w, "bad upstream url", http.StatusBadRequest)
+	// 频道订阅里的 ua= 优先，否则用 player.ua 默认（缺省内置浏览器 UA）
+	ua := ch.UA
+	if ua == "" {
+		ua = h.mgr.DefaultUA()
+	}
+	hdr := http.Header{}
+	hdr.Set("User-Agent", ua)
+
+	// 优先走代理组拉流（与 /https:// 原生转发同一机制）：
+	//   1) 该频道此前成功用过的代理组（分片 CDN 是 IP/内网地址时规则匹配不上，需沿用同一出口）
+	//   2) 否则按域名规则匹配代理组
+	// 都未命中或屡次选不到节点（返回 nil resp）→ 直连兜底。
+	resp, usedPg, perr := handler.FetchViaProxyGroup(ctx, abs, hdr, true, h.getSegGroup(ch.Key))
+	if perr != nil {
+		if errors.Is(perr, context.Canceled) {
+			return // 客户端断开
+		}
+		logger.LogPrintf("[player] proxy fetch error key=%s abs=%s err=%v", ch.Key, abs, perr)
+		http.Error(w, "proxy fetch failed: "+perr.Error(), http.StatusBadGateway)
 		return
 	}
-	if ch.UA != "" {
-		req.Header.Set("User-Agent", ch.UA) // 频道订阅里的 ua= 优先
-	} else {
-		req.Header.Set("User-Agent", h.mgr.DefaultUA()) // 否则用 player.ua 默认（缺省内置浏览器 UA）
+	if resp != nil && usedPg != nil {
+		h.storeSegGroup(ch.Key, usedPg)
 	}
-	resp, err := h.stream.Do(req) // 播放器上游跟随重定向（h.stream）
-	if err != nil {
-		logger.LogPrintf("[player] upstream fetch error key=%s abs=%s err=%v", ch.Key, abs, err)
-		http.Error(w, "upstream fetch failed: "+err.Error(), http.StatusBadGateway)
-		return
+
+	if resp == nil {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, abs, nil)
+		if err != nil {
+			http.Error(w, "bad upstream url", http.StatusBadRequest)
+			return
+		}
+		req.Header = hdr.Clone()
+		resp, err = h.stream.Do(req) // 直连兜底（h.stream 服务端跟随重定向）
+		if err != nil {
+			logger.LogPrintf("[player] upstream fetch error key=%s abs=%s err=%v", ch.Key, abs, err)
+			http.Error(w, "upstream fetch failed: "+err.Error(), http.StatusBadGateway)
+			return
+		}
 	}
 
 	// m3u8 基址：若发生重定向，用最终响应 URL（否则相对分片解析会错、且 Location 会暴露源站）
@@ -396,6 +430,7 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 
 const segOriginTTL = 30 * time.Minute
 const tokenTTL = 30 * time.Minute
+const segGroupTTL = 30 * time.Minute
 
 // storeResources 登记某频道的 token->上游URL 映射（带过期，超量时惰性清理）。
 // 用 LoadOrStore + 每 key 一把锁，保证并发登记/读取同一频道不产生 map 数据竞争。
@@ -446,6 +481,28 @@ func (h *Handler) getSegOrigin(key string) string {
 		return ""
 	}
 	return so.origin
+}
+
+// getSegGroup 返回某频道最近成功使用的代理组（未学/过期则为 nil，重新按域名规则匹配）。
+func (h *Handler) getSegGroup(key string) *config.ProxyGroupConfig {
+	v, ok := h.segGroups.Load(key)
+	if !ok {
+		return nil
+	}
+	sg := v.(*segGroup)
+	if time.Now().After(sg.until) {
+		h.segGroups.Delete(key)
+		return nil
+	}
+	return sg.pg
+}
+
+// storeSegGroup 记住某频道成功使用的代理组（LoadOrStore + 覆盖写，保证并发安全）。
+func (h *Handler) storeSegGroup(key string, pg *config.ProxyGroupConfig) {
+	if pg == nil {
+		return
+	}
+	h.segGroups.Store(key, &segGroup{pg: pg, until: time.Now().Add(segGroupTTL)})
 }
 
 func isM3U8(ct, abs string) bool {
