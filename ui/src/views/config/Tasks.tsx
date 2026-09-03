@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, CircleDashed, Plus, Play, Pencil, Trash2, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -85,9 +85,22 @@ export function TasksPage() {
     setStatusMap(map);
   }, []);
 
+  const editingRef = useRef<Set<number>>(editing);
+  editingRef.current = editing;
+
   useEffect(() => {
     refresh();
-    const id = setInterval(refresh, 5000);
+    const id = setInterval(async () => {
+      if (editingRef.current.size > 0) {
+        // 编辑中（含新增未保存行）：只刷新运行状态，不覆盖正在编辑的任务列表
+        const s = await listStatus();
+        const map: Record<string, TaskStatus> = {};
+        s.forEach((st) => (map[st.key] = st));
+        setStatusMap(map);
+      } else {
+        refresh();
+      }
+    }, 5000);
     return () => clearInterval(id);
   }, [refresh]);
 
@@ -138,7 +151,7 @@ export function TasksPage() {
   };
 
   const save = async () => {
-    const data = tasks.filter((t) => t.command.trim() !== "");
+    const data = tasks.filter((t) => (t.command || "").trim() !== "");
     try {
       await saveTasks(data);
       setNotice({ type: "ok", msg: "配置保存成功，定时任务将自动重启" });
