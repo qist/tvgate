@@ -38,7 +38,7 @@ const ChannelListItemComponent = forwardRef<HTMLButtonElement, ChannelListItemPr
         className={clsx(
           PLAYER_LIST_SURFACE_BASE_CLASS,
           PLAYER_CHANNEL_LIST_ITEM_CLASS,
-          "group flex w-full cursor-pointer items-center gap-2 p-2 text-left",
+          "group flex w-full touch-manipulation cursor-pointer items-center gap-2 p-2 text-left focus-visible:border-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60",
           isCurrentChannel ? PLAYER_LIST_SURFACE_SELECTED_CLASS : PLAYER_LIST_SURFACE_DEFAULT_CLASS,
           !isCurrentChannel && PLAYER_LIST_SURFACE_HOVER_CLASS,
         )}

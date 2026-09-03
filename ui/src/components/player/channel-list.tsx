@@ -1,5 +1,5 @@
 import { clsx } from "clsx";
-import { Search } from "lucide-react";
+import { ChevronDown, Layers, Search } from "lucide-react";
 import {
   memo,
   type RefObject,
@@ -110,6 +110,8 @@ function ChannelListComponent({
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  /** Group grid is collapsed by default (saves space on phones; friendlier for TV remote navigation). */
+  const [groupsOpen, setGroupsOpen] = useState(false);
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const deferredSelectedGroup = useDeferredValue(selectedGroup);
   const currentChannelRef = useRef<HTMLButtonElement>(null);
@@ -231,27 +233,53 @@ function ChannelListComponent({
         </div>
       </div>
 
-      {/* Groups: fixed 3-column grid, one group per cell */}
+      {/* Groups: collapsible 3-column grid (one row toggle; auto-collapse after pick) */}
       {groups && groups.length > 0 && (
-        <div className="player-performance-channel-groups mt-2 border-violet-950/10 border-y bg-[linear-gradient(90deg,rgba(224,242,254,0.55),rgba(238,242,255,0.68))] px-2 py-2 backdrop-blur-xl dark:border-violet-100/10 dark:bg-[linear-gradient(90deg,rgba(4,19,42,0.6),rgba(20,17,58,0.58))]">
-          <div className="grid grid-cols-3 gap-1.5">
-            {[null, ...groups].map((group) => (
-              <button
-                type="button"
-                key={group ?? "all"}
-                onClick={() => setSelectedGroup(group)}
-                title={group ?? t("allChannels")}
-                className={clsx(
-                  "player-performance-effect player-performance-motion h-7 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded-full border px-2 text-center font-medium text-xs leading-none transition-[color,background-color,border-color,box-shadow]",
-                  selectedGroup === group
-                    ? "player-performance-group-selected border-violet-400/30 bg-violet-500/10 text-violet-700 shadow-[0_4px_12px_rgba(124,58,237,0.1)] dark:border-violet-300/20 dark:bg-violet-400/14 dark:text-violet-200 dark:shadow-[0_4px_12px_rgba(124,58,237,0.08)]"
-                    : "player-performance-group-default cursor-pointer border border-violet-900/8 bg-white/55 text-slate-500 hover:border-violet-400/30 hover:bg-violet-50/80 hover:text-violet-800 dark:border-violet-100/10 dark:bg-slate-950/35 dark:text-slate-400 dark:hover:bg-violet-300/10 dark:hover:text-violet-100",
-                )}
-              >
-                {group ?? t("allChannels")}
-              </button>
-            ))}
-          </div>
+        <div className="player-performance-channel-groups mt-2 border-violet-950/10 border-y bg-[linear-gradient(90deg,rgba(224,242,254,0.55),rgba(238,242,255,0.68))] px-2 py-1.5 backdrop-blur-xl dark:border-violet-100/10 dark:bg-[linear-gradient(90deg,rgba(4,19,42,0.6),rgba(20,17,58,0.58))]">
+          <button
+            type="button"
+            onClick={() => setGroupsOpen((open) => !open)}
+            aria-expanded={groupsOpen}
+            className="flex h-8 w-full cursor-pointer items-center justify-between rounded-lg px-1.5 text-left font-medium text-slate-600 text-xs transition-colors hover:text-violet-800 focus-visible:border-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 dark:text-slate-300 dark:hover:text-violet-100 md:text-[13px]"
+          >
+            <span className="flex min-w-0 items-center gap-1.5">
+              <Layers className="h-3.5 w-3.5 shrink-0 text-violet-500 dark:text-violet-300" />
+              <span className="shrink-0">{t("channelGroups")}</span>
+              <span className="min-w-0 truncate text-slate-400 dark:text-slate-500">
+                · {selectedGroup ?? t("allChannels")}
+              </span>
+            </span>
+            <ChevronDown
+              className={clsx(
+                "h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 dark:text-slate-500",
+                groupsOpen && "rotate-180",
+              )}
+            />
+          </button>
+          {groupsOpen && (
+            <div className="mt-1.5 grid max-h-44 grid-cols-3 gap-1.5 overflow-y-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {[null, ...groups].map((group) => (
+                <button
+                  type="button"
+                  key={group ?? "all"}
+                  onClick={() => {
+                    setSelectedGroup(group);
+                    setGroupsOpen(false);
+                  }}
+                  onFocus={(e) => e.currentTarget.scrollIntoView({ block: "nearest" })}
+                  title={group ?? t("allChannels")}
+                  className={clsx(
+                    "player-performance-motion h-8 min-w-0 touch-manipulation overflow-hidden text-ellipsis whitespace-nowrap rounded-full border px-2 text-center font-medium text-xs leading-none transition-[color,background-color,border-color,box-shadow] focus-visible:border-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 md:h-7",
+                    selectedGroup === group
+                      ? "border-violet-400/30 bg-violet-500/10 text-violet-700 shadow-[0_4px_12px_rgba(124,58,237,0.1)] dark:border-violet-300/20 dark:bg-violet-400/14 dark:text-violet-200 dark:shadow-[0_4px_12px_rgba(124,58,237,0.08)]"
+                      : "cursor-pointer border-violet-900/8 bg-white/55 text-slate-500 hover:border-violet-400/30 hover:bg-violet-50/80 hover:text-violet-800 dark:border-violet-100/10 dark:bg-slate-950/35 dark:text-slate-400 dark:hover:bg-violet-300/10 dark:hover:text-violet-100",
+                  )}
+                >
+                  {group ?? t("allChannels")}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -20,6 +20,7 @@ const base: TranslationDict = {
   // Channel list
   searchChannels: "Search channels...",
   allChannels: "All",
+  channelGroups: "Groups",
   catchup: "Catchup",
   catchupSupported: "Catchup supported",
 
@@ -149,6 +150,7 @@ const zhHans: TranslationDict = {
   // 频道列表
   searchChannels: "搜索频道...",
   allChannels: "全部",
+  channelGroups: "分组",
   catchup: "回看",
   catchupSupported: "支持回看",
 
@@ -278,6 +280,7 @@ const zhHant: TranslationDict = {
   // 頻道列表
   searchChannels: "搜尋頻道...",
   allChannels: "全部",
+  channelGroups: "分組",
   catchup: "回看",
   catchupSupported: "支援回看",
 
