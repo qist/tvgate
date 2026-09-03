@@ -25,7 +25,12 @@ const empty = (): MulticastConfig => ({
 export async function getMulticast(): Promise<MulticastConfig> {
   try {
     const data = await api.get<Partial<MulticastConfig>>("config/multicast");
-    return { ...empty(), ...data } as MulticastConfig;
+    return {
+      ...empty(),
+      ...data,
+      // 旧后端在未配置组播段时返回 null，会覆盖上面的默认空数组
+      multicast_ifaces: Array.isArray(data.multicast_ifaces) ? data.multicast_ifaces : [],
+    } as MulticastConfig;
   } catch {
     return empty();
   }

@@ -22,9 +22,15 @@ func (h *ConfigHandler) handleDnsConfig(w http.ResponseWriter, r *http.Request) 
 	dns := config.Cfg.DNS
 	config.CfgMu.RUnlock()
 
+	// 未配置 dns 段时 Servers 为 nil，JSON 序列化成 null 会让前端 .map 崩溃；统一回空数组
+	servers := dns.Servers
+	if servers == nil {
+		servers = []string{}
+	}
+
 	// 转换为可JSON序列化的格式
 	dnsConfig := map[string]interface{}{
-		"servers":   dns.Servers,
+		"servers":   servers,
 		"timeout":   formatDuration(dns.Timeout),
 		"max_conns": dns.MaxConns,
 	}

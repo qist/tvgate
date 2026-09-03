@@ -20,8 +20,14 @@ func (h *ConfigHandler) handleMulticastConfig(w http.ResponseWriter, r *http.Req
 	mcast := config.Cfg.Multicast
 	config.CfgMu.RUnlock()
 
+	// 未配置组播段时 MulticastIfaces 为 nil，JSON 序列化成 null 会让前端 .map 崩溃；统一回空数组
+	ifaces := mcast.MulticastIfaces
+	if ifaces == nil {
+		ifaces = []string{}
+	}
+
 	mcastConfig := map[string]interface{}{
-		"multicast_ifaces":       mcast.MulticastIfaces,
+		"multicast_ifaces":       ifaces,
 		"mcast_rejoin_interval":  mcast.McastRejoinInterval.String(),
 		"fcc_type":               mcast.FccType,
 		"fcc_cache_size":         mcast.FccCacheSize,

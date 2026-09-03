@@ -20,11 +20,17 @@ func (h *ConfigHandler) handlePHPConfig(w http.ResponseWriter, r *http.Request) 
 	php := config.Cfg.PHP
 	config.CfgMu.RUnlock()
 
+	// 未配置 index 时为 nil，JSON 序列化成 null 会让前端 .map 崩溃；统一回空数组
+	index := php.Index
+	if index == nil {
+		index = []string{}
+	}
+
 	resp := map[string]interface{}{
 		"enabled":     php.Enabled,
 		"path":        php.Path,
 		"docroot":     php.DocRoot,
-		"index":       php.Index,
+		"index":       index,
 		"worker_mode": php.WorkerMode,
 		"workers":     php.Workers,
 	}
