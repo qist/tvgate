@@ -16,6 +16,9 @@ export default defineConfig(() => ({
     proxy: {
       // dev 环境走同源代理，保持 Cookie / CSRF 校验
       "/web": "http://127.0.0.1:8888",
+      // 播放器页面数据与拉流同源代理
+      "/api/player": "http://127.0.0.1:8888",
+      "/player": "http://127.0.0.1:8888",
     },
   },
   build: {
@@ -23,6 +26,11 @@ export default defineConfig(() => ({
     emptyOutDir: true,
     sourcemap: false,
     rollupOptions: {
+      // 双入口：管理后台 index.html + H5 播放器 player.html
+      input: {
+        index: resolve(__dirname, "index.html"),
+        player: resolve(__dirname, "player.html"),
+      },
       output: {
         manualChunks: {
           "vendor-react": ["react", "react-dom", "react-dom/client"],

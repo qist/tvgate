@@ -10,14 +10,14 @@
 
 | 项 | 结论 |
 |---|---|
-| **推荐技术栈** | **React 19 + TypeScript + Vite + Tailwind CSS 4 + shadcn 手写组件 + lucide-react**（与 `/opt/rtp2httpd/web-ui` 完全同栈；体积小、卡片式）、`react-hook-form + zod`、`react-router`（hash）、`zustand`，构建产物 `go:embed` 进现有单二进制 |
+| **推荐技术栈** | **React 19 + TypeScript + Vite + Tailwind CSS 4 + shadcn 手写组件 + lucide-react**（体积小、卡片式）、`react-hook-form + zod`、`react-router`（hash）、`zustand`，构建产物 `go:embed` 进现有单二进制 |
 | **迁移方式** | **渐进式（Strangler Fig）4 期迁移，不做一次性重写**；旧模板随 Phase 2 逐页删除，Phase 3 清理残余，无 `web.ui` 开关 |
 | **最先做的一步** | **Phase 0：设计系统 + 布局壳（AppShell）**，把 28 个旧页面套上统一导航与主题 —— 成本最低、当天可见效 |
 | **后端改造量** | 小。现有 ~60 个 JSON API 可直接复用，只需新增 `/web/api/v1/*` 命名空间与 SPA fallback 路由，业务逻辑不动 |
 | **风险** | 中低。最大风险是**配置表单迁移**（node/proxygroups/publisher 三页合计 8000+ 行），对策是最后迁移 + 双轨并行 |
 | **预估工期** | 4 期共 **18~25 人日**（含自测），每期均可独立上线 |
 
-> **技术栈变更记录**：本文档早期/历史进度段落（§8 各 Phase 的"已落地"）沿用了 **Vue 3 + Naive UI** 的写法与组件名（`App.vue`、`n-card`、`n-form`、`NDynamicInput`、`themeOverrides` 等）。**最终已拍板为 React 19 + Tailwind 4 + shadcn（同 `/opt/rtp2httpd/web-ui`，见 §4 与决策 #1/#14）**；历史段落中的 Vue/Naive 字样按"其功能在 React+Tailwind+shadcn 下的等价实现"理解（如 `n-card`→shadcn `Card`、`NDynamicInput`→自建 `ListEditor`、`n-form`→`react-hook-form+zod`、`.vue`→`.tsx`、`vue-tsc`→`tsc --noEmit`）。新代码一律按 §4 的 React 栈编写。
+> **技术栈变更记录**：本文档早期/历史进度段落（§8 各 Phase 的"已落地"）沿用了 **Vue 3 + Naive UI** 的写法与组件名（`App.vue`、`n-card`、`n-form`、`NDynamicInput`、`themeOverrides` 等）。**最终已拍板为 React 19 + Tailwind 4 + shadcn（见 §4 与决策 #1/#14）**；历史段落中的 Vue/Naive 字样按"其功能在 React+Tailwind+shadcn 下的等价实现"理解（如 `n-card`→shadcn `Card`、`NDynamicInput`→自建 `ListEditor`、`n-form`→`react-hook-form+zod`、`.vue`→`.tsx`、`vue-tsc`→`tsc --noEmit`）。新代码一律按 §4 的 React 栈编写。
 
 ---
 
@@ -106,13 +106,13 @@
 | **A. 现状修补**（Go template + 统一 CSS 变量） | ❌ 差 | ⚠️ 靠人肉 | 0（无新增） | ✅ | ✅ 无变化 | 低 | ⭐⭐ 治标不治本 |
 | **B. Go template + HTMX + Alpine** | ⚠️ 中 | ⚠️ 需自建 | ~40KB | ✅ | ✅ 无变化 | 中 | ⭐⭐⭐ 复杂表单仍易失控 |
 | **C. Go + templ + Tailwind（本地编译）** | ⚠️ 中 | ⚠️ 需自建 | ~30KB | ✅ | ⚠️ 引入 templ 生成 | 高 | ⭐⭐⭐ 组件库生态≈0 |
-| **D. ✅ React 19 + Tailwind 4 + shadcn（同 rtp2httpd）** | ✅ 强 | ✅ 语义色类 | **~100~160KB** | ✅ | ✅ 纯静态产物 | 中 | ⭐⭐⭐⭐⭐ **推荐（React 生态体积最优）** |
+| **D. ✅ React 19 + Tailwind 4 + shadcn** | ✅ 强 | ✅ 语义色类 | **~100~160KB** | ✅ | ✅ 纯静态产物 | 中 | ⭐⭐⭐⭐⭐ **推荐（React 生态体积最优）** |
 | **E. React + Ant Design** | ✅ 强 | ⚠️ 需大量覆写 | 300~450KB | ✅ | ✅ 纯静态产物 | 中 | ⭐⭐⭐⭐ 体积大，不合"体积小"约束 |
 | **F. Svelte 5 + shadcn-svelte** | ✅ 强 | ✅ 好 | 60~100KB | ✅ | ✅ 纯静态产物 | 中 | ⭐⭐⭐⭐ 体积**绝对最小**，但用户已定 React 同栈 → 作为体积压力过大时的 fallback |
 
 **选择 D（React + Tailwind + shadcn）的核心理由：**
 
-1. **与 `/opt/rtp2httpd/web-ui` 完全同栈**：直接复用其已打磨的 `components/ui/*`（Card/Button/Badge/Table/Switch/Select/Progress/Separator）、Tailwind 4 `@theme` 语义色 + `.dark` 双主题、`lucide-react` 按需图标这套成熟模式，交接顺畅、零新学习成本。
+1. **成熟范式**：直接复用社区已打磨的 `components/ui/*`（Card/Button/Badge/Table/Switch/Select/Progress/Separator）、Tailwind 4 `@theme` 语义色 + `.dark` 双主题、`lucide-react` 按需图标这套成熟模式，生态资料丰富、零自研学习成本。
 2. **体积小（用户强约束）**：shadcn 是"源码复制 + tree-shaking"，Tailwind 4 只编译实际用到的类，**无大型组件库全量打包**，比 Ant(300~450KB) 小得多，首屏可压到 ~100~160KB gzip，配合路由懒加载 + 代码分割在 mips/armv5 可用。绝对更小的 Svelte 列为 fallback。
 3. **复杂表单能力**：shadcn 提供受控基础组件，配置页主体用 `Card`/`Table`/`Dialog` 呈现；动态增删行/嵌套/条件显隐用 `react-hook-form + zod`（或手写受控 state）实现。
 4. **暗色主题零硬编码**：`@theme` 定义语义色（background/foreground/card/muted/border/ring…），`.dark` 只改变量，修掉现 `theme.js` 遍历 DOM 重排的 hack。
@@ -124,8 +124,8 @@
 |---|---|---|---|---|
 | 构建 | **Vite** | 7/8 | dev server + 生产构建 | dev 用 `server.proxy` 代理到 Go 保持同源；`@tailwindcss/vite` 插件 |
 | 语言 | **TypeScript** | 5.7+ | strict 模式 | API 类型从 Go 结构体半自动生成（见 §5.5） |
-| 框架 | **React** | 19.x | 函数组件 + Hooks | 与 rtp2httpd 同款 |
-| 样式 | **Tailwind CSS** | 4.x | 原子工具类 + `@theme` 语义色 | 深浅主题 `@custom-variant dark` + `.dark`（同 rtp2httpd） |
+| 框架 | **React** | 19.x | 函数组件 + Hooks | 与社区主流实践一致 |
+| 样式 | **Tailwind CSS** | 4.x | 原子工具类 + `@theme` 语义色 | 深浅主题 `@custom-variant dark` + `.dark` |
 | UI 组件 | **shadcn 风格手写组件** | — | Card/Button/Badge/Table/Switch/Select/Dialog/Toast | 源码复制进 `ui/src/components/ui/*`；基底 `class-variance-authority + clsx`（Radix 按需） |
 | 表单 | **react-hook-form + zod** | — | 动态校验/列表编辑 | 简单表单可手写受控 state |
 | 路由 | **React Router** | 7.x | hash 路由，base 运行时注入 | 路由级懒加载 |
@@ -135,7 +135,7 @@
 | 图表 | **uPlot** 或自绘 SVG | uPlot 1.6 | 实时流量/CPU 曲线 | ~45KB min，比 ECharts(300KB+) 小一个量级 |
 | 图标 | **lucide-react** | — | 按需引入 | tree-shaking，避免全量图标包 |
 | 日期 | **date-fns**（按需） | 4.x | 日志时间格式化 | 仅 `format` |
-| 代码规范 | ESLint + Prettier + `tsc --noEmit`（也可用 biome） | — | CI 卡口 | 可复用 rtp2httpd 的 biome 配置 |
+| 代码规范 | ESLint + Prettier + `tsc --noEmit`（也可用 biome） | — | CI 卡口 | 可复用社区 biome 共享配置 |
 
 ### 4.3 明确不用的东西
 
@@ -145,17 +145,17 @@
 - ❌ **Tailwind 运行时 CDN**（离线不可用；一律本地编译，构建期 `@tailwindcss/vite`）
 - ❌ **任何外部 CDN / 在线字体**（离线部署是硬约束；字体用 `-apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`）
 
-### 4.4 视觉与组件：直接采用 rtp2httpd 的 React + Tailwind + shadcn 范式
+### 4.4 视觉与组件：直接采用 React + Tailwind + shadcn 范式
 
-**结论：技术栈直接采用 `/opt/rtp2httpd/web-ui` 同款（React 19 + TypeScript + Vite + Tailwind 4 + shadcn 手写组件 + lucide-react），不再引入第二套栈。**
+**结论：技术栈直接采用成熟范式（React 19 + TypeScript + Vite + Tailwind 4 + shadcn 手写组件 + lucide-react），不再引入第二套栈。**
 
-| 组件/能力 | rtp2httpd 现成实现 | tvgate 直接复用/对齐 |
+| 组件/能力 | 成熟参考实现 | tvgate 直接复用/对齐 |
 |---|---|---|
 | 卡片式布局 | shadcn `Card`（`rounded-2xl border`，CardHeader/Title/Content/Footer） | 复制 `components/ui/card.tsx` 等整组原子组件为底座 |
 | 深浅主题 | `@theme` 语义色变量 + `.dark` 只改变量 | 对齐 §6 tokens；删除 `theme.js` 全量重排 hack |
 | 原子组件集 | button/badge/table/switch/select-box/progress/separator/labeled-switch | 直接拷入 tvgate `ui/src/components/ui/*` |
 | 图标 | `lucide-react` 按需 | 直接采用 |
-| 配置表单 | rtp2httpd 无复杂表单 | tvgate 在 shadcn 基础上自建 `ListEditor`/`KeyValueEditor`/`DurationInput`，配合 `react-hook-form + zod` 实现动态增删/嵌套/条件显隐 |
+| 配置表单 | 参考实现无复杂表单 | tvgate 在 shadcn 基础上自建 `ListEditor`/`KeyValueEditor`/`DurationInput`，配合 `react-hook-form + zod` 实现动态增删/嵌套/条件显隐 |
 
 > 体积策略：shadcn 把组件源码拷进项目、Tailwind 按需编译，**首屏 ~100~160KB gzip，是 React 生态里体积最优的做法**，满足"体积小"硬约束；若后续体积压力过大，fallback 为 Svelte + shadcn-svelte（§4.1 F）。
 
@@ -189,7 +189,7 @@
 │       │   ├── code.ts  backup.ts  logs.ts  sync.ts  github.ts  dns.ts ...
 │       ├── stores/              # system / logs / ui(主题) / configDraft（zustand）
 │       ├── components/
-│       │   ├── ui/              # ★ 复刻 rtp2httpd 的 shadcn 原子组件（Card/Button/Badge/Table/Switch/Select/Dialog/Toast）
+│       │   ├── ui/              # ★ shadcn 风格原子组件（Card/Button/Badge/Table/Switch/Select/Dialog/Toast）
 │       │   ├── common/          # PageHeader / Card / EmptyState / StatCard / RingGauge / ConfirmButton
 │       │   ├── form/            # KeyValueEditor / ListEditor / DurationInput / YamlEditor
 │       │   └── table/           # DataTable（排序/分页/空态/加载）
@@ -357,7 +357,7 @@ type APIResp struct {
 }
 ```
 
-**Tailwind 4 对接**（同 rtp2httpd `index.css`）：用 `@theme` 把语义色注册为 Tailwind 色彩，深浅主题用 `@custom-variant dark` + `.dark`，组件直接消费 `bg-background / text-card-foreground / border-border` 等工具类：
+**Tailwind 4 对接**（`index.css`）：用 `@theme` 把语义色注册为 Tailwind 色彩，深浅主题用 `@custom-variant dark` + `.dark`，组件直接消费 `bg-background / text-card-foreground / border-border` 等工具类：
 
 ```css
 @import "tailwindcss";
@@ -410,7 +410,7 @@ type APIResp struct {
 |---|---|
 | `AppShell` | 左侧固定导航（可折叠/记忆状态）+ 顶栏（面包屑 / 主题切换 / 用户菜单 / 版本徽标）。`< 992px` 自动转抽屉（shadcn `Sheet`/`Drawer`），顶栏出现汉堡按钮 |
 | `PageHeader` | 标题 + 描述 + 右侧操作区（保存/重置/帮助链接）。统一 24px 下边距 |
-| `Card` | 复刻自 rtp2httpd 的 shadcn `Card`（`rounded-2xl border`，CardHeader/Title/Content/Footer），统一 `--radius` 与内边距；标题 15px/600 |
+| `Card` | shadcn 风格 `Card`（`rounded-2xl border`，CardHeader/Title/Content/Footer），统一 `--radius` 与内边距；标题 15px/600 |
 | `DataTable` | shadcn `Table` + TanStack Table（可选用）封装：统一紧凑行距、hover 高亮、空状态 `EmptyState`、加载覆盖层。**禁止固定像素列宽**，改用 `min-width` + `truncate` + `title/tooltip`（修掉现有 `400px` IP 列） |
 | `FormPage` | 表单页统一"区块分组 + 右上保存条"，保存中 loading、成功后 Toast + 脏值提示；离开页面前拦截（未保存提醒）。校验用 `react-hook-form + zod` |
 | `ListEditor` | 动态数组编辑（节点/代理组/订阅源通用）：支持增/删/复制/拖拽排序/上移下移。这是消灭 `node_editor` 3195 行的核心组件 |
@@ -631,7 +631,7 @@ type APIResp struct {
 
 | # | 决策项 | 结论 |
 |---|---|---|
-| 1 | 技术栈 | **React 19 + TypeScript + Vite + Tailwind CSS 4 + shadcn 手写组件 + lucide-react**（与 `/opt/rtp2httpd/web-ui` 同栈）、`react-hook-form + zod`、`react-router`（hash）、`zustand`（见 §4） |
+| 1 | 技术栈 | **React 19 + TypeScript + Vite + Tailwind CSS 4 + shadcn 手写组件 + lucide-react**、`react-hook-form + zod`、`react-router`（hash）、`zustand`（见 §4） |
 | 2 | Tailwind | **采用**：Tailwind 4 本地编译（`@tailwindcss/vite`），`@theme` 语义色 + `.dark` 双主题 |
 | 3 | 产物进 Git | **不进**；`web/dist` 由 CI（`make web-ui`）生成，仓库仅占位 `index.html` + `.gitkeep` |
 | 4 | 图表 | **uPlot**（实时曲线）+ **自绘 SVG**（环形仪表）；不用 ECharts 全量 |
@@ -644,7 +644,7 @@ type APIResp struct {
 | 11 | 独立 `/status` 监控页 | **废弃**：状态数据统一走登录后的 SPA（`/web/api/v1/status`，需认证）；`monitor.path` 配置项随之弃用，`server-monitor-editor` 配置页与 `system-stats.js` 在 Phase 3 删除；不单独设计状态前端，**不对外部暴露任何无认证只读/探活端点（如 `/api/healthz`），状态全部内部化** |
 | 12 | 前端风格 | **全站视觉重新设计做美观，全部页面/模块都可用新的组件库与布局**；重设计只改变视觉与排版 |
 | 13 | 组件与展示 | **展示统一用卡片形式**（统一 Card/区块卡片、卡片式列表/表格、统一弹窗与 Toast），不用像素固定布局；**现有参数全部保留**——编辑表单的字段/配置项与现有实现一致，不得删减/改名/改语义任何现有参数 |
-| 14 | 视觉与技术栈 | **技术栈直接采用 `/opt/rtp2httpd/web-ui` 同款 React 19 + Tailwind 4 + shadcn**（体积小、卡片式、深浅主题，见 §4）；全站视觉重设计美观，**现有参数一个都不能少** |
+| 14 | 视觉与技术栈 | **技术栈直接采用 React 19 + Tailwind 4 + shadcn**（体积小、卡片式、深浅主题，见 §4）；全站视觉重设计美观，**现有参数一个都不能少** |
 
 ---
 
@@ -672,7 +672,7 @@ type APIResp struct {
 
 ## 13. 进度快照（React 全量迁移 · 2026-09-02 夜 → 09-03 待续）
 
-> 说明：上面 §8 的 Vue/NaiveUI 进度是早期方案的历史记录；后续已**整体改用 React 19 + Tailwind 4 + shadcn**（与 `/opt/rtp2httpd/web-ui` 同栈，§12 #1/#14）。本节记录 React 迁移的真实进度与剩余工作。
+> 说明：上面 §8 的 Vue/NaiveUI 进度是早期方案的历史记录；后续已**整体改用 React 19 + Tailwind 4 + shadcn**（§12 #1/#14）。本节记录 React 迁移的真实进度与剩余工作。
 
 ### 已完成（React 原生页，全部模块已接入 SPA 导航）
 

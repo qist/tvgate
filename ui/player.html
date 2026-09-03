@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Player</title>
+    <script>
+      (() => {
+        const root = document.documentElement;
+        const navigatorStandalone = navigator.standalone;
+        const isStandalone =
+          typeof navigatorStandalone === "boolean"
+            ? navigatorStandalone
+            : window.matchMedia("(display-mode: standalone)").matches;
+        root.classList.toggle("player-standalone", isStandalone);
+
+        const ua = navigator.userAgent;
+        const deviceMemory = Number.isFinite(navigator.deviceMemory) ? navigator.deviceMemory : undefined;
+        const hardwareConcurrency = Number.isFinite(navigator.hardwareConcurrency)
+          ? navigator.hardwareConcurrency
+          : undefined;
+        const isLGWebOS =
+          /(?:Web0S|webOS)/i.test(ua) || (/\bNetCast\b/i.test(ua) && /\b(?:SmartTV|Colt)\/[\d.]+/i.test(ua));
+        const isAndroid = /Android|HarmonyOS|OpenHarmony/i.test(ua);
+        const isAndroidTV =
+          isAndroid && /\b(?:TV|SmartTV|GoogleTV|BRAVIA|SHIELD|MiTV|MIBOX)\b|\bAFT[A-Z0-9]+\b/i.test(ua);
+        const isIOS =
+          /iPhone|iPad|iPod|CPU (?:iPhone )?OS \d+[_\d]* like Mac OS X|EdgiOS|CriOS|FxiOS|OPiOS/.test(ua) ||
+          (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        const isOtherMobile = /Mobile|Tablet|Silk|Kindle|PlayBook/i.test(ua);
+
+        root.dataset.playerPlatform = isLGWebOS
+          ? "lg-webos"
+          : isAndroidTV
+            ? "android-tv"
+            : isAndroid
+              ? "android"
+              : isIOS
+                ? "ios"
+                : isOtherMobile
+                  ? "mobile"
+                  : "desktop";
+
+        let performanceTier = "capable";
+        if (isLGWebOS || isAndroidTV) {
+          performanceTier = "constrained";
+        } else if (isAndroid) {
+          const lowMemory = deviceMemory !== undefined && deviceMemory <= 4;
+          const lowConcurrency = hardwareConcurrency !== undefined && hardwareConcurrency <= 4;
+          if (lowMemory || lowConcurrency) performanceTier = "constrained";
+        }
+        root.dataset.performanceTier = performanceTier;
+
+        let playerAppearance = root.dataset.performanceTier === "constrained" ? "simple" : "fancy";
+        try {
+          const storedPlayerAppearance = localStorage.getItem("tvgate-player-appearance");
+          if (storedPlayerAppearance === "fancy" || storedPlayerAppearance === "simple") {
+            playerAppearance = storedPlayerAppearance;
+          }
+        } catch (error) {
+          console.warn("Failed to apply stored player appearance early", error);
+        }
+        root.classList.toggle("player-theme-simple", playerAppearance === "simple");
+
+        try {
+          const storageKey = "tvgate-player-theme";
+          const stored = localStorage.getItem(storageKey);
+          const theme = stored === "light" || stored === "dark" ? stored : "auto";
+          const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          const isDark = theme === "dark" || (theme === "auto" && prefersDark);
+          if (isDark) {
+            root.classList.add("dark");
+            root.style.colorScheme = "dark";
+          } else {
+            root.classList.remove("dark");
+            root.style.colorScheme = "light";
+          }
+        } catch (error) {
+          console.warn("Failed to apply stored theme early", error);
+        }
+      })();
+    </script>
+    <link href="/src/styles/index.css" rel="stylesheet" />
+  </head>
+  <body class="overflow-hidden bg-background text-foreground antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/pages/player.tsx"></script>
+  </body>
+</html>

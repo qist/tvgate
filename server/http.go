@@ -344,8 +344,16 @@ func RegisterJXAndProxyMux(mux *http.ServeMux, cfg *config.Config) {
 		mux.Handle("/api/player/epg", SecurityHeaders(http.HandlerFunc(ph.ServeEPG)))
 		mux.Handle("/api/player/catchup", SecurityHeaders(http.HandlerFunc(ph.ServeCatchup)))
 		mux.Handle("/player/", SecurityHeaders(http.HandlerFunc(ph.ServePull)))
-		mux.Handle("/pp/", SecurityHeaders(http.StripPrefix("/pp/", web.PlayerPageHandler())))
-		mux.Handle("/pp", SecurityHeaders(http.RedirectHandler("/pp/", http.StatusMovedPermanently)))
+		// 旧版 /pp/ 独立播放页已迁移到 SPA（webPath+player），保留旧地址重定向（透传 my_token）
+		ppRedirect := func(w http.ResponseWriter, r *http.Request) {
+			target := cfg.Web.Path + "player"
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusMovedPermanently)
+		}
+		mux.Handle("/pp/", SecurityHeaders(http.HandlerFunc(ppRedirect)))
+		mux.Handle("/pp", SecurityHeaders(http.RedirectHandler(cfg.Web.Path+"player", http.StatusMovedPermanently)))
 		if cfg.Player.LogoDir != "" {
 			mux.Handle("/player/logo/", SecurityHeaders(http.StripPrefix("/player/logo/", http.FileServer(http.Dir(cfg.Player.LogoDir)))))
 		}

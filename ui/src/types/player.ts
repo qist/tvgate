@@ -1,0 +1,29 @@
+export interface Source {
+  url: string;
+  catchup?: string;
+  catchupSource?: string;
+  label?: string;
+}
+
+export interface Channel {
+  id: string;
+  name: string;
+  logo?: string;
+  groups: string[];
+  tvgId?: string;
+  tvgName?: string;
+  sources: Source[];
+}
+
+export interface EPGProgram {
+  id: string;
+  title?: string;
+  start: Date;
+  end: Date;
+}
+
+export interface M3UMetadata {
+  tvgUrl?: string;
+  channels: Channel[];
+  groups: string[];
+}
