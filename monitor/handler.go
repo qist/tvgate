@@ -1,7 +1,6 @@
 package monitor
 
 import (
-	"fmt"
 	"net"
 	"net/http"
 	"runtime"
@@ -28,30 +27,6 @@ type StatusData struct {
 // GetStatusData 返回状态数据快照（供 /web/api/v1/status 等 JSON API 复用）
 func GetStatusData(r *http.Request) StatusData {
 	return prepareStatusData(r)
-}
-
-// 字节格式化
-func FormatBytes(b uint64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := uint64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.2f %cB", float64(b)/float64(div), "KMGTPE"[exp])
-}
-
-// 带宽格式化
-func FormatBytesPerSec(bytes uint64, _ uint64) string {
-	return FormatBytes(bytes) + "/s"
-}
-
-// 网络流量带宽格式化
-func FormatNetworkBandwidth(bytes uint64) string {
-	return FormatBytes(bytes) + "/s"
 }
 
 func prepareStatusData(r *http.Request) StatusData {
