@@ -3,10 +3,13 @@ import { Download, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { load } from "@/api/yaml";
+import { isElevated } from "@/api/elevate";
+import { ElevateDialog } from "@/components/ElevateDialog";
 
 export function ConfigViewPage() {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(false);
+  const [elevated, setElevated] = useState<boolean | null>(null);
   const [note, setNote] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
 
   const refresh = useCallback(async () => {
@@ -21,9 +24,17 @@ export function ConfigViewPage() {
     }
   }, []);
 
+  // 敏感页：先做二次验证，通过后才加载配置全文
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    isElevated().then(setElevated);
+  }, []);
+  useEffect(() => {
+    if (elevated) refresh();
+  }, [elevated, refresh]);
+
+  if (elevated === null) return <div className="text-sm text-muted-foreground">加载中…</div>;
+  if (!elevated)
+    return <ElevateDialog onDone={() => isElevated().then(setElevated)} />;
 
   const download = () => {
     const blob = new Blob([content], { type: "application/yaml;charset=utf-8" });

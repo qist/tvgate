@@ -36,7 +36,17 @@ async function request<T>(path: string, init?: RequestInit, opts: ApiOptions = {
     throw new ApiError(401, "未认证，请先登录");
   }
   if (!res.ok) {
-    throw new ApiError(res.status, (await res.text()) || `请求失败(${res.status})`);
+    const text = await res.text();
+    let msg = text || `请求失败(${res.status})`;
+    if (res.headers.get("content-type")?.includes("application/json")) {
+      try {
+        const j = JSON.parse(text);
+        if (j?.msg) msg = j.msg;
+      } catch {
+        /* 非 JSON，按原文 */
+      }
+    }
+    throw new ApiError(res.status, msg);
   }
   if (raw || !res.headers.get("content-type")?.includes("application/json")) {
     return (await res.text()) as unknown as T;

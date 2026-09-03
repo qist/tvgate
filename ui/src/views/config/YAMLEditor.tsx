@@ -3,6 +3,8 @@ import { Braces, RotateCcw, Save, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import * as api from "@/api/yaml";
+import { isElevateRequired } from "@/api/elevate";
+import { ElevateDialog } from "@/components/ElevateDialog";
 
 function formatYaml(text: string): string {
   // 简化格式化：制表符转 2 空格，缩进统一为 2 的倍数（保留注释与原始结构）
@@ -31,6 +33,16 @@ export function YAMLEditorPage() {
     setTimeout(() => setNote(null), 3500);
   }, []);
 
+  // 二次验证：加载/保存遇 403 时弹窗，验证通过后自动续做被拦截的操作
+  const [needElevate, setNeedElevate] = useState(false);
+  const pendingRef = useRef<(() => void) | null>(null);
+  const onElevated = () => {
+    setNeedElevate(false);
+    const p = pendingRef.current;
+    pendingRef.current = null;
+    p?.();
+  };
+
   const load = useCallback(async () => {
     setBusy(true);
     try {
@@ -39,7 +51,12 @@ export function YAMLEditorPage() {
       setOriginal(text);
       notify("ok", "配置加载成功");
     } catch (e) {
-      notify("err", "加载配置失败: " + (e as Error).message);
+      if (isElevateRequired(e)) {
+        pendingRef.current = load;
+        setNeedElevate(true);
+      } else {
+        notify("err", "加载配置失败: " + (e as Error).message);
+      }
     } finally {
       setBusy(false);
     }
@@ -57,7 +74,12 @@ export function YAMLEditorPage() {
       const r = api.parseStatus(data, "配置保存成功，点击重新加载生效");
       notify(r.ok ? "ok" : "err", r.msg);
     } catch (e) {
-      notify("err", "保存失败: " + (e as Error).message);
+      if (isElevateRequired(e)) {
+        pendingRef.current = save;
+        setNeedElevate(true);
+      } else {
+        notify("err", "保存失败: " + (e as Error).message);
+      }
     } finally {
       setBusy(false);
     }
@@ -156,6 +178,8 @@ export function YAMLEditorPage() {
           {note.msg}
         </div>
       )}
+
+      {needElevate && <ElevateDialog onDone={onElevated} />}
 
       <Card className="overflow-hidden">
         <textarea

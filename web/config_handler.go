@@ -141,6 +141,7 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"login", h.handleLogin)
 	mux.HandleFunc(webPath+"logout", h.handleLogout)
 	mux.HandleFunc(webPath+"auth-status", h.handleAuthStatus)
+	mux.HandleFunc(webPath+"api/v1/elevate", h.cookieAuth(h.handleElevate)) // 二次授权（查询/解锁）
 
 	// 注册GitHub升级相关路由
 	RegisterGithubRoutes(mux, webPath, h.cookieAuth)
@@ -161,8 +162,8 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/save-player", h.cookieAuth(h.handlePlayerConfigSave))
 
 	// 配置查看与保存路由
-	mux.HandleFunc(webPath+"config", h.cookieAuth(h.handleConfig))
-	mux.HandleFunc(webPath+"config/save", h.cookieAuth(h.handleConfigSave))
+	mux.HandleFunc(webPath+"config", h.cookieAuth(h.requireElevated(h.handleConfig)))
+	mux.HandleFunc(webPath+"config/save", h.cookieAuth(h.requireElevated(h.handleConfigSave)))
 	mux.HandleFunc(webPath+"config/validate", h.cookieAuth(h.handleConfigValidate))
 
 	// 其他节点配置路由
@@ -202,8 +203,8 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/backup/list", h.cookieAuth(backupHandler.handleListBackups))
 	mux.HandleFunc(webPath+"config/backup/delete", h.cookieAuth(backupHandler.handleDeleteBackup))
 	mux.HandleFunc(webPath+"config/backup/batch-delete", h.cookieAuth(backupHandler.handleBatchDeleteBackups))
-	mux.HandleFunc(webPath+"config/backup/restore", h.cookieAuth(backupHandler.handleRestoreBackup))
-	mux.HandleFunc(webPath+"config/backup/download", h.cookieAuth(backupHandler.handleDownloadBackup))
+	mux.HandleFunc(webPath+"config/backup/restore", h.cookieAuth(h.requireElevated(backupHandler.handleRestoreBackup)))
+	mux.HandleFunc(webPath+"config/backup/download", h.cookieAuth(h.requireElevated(backupHandler.handleDownloadBackup)))
 
 	// GitHub 配置相关路由
 	mux.HandleFunc(webPath+"api/github/config", h.cookieAuth(h.handleGithubConfig))
@@ -230,12 +231,12 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"api/code/check", h.cookieAuth(h.handleCodeCheck))
 	mux.HandleFunc(webPath+"api/code/unzip", h.cookieAuth(h.handleCodeUnzip))
 
-	// 备份文件中心
+	// 备份文件中心（下载/恢复敏感：需二次授权）
 	mux.HandleFunc(webPath+"api/backup/list", h.cookieAuth(h.handleBackupList))
-	mux.HandleFunc(webPath+"api/backup/restore", h.cookieAuth(h.handleBackupRestore))
+	mux.HandleFunc(webPath+"api/backup/restore", h.cookieAuth(h.requireElevated(h.handleBackupRestore)))
 	mux.HandleFunc(webPath+"api/backup/delete", h.cookieAuth(h.handleBackupDelete))
 	mux.HandleFunc(webPath+"api/backup/batch-delete", h.cookieAuth(h.handleBackupBatchDelete))
-	mux.HandleFunc(webPath+"api/backup/download", h.cookieAuth(h.handleBackupDownload))
+	mux.HandleFunc(webPath+"api/backup/download", h.cookieAuth(h.requireElevated(h.handleBackupDownload)))
 	mux.HandleFunc(webPath+"api/backup/cleanup", h.cookieAuth(h.handleBackupCleanup))
 
 }
@@ -682,7 +683,6 @@ func (h *ConfigHandler) handleConfigValidate(w http.ResponseWriter, r *http.Requ
 }
 
 // handleNodeConfig 处理节点配置获取请求
-
 
 // copyFile 复制文件的辅助函数
 func copyFile(src, dst string) error {

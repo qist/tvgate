@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "./Checkbox";
 import * as api from "@/api/configBackup";
+import { isElevated } from "@/api/elevate";
+import { ElevateDialog } from "@/components/ElevateDialog";
 
 export function ConfigBackupPage() {
   const [backups, setBackups] = useState<string[]>([]);
@@ -32,15 +34,43 @@ export function ConfigBackupPage() {
   const allSelected = backups.length > 0 && backups.every((b) => selected.has(b));
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(backups));
 
-  const doRestore = async (f: string) => {
-    if (!window.confirm("⚠️ 警告：确认将该备份还原到当前配置吗？\n这将覆盖当前配置，建议先手动备份当前配置。")) return;
-    try {
-      await api.restore(f);
-      notify("ok", "还原成功！请手动刷新页面以确保配置生效。");
-      load();
-    } catch (e) {
-      notify("err", "还原失败: " + (e as Error).message);
+  // 二次验证：下载/还原前校验，未授权弹窗、通过后续做
+  const [needElevate, setNeedElevate] = useState(false);
+  const pendingRef = useRef<(() => void) | null>(null);
+  const ensureThen = async (fn: () => void) => {
+    if (await isElevated()) fn();
+    else {
+      pendingRef.current = fn;
+      setNeedElevate(true);
     }
+  };
+  const onElevated = () => {
+    setNeedElevate(false);
+    const p = pendingRef.current;
+    pendingRef.current = null;
+    p?.();
+  };
+
+  const doRestore = async (f: string) => {
+    await ensureThen(async () => {
+      if (!window.confirm("⚠️ 警告：确认将该备份还原到当前配置吗？\n这将覆盖当前配置，建议先手动备份当前配置。")) return;
+      try {
+        await api.restore(f);
+        notify("ok", "还原成功！请手动刷新页面以确保配置生效。");
+        load();
+      } catch (e) {
+        notify("err", "还原失败: " + (e as Error).message);
+      }
+    });
+  };
+
+  const doDownload = (f: string) => {
+    ensureThen(() => {
+      const a = document.createElement("a");
+      a.href = api.downloadUrl(f);
+      a.download = fileName(f);
+      a.click();
+    });
   };
 
   const doDelete = async (f: string) => {
@@ -88,6 +118,8 @@ export function ConfigBackupPage() {
         </div>
       )}
 
+      {needElevate && <ElevateDialog onDone={onElevated} onClose={() => setNeedElevate(false)} />}
+
       <Card>
         <CardContent className="p-0">
           <div className="flex items-center gap-3 border-b px-3 py-2 text-sm text-muted-foreground">
@@ -114,9 +146,9 @@ export function ConfigBackupPage() {
                   <Button size="sm" onClick={() => doRestore(f)}>
                     <RotateCcw className="mr-1 h-4 w-4" /> 还原
                   </Button>
-                  <a href={api.downloadUrl(f)} download className="inline-flex h-8 items-center rounded-lg border border-input px-2.5 text-sm hover:bg-accent">
+                  <Button size="sm" variant="outline" onClick={() => doDownload(f)} title="下载">
                     <Download className="h-4 w-4" />
-                  </a>
+                  </Button>
                   <Button size="icon" variant="ghost" onClick={() => doDelete(f)}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
