@@ -1,7 +1,7 @@
 import { Settings } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import { usePlayerTranslation } from "../../hooks/use-player-translation";
-import { LOCALE_OPTIONS, type Locale } from "../../lib/locale";
+import type { Locale } from "../../lib/locale";
 import {
   PICTURE_IN_PICTURE_MODE_LABEL_KEYS,
   PICTURE_IN_PICTURE_MODES,
@@ -18,7 +18,6 @@ import { SelectBox } from "../ui/select-box";
 
 interface SettingsDropdownProps {
   locale: Locale;
-  onLocaleChange: (locale: Locale) => void;
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
   appearance: PlayerAppearance;
@@ -77,7 +76,6 @@ function SettingSelect<Value extends string>({ id, label, value, options, onChan
 
 function SettingsDropdownComponent({
   locale,
-  onLocaleChange,
   theme,
   onThemeChange,
   appearance,
@@ -151,13 +149,6 @@ function SettingsDropdownComponent({
           className="player-performance-panel-background player-performance-effect player-performance-gradient absolute top-full right-0 z-50 mt-1 max-h-[calc(100vh-4rem)] w-60 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl border border-violet-900/12 bg-[linear-gradient(145deg,rgba(255,255,255,0.9),rgba(238,242,255,0.82))] p-0 shadow-[0_20px_55px_rgba(91,33,182,0.18),inset_0_1px_0_rgba(255,255,255,0.82)] backdrop-blur-2xl dark:border-violet-100/15 dark:bg-[linear-gradient(145deg,rgba(16,10,40,0.94),rgba(32,22,84,0.9))] dark:shadow-[0_22px_60px_rgba(9,4,26,0.62),inset_0_1px_0_rgba(255,255,255,0.08)]"
         >
           <div className="space-y-2.5 p-2.5">
-            <SettingSelect
-              id="player-settings-locale"
-              label={t("language")}
-              value={locale}
-              options={LOCALE_OPTIONS}
-              onChange={onLocaleChange}
-            />
             <SettingSelect
               id="player-settings-theme"
               label={t("theme")}

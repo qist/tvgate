@@ -22,7 +22,6 @@ import { SettingsDropdown } from "../components/player/settings-dropdown";
 import { VideoPlayer } from "../components/player/video-player";
 import { Button, buttonVariants } from "../components/ui/button";
 import { Card } from "../components/ui/card";
-import { useLocale } from "../hooks/use-locale";
 import { usePersistedEnum } from "../hooks/use-persisted-enum";
 import { usePlayerAppearance } from "../hooks/use-player-appearance";
 import { usePlayerTranslation } from "../hooks/use-player-translation";
@@ -225,7 +224,6 @@ function PlayerPage() {
   const supportsMSEVideoProcessing = playbackBackendKind === "mse";
   const supportsSeamlessSwitch = !isLGWebOS();
   const supportsDocumentPictureInPicture = isDocumentPictureInPictureSupported();
-  const { locale, setLocale } = useLocale("tvgate-player-locale");
   const { theme, setTheme } = useTheme("tvgate-player-theme");
   const { appearance, setAppearance } = usePlayerAppearance();
   const [pictureInPictureMode, setPictureInPictureMode] = usePersistedEnum<PictureInPictureMode>(
@@ -233,6 +231,7 @@ function PlayerPage() {
     "document",
     PICTURE_IN_PICTURE_MODES,
   );
+  const locale: Locale = "zh-Hans";
   const t = usePlayerTranslation(locale);
 
   const [metadata, setMetadata] = useState<M3UMetadata | null>(null);
@@ -503,13 +502,6 @@ function PlayerPage() {
     setCurrentVideoTime(time);
   }, []);
 
-  const handleLocaleChange = useCallback(
-    (nextLocale: Locale) => {
-      startTransition(() => setLocale(nextLocale));
-    },
-    [setLocale],
-  );
-
   const handleThemeChange = useCallback(
     (nextTheme: Parameters<typeof setTheme>[0]) => {
       startTransition(() => setTheme(nextTheme));
@@ -716,7 +708,6 @@ function PlayerPage() {
       <div className="shrink-0">
         <SettingsDropdown
           locale={locale}
-          onLocaleChange={handleLocaleChange}
           theme={theme}
           onThemeChange={handleThemeChange}
           appearance={appearance}
@@ -743,7 +734,6 @@ function PlayerPage() {
     seamlessSwitch,
     autoDeinterlace,
     pictureEnhancement,
-    handleLocaleChange,
     handleThemeChange,
     handleAppearanceChange,
     setPictureInPictureMode,
