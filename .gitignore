@@ -10,8 +10,6 @@ ffmpeg/
 .codebuddy/
 tvgate.pid
 node_modules/
-/package.json
-/package-lock.json
 test_*.js
 web/dist/*
 !web/dist/.gitkeep
