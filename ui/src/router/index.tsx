@@ -21,7 +21,6 @@ const LogsPage = lazyLoad(() => import("@/views/config/Logs"), "LogsPage");
 const GithubPage = lazyLoad(() => import("@/views/config/Github"), "GithubPage");
 const ConfigBackupPage = lazyLoad(() => import("@/views/config/ConfigBackup"), "ConfigBackupPage");
 const BackupCenterPage = lazyLoad(() => import("@/views/config/BackupCenter"), "BackupCenterPage");
-const GroupConfigPage = lazyLoad(() => import("@/views/config/GroupConfig"), "GroupConfigPage");
 const JXPage = lazyLoad(() => import("@/views/config/JX"), "JXPage");
 const MulticastPage = lazyLoad(() => import("@/views/config/Multicast"), "MulticastPage");
 const TSPage = lazyLoad(() => import("@/views/config/TS"), "TSPage");
@@ -74,7 +73,6 @@ export const router = createHashRouter([
       { path: "github", element: <GithubPage /> },
       { path: "config-backup", element: <ConfigBackupPage /> },
       { path: "backup-center", element: <BackupCenterPage /> },
-      { path: "group-config", element: <GroupConfigPage /> },
       { path: "jx", element: <JXPage /> },
       { path: "multicast", element: <MulticastPage /> },
       { path: "ts", element: <TSPage /> },
