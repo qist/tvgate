@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Play, Pencil, Trash2, X } from "lucide-react";
+import { Check, CircleDashed, Plus, Play, Pencil, Trash2, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -56,7 +56,16 @@ function fmtTime(t?: string): string {
   const d = new Date(t);
   if (isNaN(d.getTime()) || d.getFullYear() < 2000) return "—";
   const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** 时长格式化：兼容纳秒数字（后端 status）与字符串（如 "7ms"，手动 run） */
+function fmtDuration(d?: number | string): string {
+  if (d == null || d === "") return "—";
+  if (typeof d === "string") return d;
+  if (d < 1e6) return `${Math.round(d / 1e3)}μs`;
+  if (d < 1e9) return `${(d / 1e6).toFixed(d < 10e6 ? 1 : 0)}ms`;
+  return `${(d / 1e9).toFixed(2)}s`;
 }
 
 export function TasksPage() {
@@ -144,8 +153,24 @@ export function TasksPage() {
   const run = async (t: Task) => {
     try {
       const r = await runTaskNow({ command: t.command, timeout: t.timeout, key: keyOf(t) });
-      setNotice({ type: r.success ? "ok" : "err", msg: `${r.success ? "执行成功" : "执行失败"} (${r.duration || ""})${r.error ? " " + r.error : ""}` });
-      setTimeout(refresh, 800);
+      const k = keyOf(t);
+      // 立即执行是独立运行的：本地先合并结果到卡片状态，让用户立刻看到（轮询会保留调度器状态）
+      setStatusMap((prev) => {
+        const cur = prev[k] || {};
+        return {
+          ...prev,
+          [k]: {
+            ...cur,
+            ran: true,
+            success: r.success,
+            last_run: new Date().toISOString(),
+            last_duration: r.duration || "",
+            last_message: r.error ? `${r.output || ""}\n${r.error}`.trim() : r.output || "",
+          },
+        };
+      });
+      setNotice({ type: r.success ? "ok" : "err", msg: `${r.success ? "执行成功" : "执行失败"} (${r.duration || "—"})${r.error ? " " + r.error : ""}` });
+      setTimeout(refresh, 1500);
     } catch (e) {
       setNotice({ type: "err", msg: (e as Error).message });
     }
@@ -216,19 +241,32 @@ export function TasksPage() {
 }
 
 function ViewCard({ task, st, onEdit, onRun, onDelete }: { task: Task; st: TaskStatus; onEdit: () => void; onRun: () => void; onDelete: () => void }) {
-  const stClass = st.ran ? (st.success ? "bg-green-600 text-white" : "bg-red-600 text-white") : "bg-muted text-muted-foreground";
-  const stText = st.ran ? (st.success ? "成功" : "失败") : "未执行";
+  const ran = st.ran === true;
+  const ok = ran && st.success === true;
+  const fail = ran && st.success === false;
+  const stClass = fail ? "border-red-400/40 bg-red-500/10 text-red-500" : ok ? "border-green-500/40 bg-green-500/10 text-green-600" : "border-muted bg-muted/40 text-muted-foreground";
+  const stText = fail ? "执行失败" : ok ? "执行成功" : "未执行";
+  const stIcon = fail ? <XCircle className="h-3.5 w-3.5" /> : ok ? <Check className="h-3.5 w-3.5" /> : <CircleDashed className="h-3.5 w-3.5" />;
+  const lastMsg = (st.last_message || "").trim();
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <CardTitle className="text-base">
+        <div className="flex min-w-0 items-center gap-2">
+          <CardTitle className="truncate text-base">
             {task.name || task.command || "(未命名)"}
             {task.group && <span className="ml-2 text-sm font-normal text-muted-foreground">{task.group}</span>}
           </CardTitle>
-          <Badge className={stClass}>{stText}</Badge>
+          <Badge variant="outline" className={stClass}>
+            <span className="flex items-center gap-1">
+              {stIcon}
+              {stText}
+            </span>
+          </Badge>
+          <Badge variant="outline" className={task.enabled ? "border-primary/40 bg-primary/10 text-primary" : "border-border bg-muted/40 text-muted-foreground"}>
+            {task.enabled ? "已启用" : "已停用"}
+          </Badge>
         </div>
-        <div className="flex gap-1.5">
+        <div className="flex shrink-0 gap-1.5">
           <Button variant="secondary" size="sm" onClick={onRun} title="立即执行">
             <Play className="h-4 w-4" />
           </Button>
@@ -240,22 +278,28 @@ function ViewCard({ task, st, onEdit, onRun, onDelete }: { task: Task; st: TaskS
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="space-y-1 text-sm">
-        <Row label="命令" value={task.command || "未设置"} />
-        <Row label="Cron" value={task.cron || "—"} />
-        <Row label="下次执行" value={fmtTime(st.next_run)} />
-        <Row label="最近执行" value={st.ran ? `${fmtTime(st.last_run)}${st.last_duration ? " | " + st.last_duration : ""}` : "—"} />
-        <Row label="执行结果" value={(st.last_message || "—").slice(0, 120)} />
+      <CardContent className="space-y-1.5 text-sm">
+        <Row label="命令" value={task.command || "未设置"} mono />
+        <Row label="Cron" value={task.cron || "—"} mono />
+        <div className="grid gap-1.5 sm:grid-cols-2">
+          <Row label="下次执行" value={fmtTime(st.next_run)} />
+          <Row label="上次执行" value={ran ? `${fmtTime(st.last_run)} · ${fmtDuration(st.last_duration)}` : "—"} />
+        </div>
+        {lastMsg && (
+          <p className={`mt-1 rounded-md border px-2 py-1.5 font-mono text-xs break-all ${fail ? "border-red-400/30 bg-red-500/10 text-red-500" : "border-border bg-background text-foreground"}`}>
+            {lastMsg}
+          </p>
+        )}
       </CardContent>
     </Card>
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="flex gap-3">
       <span className="w-20 shrink-0 text-muted-foreground">{label}</span>
-      <span className="min-w-0 break-all text-foreground">{value}</span>
+      <span className={`min-w-0 break-all text-foreground ${mono ? "font-mono" : ""}`}>{value}</span>
     </div>
   );
 }
