@@ -156,7 +156,7 @@ export function PlayerMediaBadges({ mediaInfo, locale, renderState }: PlayerMedi
           <Badge
             variant="outline"
             size="compact"
-            className="!border-blue-100/20 !bg-blue-950/35 !text-white backdrop-blur-sm"
+            className="!border-violet-100/20 !bg-violet-950/35 !text-white backdrop-blur-sm"
             title={badge.tooltip}
           >
             {badge.value}

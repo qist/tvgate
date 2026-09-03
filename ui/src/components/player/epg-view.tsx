@@ -86,11 +86,11 @@ const EPGProgramItem = memo(function EPGProgramItem({
         <div className="flex shrink-0">
           {playing ? (
             <div
-              className="h-8 w-1 rounded-full bg-[linear-gradient(to_bottom,#3b82f6,#6366f1)] shadow-[0_0_12px_rgba(59,130,246,0.48)] md:h-10"
+              className="h-8 w-1 rounded-full bg-[linear-gradient(to_bottom,#8b5cf6,#6366f1)] shadow-[0_0_12px_rgba(139,92,246,0.48)] md:h-10"
               title={t("nowPlaying")}
             />
           ) : isPast && supportsCatchup ? (
-            <div className="h-8 w-1 rounded-full bg-slate-400/25 dark:bg-blue-100/18 md:h-10" title={t("replay")} />
+            <div className="h-8 w-1 rounded-full bg-slate-400/25 dark:bg-violet-100/18 md:h-10" title={t("replay")} />
           ) : (
             <div className="h-8 md:h-10 w-1 rounded-full bg-transparent" />
           )}
@@ -100,7 +100,7 @@ const EPGProgramItem = memo(function EPGProgramItem({
           <span
             className={clsx(
               "whitespace-nowrap font-semibold text-xs tabular-nums leading-tight md:text-sm",
-              playing && "text-blue-700 dark:text-blue-200",
+              playing && "text-violet-700 dark:text-violet-200",
             )}
           >
             {formatTime(program.start)}
@@ -120,12 +120,12 @@ const EPGProgramItem = memo(function EPGProgramItem({
         <div className="flex h-8 md:h-10 w-3 md:w-4 shrink-0 items-center justify-center">
           {onAir && (
             <span title={t("onAir")}>
-              <Circle className="h-2.5 w-2.5 fill-current text-blue-500 drop-shadow-[0_0_5px_rgba(59,130,246,0.65)] md:h-3 md:w-3" />
+              <Circle className="h-2.5 w-2.5 fill-current text-violet-500 drop-shadow-[0_0_5px_rgba(139,92,246,0.65)] md:h-3 md:w-3" />
             </span>
           )}
           {isPast && supportsCatchup && (
             <span title={t("replay")}>
-              <History className="h-3 w-3 text-slate-400 dark:text-blue-100/45 md:h-3.5 md:w-3.5" />
+              <History className="h-3 w-3 text-slate-400 dark:text-violet-100/45 md:h-3.5 md:w-3.5" />
             </span>
           )}
         </div>
@@ -180,8 +180,8 @@ const EPGProgramList = memo(function EPGProgramList({
     const date = new Date(dateKey);
     return (
       <div key={dateKey} className="relative">
-        <div className="player-performance-epg-header sticky top-0 z-10 border-blue-950/10 border-b bg-white/66 px-3 py-1.5 shadow-[0_8px_20px_rgba(30,64,175,0.06)] backdrop-blur-2xl dark:border-blue-100/10 dark:bg-[linear-gradient(90deg,#151c32,#25223f)] dark:shadow-[0_8px_20px_rgba(0,0,0,0.18)] md:px-4 md:py-2">
-          <h3 className="font-semibold text-blue-800 text-xs tracking-wide dark:text-blue-100 md:text-sm">
+        <div className="player-performance-epg-header sticky top-0 z-10 border-violet-950/10 border-b bg-white/66 px-3 py-1.5 shadow-[0_8px_20px_rgba(91,33,182,0.06)] backdrop-blur-2xl dark:border-violet-100/10 dark:bg-[linear-gradient(90deg,#151c32,#25223f)] dark:shadow-[0_8px_20px_rgba(0,0,0,0.18)] md:px-4 md:py-2">
+          <h3 className="font-semibold text-violet-800 text-xs tracking-wide dark:text-violet-100 md:text-sm">
             {formatRelativeDate(date)}
           </h3>
         </div>

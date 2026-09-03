@@ -11,7 +11,7 @@ import { PlayerSelectedGlassLayers } from "./player-selected-glass-layers";
 const FADE_OUT_MS = 200;
 
 const ICON_CLASS =
-  "h-7 w-7 shrink-0 text-blue-100 drop-shadow-[0_0_14px_rgba(59,130,246,0.5)] md:h-9 md:w-9 [@container_video_(max-height:_320px)]:h-6 [@container_video_(max-height:_320px)]:w-6 md:[@container_video_(max-height:_320px)]:h-6 md:[@container_video_(max-height:_320px)]:w-6";
+  "h-7 w-7 shrink-0 text-violet-100 drop-shadow-[0_0_14px_rgba(139,92,246,0.5)] md:h-9 md:w-9 [@container_video_(max-height:_320px)]:h-6 [@container_video_(max-height:_320px)]:w-6 md:[@container_video_(max-height:_320px)]:h-6 md:[@container_video_(max-height:_320px)]:w-6";
 
 function formatSeekDelta(deltaSeconds: number): string {
   const rounded = Math.round(deltaSeconds);
@@ -33,13 +33,13 @@ function VolumeIndicator({ volume }: { volume: number }) {
       ) : (
         <Volume2 className={ICON_CLASS} />
       )}
-      <div className="h-1.5 w-28 overflow-hidden rounded-full bg-blue-50/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.45)] ring-1 ring-white/10 md:w-40">
+      <div className="h-1.5 w-28 overflow-hidden rounded-full bg-violet-50/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.45)] ring-1 ring-white/10 md:w-40">
         <div
-          className="player-performance-progress-fill h-full rounded-full bg-[linear-gradient(90deg,#3b82f6_0%,#38bdf8_52%,#6366f1_100%)] shadow-[0_0_18px_rgba(59,130,246,0.4)]"
+          className="player-performance-progress-fill h-full rounded-full bg-[linear-gradient(90deg,#8b5cf6_0%,#38bdf8_52%,#6366f1_100%)] shadow-[0_0_18px_rgba(139,92,246,0.4)]"
           style={{ width: `${percent}%` }}
         />
       </div>
-      <span className="w-10 shrink-0 text-right font-semibold text-blue-50 text-sm tabular-nums md:text-base">
+      <span className="w-10 shrink-0 text-right font-semibold text-violet-50 text-sm tabular-nums md:text-base">
         {percent}%
       </span>
     </>
@@ -61,7 +61,7 @@ function ChannelIndicator({
       <Chevron className={ICON_CLASS} />
       {target ? (
         <>
-          <span className="shrink-0 rounded-md bg-blue-100/10 px-1.5 py-0.5 font-semibold text-blue-50/65 text-xs ring-1 ring-blue-100/10 md:text-sm">
+          <span className="shrink-0 rounded-md bg-violet-100/10 px-1.5 py-0.5 font-semibold text-violet-50/65 text-xs ring-1 ring-violet-100/10 md:text-sm">
             {target.id}
           </span>
           <span className="max-w-[40vw] truncate font-bold text-sm text-white md:text-lg">{target.name}</span>

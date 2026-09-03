@@ -36,11 +36,11 @@ interface SettingsDropdownProps {
   showVideoProcessing?: boolean;
 }
 
-const SETTING_LABEL_CLASS = "block px-0.5 font-medium text-slate-500 text-xs leading-4 dark:text-blue-50/55";
+const SETTING_LABEL_CLASS = "block px-0.5 font-medium text-slate-500 text-xs leading-4 dark:text-violet-50/55";
 const SETTING_SWITCH_CLASS = "min-h-6 gap-3 px-0.5";
-const SETTING_SWITCH_LABEL_CLASS = "flex-1 font-medium text-slate-600 text-xs leading-4 dark:text-blue-50/65";
+const SETTING_SWITCH_LABEL_CLASS = "flex-1 font-medium text-slate-600 text-xs leading-4 dark:text-violet-50/65";
 const SETTING_SWITCH_CONTROL_CLASS =
-  "border-blue-900/10 bg-slate-200/75 shadow-inner data-[state=checked]:border-blue-300/35 data-[state=checked]:bg-blue-500 data-[state=checked]:shadow-[0_0_16px_rgba(59,130,246,0.24)] dark:border-blue-100/10 dark:bg-slate-800/80";
+  "border-violet-900/10 bg-slate-200/75 shadow-inner data-[state=checked]:border-violet-300/35 data-[state=checked]:bg-violet-500 data-[state=checked]:shadow-[0_0_16px_rgba(139,92,246,0.24)] dark:border-violet-100/10 dark:bg-slate-800/80";
 const SETTINGS_POPOVER_ID = "player-settings-popover";
 
 interface SettingSelectProps<Value extends string> {
@@ -137,7 +137,7 @@ function SettingsDropdownComponent({
         aria-haspopup="dialog"
         aria-expanded={isOpen}
         aria-controls={SETTINGS_POPOVER_ID}
-        className="player-performance-effect player-performance-motion flex size-8 cursor-pointer items-center justify-center rounded-xl border border-transparent p-0 text-slate-500 transition-[color,background-color,border-color,box-shadow,transform] motion-reduce:transition-none hover:border-blue-400/20 hover:bg-blue-400/10 hover:text-blue-700 hover:shadow-[0_0_18px_rgba(59,130,246,0.1)] motion-safe:active:scale-95 dark:text-slate-400 dark:hover:text-blue-200 md:size-9"
+        className="player-performance-effect player-performance-motion flex size-8 cursor-pointer items-center justify-center rounded-xl border border-transparent p-0 text-slate-500 transition-[color,background-color,border-color,box-shadow,transform] motion-reduce:transition-none hover:border-violet-400/20 hover:bg-violet-400/10 hover:text-violet-700 hover:shadow-[0_0_18px_rgba(139,92,246,0.1)] motion-safe:active:scale-95 dark:text-slate-400 dark:hover:text-violet-200 md:size-9"
         title={t("settings")}
       >
         <Settings className="h-5 w-5" />
@@ -148,7 +148,7 @@ function SettingsDropdownComponent({
           id={SETTINGS_POPOVER_ID}
           role="dialog"
           aria-label={t("settings")}
-          className="player-performance-panel-background player-performance-effect player-performance-gradient absolute top-full right-0 z-50 mt-1 max-h-[calc(100vh-4rem)] w-60 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl border border-blue-900/12 bg-[linear-gradient(145deg,rgba(255,255,255,0.9),rgba(238,242,255,0.82))] p-0 shadow-[0_20px_55px_rgba(30,64,175,0.18),inset_0_1px_0_rgba(255,255,255,0.82)] backdrop-blur-2xl dark:border-blue-100/15 dark:bg-[linear-gradient(145deg,rgba(7,20,43,0.94),rgba(26,24,72,0.9))] dark:shadow-[0_22px_60px_rgba(1,7,24,0.62),inset_0_1px_0_rgba(255,255,255,0.08)]"
+          className="player-performance-panel-background player-performance-effect player-performance-gradient absolute top-full right-0 z-50 mt-1 max-h-[calc(100vh-4rem)] w-60 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-2xl border border-violet-900/12 bg-[linear-gradient(145deg,rgba(255,255,255,0.9),rgba(238,242,255,0.82))] p-0 shadow-[0_20px_55px_rgba(91,33,182,0.18),inset_0_1px_0_rgba(255,255,255,0.82)] backdrop-blur-2xl dark:border-violet-100/15 dark:bg-[linear-gradient(145deg,rgba(16,10,40,0.94),rgba(32,22,84,0.9))] dark:shadow-[0_22px_60px_rgba(9,4,26,0.62),inset_0_1px_0_rgba(255,255,255,0.08)]"
         >
           <div className="space-y-2.5 p-2.5">
             <SettingSelect
@@ -198,9 +198,9 @@ function SettingsDropdownComponent({
                 Both only take effect for 1080p-and-below content, so the
                 resolution caveat is stated once as a shared group note. */}
             {showVideoProcessing && (
-              <div className="space-y-2.5 border-blue-900/10 border-t pt-2.5 dark:border-blue-100/10">
+              <div className="space-y-2.5 border-violet-900/10 border-t pt-2.5 dark:border-violet-100/10">
                 <div className="px-0.5">
-                  <span className="block whitespace-nowrap text-[11px] text-slate-400 leading-4 dark:text-blue-50/35">
+                  <span className="block whitespace-nowrap text-[11px] text-slate-400 leading-4 dark:text-violet-50/35">
                     {t("resolutionLimitHint")}
                   </span>
                 </div>

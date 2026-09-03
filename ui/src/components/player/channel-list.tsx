@@ -223,9 +223,9 @@ function ChannelListComponent({
               value={searchQuery}
               onChange={handleSearchInputChange}
               onKeyDown={handleSearchKeyDown}
-              className="player-performance-input-background player-performance-motion h-8 w-full rounded-xl border border-blue-900/10 bg-white/78 px-3 py-0 pl-8 text-slate-800 text-xs shadow-none transition placeholder:text-slate-400 focus:border-ring/60 focus:outline-none focus:ring-2 focus:ring-ring/20 dark:border-blue-100/10 dark:bg-slate-900/85 dark:text-blue-50 dark:placeholder:text-slate-500 md:h-9 md:pl-9 md:text-sm"
+              className="player-performance-input-background player-performance-motion h-8 w-full rounded-xl border border-violet-900/10 bg-white/78 px-3 py-0 pl-8 text-slate-800 text-xs shadow-none transition placeholder:text-slate-400 focus:border-ring/60 focus:outline-none focus:ring-2 focus:ring-ring/20 dark:border-violet-100/10 dark:bg-slate-900/85 dark:text-violet-50 dark:placeholder:text-slate-500 md:h-9 md:pl-9 md:text-sm"
             />
-            <Search className="absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-blue-600/65 dark:text-blue-300/55 md:h-4 md:w-4" />
+            <Search className="absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-violet-600/65 dark:text-violet-300/55 md:h-4 md:w-4" />
           </div>
           {settingsSlot && <div className="shrink-0">{settingsSlot}</div>}
         </div>
@@ -233,7 +233,7 @@ function ChannelListComponent({
 
       {/* Groups */}
       {groups && groups.length > 0 && (
-        <div className="player-performance-channel-groups mt-2 border-blue-950/10 border-y bg-[linear-gradient(90deg,rgba(224,242,254,0.55),rgba(238,242,255,0.68))] px-2 py-2 backdrop-blur-xl dark:border-blue-100/10 dark:bg-[linear-gradient(90deg,rgba(4,19,42,0.6),rgba(20,17,58,0.58))]">
+        <div className="player-performance-channel-groups mt-2 border-violet-950/10 border-y bg-[linear-gradient(90deg,rgba(224,242,254,0.55),rgba(238,242,255,0.68))] px-2 py-2 backdrop-blur-xl dark:border-violet-100/10 dark:bg-[linear-gradient(90deg,rgba(4,19,42,0.6),rgba(20,17,58,0.58))]">
           <div className="flex flex-wrap items-center gap-1.5">
             {[null, ...groups].map((group) => (
               <button
@@ -243,8 +243,8 @@ function ChannelListComponent({
                 className={clsx(
                   "player-performance-effect player-performance-motion min-h-7 max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-full border px-2.5 py-1 font-medium text-xs leading-none transition-[color,background-color,border-color,box-shadow]",
                   selectedGroup === group
-                    ? "player-performance-group-selected border-blue-400/30 bg-blue-500/10 text-blue-700 shadow-[0_4px_12px_rgba(37,99,235,0.1)] dark:border-blue-300/20 dark:bg-blue-400/14 dark:text-blue-200 dark:shadow-[0_4px_12px_rgba(37,99,235,0.08)]"
-                    : "player-performance-group-default cursor-pointer border border-blue-900/8 bg-white/55 text-slate-500 hover:border-blue-400/30 hover:bg-blue-50/80 hover:text-blue-800 dark:border-blue-100/10 dark:bg-slate-950/35 dark:text-slate-400 dark:hover:bg-blue-300/10 dark:hover:text-blue-100",
+                    ? "player-performance-group-selected border-violet-400/30 bg-violet-500/10 text-violet-700 shadow-[0_4px_12px_rgba(124,58,237,0.1)] dark:border-violet-300/20 dark:bg-violet-400/14 dark:text-violet-200 dark:shadow-[0_4px_12px_rgba(124,58,237,0.08)]"
+                    : "player-performance-group-default cursor-pointer border border-violet-900/8 bg-white/55 text-slate-500 hover:border-violet-400/30 hover:bg-violet-50/80 hover:text-violet-800 dark:border-violet-100/10 dark:bg-slate-950/35 dark:text-slate-400 dark:hover:bg-violet-300/10 dark:hover:text-violet-100",
                 )}
               >
                 {group ?? t("allChannels")}

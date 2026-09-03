@@ -226,7 +226,7 @@ html.player-theme-simple .player-performance-error-background {
 }
 
 html.dark.player-theme-simple .player-performance-page-background {
-  background-color: #050b18;
+  background-color: #070516;
 }
 
 html.player-theme-simple .player-performance-video-background {
@@ -313,12 +313,12 @@ html.player-theme-simple .player-performance-progress-track {
 }
 
 html.player-theme-simple .player-performance-progress-fill {
-  background-color: #3b82f6;
+  background-color: #8b5cf6;
   background-image: none;
 }
 
 html.player-theme-simple .player-performance-logo-background {
-  background-color: #0f2a48;
+  background-color: #2a1d52;
   background-image: none;
 }
 
@@ -328,16 +328,16 @@ html.player-theme-simple .player-performance-epg-header {
 }
 
 html.dark.player-theme-simple .player-performance-epg-header {
-  background-color: #050b18;
+  background-color: #070516;
 }
 
 html.player-theme-simple .player-performance-list-surface-selected {
-  background-color: #dbeafe;
+  background-color: #ede9fe;
   background-image: none;
 }
 
 html.dark.player-theme-simple .player-performance-list-surface-selected {
-  background-color: #172554;
+  background-color: #2e1065;
 }
 
 html.player-theme-simple .player-performance-list-surface-default {
@@ -366,22 +366,22 @@ html.player-theme-simple .player-performance-channel-groups {
 }
 
 html.dark.player-theme-simple .player-performance-channel-groups {
-  background-color: #172033;
+  background-color: #1d1636;
 }
 
 html.player-theme-simple .player-performance-group-selected,
 html.player-theme-simple .player-performance-channel-number-selected {
-  background-color: #bfdbfe;
+  background-color: #ddd6fe;
   background-image: none;
 }
 
 html.dark.player-theme-simple .player-performance-group-selected,
 html.dark.player-theme-simple .player-performance-channel-number-selected {
-  background-color: #1e3a8a;
+  background-color: #4c1d95;
 }
 
 html.player-theme-simple .player-performance-channel-number-default {
-  background-color: #dbeafe;
+  background-color: #ede9fe;
   background-image: none;
 }
 

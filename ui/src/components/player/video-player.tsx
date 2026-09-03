@@ -230,22 +230,22 @@ function PlayerTopLeftOverlay({
     >
       <PlayerSelectedGlassLayers />
       <div className="relative z-10 flex min-w-0 items-center gap-1.5 md:gap-2 [@container_video_(max-height:_320px)]:gap-1 md:[@container_video_(max-height:_320px)]:gap-1">
-        <span className="shrink-0 font-medium text-xs text-blue-50 tabular-nums drop-shadow-sm md:text-base md:[@container_video_(max-height:_320px)]:text-xs">
+        <span className="shrink-0 font-medium text-xs text-violet-50 tabular-nums drop-shadow-sm md:text-base md:[@container_video_(max-height:_320px)]:text-xs">
           {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </span>
         {loading && (
           <>
             <span
-              className="shrink-0 text-blue-100/35 text-xs md:text-sm md:[@container_video_(max-height:_320px)]:text-xs"
+              className="shrink-0 text-violet-100/35 text-xs md:text-sm md:[@container_video_(max-height:_320px)]:text-xs"
               aria-hidden="true"
             >
               ·
             </span>
             <div className="relative h-3 w-3 shrink-0 md:h-3.5 md:w-3.5 md:[@container_video_(max-height:_320px)]:h-3 md:[@container_video_(max-height:_320px)]:w-3">
-              <div className="absolute inset-0 rounded-full border border-blue-100/25" />
-              <div className="player-performance-loading-spinner absolute inset-0 animate-spin rounded-full border border-blue-200 border-t-transparent shadow-[0_0_8px_rgba(147,197,253,0.5)]" />
+              <div className="absolute inset-0 rounded-full border border-violet-100/25" />
+              <div className="player-performance-loading-spinner absolute inset-0 animate-spin rounded-full border border-violet-200 border-t-transparent shadow-[0_0_8px_rgba(196,181,253,0.5)]" />
             </div>
-            <span className="min-w-0 truncate text-blue-50/70 text-xs md:text-sm md:[@container_video_(max-height:_320px)]:text-xs">
+            <span className="min-w-0 truncate text-violet-50/70 text-xs md:text-sm md:[@container_video_(max-height:_320px)]:text-xs">
               {loadingText}
             </span>
           </>
@@ -1756,7 +1756,7 @@ function VideoPlayerComponent({
       role="application"
       ref={playerSurfaceRef}
       className={clsx(
-        "player-performance-video-background dark @container-size/video relative flex aspect-video w-full min-h-0 items-center justify-center bg-[radial-gradient(circle_at_50%_35%,#102044_0%,#050b18_58%,#01030a_100%)]",
+        "player-performance-video-background dark @container-size/video relative flex aspect-video w-full min-h-0 items-center justify-center bg-[radial-gradient(circle_at_50%_35%,#102044_0%,#070516_58%,#01030a_100%)]",
         isDocumentPiP ? "h-screen min-h-screen aspect-auto" : "md:aspect-auto md:h-full",
         !showControls && "cursor-none",
       )}
@@ -1844,7 +1844,7 @@ function VideoPlayerComponent({
                 src={channel.logo}
                 alt={channel.name}
                 referrerPolicy="no-referrer"
-                className="relative z-10 h-8 w-20 object-contain drop-shadow-[0_0_14px_rgba(147,197,253,0.2)] md:h-14 md:w-36 [@container_video_(max-height:_320px)]:h-6 [@container_video_(max-height:_320px)]:w-16 md:[@container_video_(max-height:_320px)]:h-6 md:[@container_video_(max-height:_320px)]:w-16 [@container_video_(max-height:_220px)]:hidden"
+                className="relative z-10 h-8 w-20 object-contain drop-shadow-[0_0_14px_rgba(196,181,253,0.2)] md:h-14 md:w-36 [@container_video_(max-height:_320px)]:h-6 [@container_video_(max-height:_320px)]:w-16 md:[@container_video_(max-height:_320px)]:h-6 md:[@container_video_(max-height:_320px)]:w-16 [@container_video_(max-height:_220px)]:hidden"
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = "none";
                 }}
@@ -1856,8 +1856,8 @@ function VideoPlayerComponent({
                   className={clsx(
                     "player-performance-motion shrink-0 rounded-md px-1 py-0.5 font-semibold text-[10px] transition-[color,background-color,box-shadow,scale] duration-300 md:px-1.5 md:text-xs md:[@container_video_(max-height:_320px)]:px-1 md:[@container_video_(max-height:_320px)]:text-[10px]",
                     digitBuffer
-                      ? "scale-110 bg-blue-600 bg-[linear-gradient(135deg,#3b82f6,#6366f1)] text-white shadow-[0_0_20px_rgba(59,130,246,0.45)] ring-2 ring-blue-200/40"
-                      : "bg-blue-100/10 text-blue-50/65 ring-1 ring-blue-100/10",
+                      ? "scale-110 bg-violet-600 bg-[linear-gradient(135deg,#8b5cf6,#6366f1)] text-white shadow-[0_0_20px_rgba(139,92,246,0.45)] ring-2 ring-violet-200/40"
+                      : "bg-violet-100/10 text-violet-50/65 ring-1 ring-violet-100/10",
                   )}
                 >
                   {digitBuffer || channel.id}
@@ -1867,10 +1867,10 @@ function VideoPlayerComponent({
                 </h2>
                 {channel.groups.length > 0 && (
                   <>
-                    <span className="hidden text-blue-100/35 text-xs sm:inline md:text-sm [@container_video_(max-height:_320px)]:hidden md:[@container_video_(max-height:_320px)]:hidden">
+                    <span className="hidden text-violet-100/35 text-xs sm:inline md:text-sm [@container_video_(max-height:_320px)]:hidden md:[@container_video_(max-height:_320px)]:hidden">
                       ·
                     </span>
-                    <div className="hidden truncate text-blue-50/65 text-xs sm:block md:text-sm [@container_video_(max-height:_320px)]:hidden md:[@container_video_(max-height:_320px)]:hidden">
+                    <div className="hidden truncate text-violet-50/65 text-xs sm:block md:text-sm [@container_video_(max-height:_320px)]:hidden md:[@container_video_(max-height:_320px)]:hidden">
                       {channel.groups.join(" / ")}
                     </div>
                   </>
@@ -1888,10 +1888,10 @@ function VideoPlayerComponent({
           onClick={handleUserInteraction}
         >
           <div className="flex flex-col items-center gap-4 text-white">
-            <Play className="h-20 w-20 fill-blue-100/20 text-blue-100 opacity-95 drop-shadow-[0_0_24px_rgba(59,130,246,0.55)]" />
+            <Play className="h-20 w-20 fill-violet-100/20 text-violet-100 opacity-95 drop-shadow-[0_0_24px_rgba(139,92,246,0.55)]" />
             <div className="max-w-lg px-2 text-center">
-              <div className="mb-2 font-semibold text-2xl tracking-tight text-blue-50">{t("clickToPlay")}</div>
-              <div className="text-pretty text-blue-50/65 text-sm leading-5">{t("autoplayBlocked")}</div>
+              <div className="mb-2 font-semibold text-2xl tracking-tight text-violet-50">{t("clickToPlay")}</div>
+              <div className="text-pretty text-violet-50/65 text-sm leading-5">{t("autoplayBlocked")}</div>
             </div>
           </div>
         </button>
@@ -2036,13 +2036,13 @@ function VideoPlayerComponent({
   return (
     <div
       className={clsx(
-        "player-performance-video-background relative w-full bg-[radial-gradient(circle_at_50%_35%,#102044_0%,#050b18_58%,#01030a_100%)] pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] md:h-full",
+        "player-performance-video-background relative w-full bg-[radial-gradient(circle_at_50%_35%,#102044_0%,#070516_58%,#01030a_100%)] pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] md:h-full",
         showSidebar && "md:pr-0",
       )}
     >
       <div ref={playerDockRef} className="contents">
         {isDocumentPiP && (
-          <div className="@container-size/video relative flex aspect-video w-full min-h-0 items-center justify-center bg-[radial-gradient(circle_at_center,#102044_0%,#050b18_62%,#01030a_100%)] px-4 text-center font-medium text-blue-50/65 text-sm md:aspect-auto md:h-full md:text-base">
+          <div className="@container-size/video relative flex aspect-video w-full min-h-0 items-center justify-center bg-[radial-gradient(circle_at_center,#102044_0%,#070516_62%,#01030a_100%)] px-4 text-center font-medium text-violet-50/65 text-sm md:aspect-auto md:h-full md:text-base">
             {t("playingInPictureInPicture")}
           </div>
         )}
