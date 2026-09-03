@@ -22,6 +22,7 @@ import (
 	"github.com/qist/tvgate/handler"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
+	"github.com/qist/tvgate/php"
 	"github.com/qist/tvgate/stream"
 	httpclient "github.com/qist/tvgate/utils/http"
 )
@@ -301,7 +302,7 @@ func (h *Handler) ServePull(w http.ResponseWriter, r *http.Request) {
 
 	// 子路径：优先按「短 token」查真实上游 URL（m3u8 重写时登记），否则回退同源/来源解析。
 	if sub != "" {
-		if ch.Scheme != "http" && ch.Scheme != "https" {
+		if ch.Scheme != "http" && ch.Scheme != "https" && ch.Scheme != "php" {
 			http.Error(w, "sub resource not allowed", http.StatusForbidden)
 			return
 		}
@@ -340,11 +341,103 @@ func (h *Handler) ServePull(w http.ResponseWriter, r *http.Request) {
 		r2 := r.Clone(r.Context())
 		r2.URL = &url.URL{Path: "/rtsp/" + addr, RawQuery: r.URL.RawQuery}
 		handler.RtspToHTTPHandler(w, r2)
+	case "php":
+		h.servePHP(w, r, ch)
 	case "http", "https":
 		h.serveHTTP(w, r, ch, ch.RawURL)
 	default:
 		http.Error(w, "unsupported scheme", http.StatusBadRequest)
 	}
+}
+
+// servePHP 内部执行 php:// 频道源脚本（如 php://php/akmg.php?id=cctv1）：
+// 不走 HTTP 回环、无 IP 依赖，直接由内嵌 phpgo 解释器执行并捕获输出。
+// 输出处理：
+//   - 302/Location（akmg 类解析脚本）→ 以解析出的真实源地址走 http 拉流链路
+//     （代理组 + 重定向跟随 + m3u8 分片重写）
+//   - 输出体为 m3u8 → 同 http 源：分片重写为受控短地址
+//   - 其他输出（TS 连流等）→ 原样透传
+func (h *Handler) servePHP(w http.ResponseWriter, r *http.Request, ch *Channel) {
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	raw := strings.TrimPrefix(ch.RawURL, "php://")
+	rel := raw
+	query := url.Values{}
+	if i := strings.Index(raw, "?"); i >= 0 {
+		rel = raw[:i]
+		if q, err := url.ParseQuery(raw[i+1:]); err == nil {
+			query = q
+		}
+	}
+	// 剔除 token 参数，避免进入脚本 $_GET
+	if gt := auth.GetGlobalTokenManager(); gt != nil {
+		param := gt.TokenParamName
+		if param == "" {
+			param = "my_token"
+		}
+		query.Del(param)
+	}
+
+	status, hdr, body, err := php.Capture(rel, query)
+	if err != nil {
+		logger.LogPrintf("[player] php 源执行失败 key=%s src=%s err=%v", ch.Key, ch.RawURL, err)
+		http.Error(w, "php source failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// 脚本输出 Location：解析出的真实源地址 → 按 http 源继续拉流
+	if loc := strings.TrimSpace(hdr.Get("Location")); loc != "" {
+		if strings.HasPrefix(loc, "http://") || strings.HasPrefix(loc, "https://") {
+			logger.LogPrintf("[player] php 源解析成功 key=%s loc=%s", ch.Key, func() string {
+				if u, err := url.Parse(loc); err == nil {
+					return u.Host
+				}
+				return "(parse failed)"
+			}())
+			h.serveHTTP(w, r, ch, loc)
+			return
+		}
+		logger.LogPrintf("[player] php 源 Location 不支持 key=%s loc=%s", ch.Key, loc)
+		http.Error(w, "php source redirect unsupported", http.StatusBadGateway)
+		return
+	}
+
+	// 输出体：合成响应，复用 m3u8 重写/透传管线
+	ct := hdr.Get("Content-Type")
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	if ct == "" && len(trimmed) > 0 {
+		if bytes.HasPrefix(trimmed, []byte("#EXTM3U")) {
+			ct = "application/vnd.apple.mpegurl"
+		} else if len(trimmed) >= 188 && trimmed[0] == 0x47 {
+			ct = "video/mp2t"
+		}
+	}
+	base := "php://" + rel
+	hdr.Set("Content-Type", ct)
+	synth := &http.Response{
+		StatusCode: status,
+		Status:     fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		Header:     hdr,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+	if isM3U8(ct, base) {
+		rewritten, origin, tokens, werr := rewrittenM3U8(synth.Body, base, ch.Key)
+		if werr != nil && len(rewritten) == 0 {
+			http.Error(w, "read m3u8 failed", http.StatusBadGateway)
+			return
+		}
+		if origin != "" {
+			h.segOrigins.Store(ch.Key, &segOrigin{origin: origin, until: time.Now().Add(segOriginTTL)})
+		}
+		h.storeResources(ch.Key, tokens)
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(rewritten)
+		return
+	}
+	stream.HandleProxyResponse(ctx, w, r, base, synth, func() {})
 }
 
 // serveHTTP 代理拉取远程 http(s) 源到受控端点。

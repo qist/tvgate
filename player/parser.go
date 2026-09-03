@@ -165,7 +165,7 @@ func parseTXT(content []byte, src string) ([]*Channel, EPGSource) {
 }
 
 func schemeOf(u string) string {
-	for _, s := range []string{"udp://", "rtp://", "rtsp://", "https://", "http://"} {
+	for _, s := range []string{"udp://", "rtp://", "rtsp://", "php://", "https://", "http://"} {
 		if strings.HasPrefix(u, s) {
 			return strings.TrimSuffix(s, "://")
 		}
