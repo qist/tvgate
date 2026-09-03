@@ -86,7 +86,8 @@ export function Dashboard() {
             <Row label="负载" value={status.load ? `${status.load.load1 ?? "—"} / ${status.load.load5 ?? "—"} / ${status.load.load15 ?? "—"}` : "—"} />
             <Row label="内存用量" value={status.mem_used != null ? fmtBytes(status.mem_used) : "—"} />
             <Row label="交换分区" value={status.swap != null ? `${status.swap}%` : "—"} />
-            <Row label="CPU 温度" value={status.cpu_temperature != null ? `${status.cpu_temperature}℃` : "—"} />
+            <Row label="CPU 温度" value={status.cpu_temperature != null && status.cpu_temperature > 0 ? `${status.cpu_temperature}℃` : "不支持"} />
+            <Row label="启动时间" value={status.start_time ? new Date(status.start_time).toLocaleString("zh-CN", { hour12: false }) : "—"} />
             <Row label="Goroutines" value={status.goroutines != null ? String(status.goroutines) : "—"} />
             <Row label="客户端 IP" value={status.client_ip || "—"} />
             <Row label="进程 CPU" value={status.app?.cpu_percent != null ? `${status.app.cpu_percent}%` : "—"} />

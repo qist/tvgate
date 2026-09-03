@@ -42,8 +42,7 @@ export interface SystemStatus {
   interfaces?: Array<{ name?: string; bytes_recv?: number; bytes_sent?: number; packets_recv?: number; packets_sent?: number; recv_bandwidth?: number; send_bandwidth?: number }>;
   disk_partitions?: Array<{ path?: string; total?: number; used?: number; free?: number; used_percent?: number; fs_type?: string; mount_point?: string }>;
   app?: { cpu_percent?: number; memory_usage?: number; total_bytes?: number; in_bytes?: number; out_bytes?: number };
-  proxy_groups?: number;
-  proxy_group_stats?: Record<string, { connections?: number; bytes_transferred?: number; active_streams?: number; last_error?: string; last_activity?: string }>;
+  start_time?: string;
   goroutines?: number;
   client_ip?: string;
   web_path?: string;

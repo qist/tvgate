@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+
 	// "fmt"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -104,8 +105,8 @@ type TrafficStats struct {
 	CPUCount        int
 	MemoryUsage     uint64
 	MemoryTotal     uint64
-	SwapUsage       uint64  // SWAP使用量
-	SwapTotal       uint64  // SWAP总量
+	SwapUsage       uint64 // SWAP使用量
+	SwapTotal       uint64 // SWAP总量
 	DiskUsage       uint64
 	DiskTotal       uint64
 	DiskUsedPercent float64
@@ -136,7 +137,6 @@ var GlobalTrafficStats = &TrafficStats{
 }
 
 // -------------------- 深拷贝方法 --------------------
-
 
 // GetTrafficStats 获取流量统计信息的深拷贝
 func (ts *TrafficStats) GetTrafficStats() *TrafficStats {
@@ -248,11 +248,11 @@ var (
 	totalOut          uint64
 
 	// 主机信息缓存（静态信息，只需获取一次）
-	cachedHostOS           string
-	cachedHostPlatform     string
-	cachedHostKernelArch   string
+	cachedHostOS            string
+	cachedHostPlatform      string
+	cachedHostKernelArch    string
 	cachedHostKernelVersion string
-	hostInfoCached         bool
+	hostInfoCached          bool
 
 	// 温度缓存
 	lastTemperatureSample time.Time
@@ -298,16 +298,18 @@ func getTemperature() float64 {
 		return maxTemp
 	}
 
-	// 如果没有明确 CPU 传感器，取最高温度
-	maxTemp := temps[0].Temperature
-	// bestSensor := temps[0].SensorKey
+	// 如果没有明确 CPU 传感器，取最高有效温度（过滤 <20℃ 的无效值，
+	// 如虚拟机上报表的负数/常温伪传感器，避免显示 -0.9℃ 这类异常温度）
+	maxTemp := -1.0
 	for _, t := range temps {
-		if t.Temperature > maxTemp {
+		if t.Temperature >= 20 && t.Temperature > maxTemp {
 			maxTemp = t.Temperature
-			// bestSensor = t.SensorKey
 		}
 	}
-	// fmt.Printf("DEBUG: Using highest temperature sensor: %s = %.2f°C\n", bestSensor, maxTemp)
+	if maxTemp < 0 {
+		// 无任何有效温度数据（如虚拟机环境无传感器）
+		return -1
+	}
 	return maxTemp
 }
 
@@ -476,9 +478,9 @@ func updateSystemStats() {
 		hostInfoCached = true
 	}
 	hostDetails := HostInfo{
-		OS:           cachedHostOS,
-		Platform:     cachedHostPlatform,
-		KernelArch:   cachedHostKernelArch,
+		OS:            cachedHostOS,
+		Platform:      cachedHostPlatform,
+		KernelArch:    cachedHostKernelArch,
 		KernelVersion: cachedHostKernelVersion,
 	}
 
@@ -624,8 +626,8 @@ func updateAppStats(ts *TrafficStats) {
 	// ts.App.OutboundBandwidth = outBW
 	ts.App.LastUpdate = now
 	// ts.App.PrevIOCounters = &process.IOCountersStat{
-		// ReadBytes:  inBytes,
-		// WriteBytes: outBytes,
+	// ReadBytes:  inBytes,
+	// WriteBytes: outBytes,
 	// }
 
 	// ---------------- 累加总流量 ----------------

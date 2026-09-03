@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/monitor"
 )
 
@@ -101,18 +102,6 @@ func (h *ConfigHandler) handleV1Status(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// 代理组实时流量统计
-	groups := make(map[string]map[string]interface{}, len(ts.ProxyGroupStats))
-	for name, g := range ts.ProxyGroupStats {
-		groups[name] = map[string]interface{}{
-			"connections":       g.Connections,
-			"bytes_transferred": g.BytesTransferred,
-			"active_streams":    g.ActiveStreams,
-			"last_error":        g.LastError,
-			"last_activity":     g.LastActivity.Format(time.RFC3339),
-		}
-	}
-
 	resp := map[string]interface{}{
 		"version":           sd.Version,
 		"os":                ts.HostInfo.OS + "/" + ts.HostInfo.KernelArch,
@@ -120,8 +109,9 @@ func (h *ConfigHandler) handleV1Status(w http.ResponseWriter, r *http.Request) {
 		"kernel_arch":       ts.HostInfo.KernelArch,
 		"kernel_version":    ts.HostInfo.KernelVersion,
 		"uptime":            int64(sd.Uptime.Seconds()),
+		"start_time":        config.StartTime.Format(time.RFC3339),
 		"cpu":               round1(ts.CPUUsage),
-		"cpu_temperature":   round1(ts.CPUTemperature),
+		"cpu_temperature":   tempOrNull(ts.CPUTemperature),
 		"cpu_count":         ts.CPUCount,
 		"mem":               round1(pct(ts.MemoryUsage, ts.MemoryTotal)),
 		"mem_used":          ts.MemoryUsage,
@@ -144,8 +134,6 @@ func (h *ConfigHandler) handleV1Status(w http.ResponseWriter, r *http.Request) {
 		"out_bandwidth":     ts.OutboundBandwidth,
 		"interfaces":        interfaces,
 		"app":               map[string]interface{}{"cpu_percent": round1(ts.App.CPUPercent), "memory_usage": ts.App.MemoryUsage, "total_bytes": ts.App.TotalBytes, "in_bytes": ts.App.InboundBytes, "out_bytes": ts.App.OutboundBytes},
-		"proxy_groups":      len(sd.ProxyGroups),
-		"proxy_group_stats": groups,
 		"goroutines":        sd.Goroutines,
 		"client_ip":         sd.ClientIP,
 		"web_path":          sd.WebPath,
@@ -153,6 +141,14 @@ func (h *ConfigHandler) handleV1Status(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// tempOrNull 温度不可用（<=0 哨兵值）时返回 null，避免 round1 把 -1 变形为 -0.9 之类的异常显示
+func tempOrNull(v float64) interface{} {
+	if v <= 0 {
+		return nil
+	}
+	return round1(v)
 }
 
 // round1 保留 1 位小数
