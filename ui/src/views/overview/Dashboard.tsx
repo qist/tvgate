@@ -78,7 +78,7 @@ export function Dashboard() {
           </Card>
         ))}
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-3">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">资源</CardTitle></CardHeader>
           <CardContent className="space-y-1.5 text-sm">
@@ -90,8 +90,6 @@ export function Dashboard() {
             <Row label="启动时间" value={status.start_time ? new Date(status.start_time).toLocaleString("zh-CN", { hour12: false }) : "—"} />
             <Row label="Goroutines" value={status.goroutines != null ? String(status.goroutines) : "—"} />
             <Row label="客户端 IP" value={status.client_ip || "—"} />
-            <Row label="进程 CPU" value={status.app?.cpu_percent != null ? `${status.app.cpu_percent}%` : "—"} />
-            <Row label="进程内存" value={status.app?.memory_usage != null ? fmtBytes(status.app.memory_usage) : "—"} />
           </CardContent>
         </Card>
         <Card>
@@ -103,7 +101,16 @@ export function Dashboard() {
             <Row label="累计上行" value={fmtBytes(status.out_bytes)} />
             <Row label="连接数" value={status.connections != null ? String(status.connections) : "—"} />
             <Row label="总连接数" value={status.total_connections != null ? String(status.total_connections) : "—"} />
-            <Row label="进程累计" value={status.app?.total_bytes != null ? fmtBytes(status.app.total_bytes) : "—"} />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">应用（TVGate 进程）</CardTitle></CardHeader>
+          <CardContent className="space-y-1.5 text-sm">
+            <Row label="进程 CPU" value={status.app?.cpu_percent != null ? `${status.app.cpu_percent}%` : "—"} />
+            <Row label="进程内存" value={status.app?.memory_usage != null ? fmtBytes(status.app.memory_usage) : "—"} />
+            <Row label="入口流量" value={status.app?.in_bytes != null ? fmtBytes(status.app.in_bytes) : "—"} />
+            <Row label="出口流量" value={status.app?.out_bytes != null ? fmtBytes(status.app.out_bytes) : "—"} />
+            <Row label="总流量" value={status.app?.total_bytes != null ? fmtBytes(status.app.total_bytes) : "—"} />
           </CardContent>
         </Card>
       </div>
