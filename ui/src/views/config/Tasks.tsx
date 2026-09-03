@@ -20,28 +20,63 @@ const pad0 = (n: number) => String(n).padStart(2, "0");
 
 interface Visual {
   mode: "visual" | "expr";
-  freq: "daily" | "weekly" | "monthly";
+  freq: "minute" | "hourly" | "daily" | "weekly" | "monthly";
   time: string;
   weekdays: number[];
   monthDay: number;
+  minOfHour: number; // 每小时：第几分钟（0-59）
+  everyNMin: number; // 每分钟：间隔分钟数（1-59）
+  everyNHrs: number; // 每小时：间隔小时数（1-23，1=每小时）
 }
 
-const DEFAULT_VISUAL: Visual = { mode: "visual", freq: "daily", time: "00:00", weekdays: [], monthDay: 1 };
+const DEFAULT_VISUAL: Visual = {
+  mode: "visual",
+  freq: "daily",
+  time: "00:00",
+  weekdays: [],
+  monthDay: 1,
+  minOfHour: 0,
+  everyNMin: 1,
+  everyNHrs: 1,
+};
 
 function parseCronVisual(cron: string): Visual | null {
   const f = (cron || "").trim().split(/\s+/);
   if (f.length !== 5) return null;
-  const [mm, h, dd, , dw] = f;
-  if (!/^\d+$/.test(mm) || !/^\d+$/.test(h)) return null;
-  const time = `${pad0(+h)}:${pad0(+mm)}`;
-  if (dd === "*" && dw === "*") return { ...DEFAULT_VISUAL, time };
-  if (dd === "*" && /^[\d,]+$/.test(dw))
-    return { ...DEFAULT_VISUAL, freq: "weekly", time, weekdays: dw.split(",").map(Number) };
-  if (/^\d+$/.test(dd) && dw === "*") return { ...DEFAULT_VISUAL, freq: "monthly", time, monthDay: +dd };
+  const [mm, h, dd, mon, dw] = f;
+  if (mon !== "*") return null;
+  const num = (s: string) => /^\d+$/.test(s);
+  const step = (s: string) => (s.startsWith("*/") && /^\*\/\d+$/.test(s) ? +s.slice(2) : 0);
+  if (dd === "*" && dw === "*") {
+    // 每分钟：* * * * * 或 */N * * * *
+    if (h === "*") {
+      if (mm === "*") return { ...DEFAULT_VISUAL, freq: "minute", everyNMin: 1 };
+      const n = step(mm);
+      if (n >= 1) return { ...DEFAULT_VISUAL, freq: "minute", everyNMin: n };
+    }
+    // 每小时：M * * * * 或 M */H * * *
+    if (num(mm) && h === "*") return { ...DEFAULT_VISUAL, freq: "hourly", minOfHour: +mm, everyNHrs: 1 };
+    if (num(mm)) {
+      const hs = step(h);
+      if (hs >= 1) return { ...DEFAULT_VISUAL, freq: "hourly", minOfHour: +mm, everyNHrs: hs };
+    }
+    // 每天：M H * * *
+    if (num(mm) && num(h)) return { ...DEFAULT_VISUAL, freq: "daily", time: `${pad0(+h)}:${pad0(+mm)}` };
+    return null;
+  }
+  if (dd === "*" && /^[\d,]+$/.test(dw) && num(mm) && num(h))
+    return { ...DEFAULT_VISUAL, freq: "weekly", time: `${pad0(+h)}:${pad0(+mm)}`, weekdays: dw.split(",").map(Number) };
+  if (num(dd) && dw === "*" && num(mm) && num(h))
+    return { ...DEFAULT_VISUAL, freq: "monthly", time: `${pad0(+h)}:${pad0(+mm)}`, monthDay: +dd };
   return null;
 }
 
 function buildCron(v: Visual): string {
+  if (v.freq === "minute") return v.everyNMin > 1 ? `*/${v.everyNMin} * * * *` : "* * * * *";
+  if (v.freq === "hourly") {
+    const m = pad0(v.minOfHour || 0);
+    return v.everyNHrs > 1 ? `${m} */${v.everyNHrs} * * *` : `${m} * * * *`;
+  }
   const [hh, mm] = (v.time || "00:00").split(":").map((s) => pad0(+s || 0));
   if (v.freq === "weekly") {
     const ws = [...v.weekdays].sort((a, b) => a - b);
@@ -416,6 +451,19 @@ function ModeSwitch({ value, onChange }: { value: "visual" | "expr"; onChange: (
 }
 
 function VisualEditor({ visual, onChange }: { visual: Visual; onChange: (v: Visual) => void }) {
+  const numInput = (value: number, min: number, max: number, onChange: (n: number) => void) => (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      className="h-9 w-20 rounded-[var(--radius)] border bg-background px-2 text-sm"
+      value={value}
+      onChange={(e) => {
+        const n = Math.min(max, Math.max(min, Math.floor(+e.target.value || min)));
+        onChange(n);
+      }}
+    />
+  );
   return (
     <div className="mt-2 space-y-2">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -424,16 +472,29 @@ function VisualEditor({ visual, onChange }: { visual: Visual; onChange: (v: Visu
           value={visual.freq}
           onChange={(e) => onChange({ ...visual, freq: e.target.value as Visual["freq"] })}
         >
+          <option value="minute">每分钟</option>
+          <option value="hourly">每小时</option>
           <option value="daily">每天</option>
           <option value="weekly">每周</option>
           <option value="monthly">每月</option>
         </select>
-        <input
-          type="time"
-          className="h-9 rounded-[var(--radius)] border bg-background px-2 text-sm"
-          value={visual.time}
-          onChange={(e) => onChange({ ...visual, time: e.target.value || "00:00" })}
-        />
+        {visual.freq === "minute" ? (
+          <label className="flex items-center gap-1.5 text-sm">
+            每 {numInput(visual.everyNMin, 1, 59, (n) => onChange({ ...visual, everyNMin: n }))} 分钟
+          </label>
+        ) : visual.freq === "hourly" ? (
+          <label className="flex items-center gap-1.5 text-sm">
+            每 {numInput(visual.everyNHrs, 1, 23, (n) => onChange({ ...visual, everyNHrs: n }))} 小时的第{" "}
+            {numInput(visual.minOfHour, 0, 59, (n) => onChange({ ...visual, minOfHour: n }))} 分
+          </label>
+        ) : (
+          <input
+            type="time"
+            className="h-9 rounded-[var(--radius)] border bg-background px-2 text-sm"
+            value={visual.time}
+            onChange={(e) => onChange({ ...visual, time: e.target.value || "00:00" })}
+          />
+        )}
         <span className="self-center text-xs text-muted-foreground">→ {buildCron(visual)}</span>
       </div>
       {visual.freq === "weekly" && (
