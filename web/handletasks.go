@@ -19,18 +19,6 @@ var taskFieldOrder = []string{
 	"name", "enabled", "group", "cron", "command", "timeout", "notes",
 }
 
-// handleTasksEditor 处理定时任务配置编辑器页面
-func (h *ConfigHandler) handleTasksEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-	data := map[string]interface{}{
-		"title":   "TVGate 定时任务配置编辑器",
-		"webPath": webPath,
-	}
-	if err := h.renderTemplate(w, r, "tasks_editor", "templates/tasks_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleTasksConfig 处理定时任务配置获取请求（返回任务列表，按 group 排序）
 func (h *ConfigHandler) handleTasksConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

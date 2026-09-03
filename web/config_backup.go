@@ -17,16 +17,6 @@ import (
 // ConfigBackupHandler 处理配置备份管理
 type ConfigBackupHandler struct{}
 
-// handleConfigBackupPage 渲染备份管理页面
-func (h *ConfigHandler) handleConfigBackupPage(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-	data := map[string]interface{}{
-		"title":   "配置备份管理",
-		"webPath": webPath,
-	}
-	h.renderTemplate(w, r, "config_backup", "templates/config_backup.html", data)
-}
-
 // handleListBackups 返回 JSON 备份列表，按时间从新到旧排序
 func (h *ConfigBackupHandler) handleListBackups(w http.ResponseWriter, r *http.Request) {
 	configPath := *config.ConfigFilePath
@@ -73,7 +63,7 @@ func (h *ConfigBackupHandler) handleDeleteBackup(w http.ResponseWriter, r *http.
 
 	configPath := *config.ConfigFilePath
 	dir := filepath.Dir(configPath)
-	
+
 	// 确保传入的文件名是相对于配置目录的，或者在配置目录下
 	var absFile string
 	if filepath.IsAbs(file) {
@@ -85,10 +75,10 @@ func (h *ConfigBackupHandler) handleDeleteBackup(w http.ResponseWriter, r *http.
 
 	// 再次转换为绝对路径，确保安全检查的准确性
 	absFile, _ = filepath.Abs(absFile)
-	
+
 	// 确保规范化路径在配置目录下，使用更安全的路径检查方法
 	normalizedDir, _ := filepath.Abs(dir)
-	
+
 	// 使用 strings.HasPrefix 并确保路径边界安全
 	relPath, err := filepath.Rel(normalizedDir, absFile)
 	if err != nil || strings.HasPrefix(relPath, "..") {
@@ -115,7 +105,7 @@ func (h *ConfigBackupHandler) handleRestoreBackup(w http.ResponseWriter, r *http
 
 	configPath := *config.ConfigFilePath
 	dir := filepath.Dir(configPath)
-	
+
 	// 确保传入的文件名是相对于配置目录的，或者在配置目录下
 	var absFile string
 	if filepath.IsAbs(file) {
@@ -127,10 +117,10 @@ func (h *ConfigBackupHandler) handleRestoreBackup(w http.ResponseWriter, r *http
 
 	// 再次转换为绝对路径，确保安全检查的准确性
 	absFile, _ = filepath.Abs(absFile)
-	
+
 	// 确保规范化路径在配置目录下，使用更安全的路径检查方法
 	normalizedDir, _ := filepath.Abs(dir)
-	
+
 	// 使用 strings.HasPrefix 并确保路径边界安全
 	relPath, err := filepath.Rel(normalizedDir, absFile)
 	if err != nil || strings.HasPrefix(relPath, "..") {
@@ -169,7 +159,7 @@ func (h *ConfigBackupHandler) handleDownloadBackup(w http.ResponseWriter, r *htt
 
 	configPath := *config.ConfigFilePath
 	dir := filepath.Dir(configPath)
-	
+
 	// 确保传入的文件名是相对于配置目录的，或者在配置目录下
 	var absFile string
 	if filepath.IsAbs(file) {
@@ -181,10 +171,10 @@ func (h *ConfigBackupHandler) handleDownloadBackup(w http.ResponseWriter, r *htt
 
 	// 再次转换为绝对路径，确保安全检查的准确性
 	absFile, _ = filepath.Abs(absFile)
-	
+
 	// 确保规范化路径在配置目录下，使用更安全的路径检查方法
 	normalizedDir, _ := filepath.Abs(dir)
-	
+
 	// 使用 strings.HasPrefix 并确保路径边界安全
 	relPath, err := filepath.Rel(normalizedDir, absFile)
 	if err != nil || strings.HasPrefix(relPath, "..") {
@@ -250,7 +240,7 @@ func (h *ConfigBackupHandler) handleBatchDeleteBackups(w http.ResponseWriter, r 
 
 	for _, file := range files {
 		var absFile string
-		
+
 		// 如果是相对路径（不含分隔符），则认为是在配置目录下
 		if filepath.IsAbs(file) {
 			absFile = file
@@ -267,10 +257,10 @@ func (h *ConfigBackupHandler) handleBatchDeleteBackups(w http.ResponseWriter, r 
 
 		// 再次转换为绝对路径，确保安全检查的准确性
 		absFile, _ = filepath.Abs(absFile)
-		
+
 		// 确保规范化路径在配置目录下，使用更安全的路径检查方法
 		normalizedDir, _ := filepath.Abs(dir)
-		
+
 		// 使用 strings.HasPrefix 并确保路径边界安全
 		relPath, err := filepath.Rel(normalizedDir, absFile)
 		if err != nil || strings.HasPrefix(relPath, "..") {

@@ -14,18 +14,6 @@ import (
 	"github.com/qist/tvgate/logger"
 )
 
-// handleLogViewer renders the realtime log viewer page.
-func (h *ConfigHandler) handleLogViewer(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-	data := map[string]interface{}{
-		"title":   "TVGate 实时日志",
-		"webPath": webPath,
-	}
-	if err := h.renderTemplate(w, r, "log_viewer", "templates/log_viewer.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleLogStream streams logs via Server-Sent Events.
 func (h *ConfigHandler) handleLogStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)

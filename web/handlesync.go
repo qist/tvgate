@@ -21,18 +21,6 @@ var syncFieldOrder = []string{
 	"interval", "repo_path", "local_path", "only_php", "backup", "delete", "timeout",
 }
 
-// handleSyncEditor 处理仓库同步配置编辑器页面
-func (h *ConfigHandler) handleSyncEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-	data := map[string]interface{}{
-		"title":   "TVGate 仓库同步配置编辑器",
-		"webPath": webPath,
-	}
-	if err := h.renderTemplate(w, r, "sync_editor", "templates/sync_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleSyncConfig 处理仓库同步配置获取请求（返回仓库列表）
 func (h *ConfigHandler) handleSyncConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

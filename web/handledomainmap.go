@@ -14,38 +14,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// handleDomainMapEditor 处理域名映射编辑器页面
-func (h *ConfigHandler) handleDomainMapEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-
-	// 检查是否有任何domainmap配置了auth
-	config.CfgMu.RLock()
-	hasAuthConfig := false
-	for _, dm := range config.Cfg.DomainMap {
-		if dm.Auth.TokensEnabled ||
-			dm.Auth.TokenParamName != "" ||
-			dm.Auth.DynamicTokens.EnableDynamic ||
-			dm.Auth.DynamicTokens.Secret != "" ||
-			dm.Auth.DynamicTokens.Salt != "" ||
-			dm.Auth.StaticTokens.EnableStatic ||
-			dm.Auth.StaticTokens.Token != "" {
-			hasAuthConfig = true
-			break
-		}
-	}
-	config.CfgMu.RUnlock()
-
-	data := map[string]interface{}{
-		"title":         "TVGate 域名映射编辑器",
-		"webPath":       webPath,
-		"hasAuthConfig": hasAuthConfig,
-	}
-
-	if err := h.renderTemplate(w, r, "domainmap_editor", "templates/domainmap_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleDomainMapConfig 处理域名映射配置获取请求
 func (h *ConfigHandler) handleDomainMapConfig(w http.ResponseWriter, r *http.Request) {
 	// 设置响应头
@@ -343,16 +311,16 @@ func (h *ConfigHandler) handleDomainMapConfigSave(w http.ResponseWriter, r *http
 					break
 				}
 			}
-			
+
 			// 如果没有找到domainmap节点，则添加它
 			if !domainmapFound {
 				// 创建domainmap键节点
 				keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: "domainmap"}
-				
+
 				// 创建domainmap值节点（序列）
 				seqNode := &yaml.Node{Kind: yaml.SequenceNode}
 				seqNode.Content = yamlDomainMaps
-				
+
 				// 将新节点添加到文档内容中
 				doc.Content = append(doc.Content, keyNode, seqNode)
 			}

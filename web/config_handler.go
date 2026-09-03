@@ -7,8 +7,6 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
-	"net"
-	"runtime"
 	"sync"
 
 	// "log"
@@ -23,8 +21,6 @@ import (
 	"time"
 
 	"github.com/qist/tvgate/config"
-	"github.com/qist/tvgate/monitor"
-	"github.com/shirou/gopsutil/v3/mem"
 	"gopkg.in/yaml.v3"
 )
 
@@ -51,29 +47,6 @@ type WebHandler struct {
 func NewWebHandler(configHandler *ConfigHandler) *WebHandler {
 	return &WebHandler{
 		configHandler: configHandler,
-	}
-}
-
-// formatBytes 格式化字节数
-func formatBytes(bytes uint64) string {
-	const (
-		KB = 1024
-		MB = KB * 1024
-		GB = MB * 1024
-		TB = GB * 1024
-	)
-
-	switch {
-	case bytes >= TB:
-		return fmt.Sprintf("%.2f TB", float64(bytes)/TB)
-	case bytes >= GB:
-		return fmt.Sprintf("%.2f GB", float64(bytes)/GB)
-	case bytes >= MB:
-		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
-	case bytes >= KB:
-		return fmt.Sprintf("%.2f KB", float64(bytes)/KB)
-	default:
-		return fmt.Sprintf("%d B", bytes)
 	}
 }
 
@@ -164,27 +137,6 @@ func (h *ConfigHandler) isSameOrigin(r *http.Request) bool {
 	return true
 }
 
-// renderTemplate 渲染指定的模板
-func (h *ConfigHandler) renderTemplate(w http.ResponseWriter, r *http.Request, tmplName, filePath string, data map[string]interface{}) error {
-	// 从嵌入的文件系统读取模板
-	content, err := templatesFS.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to read template file: %v", err)
-	}
-
-	// 解析模板
-	tmpl, err := template.New(tmplName).Parse(string(content))
-	if err != nil {
-		return fmt.Errorf("failed to parse template: %v", err)
-	}
-
-	// 设置响应头
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	// 执行模板
-	return tmpl.Execute(w, data)
-}
-
 // RegisterRoutes 注册所有Web管理路由
 func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	webPath := h.getWebPath()
@@ -207,30 +159,12 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	// 注册GitHub升级相关路由
 	RegisterGithubRoutes(mux, webPath, h.cookieAuth)
 
-	// 基础编辑器页面路由
-	mux.HandleFunc(webPath+"editor", h.cookieAuth(h.handleEditor))
-	mux.HandleFunc(webPath+"node", h.cookieAuth(h.handleNode))
-
-	// 特定配置编辑器页面路由
-	mux.HandleFunc(webPath+"group-editor", h.cookieAuth(h.handleGroupEditor))
-	mux.HandleFunc(webPath+"domainmap-editor", h.cookieAuth(h.handleDomainMapEditor))
-	mux.HandleFunc(webPath+"proxygroups-editor", h.cookieAuth(h.handleProxyGroupsEditor))
-	mux.HandleFunc(webPath+"global-auth-editor", h.cookieAuth(h.handleGlobalAuthEditor))
-	mux.HandleFunc(webPath+"jx-editor", h.cookieAuth(h.handleJXEditor))
-	mux.HandleFunc(webPath+"publisher-editor", h.cookieAuth(h.handlePublisherEditor))
-	mux.HandleFunc(webPath+"server-editor", h.cookieAuth(h.handleServerEditor))
-	mux.HandleFunc(webPath+"multicast-editor", h.cookieAuth(h.handleMulticastEditor))
-	mux.HandleFunc(webPath+"ts-editor", h.cookieAuth(h.handleTSEditor))
-	mux.HandleFunc(webPath+"web-editor", h.cookieAuth(h.handleWebEditor))
-	mux.HandleFunc(webPath+"reload-editor", h.cookieAuth(h.handleReloadEditor))
-	mux.HandleFunc(webPath+"http-editor", h.cookieAuth(h.handleHTTPEditor))
-	mux.HandleFunc(webPath+"log-editor", h.cookieAuth(http.HandlerFunc(h.handleLogEditor)))
-	mux.HandleFunc(webPath+"logs", h.cookieAuth(h.handleLogViewer))
+	// 仓库同步模块（JSON API，页面已由 SPA /sync 覆盖）
 	mux.HandleFunc(webPath+"api/sync/config", h.cookieAuth(h.handleSyncConfig))
 	mux.HandleFunc(webPath+"api/sync/config/save", h.cookieAuth(h.handleSyncConfigSave))
 	mux.HandleFunc(webPath+"api/sync/branches", h.cookieAuth(h.handleSyncBranches))
+
 	// 定时任务模块
-	mux.HandleFunc(webPath+"tasks-editor", h.cookieAuth(h.handleTasksEditor))
 	mux.HandleFunc(webPath+"api/tasks/config", h.cookieAuth(h.handleTasksConfig))
 	mux.HandleFunc(webPath+"api/tasks/config/save", h.cookieAuth(h.handleTasksConfigSave))
 	mux.HandleFunc(webPath+"api/tasks/status", h.cookieAuth(h.handleTasksStatus))
@@ -281,9 +215,6 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/save-log", h.cookieAuth(http.HandlerFunc(h.handleSaveLogConfig)))
 	mux.HandleFunc(webPath+"api/logs/stream", h.cookieAuth(http.HandlerFunc(h.handleLogStream)))
 
-	// 备份相关路由
-	mux.HandleFunc(webPath+"config/backup", h.cookieAuth(h.handleConfigBackupPage))
-
 	// 配置备份管理路由
 	backupHandler := &ConfigBackupHandler{}
 	mux.HandleFunc(webPath+"config/backup/list", h.cookieAuth(backupHandler.handleListBackups))
@@ -293,12 +224,10 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/backup/download", h.cookieAuth(backupHandler.handleDownloadBackup))
 
 	// GitHub 配置相关路由
-	mux.HandleFunc(webPath+"github", h.cookieAuth(h.handleGithubEditor))
 	mux.HandleFunc(webPath+"api/github/config", h.cookieAuth(h.handleGithubConfig))
 	mux.HandleFunc(webPath+"api/github/config/save", h.cookieAuth(h.handleGithubConfigSave))
 
 	// DNS 配置相关路由
-	mux.HandleFunc(webPath+"dns", h.cookieAuth(h.handleDnsEditor))
 	mux.HandleFunc(webPath+"api/dns/config", h.cookieAuth(h.handleDnsConfig))
 	mux.HandleFunc(webPath+"api/dns/config/save", h.cookieAuth(h.handleDnsConfigSave))
 
@@ -308,7 +237,6 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	// mux.HandleFunc(webPath+"api/globalauth/config/save", h.handleGlobalAuthConfigSave)
 
 	// 代码文件管理（针对 docroot /www 等 PHP 脚本目录）
-	mux.HandleFunc(webPath+"code", h.cookieAuth(h.handleCodeEditor))
 	mux.HandleFunc(webPath+"api/code/list", h.cookieAuth(h.handleCodeList))
 	mux.HandleFunc(webPath+"api/code/read", h.cookieAuth(h.handleCodeRead))
 	mux.HandleFunc(webPath+"api/code/save", h.cookieAuth(h.handleCodeSave))
@@ -321,7 +249,6 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"api/code/unzip", h.cookieAuth(h.handleCodeUnzip))
 
 	// 备份文件中心
-	mux.HandleFunc(webPath+"backup", h.cookieAuth(h.handleBackupPage))
 	mux.HandleFunc(webPath+"api/backup/list", h.cookieAuth(h.handleBackupList))
 	mux.HandleFunc(webPath+"api/backup/restore", h.cookieAuth(h.handleBackupRestore))
 	mux.HandleFunc(webPath+"api/backup/delete", h.cookieAuth(h.handleBackupDelete))
@@ -332,130 +259,6 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // handleHome 处理功能面板页面
-func (h *ConfigHandler) handleNode(w http.ResponseWriter, r *http.Request) {
-	// 从嵌入的文件系统读取模板
-	content, err := templatesFS.ReadFile("templates/node.html")
-	if err != nil {
-		http.Error(w, "Failed to read template file", http.StatusInternalServerError)
-		return
-	}
-
-	// 从monitor模块获取系统状态数据
-	config.CfgMu.RLock()
-	trafficStats := monitor.GlobalTrafficStats.GetTrafficStats()
-	activeConns := monitor.ActiveClients.GetAll()
-	config.CfgMu.RUnlock()
-
-	// 计算服务器运行时间
-	uptime := getSystemUptime()
-
-	// 检查是否有domainmap和global_auth配置
-	hasDomainMap := len(config.Cfg.DomainMap) > 0
-
-	// 检查domainmap中是否有任何组配置了auth
-	hasDomainMapAuth := false
-	for _, dm := range config.Cfg.DomainMap {
-		if dm.Auth.TokensEnabled ||
-			dm.Auth.TokenParamName != "" ||
-			dm.Auth.DynamicTokens.EnableDynamic ||
-			dm.Auth.DynamicTokens.Secret != "" ||
-			dm.Auth.DynamicTokens.Salt != "" ||
-			dm.Auth.StaticTokens.EnableStatic ||
-			dm.Auth.StaticTokens.Token != "" {
-			hasDomainMapAuth = true
-			break
-		}
-	}
-
-	// 检查global_auth是否配置了有效内容
-	globalAuth := config.Cfg.GlobalAuth
-	hasGlobalAuth := globalAuth.TokensEnabled ||
-		globalAuth.TokenParamName != "" ||
-		globalAuth.DynamicTokens.EnableDynamic ||
-		globalAuth.DynamicTokens.Secret != "" ||
-		globalAuth.DynamicTokens.Salt != "" ||
-		globalAuth.StaticTokens.EnableStatic ||
-		globalAuth.StaticTokens.Token != ""
-
-	// 检查proxygroups是否配置了有效内容
-	hasProxyGroups := len(config.Cfg.ProxyGroups) > 0
-
-	// 检查是否有JX配置
-	hasJXConfig := hasJXConfiguration(&config.Cfg.JX)
-
-	// 获取客户端IP
-	clientIP := r.RemoteAddr
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		clientIP = strings.Split(xff, ",")[0]
-	} else if xr := r.Header.Get("X-Real-IP"); xr != "" {
-		clientIP = xr
-	} else {
-		// 只取IP部分，去除端口号
-		if host, _, err := net.SplitHostPort(clientIP); err == nil {
-			clientIP = host
-		}
-	}
-
-	data := map[string]interface{}{
-		"title":             "TVGate 功能面板",
-		"webPath":           h.getWebPath(),
-		"hasDomainMap":      hasDomainMap,
-		"hasDomainMapAuth":  hasDomainMapAuth,
-		"hasGlobalAuth":     hasGlobalAuth,
-		"hasProxyGroups":    hasProxyGroups,
-		"hasJXConfig":       hasJXConfig,
-		"uptime":            uptime,
-		"cpuUsage":          int(trafficStats.CPUUsage),
-		"memoryUsage":       0,
-		"memoryUsed":        trafficStats.MemoryUsage,
-		"memoryTotal":       trafficStats.MemoryTotal,
-		"swapUsage":         uint64(0),
-		"swapTotal":         uint64(0),
-		"swapUsagePercent":  0,
-		"diskUsage":         uint64(0),
-		"diskTotal":         uint64(0),
-		"diskUsagePercent":  0,
-		"activeConnections": len(activeConns),
-		"os":                trafficStats.HostInfo.Platform,
-		"kernelVersion":     trafficStats.HostInfo.KernelVersion,
-		"cpuArch":           trafficStats.HostInfo.KernelArch,
-		"version":           config.Version,
-		"goroutines":        runtime.NumGoroutine(),
-		"clientIP":          clientIP,
-	}
-
-	// 设置响应头
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	// 创建模板并解析
-	tmpl, err := template.New("home").Parse(string(content))
-	if err != nil {
-		http.Error(w, "Failed to parse template", http.StatusInternalServerError)
-		return
-	}
-
-	// 读取侧边栏模板
-	sidebarContent, err := templatesFS.ReadFile("templates/sidebar.html")
-	if err != nil {
-		http.Error(w, "Failed to read sidebar template file", http.StatusInternalServerError)
-		return
-	}
-
-	// 解析侧边栏模板
-	_, err = tmpl.New("sidebar").Parse(string(sidebarContent))
-	if err != nil {
-		http.Error(w, "Failed to parse sidebar template", http.StatusInternalServerError)
-		return
-	}
-
-	// 执行模板
-	if err := tmpl.Execute(w, data); err != nil {
-		http.Error(w, "Failed to execute template", http.StatusInternalServerError)
-		return
-	}
-}
-
-// handleSyncTheme 处理主题同步请求
 func (h *ConfigHandler) handleSyncTheme(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -490,209 +293,6 @@ func (h *ConfigHandler) handleSyncTheme(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleWeb 处理web管理界面首页
-func (h *ConfigHandler) handleWeb(w http.ResponseWriter, r *http.Request) {
-	// 记录请求信息用于调试
-	// log.Printf("处理Web请求: Path=%s, Method=%s", r.URL.Path, r.Method)
-
-	// 检查用户是否已认证
-	isAuthenticated := h.isAuthenticated(r)
-	// log.Printf("认证状态: %t", isAuthenticated)
-
-	if !isAuthenticated {
-		// 未认证用户重定向到登录页面
-		webPath := h.getWebPath()
-		redirectURL := webPath + "login"
-		// log.Printf("用户未认证，重定向到: %s", redirectURL)
-		http.Redirect(w, r, redirectURL, http.StatusFound)
-		return
-	}
-
-	// 获取配置的Web路径，默认为/web/
-	webPath := h.getWebPath()
-	// log.Printf("Web路径配置: %s", webPath)
-
-	// 如果请求的是根路径，则返回首页
-	// 处理多种情况：精确匹配、带斜杠和不带斜杠的路径
-	pathMatch := r.URL.Path == webPath ||
-		r.URL.Path == strings.TrimSuffix(webPath, "/") ||
-		r.URL.Path == "/"+strings.TrimPrefix(webPath, "/") ||
-		r.URL.Path == "/"+strings.TrimSuffix(strings.TrimPrefix(webPath, "/"), "/")
-
-	// log.Printf("路径匹配结果: %t (请求路径: %s, 配置路径: %s)", pathMatch, r.URL.Path, webPath)
-
-	if pathMatch {
-		// 从monitor模块获取系统状态数据
-		config.CfgMu.RLock()
-		trafficStats := monitor.GlobalTrafficStats.GetTrafficStats()
-		activeConns := monitor.ActiveClients.GetAll()
-		config.CfgMu.RUnlock()
-
-		// 计算服务器运行时间
-		uptime := getSystemUptime()
-
-		// 检查是否有domainmap和global_auth配置
-		hasDomainMap := len(config.Cfg.DomainMap) > 0
-
-		// 检查domainmap中是否有任何组配置了auth
-		hasDomainMapAuth := false
-		for _, dm := range config.Cfg.DomainMap {
-			if dm.Auth.TokensEnabled ||
-				dm.Auth.TokenParamName != "" ||
-				dm.Auth.DynamicTokens.EnableDynamic ||
-				dm.Auth.DynamicTokens.Secret != "" ||
-				dm.Auth.DynamicTokens.Salt != "" ||
-				dm.Auth.StaticTokens.EnableStatic ||
-				dm.Auth.StaticTokens.Token != "" {
-				hasDomainMapAuth = true
-				break
-			}
-		}
-
-		// 检查global_auth是否配置了有效内容
-		globalAuth := config.Cfg.GlobalAuth
-		hasGlobalAuth := globalAuth.TokensEnabled ||
-			globalAuth.TokenParamName != "" ||
-			globalAuth.DynamicTokens.EnableDynamic ||
-			globalAuth.DynamicTokens.Secret != "" ||
-			globalAuth.DynamicTokens.Salt != "" ||
-			globalAuth.StaticTokens.EnableStatic ||
-			globalAuth.StaticTokens.Token != ""
-
-		// 检查proxygroups是否配置了有效内容
-		hasProxyGroups := len(config.Cfg.ProxyGroups) > 0
-
-		// 检查是否有JX配置
-		hasJXConfig := hasJXConfiguration(&config.Cfg.JX)
-
-		// 计算内存使用率
-		memoryUsagePercent := 0
-		if trafficStats.MemoryTotal > 0 {
-			memoryUsagePercent = int(trafficStats.MemoryUsage * 100 / trafficStats.MemoryTotal)
-		}
-
-		// 计算SWAP使用情况
-		swapUsage := uint64(0)
-		swapTotal := uint64(0)
-		swapUsagePercent := 0
-
-		// 获取SWAP信息
-		swapMemory, _ := mem.SwapMemory()
-		if swapMemory != nil {
-			swapUsage = swapMemory.Used
-			swapTotal = swapMemory.Total
-			if swapTotal > 0 {
-				swapUsagePercent = int(swapMemory.UsedPercent)
-			}
-		}
-
-		// 获取硬盘使用情况 (系统盘)
-		diskUsage := uint64(0)
-		diskTotal := uint64(0)
-		diskUsagePercent := 0
-		if len(trafficStats.DiskPartitions) > 0 {
-			diskUsage = trafficStats.DiskUsage
-			diskTotal = trafficStats.DiskTotal
-			if diskTotal > 0 {
-				diskUsagePercent = int(float64(diskUsage) * 100 / float64(diskTotal))
-			}
-		}
-
-		// 获取客户端IP
-		clientIP := r.RemoteAddr
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			clientIP = strings.Split(xff, ",")[0]
-		} else if xr := r.Header.Get("X-Real-IP"); xr != "" {
-			clientIP = xr
-		} else {
-			// 只取IP部分，去除端口号
-			if host, _, err := net.SplitHostPort(clientIP); err == nil {
-				clientIP = host
-			}
-		}
-
-		data := map[string]interface{}{
-			"title":             "TVGate Web管理",
-			"webPath":           webPath,
-			"hasDomainMap":      hasDomainMap,
-			"hasDomainMapAuth":  hasDomainMapAuth,
-			"hasGlobalAuth":     hasGlobalAuth,
-			"hasProxyGroups":    hasProxyGroups,
-			"hasJXConfig":       hasJXConfig,
-			"uptime":            uptime,
-			"cpuUsage":          int(trafficStats.CPUUsage),
-			"memoryUsage":       memoryUsagePercent,
-			"memoryUsed":        trafficStats.MemoryUsage,
-			"memoryTotal":       trafficStats.MemoryTotal,
-			"swapUsage":         swapUsage,
-			"swapTotal":         swapTotal,
-			"cpuTemp":           trafficStats.CPUTemperature,
-			"swapUsagePercent":  swapUsagePercent,
-			"diskUsage":         diskUsage,
-			"diskTotal":         diskTotal,
-			"diskUsagePercent":  diskUsagePercent,
-			"activeConnections": len(activeConns),
-			"os":                trafficStats.HostInfo.Platform,
-			"kernelVersion":     trafficStats.HostInfo.KernelVersion,
-			"cpuArch":           trafficStats.HostInfo.KernelArch,
-			"version":           config.Version,
-			"goroutines":        runtime.NumGoroutine(),
-			"clientIP":          clientIP,
-			"isWindows":         strings.Contains(strings.ToLower(trafficStats.HostInfo.Platform), "windows"),
-			"isAndroid":         strings.Contains(strings.ToLower(trafficStats.HostInfo.Platform), "android"),
-		}
-
-		// 从嵌入的文件系统读取模板
-		content, err := templatesFS.ReadFile("templates/index.html")
-		if err != nil {
-			// log.Printf("读取模板文件失败: %v", err)
-			http.Error(w, "Failed to read template file", http.StatusInternalServerError)
-			return
-		}
-
-		// 读取侧边栏模板
-		sidebarContent, err := templatesFS.ReadFile("templates/sidebar.html")
-		if err != nil {
-			// log.Printf("读取侧边栏模板文件失败: %v", err)
-			http.Error(w, "Failed to read sidebar template file", http.StatusInternalServerError)
-			return
-		}
-
-		tmpl, err := template.New("index").Funcs(template.FuncMap{
-			"formatBytes": formatBytes,
-		}).Parse(string(content))
-		if err != nil {
-			// log.Printf("解析模板失败: %v", err)
-			http.Error(w, "Failed to parse template", http.StatusInternalServerError)
-			return
-		}
-
-		// 解析侧边栏模板
-		_, err = tmpl.New("sidebar").Parse(string(sidebarContent))
-		if err != nil {
-			// log.Printf("解析侧边栏模板失败: %v", err)
-			http.Error(w, "Failed to parse sidebar template", http.StatusInternalServerError)
-			return
-		}
-
-		// 设置响应头
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-		// 执行模板
-		if err := tmpl.Execute(w, data); err != nil {
-			// log.Printf("执行模板失败: %v", err)
-			http.Error(w, "Failed to execute template", http.StatusInternalServerError)
-			return
-		}
-
-		// log.Printf("成功渲染首页")
-		return
-	}
-
-	// log.Printf("路径不匹配，返回404")
-	http.NotFound(w, r)
-}
-
-// handleLogin 处理登录页面和登录请求
 func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// log.Printf("处理登录请求: Path=%s, Method=%s", r.URL.Path, r.Method)
 
@@ -880,17 +480,6 @@ func (h *ConfigHandler) isAuthenticated(r *http.Request) bool {
 	return result
 }
 
-// hasJXConfiguration 检查JX配置是否包含有效内容
-func hasJXConfiguration(jx *config.JXConfig) bool {
-	if jx == nil {
-		return false
-	}
-
-	return jx.Path != "" ||
-		jx.DefaultID != "" ||
-		len(jx.APIGroups) > 0
-}
-
 // getWebPath 获取Web路径
 func (h *ConfigHandler) getWebPath() string {
 	webPath := h.webConfig.Path
@@ -988,77 +577,6 @@ func (h *ConfigHandler) getUsernameFromCookie(cookieValue string) string {
 }
 
 // handleGroupEditor 处理组编辑器页面请求
-func (h *ConfigHandler) handleGroupEditor(w http.ResponseWriter, r *http.Request) {
-	// 获取配置的Web路径，默认为/web/
-	webPath := h.webConfig.Path
-	if webPath == "" {
-		webPath = "/web/"
-	}
-
-	// 确保路径以/开头和结尾
-	if !strings.HasPrefix(webPath, "/") {
-		webPath = "/" + webPath
-	}
-	if !strings.HasSuffix(webPath, "/") {
-		webPath = webPath + "/"
-	}
-
-	// 如果请求的是组编辑器路径
-	if r.URL.Path == webPath+"group-editor" {
-		// 只允许GET方法
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// 获取参数
-		configType := r.URL.Query().Get("config")
-		groupName := r.URL.Query().Get("group")
-
-		// 设置模板数据
-		data := map[string]interface{}{
-			"webPath": webPath,
-			"config":  configType,
-			"group":   groupName,
-		}
-
-		// 如果提供了参数，则设置标题和参数
-		if configType != "" && groupName != "" {
-			data["title"] = fmt.Sprintf("配置组编辑器 - %s.%s", configType, groupName)
-		} else {
-			data["title"] = "组配置编辑器"
-		}
-
-		// 从嵌入的文件系统读取模板
-		content, err := templatesFS.ReadFile("templates/group_editor.html")
-		if err != nil {
-			http.Error(w, "Failed to read template file: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 解析模板
-		tmpl, err := template.New("group_editor").Parse(string(content))
-		if err != nil {
-			http.Error(w, "Failed to parse template: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 设置响应头
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-		// 执行模板
-		if err := tmpl.Execute(w, data); err != nil {
-			http.Error(w, "Failed to execute template: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		return
-	}
-
-	http.NotFound(w, r)
-}
-
-// handleConfig 处理配置查看页面
 func (h *ConfigHandler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	// 获取配置的Web路径，默认为/web/
 	webPath := h.webConfig.Path
@@ -1221,268 +739,6 @@ func (h *ConfigHandler) handleConfigValidate(w http.ResponseWriter, r *http.Requ
 }
 
 // handleNodeConfig 处理节点配置获取请求
-func (h *ConfigHandler) handleNodeConfig(w http.ResponseWriter, r *http.Request) {
-	// 获取配置的Web路径，默认为/web/
-	webPath := h.webConfig.Path
-	if webPath == "" {
-		webPath = "/web/"
-	}
-
-	// 确保路径以/开头和结尾
-	if !strings.HasPrefix(webPath, "/") {
-		webPath = "/" + webPath
-	}
-	if !strings.HasSuffix(webPath, "/") {
-		webPath = webPath + "/"
-	}
-
-	// 如果请求的是节点配置路径
-	if r.URL.Path == webPath+"config/node" {
-		// 只允许GET方法
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// 获取节点参数
-		node := r.URL.Query().Get("node")
-		if node == "" {
-			http.Error(w, "Missing node parameter", http.StatusBadRequest)
-			return
-		}
-
-		// 获取配置文件路径
-		configPath := *config.ConfigFilePath
-
-		// 读取完整配置文件
-		fullConfigData, err := os.ReadFile(configPath)
-		if err != nil {
-			http.Error(w, "Failed to read config file: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 解析完整配置并保留注释
-		var fullNode yaml.Node
-		if err := yaml.Unmarshal(fullConfigData, &fullNode); err != nil {
-			http.Error(w, "Failed to parse config file: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 查找指定节点
-		var nodeContent *yaml.Node
-		if fullNode.Kind == yaml.DocumentNode && len(fullNode.Content) > 0 {
-			doc := fullNode.Content[0]
-			if doc.Kind == yaml.MappingNode {
-				// 遍历映射节点查找指定的键
-				for i := 0; i < len(doc.Content); i += 2 {
-					keyNode := doc.Content[i]
-					valueNode := doc.Content[i+1]
-
-					if keyNode.Kind == yaml.ScalarNode && keyNode.Value == node {
-						nodeContent = valueNode
-						break
-					}
-				}
-			}
-		}
-
-		if nodeContent == nil {
-			// 如果节点不存在，返回空内容而不是空节点
-			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(""))
-			return
-		}
-
-		// 特殊处理JX节点 - 包含api_groups
-		if node == "jx" {
-			// 序列化整个JX节点（包含api_groups）
-			nodeDataYAML, err := yaml.Marshal(nodeContent)
-			if err != nil {
-				http.Error(w, "Failed to serialize node data: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-
-			// 返回节点配置
-			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(http.StatusOK)
-			w.Write(nodeDataYAML)
-			return
-		}
-
-		// 特殊处理ProxyGroups节点
-		if node == "proxygroups" {
-			// 序列化整个ProxyGroups节点
-			nodeDataYAML, err := yaml.Marshal(nodeContent)
-			if err != nil {
-				http.Error(w, "Failed to serialize node data: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-
-			// 返回节点配置
-			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(http.StatusOK)
-			w.Write(nodeDataYAML)
-			return
-		}
-
-		// 序列化节点数据（保留注释）
-		nodeDataYAML, err := yaml.Marshal(nodeContent)
-		if err != nil {
-			http.Error(w, "Failed to serialize node data: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 返回节点配置
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-		w.Write(nodeDataYAML)
-		return
-	}
-
-	http.NotFound(w, r)
-}
-
-// handleConfigSaveNode 处理配置节点保存请求
-func (h *ConfigHandler) handleConfigSaveNode(w http.ResponseWriter, r *http.Request) {
-	// 获取配置的Web路径，默认为/web/
-	webPath := h.webConfig.Path
-	if webPath == "" {
-		webPath = "/web/"
-	}
-
-	// 确保路径以/开头和结尾
-	if !strings.HasPrefix(webPath, "/") {
-		webPath = "/" + webPath
-	}
-	if !strings.HasSuffix(webPath, "/") {
-		webPath = webPath + "/"
-	}
-
-	// 如果请求的是配置节点保存路径
-	if r.URL.Path == webPath+"config/save-node" {
-		// 只允许POST方法
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// 获取节点参数
-		node := r.URL.Query().Get("node")
-		if node == "" {
-			http.Error(w, "Missing node parameter", http.StatusBadRequest)
-			return
-		}
-
-		// 读取请求体中的配置内容
-		content, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "Failed to read request body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		defer r.Body.Close()
-
-		// 验证YAML格式，使用yaml.Node保留注释
-		var temp yaml.Node
-		if err := yaml.Unmarshal(content, &temp); err != nil {
-			http.Error(w, "YAML格式错误: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		// 获取配置文件路径
-		configPath := *config.ConfigFilePath
-
-		// 读取完整配置文件
-		fullConfigData, err := os.ReadFile(configPath)
-		if err != nil {
-			http.Error(w, "Failed to read config file: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 解析完整配置并保留注释
-		var fullNode yaml.Node
-		if err := yaml.Unmarshal(fullConfigData, &fullNode); err != nil {
-			http.Error(w, "Failed to parse config file: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 解析新节点内容
-		var newNode yaml.Node
-		if err := yaml.Unmarshal(content, &newNode); err != nil {
-			http.Error(w, "Failed to parse node data: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		// 查找并替换指定节点
-		replaced := false
-		if fullNode.Kind == yaml.DocumentNode && len(fullNode.Content) > 0 {
-			doc := fullNode.Content[0]
-			if doc.Kind == yaml.MappingNode {
-				// 遍历映射节点查找并替换指定的键
-				for i := 0; i < len(doc.Content); i += 2 {
-					keyNode := doc.Content[i]
-
-					if keyNode.Kind == yaml.ScalarNode && keyNode.Value == node {
-						// 替换值节点
-						doc.Content[i+1] = newNode.Content[0]
-						replaced = true
-						break
-					}
-				}
-
-				// 如果节点不存在，添加新节点
-				if !replaced {
-					keyNode := &yaml.Node{
-						Kind:  yaml.ScalarNode,
-						Value: node,
-					}
-					doc.Content = append(doc.Content, keyNode, newNode.Content[0])
-					replaced = true
-				}
-			}
-		}
-
-		if !replaced {
-			http.Error(w, "Failed to update node", http.StatusInternalServerError)
-			return
-		}
-
-		// 重新序列化完整配置（保留注释）
-		newConfigData, err := yaml.Marshal(&fullNode)
-		if err != nil {
-			http.Error(w, "Failed to serialize config: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 备份当前配置文件
-		backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
-		if err := copyFile(configPath, backupPath); err != nil {
-			http.Error(w, "Failed to create backup: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 尝试将新配置写入文件
-		if err := os.WriteFile(configPath, newConfigData, 0644); err != nil {
-			// 如果写入失败，尝试恢复备份
-			os.Rename(backupPath, configPath)
-			http.Error(w, "Failed to save config: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 备份文件保留，不删除
-		// os.Remove(backupPath) // 注释掉这行，保留备份文件
-
-		// 返回成功响应
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status": "success", "message": "Configuration node saved successfully"}`))
-		return
-	}
-
-	http.NotFound(w, r)
-}
-
-// handleGroupConfig 处理组配置获取请求
 func (h *ConfigHandler) handleGroupConfig(w http.ResponseWriter, r *http.Request) {
 	// 获取配置的Web路径，默认为/web/
 	webPath := h.webConfig.Path

@@ -12,20 +12,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// handleLogEditor 日志配置编辑器页面
-func (h *ConfigHandler) handleLogEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-
-	data := map[string]interface{}{
-		"title":   "TVGate 日志配置编辑器",
-		"webPath": webPath,
-	}
-
-	if err := h.renderTemplate(w, r, "log_editor", "templates/log_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleGetLogConfig 获取日志配置
 func (h *ConfigHandler) handleGetLogConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -35,12 +21,12 @@ func (h *ConfigHandler) handleGetLogConfig(w http.ResponseWriter, r *http.Reques
 	config.CfgMu.RUnlock()
 
 	resp := map[string]interface{}{
-		"enabled":     logCfg.Enabled,
-		"file":        logCfg.File,
-		"maxsize":     logCfg.MaxSizeMB,
-		"maxbackups":  logCfg.MaxBackups,
-		"maxage":      logCfg.MaxAgeDays,
-		"compress":    logCfg.Compress,
+		"enabled":    logCfg.Enabled,
+		"file":       logCfg.File,
+		"maxsize":    logCfg.MaxSizeMB,
+		"maxbackups": logCfg.MaxBackups,
+		"maxage":     logCfg.MaxAgeDays,
+		"compress":   logCfg.Compress,
 	}
 
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
@@ -97,7 +83,7 @@ func (h *ConfigHandler) handleSaveLogConfig(w http.ResponseWriter, r *http.Reque
 							&yaml.Node{Kind: yaml.ScalarNode, Value: "enabled"},
 							&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", enabled)})
 					}
-					
+
 					// file
 					if file, ok := logConfig["file"]; ok {
 						fileStr := fmt.Sprintf("%v", file)
@@ -107,28 +93,28 @@ func (h *ConfigHandler) handleSaveLogConfig(w http.ResponseWriter, r *http.Reque
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fileStr, Style: yaml.DoubleQuotedStyle})
 						}
 					}
-					
+
 					// maxsize
 					if maxSize, ok := logConfig["maxsize"]; ok {
 						newLogNode.Content = append(newLogNode.Content,
 							&yaml.Node{Kind: yaml.ScalarNode, Value: "maxsize"},
 							&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", maxSize)})
 					}
-					
+
 					// maxbackups
 					if maxBackups, ok := logConfig["maxbackups"]; ok {
 						newLogNode.Content = append(newLogNode.Content,
 							&yaml.Node{Kind: yaml.ScalarNode, Value: "maxbackups"},
 							&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", maxBackups)})
 					}
-					
+
 					// maxage
 					if maxAge, ok := logConfig["maxage"]; ok {
 						newLogNode.Content = append(newLogNode.Content,
 							&yaml.Node{Kind: yaml.ScalarNode, Value: "maxage"},
 							&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", maxAge)})
 					}
-					
+
 					// compress
 					if compress, ok := logConfig["compress"]; ok {
 						newLogNode.Content = append(newLogNode.Content,

@@ -18,25 +18,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func (h *ConfigHandler) handlePublisherEditor(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
-		return
-	}
-
-	webPath := h.getWebPath()
-
-	data := map[string]interface{}{
-		"title":   "TVGate 推流管理",
-		"webPath": webPath,
-	}
-
-	if err := h.renderTemplate(w, r, "publisher_editor", "templates/publisher_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-}
-
 func (h *ConfigHandler) handlePublisherStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)

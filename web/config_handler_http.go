@@ -12,20 +12,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// handleHTTPEditor 处理 HTTP 配置编辑器页面
-func (h *ConfigHandler) handleHTTPEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-
-	data := map[string]interface{}{
-		"title":   "TVGate HTTP 配置编辑器",
-		"webPath": webPath,
-	}
-
-	if err := h.renderTemplate(w, r, "http_editor", "templates/http_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleHTTPConfig 获取当前 HTTP 配置
 func (h *ConfigHandler) handleHTTPConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

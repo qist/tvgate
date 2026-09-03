@@ -14,20 +14,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// handleJXEditor 处理jx编辑器页面
-func (h *ConfigHandler) handleJXEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-
-	data := map[string]interface{}{
-		"title":   "TVGate JX编辑器",
-		"webPath": webPath,
-	}
-
-	if err := h.renderTemplate(w, r, "jx_editor", "templates/jx_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleJXConfig 处理jx配置获取请求
 func (h *ConfigHandler) handleJXConfig(w http.ResponseWriter, r *http.Request) {
 	// 设置响应头
@@ -103,12 +89,12 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 
 	// 添加日志，打印解析后的数据
 	// fmt.Printf("DEBUG: 解析后的jxConfig: %+v\n", jxConfig)
-	
+
 	// 特别打印 path 和 default_id 字段
 	// if path, ok := jxConfig["path"]; ok {
 	// 	fmt.Printf("DEBUG: path字段值: %v, 类型: %T\n", path, path)
 	// }
-	
+
 	// if defaultID, ok := jxConfig["default_id"]; ok {
 	// 	fmt.Printf("DEBUG: default_id字段值: %v, 类型: %T\n", defaultID, defaultID)
 	// }
@@ -178,17 +164,17 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 				if ok && len(apiGroupsMap) > 0 {
 					// 创建api_groups节点
 					apiGroupsNode := &yaml.Node{Kind: yaml.MappingNode}
-					
+
 					// 遍历api_groups
 					for groupName, groupData := range apiGroupsMap {
 						groupMap, ok := groupData.(map[string]interface{})
 						if !ok {
 							continue
 						}
-						
+
 						// 创建group节点
 						groupNode := &yaml.Node{Kind: yaml.MappingNode}
-						
+
 						// 添加endpoints字段
 						if endpoints, ok := groupMap["endpoints"]; ok {
 							endpointsSlice, ok := endpoints.([]interface{})
@@ -205,49 +191,49 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 									endpointsNode)
 							}
 						}
-						
+
 						// 添加timeout字段
 						if timeout, ok := groupMap["timeout"]; ok && timeout != "" {
 							groupNode.Content = append(groupNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "timeout"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", timeout)})
 						}
-						
+
 						// 添加query_template字段
 						if queryTemplate, ok := groupMap["query_template"]; ok && queryTemplate != "" {
 							groupNode.Content = append(groupNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "query_template"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", queryTemplate)})
 						}
-						
+
 						// 添加primary字段
 						if primary, ok := groupMap["primary"]; ok {
 							groupNode.Content = append(groupNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "primary"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", primary)})
 						}
-						
+
 						// 添加weight字段
 						if weight, ok := groupMap["weight"]; ok {
 							groupNode.Content = append(groupNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "weight"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", weight)})
 						}
-						
+
 						// 添加fallback字段
 						if fallback, ok := groupMap["fallback"]; ok {
 							groupNode.Content = append(groupNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "fallback"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", fallback)})
 						}
-						
+
 						// 添加max_retries字段
 						if maxRetries, ok := groupMap["max_retries"]; ok {
 							groupNode.Content = append(groupNode.Content,
 								&yaml.Node{Kind: yaml.ScalarNode, Value: "max_retries"},
 								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", maxRetries)})
 						}
-						
+
 						// 添加filters字段
 						if filters, ok := groupMap["filters"]; ok {
 							filtersMap, ok := filters.(map[string]interface{})
@@ -263,13 +249,13 @@ func (h *ConfigHandler) handleJXConfigSave(w http.ResponseWriter, r *http.Reques
 									filtersNode)
 							}
 						}
-						
+
 						// 将group节点添加到api_groups节点
 						apiGroupsNode.Content = append(apiGroupsNode.Content,
 							&yaml.Node{Kind: yaml.ScalarNode, Value: groupName},
 							groupNode)
 					}
-					
+
 					// 将api_groups节点添加到jx节点
 					jxNode.Content = append(jxNode.Content,
 						&yaml.Node{Kind: yaml.ScalarNode, Value: "api_groups"},
@@ -406,12 +392,12 @@ func (h *ConfigHandler) TestAPIEndpoint(w http.ResponseWriter, r *http.Request) 
 		responsePreview := string(buffer[:n])
 		// 检查是否包含JSON响应的特征
 		isJSON := strings.Contains(responsePreview, "{") || strings.Contains(responsePreview, "[")
-		
+
 		message := fmt.Sprintf("状态码: %d", resp.StatusCode)
 		if isJSON {
 			message += ", 检测到JSON响应"
 		}
-		
+
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"message": message,

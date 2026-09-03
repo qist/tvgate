@@ -3,7 +3,6 @@ package web
 import (
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,33 +11,12 @@ import (
 	"time"
 )
 
-// handleBackupPage 渲染备份文件中心页面
-func (h *ConfigHandler) handleBackupPage(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	webPath := h.getWebPath()
-	content, err := templatesFS.ReadFile("templates/backup.html")
-	if err != nil {
-		http.Error(w, "Failed to read template: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	tmpl, err := template.New("backup").Parse(string(content))
-	if err != nil {
-		http.Error(w, "Failed to parse template: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tmpl.Execute(w, map[string]interface{}{"webPath": webPath})
-}
-
 // backupItem 备份文件信息
 type backupItem struct {
 	Name     string `json:"name"`     // 备份文件名（含 .bak.时间戳）
 	Original string `json:"original"` // 原始文件名
 	Time     string `json:"time"`     // 备份时间（可读格式）
-	Size     int64  `json:"size"`    // 文件大小
+	Size     int64  `json:"size"`     // 文件大小
 }
 
 // handleBackupList 列出所有备份文件
@@ -278,8 +256,8 @@ func (h *ConfigHandler) handleBackupCleanup(w http.ResponseWriter, r *http.Reque
 	}
 	root := h.codeRoot()
 	var req struct {
-		Path    string `json:"path"`     // 原始文件相对路径（空=全部）
-		Keep    int    `json:"keep"`     // 每个文件保留几个备份（0=全删）
+		Path string `json:"path"` // 原始文件相对路径（空=全部）
+		Keep int    `json:"keep"` // 每个文件保留几个备份（0=全删）
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "解析请求失败: "+err.Error(), http.StatusBadRequest)

@@ -12,34 +12,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// handleMulticastEditor 处理组播配置编辑器页面
-func (h *ConfigHandler) handleMulticastEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-
-	data := map[string]interface{}{
-		"title":   "TVGate 组播配置编辑器",
-		"webPath": webPath,
-	}
-
-	if err := h.renderTemplate(w, r, "multicast_editor", "templates/multicast_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-// handleTSEditor 处理TS缓存配置编辑器页面
-func (h *ConfigHandler) handleTSEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-
-	data := map[string]interface{}{
-		"title":   "TVGate TS缓存配置编辑器",
-		"webPath": webPath,
-	}
-
-	if err := h.renderTemplate(w, r, "ts_editor", "templates/ts_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleMulticastConfig 处理组播配置获取请求
 func (h *ConfigHandler) handleMulticastConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

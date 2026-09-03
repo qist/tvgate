@@ -720,11 +720,20 @@ type APIResp struct {
 - 移动端导航修复：AppShell 汉堡按钮在 `<768px` 打开抽屉式侧栏（此前只切换桌面折叠态，移动端侧栏完全不可见）；桌面固定 240px 侧栏。
 - 首屏体积：路由懒加载 + vendor 分包（react/router/forms/ui 四 chunk），首屏 gzip ≈107KB（原 158KB 单文件），达成 §11「首屏 JS < 150KB」验收项。
 
+### 2026-09-03 收尾清理（Phase 3 主体 — ✅ 完成）
+
+浏览器冒烟通过后执行旧前端物理删除：
+
+- **旧模板**：`web/templates/` 29 个模板全部删除（backup/code/config_backup/*_editor/index/node/sidebar/web_editor 等），**仅保留 `login.html`**（服务端登录页仍被未认证 302 使用；SPA 登录页与它并存）。
+- **孤儿 handler**：删除 30 个页面渲染 handler（`handleEditor`/`handleNode`/`handle*Editor`/`handleLogViewer`/`handleLogEditor`/`handleBackupPage`/`handleConfigBackupPage`/`handleTasksEditor` 等 + `renderTemplate` + `handleNodeConfig`/`handleConfigSaveNode`/`formatBytes`/`hasJXConfiguration` 辅助），保留全部 JSON API（config/*、config/save-*、api/sync/*、api/tasks/*、api/code/*、api/backup/*、api/github/*、api/dns/*、api/logs/stream、api/publisher/*、config/backup/*）+ 登录/鉴权。SPA 依赖的 **`config`/`config/save`/`config/validate`（YAML 文本协议）保留**。
+- **静态资源**：删除 `static/js/codemirror`、`js-yaml.min.js`、`system-stats.js`、`version-upgrade.js`；保留 login.html 依赖的 `common.css`/`mobile.css`/`version.css`/`js/theme.js`。
+- 路由注册从 ~76 条清理至仅 API + 登录 + SPA。旧 URL（`/web/editor`、`/web/github` 等）落入 SPA fallback，不再有任何旧页面。
+- 验证：`go build ./...` 通过；重启后 SPA/登录/全部 JSON API（config/player、sync、tasks、code、backup、github、dns、server、web、http、auth、jx、publisher、group、domainmap、proxygroups、multicast、ts、reload、php、log）回归 200 正常。
+
 ### 剩余 / 待办（按优先级）
 
-1. **git 提交**（待推送）：`8e78c99` 已本地提交；本轮监控迁移/清理/移动端/体积优化/播放器改动待 commit 后一并推送。
-2. **收尾清理（剩余）**：`web/templates/*` 30 个旧模板 + 对应 `handle*Editor`/`handle*Config` 孤儿 handler 已被 SPA 取代（monitor/status 相关已随本轮清理），按 Phase 3 纪律删除；保留 code/backup/github/sync/logs 相关 API 与登录。
-   - `static/js/codemirror` vendor：若未再被保留页面引用，冒烟后清理。
-3. **验收核对**：对照 §11 验收清单，特别是浅深主题、375px 无横向滚动、全站 `credentials: 'same-origin'` 与 CSRF（冒烟已确认请求正常、401/CSRF 纵深保留）。
+1. **git 提交**（待推送）：`8e78c99` + `05801cc` 已本地提交；本轮收尾清理改动待 commit 后一并推送。
+2. **浏览器终验**：清理后跑一次完整 SPA 回归（懒加载/登录/各模块），确认无回归。
+3. **验收核对**：对照 §11 验收清单，特别是浅深主题、375px 无横向滚动、全站 `credentials: 'same-origin'` 与 CSRF。
 
 > 备注：React 迁移主体未改动既有 JSON 契约（配置读写仍走 `config/*` 与 `api/*` 原端点，保存/热重载逻辑零改动）；仅新增 `/web/api/v1/status` 一个 SPA 专属状态端点，并调整 cookieAuth 对 JSON 请求的未认证响应（302 → 401），不影响页面请求与旧接口。

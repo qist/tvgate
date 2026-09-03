@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"io"
 	"net/http"
 	"os"
@@ -52,34 +51,6 @@ func (h *ConfigHandler) assertInside(root, abs string) error {
 		return fmt.Errorf("非法路径：符号链接指向 docroot 之外（%s）", real)
 	}
 	return nil
-}
-
-// handleCodeEditor 渲染代码文件管理器页面
-func (h *ConfigHandler) handleCodeEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-	if r.URL.Path == webPath+"code" {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		content, err := templatesFS.ReadFile("templates/code.html")
-		if err != nil {
-			http.Error(w, "Failed to read template: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		tmpl, err := template.New("code").Parse(string(content))
-		if err != nil {
-			http.Error(w, "Failed to parse template: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.Execute(w, map[string]interface{}{"webPath": webPath}); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		return
-	}
-	http.NotFound(w, r)
 }
 
 // handleCodeList 列出指定目录下的文件/子目录（非递归，仅当前层级）

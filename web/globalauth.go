@@ -14,20 +14,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// handleGlobalAuthEditor 处理全局认证编辑器页面
-func (h *ConfigHandler) handleGlobalAuthEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-
-	data := map[string]interface{}{
-		"title":   "TVGate 全局认证编辑器",
-		"webPath": webPath,
-	}
-
-	if err := h.renderTemplate(w, r, "global_auth_editor", "templates/global_auth_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // 凭据掩码占位符：save 收到该值时保留原始配置（不覆盖不回显）。
 // 注意：GET 现在返回真实值，由前端默认打码 + 眼睛按钮按需显示，避免小设备使用者忘记凭据。
 const credentialMask = "********"

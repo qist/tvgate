@@ -12,20 +12,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// handleDnsEditor 处理 DNS 配置编辑器页面
-func (h *ConfigHandler) handleDnsEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-
-	data := map[string]interface{}{
-		"title":   "TVGate DNS 配置编辑器",
-		"webPath": webPath,
-	}
-
-	if err := h.renderTemplate(w, r, "dns_editor", "templates/dns_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleDnsConfig 处理 DNS 配置获取请求
 func (h *ConfigHandler) handleDnsConfig(w http.ResponseWriter, r *http.Request) {
 	// 设置响应头

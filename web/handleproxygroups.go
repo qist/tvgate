@@ -13,20 +13,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// handleProxyGroupsEditor 处理代理组编辑器页面
-func (h *ConfigHandler) handleProxyGroupsEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-
-	data := map[string]interface{}{
-		"title":   "TVGate 代理组编辑器",
-		"webPath": webPath,
-	}
-
-	if err := h.renderTemplate(w, r, "proxygroups_editor", "templates/proxygroups_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleProxyGroupsConfig 处理代理组配置获取请求
 func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.Request) {
 	// 设置响应头

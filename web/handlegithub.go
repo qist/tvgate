@@ -12,20 +12,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// handleGithubEditor 处理 GitHub 配置编辑器页面
-func (h *ConfigHandler) handleGithubEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-
-	data := map[string]interface{}{
-		"title":   "TVGate GitHub 配置编辑器",
-		"webPath": webPath,
-	}
-
-	if err := h.renderTemplate(w, r, "github_editor", "templates/github_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleGithubConfig 处理 GitHub 配置获取请求
 func (h *ConfigHandler) handleGithubConfig(w http.ResponseWriter, r *http.Request) {
 	// 设置响应头

@@ -12,18 +12,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// handlePlayerEditor 显示播放器模块配置编辑器页面
-func (h *ConfigHandler) handlePlayerEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-	data := map[string]interface{}{
-		"title":   "TVGate H5 播放器配置",
-		"webPath": webPath,
-	}
-	if err := h.renderTemplate(w, r, "player_editor", "templates/player_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handlePlayerConfig 获取当前播放器模块配置
 func (h *ConfigHandler) handlePlayerConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

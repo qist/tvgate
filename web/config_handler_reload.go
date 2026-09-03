@@ -12,20 +12,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// handleReloadEditor 显示 reload 编辑器页面
-func (h *ConfigHandler) handleReloadEditor(w http.ResponseWriter, r *http.Request) {
-	webPath := h.getWebPath()
-
-	data := map[string]interface{}{
-		"title":   "TVGate 配置重新加载间隔",
-		"webPath": webPath,
-	}
-
-	if err := h.renderTemplate(w, r, "reload_editor", "templates/reload_editor.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 // handleReloadConfig 获取当前 reload 配置
 func (h *ConfigHandler) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
