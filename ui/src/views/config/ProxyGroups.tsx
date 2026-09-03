@@ -43,7 +43,12 @@ export function ProxyGroupsPage() {
   const set = (i: number, patch: Partial<ProxyGroup>) =>
     setEntries((prev) => prev.map((e, idx) => (idx === i ? { ...e, g: { ...e.g, ...patch } } : e)));
 
-  const addGroup = () => setEntries((prev) => [...prev, { name: "", g: emptyGroup() }]);
+  const addGroup = () => {
+    // 新组插到最前面并直接进入编辑，避免组多时滚到底部才能添加
+    setEntries((prev) => [{ name: "", g: emptyGroup() }, ...prev]);
+    setEditing((prev) => new Set([0, ...[...prev].map((i) => i + 1)]));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const remove = (i: number) => {
     setEntries((prev) => prev.filter((_, idx) => idx !== i));
