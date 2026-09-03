@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brush, Download, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Brush, Download, FolderCode, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,7 @@ function fmtSize(n: number): string {
 }
 
 export function BackupCenterPage() {
+  const navigate = useNavigate();
   const [items, setItems] = useState<BackupItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -129,6 +131,9 @@ export function BackupCenterPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">备份中心</h1>
         <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => navigate("/code")} title="打开代码文件管理">
+            <FolderCode className="mr-1 h-4 w-4" /> 代码文件
+          </Button>
           <Button variant="outline" size="sm" onClick={load}>
             <RefreshCw className={`mr-1 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> 刷新
           </Button>
