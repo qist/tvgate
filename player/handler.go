@@ -276,7 +276,10 @@ func (h *Handler) ServeCatchup(w http.ResponseWriter, r *http.Request) {
 }
 
 // catchupURL 在源地址上拼 playseek=<start>-<end>（回看参数，源侧处理时差）。
+// 中国移动 OTT 源（路径含 /PLTV/ 段）回看需将 PLTV 替换为 TVOD（时移服务器路径），
+// 如 ott.fj.chinamobile.com/PLTV/.../index.m3u8 → ott.fj.chinamobile.com/TVOD/.../index.m3u8。
 func catchupURL(raw, start, end string) string {
+	raw = strings.Replace(raw, "/PLTV/", "/TVOD/", 1)
 	sep := "?"
 	if strings.Contains(raw, "?") {
 		sep = "&"
