@@ -10,6 +10,12 @@ export interface SegmentMeta {
   resetRemuxer: boolean;
   /** fMP4 initialization segment URL (HLS EXT-X-MAP), if any. */
   initUrl?: string;
+  /** Which track this segment feeds when HLS separates audio into its own rendition. Defaults to video. */
+  track?: "video" | "audio";
+  /** HLS media sequence number (used to align separate audio renditions). */
+  mediaSequence?: number;
+  /** EXT-X-PROGRAM-DATE-TIME in ms since the Unix epoch, when present. */
+  programDateTime?: number;
 }
 
 export interface SegmentSource {

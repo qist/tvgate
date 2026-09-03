@@ -156,6 +156,11 @@ export function createMSEPlaybackController(
           updateFetchBackpressure();
         }
         break;
+      case "audio-disabled":
+        // The worker already released held messages; nothing to do beyond
+        // flushing any pending init batch immediately.
+        flushPendingInits();
+        break;
       case "pcm-audio-data": {
         const player = ensurePCMPlayer();
         const pcm = new Float32Array(msg.pcm);

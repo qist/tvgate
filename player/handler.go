@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -61,6 +62,9 @@ type resMap struct {
 	m     map[string]string
 	until time.Time
 }
+
+// m3u8URIRe 匹配 m3u8 标签行中的内嵌 URI 属性（EXT-X-MEDIA / EXT-X-KEY / EXT-X-MAP 等）。
+var m3u8URIRe = regexp.MustCompile(`URI="([^"]+)"`)
 
 func NewHandler(mgr *Manager) *Handler {
 	sc := httpclient.NewHTTPClient(&config.Cfg, nil)
@@ -609,6 +613,8 @@ func isM3U8(ct, abs string) bool {
 // rewrittenM3U8 把 m3u8 里的资源（分片/VARIANT m3u8/EXT-X-MAP init）统一重写为
 // `绝对路径 /player/<key>/<短token>`，并登记 token->真实上游 URL（含 query 签名）。
 // 用绝对路径可避免 hls.js 把 /player/<key> 当文件名而丢 key；浏览器只见短地址，CDN path+长 query 不可见。
+// 带内嵌 URI 的标签行（如 EXT-X-MEDIA 音频 rendition、EXT-X-I-FRAME-STREAM-INF、EXT-X-KEY）
+// 其 URI 同样解析登记后重写，否则独立的音频轨道会以错误的相对路径回拉。
 func rewrittenM3U8(body io.Reader, baseStr, key string) ([]byte, string, map[string]string, error) {
 	raw, err := io.ReadAll(io.LimitReader(body, 8<<20))
 	if err != nil {
@@ -623,7 +629,24 @@ func rewrittenM3U8(body io.Reader, baseStr, key string) ([]byte, string, map[str
 	var out bytes.Buffer
 	for _, line := range strings.Split(string(raw), "\n") {
 		lt := strings.TrimSpace(line)
-		if strings.HasPrefix(lt, "#") || lt == "" {
+		if strings.HasPrefix(lt, "#") {
+			if strings.Contains(lt, `URI="`) {
+				line = m3u8URIRe.ReplaceAllStringFunc(line, func(match string) string {
+					sub := m3u8URIRe.FindStringSubmatch(match)[1]
+					seg, err := resolveSegment(sub, base)
+					if err != nil {
+						return match
+					}
+					abs := seg.String()
+					tok := shortHash(abs)
+					tokens[tok] = abs
+					return `URI="/player/` + key + `/` + tok + `"`
+				})
+			}
+			out.WriteString(line + "\n")
+			continue
+		}
+		if lt == "" {
 			out.WriteString(line + "\n")
 			continue
 		}

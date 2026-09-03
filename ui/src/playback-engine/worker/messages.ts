@@ -25,7 +25,8 @@ export type WorkerEvent =
       url?: string;
       gen: number;
     }
-  | { type: "hls-info"; live: boolean; totalDuration: number; gen: number }
+  | { type: "hls-info"; live: boolean; totalDuration: number; separateAudio: boolean; gen: number }
+  | { type: "audio-disabled"; gen: number }
   | {
       type: "pcm-audio-data";
       pcm: ArrayBuffer;

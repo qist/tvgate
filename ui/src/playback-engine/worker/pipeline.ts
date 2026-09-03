@@ -49,6 +49,8 @@ export interface PipelineCallbacks {
   onDemuxError: (type: DemuxErrorDetail, info: string) => void;
   onHlsInfo: (info: HlsInfo) => void;
   onMediaInfo: (info: PlayerMediaInfo) => void;
+  /** The separate audio rendition was given up; main thread may resume video-only flow. */
+  onAudioDisabled: () => void;
   /** `time` is normalized to the MSE timeline (seconds, same space as video.currentTime). */
   onPCMAudioData: (pcm: Float32Array, channels: number, sampleRate: number, time: number) => void;
 }
@@ -133,6 +135,9 @@ class Pipeline {
 
   private _demuxer: TSDemuxer | null = null;
   private _remuxer: MP4Remuxer | null = null;
+  /** Separate pair for HLS audio renditions (EXT-X-MEDIA), fed by track:"audio" segments. */
+  private _audioDemuxer: TSDemuxer | null = null;
+  private _audioRemuxer: MP4Remuxer | null = null;
   private _ioctl: FetchLoader | null = null;
   /** Settles the in-flight segment load promise (so a cancelled loop can exit). */
   private _cancelLoad: (() => void) | null = null;
@@ -505,6 +510,7 @@ class Pipeline {
       this._callbacks.onHlsInfo(info);
       this._handleHlsInfo(info);
     };
+    hls.onAudioDisabled = () => this._callbacks.onAudioDisabled();
     this._hlsSource = hls;
     this._source = hls;
     void this._run(this._runId);
@@ -523,6 +529,14 @@ class Pipeline {
     if (this._remuxer) {
       this._remuxer.destroy();
       this._remuxer = null;
+    }
+    if (this._audioDemuxer) {
+      this._audioDemuxer.destroy();
+      this._audioDemuxer = null;
+    }
+    if (this._audioRemuxer) {
+      this._audioRemuxer.destroy();
+      this._audioRemuxer = null;
     }
     this._pendingDtsOffsetMs = 0;
     this._fmp4Mode = false;
@@ -597,33 +611,53 @@ class Pipeline {
       }
 
       try {
+        const isAudioTrack = meta.track === "audio";
         if (meta.resetRemuxer) {
           const initSegmentChanged = meta.initUrl !== undefined && meta.initUrl !== this._lastInitUrl;
-          this._resetTransmux(meta.start, !this._fmp4Mode || initSegmentChanged);
+          if (isAudioTrack) {
+            this._resetAudioTransmux();
+          } else {
+            this._resetTransmux(meta.start, !this._fmp4Mode || initSegmentChanged);
+          }
         }
-        if (meta.initUrl && meta.initUrl !== this._lastInitUrl) {
+        if (!isAudioTrack && meta.initUrl && meta.initUrl !== this._lastInitUrl) {
           if (!(await this._waitIfPaused(runId))) return;
           await this._loadFmp4Init(meta.initUrl, runId);
           if (this._runId !== runId) return;
           this._lastInitUrl = meta.initUrl;
         }
         if (!(await this._waitIfPaused(runId))) return;
-        this._currentSegmentBytes = 0;
+        // Per-segment A/V sync correction: re-anchor the audio remuxer's next
+        // output batch at this segment's mapped playlist position (see
+        // setAudioSegmentStartTarget). No-op when the remuxer is about to be
+        // recreated — the fresh instance anchors via setDtsBaseOffset.
+        if (isAudioTrack) {
+          this._audioRemuxer?.setAudioSegmentStartTarget(meta.start * 1000);
+        }
+        // Audio rendition bytes accumulate into the next video segment's bitrate sample
+        if (!isAudioTrack) {
+          this._currentSegmentBytes = 0;
+        }
         await this._loadSegment(meta);
         if (this._runId !== runId) return;
-        if (this._sourceMode === "hls" || this._fmp4Mode) {
+        if (!isAudioTrack && (this._sourceMode === "hls" || this._fmp4Mode)) {
           this._publishSegmentBitrate(meta.duration);
         }
 
-        if (this._fmp4Mode) {
+        if (this._fmp4Mode && !isAudioTrack) {
           this._flushFmp4Segment(meta);
         } else if (this._hlsSource) {
           // Keep each HLS TS input segment as a hard batching boundary. Codec
           // metadata remains reusable, but all complete media samples must be
           // emitted before loading the next playlist segment.
-          this._demuxer?.flushSegmentBoundary();
-          this._remuxer?.flushStashedSamples();
-        } else {
+          if (isAudioTrack) {
+            this._audioDemuxer?.flushSegmentBoundary();
+            this._audioRemuxer?.flushStashedSamples();
+          } else {
+            this._demuxer?.flushSegmentBoundary();
+            this._remuxer?.flushStashedSamples();
+          }
+        } else if (!isAudioTrack) {
           this._finishTsInputBoundary();
         }
       } catch (e) {
@@ -658,6 +692,21 @@ class Pipeline {
     // The output timeline restarts: stale carry bytes and the PTS anchor are invalid
     this._workerAudioDecoder?.reset();
     this._resetAudioTiming();
+  }
+
+  /**
+   * Reset the separate-audio-rendition pair. The pair is recreated lazily on the
+   * next audio segment, anchored at that segment's playlist position.
+   */
+  private _resetAudioTransmux(): void {
+    if (this._audioDemuxer) {
+      this._audioDemuxer.destroy();
+      this._audioDemuxer = null;
+    }
+    if (this._audioRemuxer) {
+      this._audioRemuxer.destroy();
+      this._audioRemuxer = null;
+    }
   }
 
   private _shouldAnchorSegment(meta: SegmentMeta): boolean {
@@ -738,6 +787,10 @@ class Pipeline {
   }
 
   private _onProbeChunk(meta: SegmentMeta, data: Uint8Array, byteStart: number): number {
+    if (meta.track === "audio") {
+      return this._onAudioProbeChunk(meta, data, byteStart);
+    }
+
     if (this._fmp4Mode) {
       return this._onFmp4Chunk(data);
     }
@@ -853,6 +906,90 @@ class Pipeline {
   private _onDemuxException(type: DemuxErrorDetail, info: string): void {
     Log.e(this.TAG, `DemuxException: type = ${type}, info = ${info}`);
     this._callbacks.onDemuxError(type, info);
+  }
+
+  // ---- Separate audio rendition (EXT-X-MEDIA) path ----
+
+  private _onAudioProbeChunk(meta: SegmentMeta, data: Uint8Array, byteStart: number): number {
+    const probeData = TSDemuxer.probe(data);
+    if (probeData.match) {
+      this._setupAudioDemuxerRemuxer(probeData, meta);
+      if (this._ioctl && this._audioDemuxer) {
+        const demuxer = this._audioDemuxer;
+        this._ioctl.onDataArrival = (chunk, chunkByteStart) => {
+          this._recordInputBytes(chunk.byteLength);
+          return demuxer.parseChunks(chunk, chunkByteStart);
+        };
+      }
+      return this._audioDemuxer?.parseChunks(data, byteStart) ?? 0;
+    }
+
+    // fMP4 or unknown audio rendition container: not supported on the separate path
+    if (!probeData.needMoreData) {
+      Log.w(this.TAG, `Audio rendition segment is not MPEG-TS (${meta.url}); disabling separate audio track`);
+      this._hlsSource?.disableAudio();
+      this._resetAudioTransmux();
+      return data.byteLength; // consume the rest of this segment without demuxing
+    }
+    return 0;
+  }
+
+  private _setupAudioDemuxerRemuxer(probeData: unknown, meta: SegmentMeta): void {
+    const canReuse = !meta.resetRemuxer && this._audioDemuxer !== null && this._audioRemuxer !== null;
+    if (canReuse) {
+      this._audioDemuxer?.resetSegmentBoundary(probeData as ConstructorParameters<typeof TSDemuxer>[0], {
+        resetAudioParserState: true,
+      });
+      return;
+    }
+
+    if (this._audioDemuxer) {
+      this._audioDemuxer.destroy();
+    }
+    const demuxer = new TSDemuxer(probeData as ConstructorParameters<typeof TSDemuxer>[0], {
+      waitForInitialVideoKeyframe: false,
+    });
+    this._audioDemuxer = demuxer;
+
+    if (!this._audioRemuxer) {
+      this._audioRemuxer = new MP4Remuxer();
+      // Anchor the audio rendition's first sample at the playlist position of this
+      // segment; this aligns it with the video timeline even when the renditions
+      // use different PTS epochs.
+      this._audioRemuxer.setDtsBaseOffset(meta.start * 1000);
+    }
+    this._audioRemuxer.setTsSegmentContinuityNormalization(false);
+
+    demuxer.onError = this._onDemuxException.bind(this);
+    demuxer.timestampBase = 0;
+    demuxer.onTrackDiscontinuity = (track) => {
+      if (track === "audio") {
+        this._audioRemuxer?.flushStashedSamples();
+        this._audioRemuxer?.insertDiscontinuity();
+      }
+    };
+
+    this._audioRemuxer.bindDataSource(
+      demuxer as unknown as {
+        onDataAvailable: (...args: unknown[]) => void;
+        onTrackMetadata: (...args: unknown[]) => void;
+      },
+    );
+    const remuxTrackMetadata = demuxer.onTrackMetadata;
+    demuxer.onTrackMetadata = (type, metadata) => {
+      this._handleTsTrackMetadata(type, metadata);
+      remuxTrackMetadata?.(type, metadata);
+    };
+
+    this._audioRemuxer.onInitSegment = (type, initSegment) => {
+      this._callbacks.onInitSegment(type, initSegment as unknown as Parameters<PipelineCallbacks["onInitSegment"]>[1]);
+    };
+    this._audioRemuxer.onMediaSegment = (type, mediaSegment) => {
+      this._callbacks.onMediaSegment(
+        type,
+        mediaSegment as unknown as Parameters<PipelineCallbacks["onMediaSegment"]>[1],
+      );
+    };
   }
 
   // ---- fMP4 passthrough path ----

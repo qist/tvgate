@@ -1,13 +1,13 @@
 /**
  * Minimal m3u8 playlist parser. Supports only what the player needs:
  * - Media playlist: EXTINF, EXT-X-TARGETDURATION, EXT-X-MEDIA-SEQUENCE,
- *   EXT-X-DISCONTINUITY, EXT-X-ENDLIST, EXT-X-MAP
- * - Multivariant playlist: EXT-X-STREAM-INF media hints
+ *   EXT-X-PROGRAM-DATE-TIME, EXT-X-DISCONTINUITY, EXT-X-ENDLIST, EXT-X-MAP
+ * - Multivariant playlist: EXT-X-STREAM-INF media hints, EXT-X-MEDIA audio renditions
  *
  * EXT-X-PLAYLIST-TYPE is ignored: any playlist without EXT-X-ENDLIST (including
  * EVENT) is treated as live and keeps refreshing.
  *
- * Explicitly unsupported: LL-HLS, EXT-X-MEDIA renditions, encryption, byteranges.
+ * Explicitly unsupported: LL-HLS, non-audio EXT-X-MEDIA renditions, encryption, byteranges.
  */
 
 export interface HlsPlaylistSegment {
@@ -16,6 +16,8 @@ export interface HlsPlaylistSegment {
   mediaSequence: number;
   discontinuity: boolean;
   initUrl?: string;
+  /** EXT-X-PROGRAM-DATE-TIME for this segment, in milliseconds since the Unix epoch. */
+  programDateTime?: number;
 }
 
 export interface HlsMediaPlaylist {
@@ -36,11 +38,23 @@ export interface HlsVariant {
   resolution?: { width: number; height: number };
   frameRate?: number;
   videoRange?: string;
+  /** GROUP-ID of the EXT-X-MEDIA audio rendition associated with this variant. */
+  audioGroupId?: string;
+}
+
+export interface HlsAudioRendition {
+  url: string;
+  groupId: string;
+  name: string;
+  language?: string;
+  isDefault: boolean;
 }
 
 export interface HlsMultivariantPlaylist {
   kind: "multivariant";
   variants: HlsVariant[];
+  /** TYPE=AUDIO renditions that carry their own media playlist (URI present). */
+  audioRenditions: HlsAudioRendition[];
 }
 
 export type HlsPlaylist = HlsMediaPlaylist | HlsMultivariantPlaylist;
@@ -75,10 +89,22 @@ export function parseM3U8(text: string, baseUrl: string): HlsPlaylist {
 
 function parseMultivariant(lines: string[], baseUrl: string): HlsMultivariantPlaylist {
   const variants: HlsVariant[] = [];
+  const audioRenditions: HlsAudioRendition[] = [];
   let pending: Omit<HlsVariant, "url"> | null = null;
 
   for (const line of lines) {
-    if (line.startsWith("#EXT-X-STREAM-INF:")) {
+    if (line.startsWith("#EXT-X-MEDIA:")) {
+      const attrs = parseAttributes(line.slice("#EXT-X-MEDIA:".length));
+      if (attrs.TYPE === "AUDIO" && attrs.URI && attrs["GROUP-ID"]) {
+        audioRenditions.push({
+          url: new URL(attrs.URI, baseUrl).href,
+          groupId: attrs["GROUP-ID"],
+          name: attrs.NAME ?? "",
+          language: attrs.LANGUAGE,
+          isDefault: attrs.DEFAULT === "YES",
+        });
+      }
+    } else if (line.startsWith("#EXT-X-STREAM-INF:")) {
       const attrs = parseAttributes(line.slice("#EXT-X-STREAM-INF:".length));
       const resolutionMatch = /^(\d+)x(\d+)$/i.exec(attrs.RESOLUTION ?? "");
       const averageBandwidth = Number.parseInt(attrs["AVERAGE-BANDWIDTH"] ?? "", 10);
@@ -92,6 +118,7 @@ function parseMultivariant(lines: string[], baseUrl: string): HlsMultivariantPla
           : undefined,
         frameRate: Number.isFinite(frameRate) && frameRate > 0 ? frameRate : undefined,
         videoRange: attrs["VIDEO-RANGE"],
+        audioGroupId: attrs.AUDIO || undefined,
       };
     } else if (pending && line.length > 0 && !line.startsWith("#")) {
       variants.push({ url: new URL(line, baseUrl).href, ...pending });
@@ -99,7 +126,7 @@ function parseMultivariant(lines: string[], baseUrl: string): HlsMultivariantPla
     }
   }
 
-  return { kind: "multivariant", variants };
+  return { kind: "multivariant", variants, audioRenditions };
 }
 
 function parseMedia(lines: string[], baseUrl: string): HlsMediaPlaylist {
@@ -110,11 +137,20 @@ function parseMedia(lines: string[], baseUrl: string): HlsMediaPlaylist {
   let pendingDuration: number | null = null;
   let pendingDiscontinuity = false;
   let currentInitUrl: string | undefined;
+  let pendingProgramDateTime: number | undefined;
   let totalDuration = 0;
+  // PDT propagation: many CDNs emit EXT-X-PROGRAM-DATE-TIME only once per playlist
+  // window. Per spec the tag applies to the following segment; subsequent segments
+  // extrapolate from the last seen tag plus the intervening EXTINF durations.
+  let lastPdtMs: number | undefined;
+  let durationSincePdtMs = 0;
 
   for (const line of lines) {
     if (line.startsWith("#EXTINF:")) {
       pendingDuration = Number.parseFloat(line.slice("#EXTINF:".length)) || 0;
+    } else if (line.startsWith("#EXT-X-PROGRAM-DATE-TIME:")) {
+      const parsed = Date.parse(line.slice("#EXT-X-PROGRAM-DATE-TIME:".length).trim());
+      pendingProgramDateTime = Number.isFinite(parsed) ? parsed : undefined;
     } else if (line.startsWith("#EXT-X-TARGETDURATION:")) {
       targetDuration = Number.parseFloat(line.slice("#EXT-X-TARGETDURATION:".length)) || 0;
     } else if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
@@ -132,16 +168,26 @@ function parseMedia(lines: string[], baseUrl: string): HlsMediaPlaylist {
     } else if (line.startsWith("#EXT-X-ENDLIST")) {
       ended = true;
     } else if (line.length > 0 && !line.startsWith("#") && pendingDuration !== null) {
+      let pdtMs: number | undefined = pendingProgramDateTime;
+      if (pdtMs !== undefined) {
+        lastPdtMs = pdtMs;
+        durationSincePdtMs = 0;
+      } else if (lastPdtMs !== undefined) {
+        pdtMs = lastPdtMs + durationSincePdtMs;
+      }
+      durationSincePdtMs += pendingDuration * 1000;
       segments.push({
         url: new URL(line, baseUrl).href,
         duration: pendingDuration,
         mediaSequence: mediaSequence + segments.length,
         discontinuity: pendingDiscontinuity,
         initUrl: currentInitUrl,
+        programDateTime: pdtMs,
       });
       totalDuration += pendingDuration;
       pendingDuration = null;
       pendingDiscontinuity = false;
+      pendingProgramDateTime = undefined;
     }
   }
 

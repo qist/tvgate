@@ -150,6 +150,8 @@ class MP4Remuxer {
   private _silentAudioMode: boolean;
   private _silentAudioLastDts: number | undefined;
   private _silentAudioDurationResidual: number;
+  /** One-shot playlist-position target (ms) for the next audio remux batch; see setAudioSegmentStartTarget. */
+  private _pendingAudioSegmentStartMs: number | null;
   private _tsSegmentContinuityNormalization: boolean;
   private _mediaSegmentBatchDurationMs: number;
   private _mediaSegmentBatchMaxBytes: number;
@@ -187,6 +189,7 @@ class MP4Remuxer {
     this._silentAudioMode = false;
     this._silentAudioLastDts = undefined;
     this._silentAudioDurationResidual = 0;
+    this._pendingAudioSegmentStartMs = null;
     this._tsSegmentContinuityNormalization = false;
     this._mediaSegmentBatchDurationMs = normalizeMediaBatchLimit(
       options.mediaSegmentBatchDurationMs,
@@ -206,6 +209,7 @@ class MP4Remuxer {
     this._silentAudioMode = false;
     this._silentAudioLastDts = undefined;
     this._silentAudioDurationResidual = 0;
+    this._pendingAudioSegmentStartMs = null;
     this._tsSegmentContinuityNormalization = false;
     this._audioMediaSegmentEmitted = false;
     this._videoMediaSegmentEmitted = false;
@@ -357,6 +361,19 @@ class MP4Remuxer {
    */
   setDtsBaseOffset(offsetMs: number): void {
     this._dtsBaseOffset = offsetMs;
+  }
+
+  /**
+   * Soft A/V sync correction for separate HLS audio renditions: re-anchor the first
+   * output sample of the NEXT audio remux batch at the segment's mapped playlist
+   * position. The dedicated audio remuxer instance extrapolates timing by sample
+   * count from a fixed base, so any startup anchor error or source-side PTS jitter
+   * accumulates into a permanent audio lead/lag. Correcting once per input segment
+   * (duration >> drift per segment) keeps audio locked to the video playlist
+   * timeline without audible glitches.
+   */
+  setAudioSegmentStartTarget(startMs: number | null): void {
+    this._pendingAudioSegmentStartMs = startMs;
   }
 
   remux(audioTrack: DemuxTrack | null | undefined, videoTrack: DemuxTrack | null | undefined, force = false): void {
@@ -737,12 +754,26 @@ class MP4Remuxer {
 
     const firstSampleOriginalDts = (samples[0] as AudioSample).dts - this._dtsBase;
 
-    const dtsCorrection = this._computeDtsCorrection(
+    let dtsCorrection = this._computeDtsCorrection(
       "audio",
       firstSampleOriginalDts,
       this._audioNextDts,
       this._audioTiming,
     );
+
+    // One-shot per-segment re-anchor (see setAudioSegmentStartTarget): force the
+    // batch's first output sample onto the mapped playlist position.
+    if (this._pendingAudioSegmentStartMs !== null) {
+      const targetCorrection = firstSampleOriginalDts - this._pendingAudioSegmentStartMs;
+      if (Math.abs(targetCorrection - dtsCorrection) > 1) {
+        Log.v(
+          this.TAG,
+          `Audio segment re-anchor: output ${((firstSampleOriginalDts - dtsCorrection) / 1000).toFixed(3)}s -> ${(this._pendingAudioSegmentStartMs / 1000).toFixed(3)}s`,
+        );
+        dtsCorrection = targetCorrection;
+      }
+      this._pendingAudioSegmentStartMs = null;
+    }
 
     const mp4Samples: MP4Sample[] = [];
     let nextOutputDts = firstSampleOriginalDts - dtsCorrection;
