@@ -730,6 +730,12 @@ type APIResp struct {
 - 路由注册从 ~76 条清理至仅 API + 登录 + SPA。旧 URL（`/web/editor`、`/web/github` 等）落入 SPA fallback，不再有任何旧页面。
 - 验证：`go build ./...` 通过；重启后 SPA/登录/全部 JSON API（config/player、sync、tasks、code、backup、github、dns、server、web、http、auth、jx、publisher、group、domainmap、proxygroups、multicast、ts、reload、php、log）回归 200 正常。
 
+### 2026-09-03 登录页迁移 SPA + static 全量清理
+
+- **登录迁移**：服务端 `login.html` 删除；`GET /web/login` 改为 `302 → /web/#/login`（SPA 内登录）；`POST /web/login` 鉴权不变；未认证访问 `/web/` 由 AppShell 守卫跳 `#/login`。登录页与 `auth-status` 均为**公开白名单**（无需认证），登录后才访问受 cookieAuth 保护的数据接口。
+- **auth-status 循环修复**：原 `BlankLayout` 用 `r.ok` 判断跳转导致「未认证 200 → 跳回首页 → 守卫再跳登录页」死循环（auth-status 持续刷新）；已删除 BlankLayout/Login 上的 auth-status 请求，登录页零认证请求，AppShell 守卫仅检查一次。
+- **static 清理**：删除 `web/static/` 全部（common.css/mobile.css/version.css/js/theme.js）+ `web/templates/`（含 login.html）；移除 `staticFS`/`templatesFS` embed 与 `/static/`、`/web/static/` 静态服务路由（旧页面资源零保留）。
+
 ### 剩余 / 待办（按优先级）
 
 1. **git 提交**（待推送）：`8e78c99` + `05801cc` 已本地提交；本轮收尾清理改动待 commit 后一并推送。

@@ -1,20 +1,11 @@
-import { useEffect } from "react";
-import { Outlet, useNavigate } from "react-router-dom";
+import { Outlet } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/hooks/use-theme";
 import { Moon, Sun } from "lucide-react";
 
-/** 空白布局：登录页 / 全屏页 */
+/** 空白布局：登录页（白名单，不做任何认证请求） */
 export function BlankLayout() {
-  const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
-
-  useEffect(() => {
-    // 已登录则回到首页
-    fetch(new URL("auth-status", window.location.href.split("#")[0]).toString(), { credentials: "same-origin" })
-      .then((r) => r.ok && navigate("/", { replace: true }))
-      .catch(() => {});
-  }, [navigate]);
 
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-background p-4">

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -7,7 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { checkAuth, login } from "@/api/auth";
+import { login } from "@/api/auth";
 
 const schema = z.object({
   username: z.string().min(1, "请输入用户名"),
@@ -16,18 +15,11 @@ const schema = z.object({
 
 type Form = z.infer<typeof schema>;
 
-/** 登录页 */
+/** 登录页（白名单，不做任何认证请求，由 AppShell 守卫决定进出） */
 export function Login() {
   const navigate = useNavigate();
   const [error, setError] = useState("");
   const { register, handleSubmit } = useForm<Form>({ resolver: zodResolver(schema) });
-
-  // 已登录则直接进入管理后台
-  useEffect(() => {
-    checkAuth().then((ok) => {
-      if (ok) navigate("/", { replace: true });
-    });
-  }, [navigate]);
 
   const onSubmit = async (v: Form) => {
     setError("");

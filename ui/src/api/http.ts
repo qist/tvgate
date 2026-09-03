@@ -27,10 +27,11 @@ async function request<T>(path: string, init?: RequestInit, opts: ApiOptions = {
     },
   });
 
-  // 后端对未认证 JSON 请求返回 401（cookieAuth 按 Accept 判定）；仍可能 302 的场景统一视为未认证
+  // 后端对未认证 JSON 请求返回 401（cookieAuth 按 Accept 判定）；仍可能 302 的场景统一视为未认证。
+  // 未认证一律进 SPA 公开登录页（白名单），不走整页跳转（避免中断在途请求）
   if (res.status === 401 || res.status === 302) {
-    if (auth) {
-      window.location.href = base + "login";
+    if (auth && !window.location.hash.startsWith("#/login")) {
+      window.location.hash = "#/login";
     }
     throw new ApiError(401, "未认证，请先登录");
   }

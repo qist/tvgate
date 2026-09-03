@@ -1,12 +1,9 @@
 package web
 
 import (
-	"embed"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"io"
-	"io/fs"
 	"sync"
 
 	// "log"
@@ -23,12 +20,6 @@ import (
 	"github.com/qist/tvgate/config"
 	"gopkg.in/yaml.v3"
 )
-
-//go:embed templates/*
-var templatesFS embed.FS
-
-//go:embed all:static/*
-var staticFS embed.FS
 
 // WebConfig web管理界面配置
 type WebConfig struct {
@@ -143,11 +134,6 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 
 	// 注册主题同步路由
 	mux.HandleFunc(webPath+"sync-theme", h.handleSyncTheme)
-
-	// --- 静态文件 ---
-	subFS, _ := fs.Sub(staticFS, "static")
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(subFS))))
-	mux.Handle(webPath+"static/", http.StripPrefix(webPath+"static/", http.FileServer(http.FS(subFS))))
 
 	// 注册不需要认证的路由
 	registerSPARoutes(mux, webPath)  // /web/ 返回前端 SPA（含 /web/assets/*）
@@ -292,57 +278,18 @@ func (h *ConfigHandler) handleSyncTheme(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// handleWeb 处理web管理界面首页
+// handleLogin 处理登录（登录页已迁移到 SPA #/login，此处 GET 仅重定向、POST 负责鉴权）
 func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
-	// log.Printf("处理登录请求: Path=%s, Method=%s", r.URL.Path, r.Method)
-
 	webPath := h.getWebPath()
 
-	// log.Printf("Web路径配置: %s", webPath)
-
-	// GET请求显示登录页面
+	// GET请求：已认证回首页，未认证进 SPA 登录页
 	if r.Method == http.MethodGet {
-		// 如果用户已经登录，重定向到首页
 		if h.isAuthenticated(r) {
-			redirectURL := strings.TrimSuffix(webPath, "/")
-			// log.Printf("用户已认证，重定向到首页: %s", redirectURL)
-			http.Redirect(w, r, redirectURL, http.StatusFound)
+			http.Redirect(w, r, strings.TrimSuffix(webPath, "/"), http.StatusFound)
 			return
 		}
-
-		// log.Printf("显示登录页面")
-
-		// 显示登录页面
-		content, err := templatesFS.ReadFile("templates/login.html")
-		if err != nil {
-			// log.Printf("读取登录模板文件失败: %v", err)
-			http.Error(w, "Failed to read template file", http.StatusInternalServerError)
-			return
-		}
-
-		tmpl, err := template.New("login").Parse(string(content))
-		if err != nil {
-			// log.Printf("解析登录模板失败: %v", err)
-			http.Error(w, "Failed to parse template", http.StatusInternalServerError)
-			return
-		}
-
-		data := map[string]interface{}{
-			"title":   "登录",
-			"webPath": webPath,
-		}
-
-		// 设置响应头
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-		// 执行模板
-		if err := tmpl.Execute(w, data); err != nil {
-			// log.Printf("执行登录模板失败: %v", err)
-			http.Error(w, "Failed to execute template", http.StatusInternalServerError)
-			return
-		}
-
-		// log.Printf("成功渲染登录页面")
+		// 直接访问 /web/login 也进 SPA 的 #/login（登录页已不单独渲染）
+		http.Redirect(w, r, webPath+"#/login", http.StatusFound)
 		return
 	}
 

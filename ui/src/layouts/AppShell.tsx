@@ -98,15 +98,24 @@ export function AppShell() {
   const [authed, setAuthed] = useState<boolean | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     fetch(new URL("auth-status", window.location.href.split("#")[0]).toString(), { credentials: "same-origin" })
-      .then((r) => {
-        if (!r.ok) {
+      .then((r) => r.json())
+      .then((j: { authenticated?: boolean }) => {
+        if (cancelled) return;
+        if (j && j.authenticated === true) {
+          setAuthed(true);
+        } else {
+          // 未认证：进公开登录页（白名单），不渲染任何授权页面
           navigate("/login", { replace: true });
-          return;
         }
-        setAuthed(true);
       })
-      .catch(() => navigate("/login", { replace: true }));
+      .catch(() => {
+        if (!cancelled) navigate("/login", { replace: true });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [navigate]);
 
   if (authed !== true) {
