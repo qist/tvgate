@@ -88,6 +88,10 @@ func NewHTTPClient(c *config.Config, transport *http.Transport) *http.Client {
 	return &http.Client{
 		Timeout:   c.HTTP.Timeout,
 		Transport: transport,
+		// 注意：返回 ErrUseLastResponse —— 本 client 不自动跟随重定向，
+		// 3xx 交由调用方处理（如 stream.handleRedirect 回写同源地址）。
+		// 这里仅记录「原域名 -> 跳转目标」到 redirect 链缓存，供域名跳 IP 场景匹配代理组。
+		// 此前 hook 中的 req.URL = targetURL 重写是无效写（ErrUseLastResponse 分支会丢弃该请求）。
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			redirectCount := len(via)
 			if redirectCount >= maxRedirects {
@@ -102,7 +106,6 @@ func NewHTTPClient(c *config.Config, transport *http.Transport) *http.Client {
 			}
 
 			targetURL := previousURL.ResolveReference(redirectURL)
-			req.URL = targetURL
 
 			// 记录重定向
 			if transport != nil {

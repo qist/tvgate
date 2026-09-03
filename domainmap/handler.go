@@ -1070,6 +1070,9 @@ func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, m
 	reqBodyBytes, _ := io.ReadAll(req.Body)
 	req.Body.Close()
 
+	// 保存原始请求头：重定向重建请求时需要带上（UA/Referer 等上游可能校验）
+	origHeader := req.Header.Clone()
+
 	for i := 0; i < maxRedirect; i++ {
 		req.Body = io.NopCloser(bytes.NewReader(reqBodyBytes))
 		resp, err := client.Do(req)
@@ -1108,9 +1111,7 @@ func (dm *DomainMapper) doWithRedirect(client *http.Client, req *http.Request, m
 			if err != nil {
 				return nil, err
 			}
-			for name, values := range req.Header {
-				req.Header[name] = values
-			}
+			req.Header = origHeader.Clone()
 			continue
 		}
 
