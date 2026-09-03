@@ -36,7 +36,20 @@ export function saveFile(path: string, content: string): Promise<void> {
 }
 
 export function createFile(path: string, content = ""): Promise<void> {
-  return textPost(`new?path=${encodeURIComponent(path)}`, content);
+  return textPost(`new?path=${encodeURIComponent(path)}&type=file`, content);
+}
+
+export function createDir(path: string): Promise<void> {
+  return textPost(`new?path=${encodeURIComponent(path)}&type=dir`);
+}
+
+export function rename(oldPath: string, newName: string): Promise<void> {
+  return textPost(`rename?path=${encodeURIComponent(oldPath)}&newname=${encodeURIComponent(newName)}`);
+}
+
+export function unzip(zipPath: string, dir?: string): Promise<void> {
+  const q = `unzip?path=${encodeURIComponent(zipPath)}${dir ? `&dir=${encodeURIComponent(dir)}` : ""}`;
+  return textPost(q);
 }
 
 export function deleteFile(path: string): Promise<void> {
