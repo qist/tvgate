@@ -1,6 +1,6 @@
 module github.com/qist/tvgate
 
-go 1.25.6
+go 1.26.0
 
 require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
@@ -13,10 +13,11 @@ require (
 	github.com/libp2p/go-reuseport v0.4.0
 	github.com/miekg/dns v1.1.73
 	github.com/pion/rtp v1.10.5
-	github.com/quic-go/quic-go v0.61.0
+	github.com/quic-go/quic-go v0.62.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.58.0
 	golang.org/x/sync v0.22.0
+	golang.org/x/text v0.41.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 	h12.io/socks v1.0.3
@@ -29,7 +30,6 @@ require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/pion/logging v0.2.4 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
@@ -46,5 +46,4 @@ require (
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
 )
