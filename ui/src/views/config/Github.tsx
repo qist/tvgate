@@ -73,7 +73,7 @@ export function GithubPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">GitHub 升级</h1>
+        <h1 className="text-xl font-semibold">GitHub 加速配置</h1>
         <div className="flex items-center gap-2">
           <Badge variant={statusState === "running" ? "default" : statusState === "error" || statusState === "panic" ? "destructive" : "outline"}>
             {statusText}
@@ -101,6 +101,10 @@ export function GithubPage() {
             </Button>
           </div>
         </CardContent>
+        <p className="border-b px-4 py-2 text-xs text-muted-foreground">
+          此加速配置同时作用于：<span className="text-foreground">仓库同步</span>（「仓库同步」页拉取 GitHub/Gitee/GitLab 仓库内容）与
+          <span className="text-foreground">版本升级</span>（下方拉取发布版本并下载升级包）。
+        </p>
         <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-2">
           <div className="flex items-end gap-3 pb-1">
             <Label className="text-sm">启用 GitHub 加速</Label>
@@ -140,13 +144,13 @@ export function GithubPage() {
       <Card>
         <CardContent className="p-4">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="font-semibold">版本发布</h3>
+            <h3 className="font-semibold">版本升级</h3>
             <Button variant="outline" size="sm" onClick={refresh}>
               <RefreshCw className="mr-1 h-4 w-4" /> 检查更新
             </Button>
           </div>
           {releases.length === 0 ? (
-            <p className="text-sm text-muted-foreground">未获取到发布版本{upStatus?.state === "error" ? "（" + upStatus.message + "）" : ""}，请检查加速配置或稍后重试。</p>
+            <p className="text-sm text-muted-foreground">未获取到发布版本{upStatus?.state === "error" ? "（" + upStatus.message + "）" : ""}，请检查上方加速配置或稍后重试。</p>
           ) : (
             <ul className="divide-y">
               {releases.map((r) => (

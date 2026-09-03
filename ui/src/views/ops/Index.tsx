@@ -10,7 +10,7 @@ export function OpsIndex() {
           <CardTitle className="text-base">骨架占位</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
-          实时日志（SSE）、配置备份、仓库同步、GitHub 升级等运维 / 工具页。
+          实时日志（SSE）、配置备份、仓库同步、GitHub 加速等运维 / 工具页。
         </CardContent>
       </Card>
     </div>

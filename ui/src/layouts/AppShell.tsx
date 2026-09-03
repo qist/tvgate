@@ -70,7 +70,7 @@ const navGroups = [
     items: [
       { key: "code", to: "/code", icon: Code2, label: "代码文件" },
       { key: "sync", to: "/sync", icon: RefreshCw, label: "仓库同步" },
-      { key: "github", to: "/github", icon: Github, label: "GitHub 升级" },
+      { key: "github", to: "/github", icon: Github, label: "GitHub 加速" },
     ],
   },
   {
