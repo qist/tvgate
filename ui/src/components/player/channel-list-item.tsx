@@ -58,7 +58,10 @@ const ChannelListItemComponent = forwardRef<HTMLButtonElement, ChannelListItemPr
         </span>
         <div className="relative z-10 min-w-0 flex-1 overflow-hidden">
           <div className="flex items-center gap-1 md:gap-1.5">
-            <div className="min-w-0 flex-1 truncate font-semibold text-sm leading-tight tracking-[0.005em] md:text-base">
+            <div
+              className="min-w-0 flex-1 truncate font-semibold text-sm leading-tight tracking-[0.005em] md:text-base"
+              title={channel.name}
+            >
               {channel.name}
             </div>
             {channel.sources.some((s) => s.catchup && s.catchupSource) && (

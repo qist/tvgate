@@ -231,17 +231,18 @@ function ChannelListComponent({
         </div>
       </div>
 
-      {/* Groups */}
+      {/* Groups: fixed 3-column grid, one group per cell */}
       {groups && groups.length > 0 && (
         <div className="player-performance-channel-groups mt-2 border-violet-950/10 border-y bg-[linear-gradient(90deg,rgba(224,242,254,0.55),rgba(238,242,255,0.68))] px-2 py-2 backdrop-blur-xl dark:border-violet-100/10 dark:bg-[linear-gradient(90deg,rgba(4,19,42,0.6),rgba(20,17,58,0.58))]">
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="grid grid-cols-3 gap-1.5">
             {[null, ...groups].map((group) => (
               <button
                 type="button"
                 key={group ?? "all"}
                 onClick={() => setSelectedGroup(group)}
+                title={group ?? t("allChannels")}
                 className={clsx(
-                  "player-performance-effect player-performance-motion min-h-7 max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-full border px-2.5 py-1 font-medium text-xs leading-none transition-[color,background-color,border-color,box-shadow]",
+                  "player-performance-effect player-performance-motion h-7 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded-full border px-2 text-center font-medium text-xs leading-none transition-[color,background-color,border-color,box-shadow]",
                   selectedGroup === group
                     ? "player-performance-group-selected border-violet-400/30 bg-violet-500/10 text-violet-700 shadow-[0_4px_12px_rgba(124,58,237,0.1)] dark:border-violet-300/20 dark:bg-violet-400/14 dark:text-violet-200 dark:shadow-[0_4px_12px_rgba(124,58,237,0.08)]"
                     : "player-performance-group-default cursor-pointer border border-violet-900/8 bg-white/55 text-slate-500 hover:border-violet-400/30 hover:bg-violet-50/80 hover:text-violet-800 dark:border-violet-100/10 dark:bg-slate-950/35 dark:text-slate-400 dark:hover:bg-violet-300/10 dark:hover:text-violet-100",
