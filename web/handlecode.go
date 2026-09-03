@@ -92,6 +92,12 @@ func (h *ConfigHandler) handleCodeList(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(name, ".") || strings.Contains(name, ".bak.") {
 			continue
 		}
+		// 跳过非 UTF-8 编码文件名（如 GBK 残留）：解码显示名与磁盘字节名不一致，
+		// read/save/delete 按显示名定位会 404（本就无法通过页面操作），
+		// 且解码后常与真实 UTF-8 同名文件重复显示（本地上传与远程同步编码不一致所致）。
+		if !utf8.ValidString(name) {
+			continue
+		}
 		// 尝试将非 UTF-8 文件名（如 GBK）转换为 UTF-8
 		displayName := decodeFilename(name)
 		fi, err := e.Info()
@@ -317,7 +323,9 @@ func (h *ConfigHandler) handleCodeUpload(w http.ResponseWriter, r *http.Request)
 	var failed []string
 	files := r.MultipartForm.File["file"]
 	for _, fh := range files {
-		name := filepath.Base(fh.Filename)
+		// 上传文件名统一转为 UTF-8 落盘（本地上传/远程工具可能带 GBK 编码名），
+		// 避免产生列表不可见、无法操作的 GBK 残留文件
+		name := normalizeFilename(filepath.Base(fh.Filename))
 		dst := filepath.Join(absDir, name)
 		src, e := fh.Open()
 		if e != nil {
@@ -546,7 +554,7 @@ func (h *ConfigHandler) handleCodeUnzip(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		for _, zf := range zipReader.File {
-			fname := strings.TrimPrefix(filepath.Clean(zf.Name), string(filepath.Separator))
+			fname := strings.TrimPrefix(filepath.Clean(zipEntryName(zf)), string(filepath.Separator))
 			if fname == "" || fname == "." || strings.HasPrefix(fname, "..") {
 				continue
 			}
@@ -792,6 +800,41 @@ func decodeFilename(name string) string {
 		return gb18030UTF8
 	}
 	return name
+}
+
+// normalizeFilename 将上传文件名中的非 UTF-8 编码（如 GBK/GB18030）转为 UTF-8，
+// 保证落盘文件名与列表显示名一致（可见、可操作）。与 decodeFilename 对称。
+func normalizeFilename(name string) string {
+	if utf8.ValidString(name) {
+		return name
+	}
+	if dec, err := simplifiedchinese.GBK.NewDecoder().String(name); err == nil && utf8.ValidString(dec) && containsCJK(dec) {
+		return dec
+	}
+	if dec, err := simplifiedchinese.GB18030.NewDecoder().String(name); err == nil && utf8.ValidString(dec) && containsCJK(dec) {
+		return dec
+	}
+	// 解不出 CJK 的非法字节名：替换非法字节，保证落盘为合法 UTF-8
+	return strings.ToValidUTF8(name, "\uFFFD")
+}
+
+// zipEntryName 解析 zip 条目名为 UTF-8：Windows 等工具压缩的 zip 常以 GBK 编码
+// 条目名且不设 UTF-8 标志位，Go archive/zip 会按 CP437 误读——还原原始字节后
+// 按 GBK/GB18030 解码，保证解压落盘的文件名在列表中可见、可操作。
+func zipEntryName(zf *zip.File) string {
+	if zf.Flags&0x800 != 0 {
+		// 声明为 UTF-8：个别工具标志位不可靠，仍兜底转码
+		return normalizeFilename(zf.Name)
+	}
+	// 无 UTF-8 标志：Go 已按 CP437 解码（单字节编码，可逆），还原原始字节
+	raw := make([]byte, 0, len(zf.Name))
+	for _, c := range zf.Name {
+		if c > 0xFF {
+			return normalizeFilename(zf.Name)
+		}
+		raw = append(raw, byte(c))
+	}
+	return normalizeFilename(string(raw))
 }
 
 // containsCJK 检查字符串是否包含 CJK 统一汉字（U+4E00~U+9FFF）
