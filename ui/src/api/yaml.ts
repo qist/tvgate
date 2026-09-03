@@ -1,4 +1,5 @@
 import { resolveBase } from "./base";
+import { ApiError } from "./http";
 
 const base = () => resolveBase();
 
@@ -11,7 +12,7 @@ export async function load(): Promise<string> {
     headers: { "Content-Type": "text/plain; charset=utf-8" },
     credentials: "same-origin",
   });
-  if (!r.ok) throw new Error(await textOf(r));
+  if (!r.ok) throw await ApiError.from(r);
   return textOf(r);
 }
 
@@ -26,7 +27,7 @@ export async function save(content: string): Promise<string> {
       body: content,
       signal: ctrl.signal,
     });
-    if (!r.ok) throw new Error(await textOf(r));
+    if (!r.ok) throw await ApiError.from(r);
     return textOf(r);
   } finally {
     clearTimeout(t);
@@ -40,7 +41,7 @@ export async function validate(content: string): Promise<string> {
     credentials: "same-origin",
     body: content,
   });
-  if (!r.ok) throw new Error(await textOf(r));
+  if (!r.ok) throw await ApiError.from(r);
   return textOf(r);
 }
 

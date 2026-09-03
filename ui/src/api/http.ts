@@ -12,6 +12,20 @@ export class ApiError extends Error {
     super(message);
     this.status = status;
   }
+  /** 从 Response 构造：JSON 响应优先取 msg 字段，否则用原文 */
+  static async from(res: Response): Promise<ApiError> {
+    const text = await res.text();
+    let msg = text || `请求失败(${res.status})`;
+    if (res.headers.get("content-type")?.includes("application/json")) {
+      try {
+        const j = JSON.parse(text);
+        if (j?.msg) msg = j.msg;
+      } catch {
+        /* 非 JSON，按原文 */
+      }
+    }
+    return new ApiError(res.status, msg);
+  }
 }
 
 async function request<T>(path: string, init?: RequestInit, opts: ApiOptions = {}): Promise<T> {
@@ -36,17 +50,7 @@ async function request<T>(path: string, init?: RequestInit, opts: ApiOptions = {
     throw new ApiError(401, "未认证，请先登录");
   }
   if (!res.ok) {
-    const text = await res.text();
-    let msg = text || `请求失败(${res.status})`;
-    if (res.headers.get("content-type")?.includes("application/json")) {
-      try {
-        const j = JSON.parse(text);
-        if (j?.msg) msg = j.msg;
-      } catch {
-        /* 非 JSON，按原文 */
-      }
-    }
-    throw new ApiError(res.status, msg);
+    throw await ApiError.from(res);
   }
   if (raw || !res.headers.get("content-type")?.includes("application/json")) {
     return (await res.text()) as unknown as T;

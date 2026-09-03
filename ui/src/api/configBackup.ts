@@ -1,4 +1,5 @@
 import { resolveBase } from "./base";
+import { ApiError } from "./http";
 
 const base = () => resolveBase() + "config/backup";
 
@@ -22,7 +23,7 @@ export async function restore(file: string): Promise<void> {
     method: "POST",
     credentials: "same-origin",
   });
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) throw await ApiError.from(r);
 }
 
 export async function batchDelete(files: string[]): Promise<string> {

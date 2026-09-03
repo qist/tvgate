@@ -1,4 +1,5 @@
 import { resolveBase } from "./base";
+import { ApiError } from "./http";
 
 export interface BackupItem {
   name: string;
@@ -28,6 +29,7 @@ export async function list(): Promise<BackupItem[]> {
 
 export async function restore(path: string): Promise<string> {
   const r = await fetch(`${base()}/restore?path=${encodeURIComponent(path)}`, { method: "POST", credentials: "same-origin" });
+  if (!r.ok) throw await ApiError.from(r);
   const d = await parseJson(r);
   if (d.status !== "success") throw new Error(d.message || "回滚失败");
   return d.message;
