@@ -99,18 +99,15 @@ export function Dashboard() {
             <Row label="实时上行" value={status.out_bandwidth != null ? `${fmtBytes(status.out_bandwidth)}/s` : "—"} />
             <Row label="累计下行" value={fmtBytes(status.in_bytes)} />
             <Row label="累计上行" value={fmtBytes(status.out_bytes)} />
-            <Row label="连接数" value={status.connections != null ? String(status.connections) : "—"} />
             <Row label="总连接数" value={status.total_connections != null ? String(status.total_connections) : "—"} />
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">应用（TVGate 进程）</CardTitle></CardHeader>
           <CardContent className="space-y-1.5 text-sm">
-            <Row label="进程 CPU" value={status.app?.cpu_percent != null ? `${status.app.cpu_percent}%` : "—"} />
-            <Row label="进程内存" value={status.app?.memory_usage != null ? fmtBytes(status.app.memory_usage) : "—"} />
-            <Row label="入口流量" value={status.app?.in_bytes != null ? fmtBytes(status.app.in_bytes) : "—"} />
-            <Row label="出口流量" value={status.app?.out_bytes != null ? fmtBytes(status.app.out_bytes) : "—"} />
-            <Row label="总流量" value={status.app?.total_bytes != null ? fmtBytes(status.app.total_bytes) : "—"} />
+            <Row label="连接数" value={status.connections != null ? String(status.connections) : "—"} />
+            <Row label="CPU" value={status.app?.cpu_percent != null ? `${status.app.cpu_percent}%` : "—"} />
+            <Row label="内存" value={status.app?.memory_usage != null ? fmtBytes(status.app.memory_usage) : "—"} />
           </CardContent>
         </Card>
       </div>

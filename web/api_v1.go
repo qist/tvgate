@@ -133,11 +133,12 @@ func (h *ConfigHandler) handleV1Status(w http.ResponseWriter, r *http.Request) {
 		"in_bandwidth":      ts.InboundBandwidth,
 		"out_bandwidth":     ts.OutboundBandwidth,
 		"interfaces":        interfaces,
-		"app":               map[string]interface{}{"cpu_percent": round1(ts.App.CPUPercent), "memory_usage": ts.App.MemoryUsage, "total_bytes": ts.App.TotalBytes, "in_bytes": ts.App.InboundBytes, "out_bytes": ts.App.OutboundBytes},
-		"goroutines":        sd.Goroutines,
-		"client_ip":         sd.ClientIP,
-		"web_path":          sd.WebPath,
-		"timestamp":         sd.Timestamp.Format(time.RFC3339),
+		// app 流量收集（IOCounters）因 CPU 占用已移除，仅保留 CPU/内存
+		"app":        map[string]interface{}{"cpu_percent": round1(ts.App.CPUPercent), "memory_usage": ts.App.MemoryUsage},
+		"goroutines": sd.Goroutines,
+		"client_ip":  sd.ClientIP,
+		"web_path":   sd.WebPath,
+		"timestamp":  sd.Timestamp.Format(time.RFC3339),
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(resp)

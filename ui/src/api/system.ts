@@ -41,7 +41,7 @@ export interface SystemStatus {
   out_bandwidth?: number;
   interfaces?: Array<{ name?: string; bytes_recv?: number; bytes_sent?: number; packets_recv?: number; packets_sent?: number; recv_bandwidth?: number; send_bandwidth?: number }>;
   disk_partitions?: Array<{ path?: string; total?: number; used?: number; free?: number; used_percent?: number; fs_type?: string; mount_point?: string }>;
-  app?: { cpu_percent?: number; memory_usage?: number; total_bytes?: number; in_bytes?: number; out_bytes?: number };
+  app?: { cpu_percent?: number; memory_usage?: number };
   start_time?: string;
   goroutines?: number;
   client_ip?: string;
