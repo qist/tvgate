@@ -114,15 +114,22 @@ export function ProxyGroupsPage() {
 function GroupViewCard({ entry, onEdit, onDelete }: { entry: Entry; onEdit: () => void; onDelete: () => void }) {
   const g = entry.g;
   const proxyStats = g.stats?.ProxyStats || {};
-  const aliveCount = g.proxies.filter((p) => proxyStats[p.name || p.server]?.Alive).length;
+  const aliveCount = g.proxies.filter((p) => {
+    const st = proxyStats[p.name || p.server];
+    return st && st.LastCheck && st.Alive;
+  }).length;
+  const unknownCount = g.proxies.filter((p) => {
+    const st = proxyStats[p.name || p.server];
+    return !st || !st.LastCheck;
+  }).length;
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <CardTitle className="text-base">{entry.name || "(未命名组)"}</CardTitle>
           <Badge variant="secondary">{g.proxies.length} 代理</Badge>
-          <Badge variant={aliveCount > 0 ? "default" : "outline"} className={aliveCount > 0 ? "bg-green-600 text-white" : ""}>
-            {aliveCount}/{g.proxies.length} 在线
+          <Badge variant={aliveCount > 0 ? "default" : "outline"} className={aliveCount > 0 ? "bg-green-600 text-white" : unknownCount === g.proxies.length && g.proxies.length > 0 ? "bg-muted text-muted-foreground" : ""}>
+            {aliveCount}/{g.proxies.length} 在线{unknownCount > 0 ? ` · ${unknownCount} 未测` : ""}
           </Badge>
           {g.loadbalance && <Badge variant="outline">{g.loadbalance}</Badge>}
         </div>
@@ -149,6 +156,8 @@ function GroupViewCard({ entry, onEdit, onDelete }: { entry: Entry; onEdit: () =
               <tbody>
                 {g.proxies.map((p, pi) => {
                   const st = proxyStats[p.name || p.server];
+                  // 从未测速（无 LastCheck）视为"未测"，不算离线
+                  const checked = !!st?.LastCheck;
                   const alive = st?.Alive;
                   return (
                     <tr key={pi} className="border-t border-border/60">
@@ -157,8 +166,8 @@ function GroupViewCard({ entry, onEdit, onDelete }: { entry: Entry; onEdit: () =
                       <td className="py-1.5 pr-3 font-mono text-muted-foreground">{p.server}:{p.port}</td>
                       <td className="py-1.5 pr-3">
                         <span className="inline-flex items-center gap-1">
-                          <span className={`inline-block h-2 w-2 rounded-full ${alive ? "bg-green-500" : alive === false ? "bg-red-500" : "bg-muted-foreground/40"}`} />
-                          <span className="text-muted-foreground">{alive ? "在线" : alive === false ? "离线" : "未测"}</span>
+                          <span className={`inline-block h-2 w-2 rounded-full ${checked ? (alive ? "bg-green-500" : "bg-red-500") : "bg-muted-foreground/40"}`} />
+                          <span className="text-muted-foreground">{checked ? (alive ? "在线" : "离线") : "未测"}</span>
                         </span>
                       </td>
                       <td className="py-1.5 pr-3 font-mono">{st?.ResponseTime ? `${fmtDur(st.ResponseTime)}` : "—"}</td>
@@ -305,7 +314,8 @@ function ProxyEditor({
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <select className="h-9 rounded-[var(--radius)] border bg-background px-2 text-sm" value={proxy.type} onChange={(e) => onChange({ type: e.target.value })}>
-          {["http", "https", "socks5", "socks4", "ss", "vmess", "trojan"].map((t) => (
+          {/* 仅保留后端支持的协议：http/https/socks5/socks4 */}
+          {["http", "https", "socks5", "socks4"].map((t) => (
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
