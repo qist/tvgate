@@ -11,6 +11,16 @@ export interface Proxy {
   headers?: Record<string, string>;
 }
 
+export interface ProxyStats {
+  LastCheck?: string;
+  LastUsed?: string;
+  ResponseTime?: number;
+  Alive?: boolean;
+  FailCount?: number;
+  CooldownUntil?: string;
+  StatusCode?: number;
+}
+
 export interface ProxyGroup {
   proxies: Proxy[];
   domains: string[];
@@ -20,6 +30,8 @@ export interface ProxyGroup {
   max_retries: number;
   retry_delay: string;
   max_rt: string;
+  /** 运行时探测状态（后端配置读取时附加；保存时不提交该字段） */
+  stats?: { ProxyStats?: Record<string, ProxyStats> };
 }
 
 export type ProxyGroupMap = Record<string, ProxyGroup>;

@@ -58,7 +58,9 @@ export function ProxyGroupsPage() {
     const map: Record<string, ProxyGroup> = {};
     for (const e of entries) {
       if (!e.name.trim()) continue;
-      map[e.name.trim()] = e.g;
+      // 只提交配置字段，剥离运行时 stats
+      const { stats: _stats, ...cfg } = e.g;
+      map[e.name.trim()] = cfg;
     }
     try {
       await saveProxyGroups(map);
@@ -111,12 +113,17 @@ export function ProxyGroupsPage() {
 
 function GroupViewCard({ entry, onEdit, onDelete }: { entry: Entry; onEdit: () => void; onDelete: () => void }) {
   const g = entry.g;
+  const proxyStats = g.stats?.ProxyStats || {};
+  const aliveCount = g.proxies.filter((p) => proxyStats[p.name || p.server]?.Alive).length;
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <CardTitle className="text-base">{entry.name || "(未命名组)"}</CardTitle>
           <Badge variant="secondary">{g.proxies.length} 代理</Badge>
+          <Badge variant={aliveCount > 0 ? "default" : "outline"} className={aliveCount > 0 ? "bg-green-600 text-white" : ""}>
+            {aliveCount}/{g.proxies.length} 在线
+          </Badge>
           {g.loadbalance && <Badge variant="outline">{g.loadbalance}</Badge>}
         </div>
         <div className="flex gap-1.5">
@@ -124,10 +131,45 @@ function GroupViewCard({ entry, onEdit, onDelete }: { entry: Entry; onEdit: () =
           <Button variant="destructive" size="sm" onClick={onDelete}><Trash2 className="h-4 w-4" /></Button>
         </div>
       </CardHeader>
-      <CardContent className="space-y-1 text-sm">
-        <p className="text-muted-foreground">
-          代理：{g.proxies.map((p) => p.name || p.server).join("、") || "无"}
-        </p>
+      <CardContent className="space-y-2 text-sm">
+        {/* 节点状态列表 */}
+        {g.proxies.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[420px] text-xs">
+              <thead>
+                <tr className="text-left text-muted-foreground">
+                  <th className="pb-1 pr-3 font-medium">节点</th>
+                  <th className="pb-1 pr-3 font-medium">类型</th>
+                  <th className="pb-1 pr-3 font-medium">地址</th>
+                  <th className="pb-1 pr-3 font-medium">状态</th>
+                  <th className="pb-1 pr-3 font-medium">延迟</th>
+                  <th className="pb-1 font-medium">连续失败</th>
+                </tr>
+              </thead>
+              <tbody>
+                {g.proxies.map((p, pi) => {
+                  const st = proxyStats[p.name || p.server];
+                  const alive = st?.Alive;
+                  return (
+                    <tr key={pi} className="border-t border-border/60">
+                      <td className="py-1.5 pr-3 font-medium">{p.name || "(未命名)"}</td>
+                      <td className="py-1.5 pr-3 text-muted-foreground">{p.type}</td>
+                      <td className="py-1.5 pr-3 font-mono text-muted-foreground">{p.server}:{p.port}</td>
+                      <td className="py-1.5 pr-3">
+                        <span className="inline-flex items-center gap-1">
+                          <span className={`inline-block h-2 w-2 rounded-full ${alive ? "bg-green-500" : alive === false ? "bg-red-500" : "bg-muted-foreground/40"}`} />
+                          <span className="text-muted-foreground">{alive ? "在线" : alive === false ? "离线" : "未测"}</span>
+                        </span>
+                      </td>
+                      <td className="py-1.5 pr-3 font-mono">{st?.ResponseTime ? `${fmtDur(st.ResponseTime)}` : "—"}</td>
+                      <td className="py-1.5 font-mono">{st ? String(st.FailCount ?? 0) : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
         <p className="text-muted-foreground">域名：{g.domains.join("，") || "无"}</p>
         <p className="text-muted-foreground">
           ipv6={String(g.ipv6)} · interval={g.interval} · retries={g.max_retries} · delay={g.retry_delay} · max_rt={g.max_rt}
@@ -135,6 +177,13 @@ function GroupViewCard({ entry, onEdit, onDelete }: { entry: Entry; onEdit: () =
       </CardContent>
     </Card>
   );
+}
+
+/** 时长（纳秒）→ 可读 */
+function fmtDur(ns: number): string {
+  if (ns < 1e6) return `${Math.round(ns / 1e3)}μs`;
+  if (ns < 1e9) return `${(ns / 1e6).toFixed(1)}ms`;
+  return `${(ns / 1e9).toFixed(2)}s`;
 }
 
 function GroupEditCard({
