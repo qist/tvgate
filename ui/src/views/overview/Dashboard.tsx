@@ -52,13 +52,6 @@ export function Dashboard() {
     };
   }, []);
 
-  // 访问地址：当前 origin + web 路径（web_path 可能为 /web/ 或自定义）
-  let accessUrl = "—";
-  if (typeof window !== "undefined") {
-    const wp = status.web_path || "/web/";
-    accessUrl = window.location.origin + (wp.startsWith("/") ? "" : "/") + wp;
-  }
-
   const items = [
     { label: "版本", value: status.version || "—" },
     { label: "系统", value: status.os || "—" },
@@ -66,13 +59,11 @@ export function Dashboard() {
     { label: "内存", value: status.mem != null ? `${status.mem}%` : "—" },
     { label: "活跃连接", value: status.clients != null ? String(status.clients) : "—" },
     { label: "运行时长", value: fmtUptime(status.uptime) },
-    { label: "访问地址", value: accessUrl, mono: true },
   ];
 
   const partitions = status.disk_partitions || [];
   const ifaces = status.interfaces || [];
   const clients = status.active_clients || [];
-  const groups = Object.entries(status.proxy_group_stats || {});
 
   return (
     <div className="space-y-4">
@@ -83,7 +74,7 @@ export function Dashboard() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">{it.label}</CardTitle>
             </CardHeader>
-            <CardContent className={`text-2xl font-bold ${it.mono ? "font-mono text-sm truncate" : ""}`}>{it.value}</CardContent>
+            <CardContent className="text-2xl font-bold">{it.value}</CardContent>
           </Card>
         ))}
       </div>
@@ -216,39 +207,6 @@ export function Dashboard() {
           </CardContent>
         </Card>
       </div>
-
-      {/* 代理组流量统计 */}
-      <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-base">代理组统计（{status.proxy_groups ?? "—"} 组，{groups.length} 组有实时数据）</CardTitle></CardHeader>
-        <CardContent className="overflow-x-auto">
-          {groups.length === 0 ? (
-            <p className="text-sm text-muted-foreground">暂无代理组实时数据</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>组名</TableHead>
-                  <TableHead>连接数</TableHead>
-                  <TableHead>流量</TableHead>
-                  <TableHead>活跃流</TableHead>
-                  <TableHead>最近活动</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {groups.map(([name, g]) => (
-                  <TableRow key={name}>
-                    <TableCell className="font-mono text-xs">{name}</TableCell>
-                    <TableCell className="text-xs">{g.connections ?? 0}</TableCell>
-                    <TableCell className="text-xs">{fmtBytes(g.bytes_transferred)}</TableCell>
-                    <TableCell className="text-xs">{g.active_streams ?? 0}</TableCell>
-                    <TableCell className="text-xs">{fmtTime(g.last_activity)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }
