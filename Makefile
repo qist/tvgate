@@ -27,11 +27,13 @@ BUILD    = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) $(if $(3),GOARM=$(3) )go build -l
 # 产物由 go:embed 编入单二进制；无 npm 环境时静默跳过（web/dist 占位保证 go build 可编译）
 UI_DIR      := ui
 DIST_STAMP  := web/dist/.built
+# 前端源码变化时自动重建 dist（go:embed 依赖此产物，避免二进制嵌入过期前端）
+UI_SRCS     := $(shell find $(UI_DIR)/src -type f 2>/dev/null)
 
 .PHONY: web-ui ui-install go-only
 web-ui: $(DIST_STAMP)
 
-$(DIST_STAMP): $(UI_DIR)/package.json $(UI_DIR)/package-lock.json
+$(DIST_STAMP): $(UI_SRCS) $(UI_DIR)/package.json $(UI_DIR)/package-lock.json
 	@command -v npm >/dev/null 2>&1 || { echo "⚠️ 未检测到 npm，跳过前端构建"; exit 0; }
 	@test -d $(UI_DIR)/node_modules || (cd $(UI_DIR) && npm install)
 	cd $(UI_DIR) && npm run build
@@ -46,8 +48,8 @@ go-only:
 
 # ==================== Linux ====================
 
-linux-64: $(OUT_DIR)/TVGate-linux-64
-$(OUT_DIR)/TVGate-linux-64:
+linux-64: $(DIST_STAMP) $(OUT_DIR)/TVGate-linux-64
+$(OUT_DIR)/TVGate-linux-64: $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,amd64)
 

@@ -3,8 +3,8 @@ import {
   History,
   Maximize,
   Minimize,
-  PanelRightClose,
-  PanelRightOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pause,
   PictureInPicture,
   Play,
@@ -613,9 +613,9 @@ function PlayerControlsComponent({
               title={showSidebar ? t("hideSidebar") : t("showSidebar")}
             >
               {showSidebar ? (
-                <PanelRightClose className={clsx("h-5 w-5 md:h-6 md:w-6", COMPACT_ICON_CLASS)} />
+                <PanelLeftClose className={clsx("h-5 w-5 md:h-6 md:w-6", COMPACT_ICON_CLASS)} />
               ) : (
-                <PanelRightOpen className={clsx("h-5 w-5 md:h-6 md:w-6", COMPACT_ICON_CLASS)} />
+                <PanelLeftOpen className={clsx("h-5 w-5 md:h-6 md:w-6", COMPACT_ICON_CLASS)} />
               )}
             </button>
           )}

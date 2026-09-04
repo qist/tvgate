@@ -1989,7 +1989,7 @@ function VideoPlayerComponent({
           role="toolbar"
           className={clsx(
             "player-performance-controls-position player-performance-motion absolute bottom-0 left-[calc(0px_-_env(safe-area-inset-left))] right-[calc(0px_-_env(safe-area-inset-right))] z-10 transition-opacity duration-300",
-            showSidebar && "md:right-0",
+            showSidebar && "md:left-0",
             showControls
               ? "opacity-100"
               : "opacity-0 pointer-events-none has-focus-visible:opacity-100 has-focus-visible:pointer-events-auto",
@@ -2037,7 +2037,7 @@ function VideoPlayerComponent({
     <div
       className={clsx(
         "player-performance-video-background relative w-full bg-[radial-gradient(circle_at_50%_35%,#102044_0%,#070516_58%,#01030a_100%)] pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] md:h-full",
-        showSidebar && "md:pr-0",
+        showSidebar && "md:pl-0",
       )}
     >
       <div ref={playerDockRef} className="contents">

@@ -754,8 +754,8 @@ function PlayerPage() {
       >
         <title>{t("title")}</title>
 
-        {/* Main Content */}
-        <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
+        {/* Main Content - Desktop/TV: sidebar on the LEFT (flex-row-reverse keeps video first in DOM for focus order), Mobile: sidebar below video */}
+        <div className="flex flex-col md:flex-row-reverse flex-1 overflow-hidden">
           {/* Video Player - Mobile: fixed aspect ratio at top, Desktop: fills left side */}
           <div className="w-full sticky md:static md:flex-1 shrink-0">
             <PlaybackTimeProvider value={currentVideoTime}>
@@ -788,10 +788,10 @@ function PlayerPage() {
             </PlaybackTimeProvider>
           </div>
 
-          {/* Sidebar - Mobile: always visible (below video, hidden in fullscreen), Desktop: toggle-able side panel (visible in fullscreen) */}
+          {/* Sidebar - Mobile: always visible (below video, hidden in fullscreen), Desktop/TV: toggle-able LEFT side panel (visible in fullscreen) */}
           <div
             className={clsx(
-              "player-performance-panel-background flex w-full flex-1 flex-col overflow-hidden border-violet-950/10 border-t bg-white/68 pl-[env(safe-area-inset-left)] shadow-[-14px_0_40px_rgba(91,33,182,0.06)] backdrop-blur-2xl dark:border-violet-100/10 dark:bg-[linear-gradient(160deg,rgba(10,7,26,0.96),rgba(23,16,53,0.92))] dark:shadow-[-18px_0_48px_rgba(9,4,26,0.28)] md:w-[21rem] lg:w-[22rem] md:flex-initial md:border-t-0 md:border-l md:pt-[env(safe-area-inset-top)] md:pl-0",
+              "player-performance-panel-background flex w-full flex-1 flex-col overflow-hidden border-violet-950/10 border-t bg-white/68 pl-[env(safe-area-inset-left)] shadow-[14px_0_40px_rgba(91,33,182,0.06)] backdrop-blur-2xl dark:border-violet-100/10 dark:bg-[linear-gradient(160deg,rgba(10,7,26,0.96),rgba(23,16,53,0.92))] dark:shadow-[18px_0_48px_rgba(9,4,26,0.28)] md:w-[21rem] lg:w-[22rem] md:flex-initial md:border-t-0 md:border-r md:pt-[env(safe-area-inset-top)] md:pr-0",
               insetSidebarRight && "pr-[env(safe-area-inset-right)]",
               (showSidebar || isMobile) && !(isFullscreen && isMobile) ? "" : "hidden",
             )}
