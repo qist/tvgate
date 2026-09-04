@@ -221,30 +221,42 @@ export function GithubPage() {
         </div>
       </Card>
 
-      <Card>
-        <CardContent className="p-4">
-          <div className="mb-2 flex items-center justify-between">
+      {/* 版本升级：Android APK 内置 so / Windows 不支持在线升级，整卡隐藏并提示走对应更新流程 */}
+      {upStatus?.updatable === false ? (
+        <Card>
+          <CardContent className="p-4">
             <h3 className="font-semibold">版本升级</h3>
-            <Button variant="outline" size="sm" onClick={refresh}>
-              <RefreshCw className="mr-1 h-4 w-4" /> 检查更新
-            </Button>
-          </div>
-          {releases.length === 0 ? (
-            <p className="text-sm text-muted-foreground">未获取到发布版本{upStatus?.state === "error" ? "（" + upStatus.message + "）" : ""}，请检查上方加速配置或稍后重试。</p>
-          ) : (
-            <ul className="divide-y">
-              {releases.map((r) => (
-                <li key={r.tag_name} className="flex items-center justify-between gap-2 py-2">
-                  <span className="font-mono text-sm">{r.tag_name}</span>
-                  <Button size="sm" disabled={!!upgrading} onClick={() => setConfirmVer(r.tag_name)}>
-                    <Rocket className="mr-1 h-4 w-4" /> {upgrading === r.tag_name ? "升级中…" : "升级到此版本"}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+            <p className="mt-1 text-sm text-muted-foreground">
+              当前平台不支持在线升级：APK 内置版本请使用 APK 自身的更新流程（无法更新内置的 so），Windows 版请下载安装包覆盖安装。
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="font-semibold">版本升级</h3>
+              <Button variant="outline" size="sm" onClick={refresh}>
+                <RefreshCw className="mr-1 h-4 w-4" /> 检查更新
+              </Button>
+            </div>
+            {releases.length === 0 ? (
+              <p className="text-sm text-muted-foreground">未获取到发布版本{upStatus?.state === "error" ? "（" + upStatus.message + "）" : ""}，请检查上方加速配置或稍后重试。</p>
+            ) : (
+              <ul className="divide-y">
+                {releases.map((r) => (
+                  <li key={r.tag_name} className="flex items-center justify-between gap-2 py-2">
+                    <span className="font-mono text-sm">{r.tag_name}</span>
+                    <Button size="sm" disabled={!!upgrading} onClick={() => setConfirmVer(r.tag_name)}>
+                      <Rocket className="mr-1 h-4 w-4" /> {upgrading === r.tag_name ? "升级中…" : "升级到此版本"}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

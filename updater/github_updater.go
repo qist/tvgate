@@ -47,6 +47,14 @@ func GetStatus() map[string]string {
 	return cpy
 }
 
+// Updatable 当前平台是否支持在线升级。
+// Android：程序以 .so 形式内置于 APK，替换可执行文件的升级流程不适用，
+// 只能走 APK 自身的更新流程；Windows：不支持 tableflip 热升级（与 upgrade 包一致）。
+func Updatable() bool {
+	goos := runtime.GOOS
+	return goos != "android" && goos != "windows"
+}
+
 // --- Release 信息 ---
 type Release struct {
 	TagName string `json:"tag_name"`

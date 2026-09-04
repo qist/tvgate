@@ -17,6 +17,8 @@ export interface GithubStatus {
   message?: string;
   target_version?: string;
   version?: string;
+  /** 当前平台是否支持在线升级（Android APK 内置 so / Windows 为 false） */
+  updatable?: boolean;
 }
 
 const base = () => resolveBase();

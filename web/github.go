@@ -50,6 +50,12 @@ func handleGithubUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 平台不支持在线升级（Android APK 内置 so / Windows）：直接拒绝，防止误触发
+	if !updater.Updatable() {
+		http.Error(w, "当前平台不支持在线升级，请使用对应的安装包更新流程", http.StatusForbidden)
+		return
+	}
+
 	// 先标记状态，避免并发多次升级
 	updater.SetStatus("running", fmt.Sprintf("正在升级到版本 %s", req.Version))
 	updater.SetTargetVersion(req.Version)
@@ -77,9 +83,14 @@ func handleGithubUpdate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// 获取升级状态
+// 获取升级状态（附带平台可升级标记，前端据此隐藏版本升级入口）
 func handleGithubStatus(w http.ResponseWriter, r *http.Request) {
 	status := updater.GetStatus()
+	resp := make(map[string]interface{}, len(status)+1)
+	for k, v := range status {
+		resp[k] = v
+	}
+	resp["updatable"] = updater.Updatable()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
+	json.NewEncoder(w).Encode(resp)
 }
