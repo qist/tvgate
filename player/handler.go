@@ -264,7 +264,11 @@ func (h *Handler) ServeCatchup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "channel not found", http.StatusForbidden)
 		return
 	}
-	if ch.Scheme != "http" && ch.Scheme != "https" {
+	// http(s)/php/rtsp 源支持回看：拼接 playseek 后仍走各自播放链路
+	// （php 解析脚本如 akmg 自行处理 playseek；rtsp 由源侧时移服务处理）。
+	switch ch.Scheme {
+	case "http", "https", "php", "rtsp":
+	default:
 		http.Error(w, "catchup not supported for this source", http.StatusBadRequest)
 		return
 	}

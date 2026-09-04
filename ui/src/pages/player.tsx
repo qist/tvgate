@@ -175,8 +175,8 @@ function mapChannels(payload: TvgateChannelPayload[]): { channels: Channel[]; gr
   for (const c of payload) {
     if (!c?.key || !c.name) continue;
     const source: Source = { url: withToken(`/player/${c.key}`), label: c.scheme || undefined };
-    // http(s) 源由服务端提供 catchup（/api/player/catchup），打标记供 UI 与 EPG 缝隙填充识别。
-    if (c.scheme === "http" || c.scheme === "https") {
+    // http(s)/php/rtsp 源由服务端提供 catchup（/api/player/catchup），打标记供 UI 与 EPG 缝隙填充识别。
+    if (c.scheme === "http" || c.scheme === "https" || c.scheme === "php" || c.scheme === "rtsp") {
       source.catchup = "server";
       source.catchupSource = "server";
     }

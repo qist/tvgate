@@ -354,3 +354,72 @@ func TestRewriteM3U8(t *testing.T) {
 		t.Fatalf("origin 学取不对: %q", origin)
 	}
 }
+
+// TestServeCatchupPhpRtsp：php:// 与 rtsp:// 直连源（如 akmg 解析脚本、咪咕 IPTV）
+// 同样支持 playseek 回看；udp/rtp 组播无时移仍拒绝。
+func TestServeCatchupPhpRtsp(t *testing.T) {
+	b := false
+	config.Cfg.HTTP.InsecureSkipVerify = &b
+	config.Cfg.HTTP.DisableKeepAlives = &b
+
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("爱看咪咕,#genre#\n" +
+			"CCTV1,php://akmg.php?id=cctv1\n" +
+			"CCTV2,rtsp://115.153.245.70/PLTV/88888888/224/3221225699/iptv8040.smil\n" +
+			"CCTV3,udp://239.3.1.1:8001\n"))
+	}))
+	defer up.Close()
+
+	setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: up.URL}, t)
+	mgr := NewManager(&config.Cfg.Player)
+	mgr.httpClient = up.Client()
+	mgr.Reload()
+
+	keys := map[string]string{}
+	for _, c := range mgr.Channels() {
+		keys[c.Name] = c.Key
+	}
+
+	h := NewHandler(mgr)
+	doCatchup := func(name string) (int, string) {
+		rr := httptest.NewRecorder()
+		h.ServeCatchup(rr, httptest.NewRequest("GET",
+			"/api/player/catchup?key="+keys[name]+"&start=20260904120000&end=20260904130000", nil))
+		return rr.Code, rr.Body.String()
+	}
+
+	// php:// → &playseek 追加（URL 已含 query）
+	code, body := doCatchup("CCTV1")
+	if code != http.StatusOK {
+		t.Fatalf("php 源 catchup 应 200, got %d: %s", code, body)
+	}
+	var resp struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil || resp.URL == "" {
+		t.Fatalf("php catchup 响应异常: %s", body)
+	}
+	parts := strings.SplitN(strings.TrimPrefix(resp.URL, "/player/"), "/", 2)
+	if got := h.resolveToken(keys["CCTV1"], parts[1]); got != "php://akmg.php?id=cctv1&playseek=20260904120000-20260904130000" {
+		t.Fatalf("php 回看地址不对: %q", got)
+	}
+
+	// rtsp:// → PLTV 换 TVOD + ?playseek
+	code, body = doCatchup("CCTV2")
+	if code != http.StatusOK {
+		t.Fatalf("rtsp 源 catchup 应 200, got %d: %s", code, body)
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil || resp.URL == "" {
+		t.Fatalf("rtsp catchup 响应异常: %s", body)
+	}
+	parts = strings.SplitN(strings.TrimPrefix(resp.URL, "/player/"), "/", 2)
+	if got := h.resolveToken(keys["CCTV2"], parts[1]); got != "rtsp://115.153.245.70/TVOD/88888888/224/3221225699/iptv8040.smil?playseek=20260904120000-20260904130000" {
+		t.Fatalf("rtsp 回看地址不对: %q", got)
+	}
+
+	// udp:// 组播 → 仍 400
+	if code, _ := doCatchup("CCTV3"); code != http.StatusBadRequest {
+		t.Fatalf("udp 源 catchup 应 400, got %d", code)
+	}
+}
