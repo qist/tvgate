@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import * as api from "@/api/sync";
 import type { SyncEntry } from "@/api/sync";
 
@@ -84,6 +85,9 @@ export function SyncPage() {
   const addEntry = () => setEntries((list) => [...list, api.defaultEntry()]);
   const removeEntry = (i: number) => setEntries((list) => list.filter((_, j) => j !== i));
 
+  const [pendingDelete, setPendingDelete] = useState<number | null>(null);
+  const askDelete = (i: number) => setPendingDelete(i);
+
   const addProtect = (i: number) => onChange(i, { protect: [...(entries[i].protect || []), ""] });
   const setProtect = (i: number, pi: number, v: string) =>
     onChange(i, { protect: entries[i].protect.map((p, j) => (j === pi ? v : p)) });
@@ -153,7 +157,7 @@ export function SyncPage() {
               <span className="font-semibold">
                 仓库 {i + 1}：{e.name || e.repo || "(未命名)"}
               </span>
-              <Button size="sm" variant="ghost" onClick={() => removeEntry(i)}>
+              <Button size="sm" variant="ghost" onClick={() => askDelete(i)}>
                 <Trash2 className="h-4 w-4" /> 删除
               </Button>
             </div>
@@ -236,6 +240,18 @@ export function SyncPage() {
           </CardContent>
         </Card>
       ))}
+
+      {pendingDelete !== null && (
+        <ConfirmDialog
+          title="确认删除仓库"
+          description={`确定删除仓库 ${pendingDelete + 1}「${entries[pendingDelete]?.name || entries[pendingDelete]?.repo || "(未命名)"}」吗？删除后需点击保存才会生效。`}
+          onConfirm={() => {
+            removeEntry(pendingDelete);
+            setPendingDelete(null);
+          }}
+          onClose={() => setPendingDelete(null)}
+        />
+      )}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   listTasks,
   listStatus,
@@ -185,6 +186,9 @@ export function TasksPage() {
     });
   };
 
+  const [pendingDelete, setPendingDelete] = useState<number | null>(null);
+  const askDelete = (i: number) => setPendingDelete(i);
+
   const save = async () => {
     const data = tasks.filter((t) => (t.command || "").trim() !== "");
     try {
@@ -269,12 +273,24 @@ export function TasksPage() {
             onVisual={(v) => setVisual((prev) => ({ ...prev, [i]: v }))}
             onUpdate={(p) => update(i, p)}
             onCancel={() => cancelEdit(i)}
-            onDelete={() => remove(i)}
+            onDelete={() => askDelete(i)}
           />
         ) : (
-          <ViewCard key={i} task={t} st={statusOf(t)} onEdit={() => openEdit(i)} onRun={() => run(t)} onDelete={() => remove(i)} />
+          <ViewCard key={i} task={t} st={statusOf(t)} onEdit={() => openEdit(i)} onRun={() => run(t)} onDelete={() => askDelete(i)} />
         );
       })}
+
+      {pendingDelete !== null && (
+        <ConfirmDialog
+          title="确认删除任务"
+          description={`确定删除任务「${tasks[pendingDelete]?.name || tasks[pendingDelete]?.command || "未命名"}」吗？删除后需点击保存才会生效。`}
+          onConfirm={() => {
+            remove(pendingDelete);
+            setPendingDelete(null);
+          }}
+          onClose={() => setPendingDelete(null)}
+        />
+      )}
 
       {shown.length > 0 && (
         <div className="flex gap-2">

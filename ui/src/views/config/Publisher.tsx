@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -89,6 +90,7 @@ export function PublisherPage() {
   const [path, setPath] = useState("");
   const [note, setNote] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [editing, setEditing] = useState<{ name: string; isNew: boolean } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [draft, setDraft] = useState<StreamItem>(defaultStream());
 
   const notify = useCallback((type: "ok" | "err", msg: string) => {
@@ -149,8 +151,14 @@ export function PublisherPage() {
     await saveAll(next);
   };
 
-  const remove = async (name: string) => {
-    if (!window.confirm("确定要删除推流配置吗？删除后不可恢复（会写入配置文件备份）")) return;
+  const remove = (name: string) => {
+    setPendingDelete(name);
+  };
+
+  const confirmRemove = async () => {
+    const name = pendingDelete;
+    setPendingDelete(null);
+    if (!name) return;
     const next = { ...cfg };
     delete next[name];
     await saveAll(next);
@@ -370,6 +378,15 @@ export function PublisherPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {pendingDelete !== null && (
+        <ConfirmDialog
+          title="确认删除推流"
+          description={`确定删除推流「${pendingDelete}」吗？删除后不可恢复（会写入配置文件备份）。`}
+          onConfirm={confirmRemove}
+          onClose={() => setPendingDelete(null)}
+        />
       )}
     </div>
   );

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { listProxyGroups, saveProxyGroups, type Proxy, type ProxyGroup } from "@/api/proxygroups";
 
 interface Entry {
@@ -59,6 +60,9 @@ export function ProxyGroupsPage() {
     });
   };
 
+  const [pendingDelete, setPendingDelete] = useState<number | null>(null);
+  const askDelete = (i: number) => setPendingDelete(i);
+
   const save = async () => {
     const map: Record<string, ProxyGroup> = {};
     for (const e of entries) {
@@ -100,10 +104,22 @@ export function ProxyGroupsPage() {
 
       {entries.map((e, i) =>
         editing.has(i) ? (
-          <GroupEditCard key={i} entry={e} onChange={(p) => set(i, p)} onName={(n) => setEntries((prev) => prev.map((x, idx) => (idx === i ? { ...x, name: n } : x)))} onCancel={() => setEditing((prev) => { const n = new Set(prev); n.delete(i); return n; })} onDelete={() => remove(i)} />
+          <GroupEditCard key={i} entry={e} onChange={(p) => set(i, p)} onName={(n) => setEntries((prev) => prev.map((x, idx) => (idx === i ? { ...x, name: n } : x)))} onCancel={() => setEditing((prev) => { const n = new Set(prev); n.delete(i); return n; })} onDelete={() => askDelete(i)} />
         ) : (
-          <GroupViewCard key={i} entry={e} onEdit={() => setEditing((prev) => new Set(prev).add(i))} onDelete={() => remove(i)} />
+          <GroupViewCard key={i} entry={e} onEdit={() => setEditing((prev) => new Set(prev).add(i))} onDelete={() => askDelete(i)} />
         ),
+      )}
+
+      {pendingDelete !== null && (
+        <ConfirmDialog
+          title="确认删除代理组"
+          description={`确定删除「${entries[pendingDelete]?.name || "未命名代理组"}」吗？删除后需点击保存才会生效。`}
+          onConfirm={() => {
+            remove(pendingDelete);
+            setPendingDelete(null);
+          }}
+          onClose={() => setPendingDelete(null)}
+        />
       )}
 
       {entries.length > 0 && (

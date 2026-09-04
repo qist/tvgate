@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { KeyValueEditor } from "@/components/form/KeyValueEditor";
@@ -46,6 +47,9 @@ export function DomainMapPage() {
     });
   };
 
+  const [pendingDelete, setPendingDelete] = useState<number | null>(null);
+  const askDelete = (i: number) => setPendingDelete(i);
+
   const save = async () => {
     const data = list
       .filter((m) => m.name.trim() || m.source.trim())
@@ -84,10 +88,22 @@ export function DomainMapPage() {
 
       {list.map((m, i) =>
         editing.has(i) ? (
-          <EditCard key={i} m={m} onChange={(p) => patch(i, p)} onAuth={(a) => patchAuth(i, a)} onCancel={() => setEditing((prev) => { const n = new Set(prev); n.delete(i); return n; })} onDelete={() => remove(i)} />
+          <EditCard key={i} m={m} onChange={(p) => patch(i, p)} onAuth={(a) => patchAuth(i, a)} onCancel={() => setEditing((prev) => { const n = new Set(prev); n.delete(i); return n; })} onDelete={() => askDelete(i)} />
         ) : (
-          <ViewCard key={i} m={m} onEdit={() => setEditing((prev) => new Set(prev).add(i))} onDelete={() => remove(i)} />
+          <ViewCard key={i} m={m} onEdit={() => setEditing((prev) => new Set(prev).add(i))} onDelete={() => askDelete(i)} />
         ),
+      )}
+
+      {pendingDelete !== null && (
+        <ConfirmDialog
+          title="确认删除映射"
+          description={`确定删除「${list[pendingDelete]?.name || list[pendingDelete]?.source || "未命名映射"}」吗？删除后需点击保存才会生效。`}
+          onConfirm={() => {
+            remove(pendingDelete);
+            setPendingDelete(null);
+          }}
+          onClose={() => setPendingDelete(null)}
+        />
       )}
 
       {list.length > 0 && (
