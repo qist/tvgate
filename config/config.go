@@ -89,7 +89,7 @@ type Config struct {
 	// 仓库同步（支持多仓库，每个条目独立同步到各自 local_path）
 	Sync []SyncConfig `yaml:"sync"`
 
-	// 定时任务（扁平列表，按 group 分组展示，Cron 表达式调度执行 Shell 命令）
+	// 定时任务（扁平列表，按 group 分组展示，Cron 表达式调度执行命令：系统 shell 或 php:// 内嵌 phpgo 脚本）
 	Tasks []TaskConfig `yaml:"tasks"`
 
 	// 全局认证配置
@@ -309,7 +309,7 @@ type SyncConfig struct {
 	Timeout   time.Duration `yaml:"timeout"`    // 单次 API/下载请求超时
 }
 
-// TaskConfig 定时任务条目（类似 Linux crontab，Cron 表达式触发执行 Shell 命令）
+// TaskConfig 定时任务条目（类似 Linux crontab，Cron 表达式触发执行命令：系统 shell 或 php:// 内嵌 phpgo 脚本）
 type TaskConfig struct {
 	Name    string        `yaml:"name"`    // 任务名称（标识用途）
 	Enabled bool          `yaml:"enabled"` // 是否启用
