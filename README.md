@@ -388,10 +388,22 @@ player:
   ua: ""                           # 默认抓流 UA；频道行带 ua=xxx 时优先
 ```
 
+### 订阅源地址形式
+
+`subscription` 支持以下写法，均可指向**单个文件**或**目录**（目录=递归收集其中 `.txt` / `.m3u` / `.m3u8` 合并解析，跳过隐藏文件，按路径排序保证合并顺序稳定，单文件上限 64MB）：
+
+| 写法 | 说明 |
+|---|---|
+| `https://...` / `http://...` | 远程订阅 URL（固定浏览器 UA 抓取） |
+| `/opt/tvgate/tv.txt` | 本地绝对路径 |
+| `file:///opt/tvgate/tv.txt` | `file://` 前缀本地路径 |
+| `php://sub/tv.txt` | 相对 docroot（php 模块脚本目录）；也可写目录如 `php://sub` |
+| `tv.txt` / `sub` | 裸相对路径，基准为 docroot |
+
 ### 订阅格式
 
-- **M3U**：标准 `#EXTINF` 条目，支持 `tvg-id` / `tvg-name` / `tvg-logo` / 分组属性；EPG 由 `#EXTM3U x-tvg-url=` 指向 XMLTV 文件（自动识别 `epg.xml` / `epg.xml.gz` gzip 魔数，服务端定时下载解析）。
-- **逗号 TXT**：`分类,#genre#` 声明分类，`名称,URL` 为频道行（可追加 `,ua=xxx`）；EPG 与台标用上方配置模板填充。
+- **M3U**：以 `#EXTM3U` 开头的标准清单，`#EXTINF` 条目支持 `tvg-id` / `tvg-name` / `tvg-logo` / 分组属性；EPG 由 `x-tvg-url`（或 `url-tvg`）属性指向 XMLTV 文件（自动识别 `epg.xml` / `epg.xml.gz` gzip 魔数，服务端定时下载解析）。
+- **逗号 TXT**：`分类,#genre#` 声明分类，`名称,URL` 为频道行；UA 两种写法——独立 `ua=xxx` 行作用于后续所有频道，或频道行尾 `名称,URL,ua=xxx`（优先级更高）；EPG 与台标用上方配置模板填充。
 - 订阅地址即**源白名单**：仅订阅内的频道可经播放器访问。
 
 ### 频道源协议
@@ -728,7 +740,7 @@ global_auth:
 # H5 播放器（订阅白名单 + 不透明频道 key，真实源不外露）
 player:
     enabled: false                 # 启用后挂载 /web/player、/player/<key>、/api/player/*（热加载）
-    subscription: tv.txt           # 订阅源：M3U 或 逗号TXT；本地路径（相对 docroot）或 HTTP(S) URL
+    subscription: tv.txt           # 订阅源：HTTP(S) URL / 绝对路径 / file:// / php://或相对docroot；可指向文件或目录（目录递归收集 .txt/.m3u/.m3u8）
     epg: ""                        # TXT 订阅的 EPG 模板（{name}/{date}）；M3U 用 x-tvg-url 的 XMLTV
     logo: ""                       # TXT 订阅的台标模板（{name}）；M3U 自带 tvg-logo 时优先
     logo_dir: ""                   # 本地台标目录：取 <频道名>.png，优先于 logo 模板

@@ -141,7 +141,7 @@ type PHPConfig struct {
 // PlayerConfig 表示 H5 播放器的订阅源配置
 type PlayerConfig struct {
 	Enabled        bool          `yaml:"enabled"`         // 是否启用播放器模块
-	Subscription   string        `yaml:"subscription"`    // 订阅源：HTTP(S) URL，或本地文件（支持绝对路径 / file:// / php://相对docroot / docroot相对路径）
+	Subscription   string        `yaml:"subscription"`    // 订阅源：HTTP(S) URL，或本地路径（绝对路径 / file:// / php://相对docroot / docroot相对路径）；可指向文件或目录（目录递归收集 .txt/.m3u/.m3u8 合并解析）
 	Epg            string        `yaml:"epg"`             // 逗号TXT 订阅的 EPG 模板（含 {name}/{date} 占位符）
 	Logo           string        `yaml:"logo"`            // 逗号TXT 订阅的台标模板（含 {name} 占位符），如 https://logo.<your-domain>/{name}.png
 	LogoDir        string        `yaml:"logo_dir"`        // 本地台标目录（如 /opt/TVLogo），频道 logo 用该目录下 <频道名>.png，经 /player/logo/ 服务
