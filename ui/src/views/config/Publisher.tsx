@@ -191,6 +191,12 @@ export function PublisherPage() {
 
   const statFor = (name: string) => statsMap[name];
   const skValue = (name: string) => getNested(cfg, name + ".streamkey.value") || name;
+  // 播放地址前缀跟随配置的 Publisher Path（路由按它挂载），不能硬编码
+  const pubBase = (() => {
+    const p = (path || "").trim();
+    const norm = p.startsWith("/") ? p : "/" + p;
+    return norm.endsWith("/") ? norm : norm + "/";
+  })();
 
   return (
     <div className="space-y-4">
@@ -285,8 +291,8 @@ export function PublisherPage() {
                     <div className="flex gap-2">
                       <dt className="w-20 shrink-0 text-muted-foreground">本地 FLV</dt>
                       <dd className="truncate">
-                        <a className="text-primary hover:underline" href={window.location.origin + "/play/" + sk + ".flv"} target="_blank" rel="noreferrer">
-                          {window.location.origin + "/play/" + sk + ".flv"}
+                        <a className="text-primary hover:underline" href={window.location.origin + pubBase + "play/" + sk + ".flv"} target="_blank" rel="noreferrer">
+                          {window.location.origin + pubBase + "play/" + sk + ".flv"}
                         </a>
                       </dd>
                     </div>
@@ -295,8 +301,8 @@ export function PublisherPage() {
                     <div className="flex gap-2">
                       <dt className="w-20 shrink-0 text-muted-foreground">本地 HLS</dt>
                       <dd className="truncate">
-                        <a className="text-primary hover:underline" href={window.location.origin + "/play/" + sk + ".m3u8"} target="_blank" rel="noreferrer">
-                          {window.location.origin + "/play/" + sk + ".m3u8"}
+                        <a className="text-primary hover:underline" href={window.location.origin + pubBase + "play/" + sk + ".m3u8"} target="_blank" rel="noreferrer">
+                          {window.location.origin + pubBase + "play/" + sk + ".m3u8"}
                         </a>
                       </dd>
                     </div>
