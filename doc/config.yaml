@@ -12,21 +12,18 @@ server:
   # SSL ECDH 曲线 (支持 ML-KEM)
   ssl_ecdh_curve: "X25519MLKEM768:X25519:P-384:P-256"
 
-  # 组播监听地址
-  multicast_ifaces: [] # 可留空表示默认接口 [ "eth0", "eth1" ]
-  
-  # 多播重新加入间隔时间（默认0，表示禁用）
-  # 设置为正数（例如60s）以定期重新加入多播组
-  # 这是一个兼容性解决方案，适用于以下网络：
-  # - 具有IGMP侦听交换机的网络，但路由器没有正确的IGMP查询
-  # - 错误配置的网络设备可能会丢弃多播成员身份
-  # 推荐值：30-120秒（小于典型交换机超时时间260秒）
-  # 仅在遇到多播流中断时启用
-  mcast_rejoin_interval: 0s
+  # 组播监听地址见下方 multicast 段
 
-# 监控配置
-monitor:
-  path: "/status"   # 状态信息
+# 组播配置（RTP/UDP 转发与 FCC 快速换台，详见 doc/MULTICAST.md）
+multicast:
+  multicast_ifaces: [] # 组播监听网卡，留空表示默认接口 [ "eth0", "eth1" ]
+  mcast_rejoin_interval: 0s # 组播重加入间隔（0=禁用；IGMP 侦听网络建议 30-120s）
+  # fcc_type: telecom       # FCC 快速换台类型: telecom / huawei（留空不启用）
+  # fcc_cache_size: 16384   # FCC 缓存大小（字节）
+  # fcc_listen_port_min: 40000  # FCC 监听端口范围
+  # fcc_listen_port_max: 40100
+  # upstream_interface: ""      # 默认上游接口
+  # upstream_interface_fcc: ""  # FCC 专用上游接口
 
 # 配置文件编辑接口
 web:
@@ -68,7 +65,7 @@ php:
 #   # 部分源限制浏览器 UA（如百视通需要 okhttp/3.8.1），此时填这里即可全频道生效：
 #   ua: "okhttp/3.8.1"
 
-# 仓库同步（将仓库内容单向同步到本地 docroot 下 local_path；支持多仓库，每个条目独立同步，见 doc/sync-dev.md）
+# 仓库同步（将仓库内容单向同步到本地 docroot 下 local_path；支持多仓库，每个条目独立同步，详见 doc/SYNC.md）
 # sync:
 #   - name: tvbox               # 标识（用于日志，可空）
 #     enabled: false            # 是否启用
@@ -91,7 +88,7 @@ log:
   # 是否输出日志
   enabled: true
   # 日志输出文件地址 "" 表示标准输出，否则输出到指定文件 ./access.log
-  file: "/var/log/tvgate.log"
+  file: ""
   # 日志大小M单位
   maxsize: 10
   # 压缩文件备份个数
