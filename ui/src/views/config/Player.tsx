@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link2, Tv } from "lucide-react";
+import { Link2, Tv, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -76,6 +76,8 @@ export function PlayerPage() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">H5 播放器配置</h1>
         <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" onClick={refresh}>重新加载</Button>
+          <Button onClick={save}><Save className="mr-1 h-4 w-4" />保存配置</Button>
           <button
             type="button"
             onClick={copyExternal}
@@ -159,10 +161,6 @@ export function PlayerPage() {
           </div>
         </CardContent>
       </Card>
-      <div className="flex gap-2">
-        <Button onClick={save}>保存配置</Button>
-        <Button variant="secondary" onClick={refresh}>重新加载</Button>
-      </div>
     </div>
   );
 }

@@ -65,7 +65,9 @@ export function JXPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">视频解析 (JX)</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">视频解析 (JX)</h1>
+      </div>
 
       {notice && (
         <div className={`rounded-lg border px-3 py-2 text-sm ${notice.type === "ok" ? "border-primary/30 bg-primary/10 text-primary" : "border-destructive/30 bg-destructive/10 text-destructive"}`}>

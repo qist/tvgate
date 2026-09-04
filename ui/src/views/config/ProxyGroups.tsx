@@ -87,9 +87,13 @@ export function ProxyGroupsPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">代理组</h1>
-        <Button onClick={addGroup}>
-          <Plus className="mr-1 h-4 w-4" /> 添加代理组
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={refresh}>重置</Button>
+          <Button onClick={save}><Save className="mr-1 h-4 w-4" />保存全部配置</Button>
+          <Button onClick={addGroup}>
+            <Plus className="mr-1 h-4 w-4" /> 添加代理组
+          </Button>
+        </div>
       </div>
 
       {notice && (
@@ -119,13 +123,6 @@ export function ProxyGroupsPage() {
           }}
           onClose={() => setPendingDelete(null)}
         />
-      )}
-
-      {entries.length > 0 && (
-        <div className="flex gap-2">
-          <Button onClick={save}>保存全部配置</Button>
-          <Button variant="secondary" onClick={refresh}>重置</Button>
-        </div>
       )}
     </div>
   );
