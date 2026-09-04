@@ -411,12 +411,12 @@ function EditCard({
           </Field>
         </div>
 
-        <Field label="执行命令（Shell 命令，可调用 PHP 脚本）">
+        <Field label="执行命令（Shell 命令，或 php:// 内部执行 PHP 脚本）">
           <textarea
             className="min-h-[80px] w-full rounded-[var(--radius)] border bg-background p-2 font-mono text-sm"
             value={task.command}
             onChange={(e) => onUpdate({ command: e.target.value })}
-            placeholder="例如: /usr/bin/php /path/script.php"
+            placeholder={'例如: /usr/bin/php /path/script.php\n或 php://php/akmg.php?id=cctv1（phpgo 内部执行，无需系统 php，路径相对 docroot）'}
           />
         </Field>
 

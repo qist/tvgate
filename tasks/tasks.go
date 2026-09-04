@@ -2,6 +2,9 @@ package tasks
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -10,6 +13,7 @@ import (
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/php"
 )
 
 // manager 单个定时任务的调度循环
@@ -177,7 +181,7 @@ func (m *manager) runTask(ctx context.Context, t *config.TaskConfig, key string)
 	}
 
 	start := time.Now()
-	out, err := shellCommand(cmdCtx, t.Command)
+	out, err := runCommand(cmdCtx, t.Command)
 	dur := time.Since(start).Round(time.Millisecond)
 	now := time.Now()
 	if err != nil {
@@ -223,8 +227,51 @@ func ExecuteOnce(command string, timeout time.Duration) (output string, duration
 		defer cancel()
 	}
 	start := time.Now()
-	out, e := shellCommand(ctx, command)
+	out, e := runCommand(ctx, command)
 	return string(out), time.Since(start).Round(time.Millisecond), e
+}
+
+// runCommand 按命令前缀分发执行方式：
+//   - php://xxx.php?key=val → 内嵌 phpgo 解释器执行 docroot 脚本（安卓等无原生 php 环境
+//     无需外二进制），GET 语义注入 $_GET，输出体作为命令输出，HTTP >=400 视为失败；
+//   - 其他 → 系统 shell（sh -c / cmd /C）。
+//
+// 注意：phpgo 执行为同步调用，timeout 仅能在整体上等待，无法中断运行中的脚本。
+func runCommand(ctx context.Context, command string) ([]byte, error) {
+	if strings.HasPrefix(command, "php://") {
+		return phpCommand(command)
+	}
+	return shellCommand(ctx, command)
+}
+
+// phpCommand 经内嵌 phpgo 执行 php://rel?query 形式的脚本任务。
+func phpCommand(command string) ([]byte, error) {
+	raw := strings.TrimPrefix(command, "php://")
+	rel := raw
+	query := url.Values{}
+	if i := strings.Index(raw, "?"); i >= 0 {
+		rel = raw[:i]
+		if q, err := url.ParseQuery(raw[i+1:]); err == nil {
+			query = q
+		}
+	}
+	status, _, body, err := php.Capture(rel, query)
+	if err != nil {
+		return body, fmt.Errorf("php 执行失败: %w", err)
+	}
+	if status >= http.StatusBadRequest {
+		return body, fmt.Errorf("php 脚本返回 HTTP %d: %s", status, truncateForMessage(body))
+	}
+	return body, nil
+}
+
+// truncateForMessage 截断响应体用于错误信息展示
+func truncateForMessage(body []byte) string {
+	s := strings.TrimSpace(string(body))
+	if len(s) > 200 {
+		s = s[:200] + "..."
+	}
+	return s
 }
 
 // shellCommand 通过系统默认 shell 执行命令并返回 stdout+stderr。
