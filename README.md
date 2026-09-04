@@ -140,7 +140,7 @@
 
 ### 安装
 1. 下载对应平台二进制（示例）并放到 `/usr/local/TVGate/`（或你的目录）。
-2. 准备配置文件 `/usr/local/TVGate/config.yaml`（可从 [doc/config.yaml](doc/config.yaml) 改起，各模块详细说明见 [详细文档](#-详细文档)）。
+2. 第一次启动配置文件会自动创建，后续修改请直接编辑 `config.yaml` 或者web 界面编辑。
 3. 启动：
 ```bash
 nohup /usr/local/TVGate/TVGate-linux-amd64 -config=/usr/local/TVGate/config.yaml > /var/log/tvgate.log 2>&1 &
