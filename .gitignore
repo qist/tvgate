@@ -17,3 +17,7 @@ web/dist/*
 .DS_Store
 .env
 .env.local
+ui/pkg/
+.tmp_upgrade/
+tvgate.bak
+tvgate.new
