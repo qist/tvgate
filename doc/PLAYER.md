@@ -15,6 +15,7 @@ player:
   logo_dir: ""                     # 本地台标目录（如 /opt/TVLogo）：取 <频道名>.png，优先于上方模板
   update_interval: 2h              # 订阅定时刷新间隔
   ua: ""                           # 默认抓流 UA；频道行带 ua=xxx 时优先
+  android_autoplay: false          # 安卓设备启动进入播放页标记位（供客户端 App 读取，见下文）
 ```
 
 ## 字段说明
@@ -28,6 +29,7 @@ player:
 | `logo_dir` | string | `""` | 本地台标目录（如 `/opt/TVLogo`），频道台标取该目录下 `<频道名>.png`，经 `/player/logo/` 服务；优先于 `logo` 模板 |
 | `update_interval` | duration | `2h` | 订阅定时刷新间隔（如 `30m` / `2h`） |
 | `ua` | string | `""` | 默认抓流 User-Agent；频道未指定 `ua=` 时请求上游使用（部分源限制浏览器 UA） |
+| `android_autoplay` | bool | `false` | **纯标记位**：安卓设备启动是否进入播放页。本服务不做任何行为控制，由安卓客户端 App 读取该标记后自行决定启动行为；Web 后台「播放器」页可可视化编辑 |
 
 ## 订阅源地址写法
 
@@ -134,6 +136,14 @@ logo=https://logo.example.com/{name}.png
 
 配置 `logo_dir` 后（如 `/opt/TVLogo`），频道台标优先取该目录下 **`<频道名>.png`**，经 `/player/logo/` 路径对外服务；未命中时回落到 M3U `tvg-logo` 或 TXT `logo=` / `player.logo` 模板。适合将台标包放到本地、避免外链失效的场景。
 
+## 安卓客户端启动标记（android_autoplay）
+
+`player.android_autoplay` 是**纯标记位**：仅表示「安卓设备启动是否进入播放页」，供安卓客户端 App 启动时读取。
+
+- 本服务与 H5 播放页**不做任何行为控制**，播放页对所有设备照常可访问（含远程），是否进入播放页由客户端 App 自行判断（如关闭时 App 启动后不打开播放地址，停留在自带的信息启动页）。
+- 修改方式：直接改配置文件，或 Web 后台「播放器」页的「安卓设备启动进入播放页」开关（保存写入 YAML，热加载生效）。
+- 未配置时播放器各接口行为不变；该标记不影响 `/player/<key>`、`/web/player` 等任何访问权限。
+
 ## 安全设计
 
 - **源白名单 = 唯一可播放清单**：订阅内容即允许播放的频道清单，仅订阅内的频道可经播放器访问；白名单外 key 一律 `403`。
@@ -152,6 +162,7 @@ player:
   logo_dir: /opt/TVLogo                             # 本地台标目录：<频道名>.png，优先于 logo 模板
   update_interval: 30m
   ua: okhttp/3.8.12                                 # 部分 IPTV 源拒绝浏览器 UA 时按需设置
+  android_autoplay: false                           # 安卓启动进入播放页标记位（App 读取，服务端不控制）
 ```
 
 ## 注意事项
