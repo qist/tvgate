@@ -40,6 +40,15 @@ type Handler struct {
 	segGroups sync.Map // key -> *segGroup
 	// resources: 每个频道的「短 token -> 真实上游 URL」（m3u8 重写时登记），前端只见短令牌。
 	resources sync.Map // key -> *resMap
+	// redirects: 每个频道 302 解析型源（如 gdlt.php）的最终地址缓存。m3u8 刷新
+	// 直接访问真实源，不再每次重复执行解析脚本；失效时回退重新解析。
+	redirects sync.Map // key -> *redirectCache
+}
+
+// redirectCache 记录某频道解析型源的最终拉流地址（带过期，过期/失效后回退重新解析）。
+type redirectCache struct {
+	finalURL string
+	until    time.Time
 }
 
 // segGroup 记录某频道的代理组，带过期时间（超时后重新按域名规则匹配，跟进配置变更）。
@@ -485,35 +494,69 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 	hdr := http.Header{}
 	hdr.Set("User-Agent", ua)
 
-	// 优先走代理组拉流（与 /https:// 原生转发同一机制）：
-	//   1) 该频道此前成功用过的代理组（分片 CDN 是 IP/内网地址时规则匹配不上，需沿用同一出口）
-	//   2) 否则按域名规则匹配代理组
-	// 都未命中或屡次选不到节点（返回 nil resp）→ 直连兜底。
-	resp, usedPg, perr := handler.FetchViaProxyGroup(ctx, abs, hdr, true, h.getSegGroup(ch.Key))
-	if perr != nil {
-		if errors.Is(perr, context.Canceled) {
-			return // 客户端断开
+	// 302 解析型源（abs 为频道原始地址，如 gdlt.php）：优先用缓存的最终地址，
+	// m3u8 刷新不再每次重复执行解析脚本；缓存地址失效时回退重新解析。
+	origin := abs
+	if abs == ch.RawURL {
+		if cu := h.getRedirect(ch.Key); cu != "" {
+			abs = cu
 		}
-		logger.LogPrintf("[player] proxy fetch error key=%s abs=%s err=%v", ch.Key, abs, perr)
-		http.Error(w, "proxy fetch failed: "+perr.Error(), http.StatusBadGateway)
-		return
-	}
-	if resp != nil && usedPg != nil {
-		h.storeSegGroup(ch.Key, usedPg)
 	}
 
-	if resp == nil {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, abs, nil)
-		if err != nil {
-			http.Error(w, "bad upstream url", http.StatusBadRequest)
-			return
+	doFetch := func(u string) (*http.Response, error) {
+		// 优先走代理组拉流（与 /https:// 原生转发同一机制）：
+		//   1) 该频道此前成功用过的代理组（分片 CDN 是 IP/内网地址时规则匹配不上，需沿用同一出口）
+		//   2) 否则按域名规则匹配代理组
+		// 都未命中或屡次选不到节点（返回 nil resp）→ 直连兜底（h.stream 服务端跟随重定向）。
+		resp, usedPg, perr := handler.FetchViaProxyGroup(ctx, u, hdr, true, h.getSegGroup(ch.Key))
+		if perr != nil {
+			if !errors.Is(perr, context.Canceled) {
+				logger.LogPrintf("[player] proxy fetch error key=%s abs=%s err=%v", ch.Key, u, perr)
+			}
+			return nil, perr
 		}
-		req.Header = hdr.Clone()
-		resp, err = h.stream.Do(req) // 直连兜底（h.stream 服务端跟随重定向）
+		if resp != nil && usedPg != nil {
+			h.storeSegGroup(ch.Key, usedPg)
+		}
+		if resp == nil {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+			if err != nil {
+				return nil, err
+			}
+			req.Header = hdr.Clone()
+			return h.stream.Do(req)
+		}
+		return resp, nil
+	}
+
+	resp, err := doFetch(abs)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return // 客户端断开
+		}
+		logger.LogPrintf("[player] upstream fetch error key=%s abs=%s err=%v", ch.Key, abs, err)
+		http.Error(w, "upstream fetch failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	// 缓存的最终地址已失效（非 2xx）→ 清缓存，回退原始解析地址重试一次
+	if abs != origin && (resp.StatusCode < 200 || resp.StatusCode > 299) {
+		h.clearRedirect(ch.Key)
+		_ = resp.Body.Close()
+		abs = origin
+		resp, err = doFetch(abs)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return // 客户端断开
+			}
 			logger.LogPrintf("[player] upstream fetch error key=%s abs=%s err=%v", ch.Key, abs, err)
 			http.Error(w, "upstream fetch failed: "+err.Error(), http.StatusBadGateway)
 			return
+		}
+	}
+	// 成功且最终地址与原始地址不同（发生解析重定向）→ 记住并滚动续期
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.Request != nil && resp.Request.URL != nil {
+		if final := resp.Request.URL.String(); final != origin {
+			h.storeRedirect(ch.Key, final)
 		}
 	}
 
@@ -554,6 +597,29 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 const segOriginTTL = 30 * time.Minute
 const tokenTTL = 30 * time.Minute
 const segGroupTTL = 30 * time.Minute
+const redirectTTL = 30 * time.Minute
+
+// getRedirect 返回某频道解析型源的缓存最终地址（未学/过期则为空）。
+func (h *Handler) getRedirect(key string) string {
+	v, ok := h.redirects.Load(key)
+	if !ok {
+		return ""
+	}
+	rc := v.(*redirectCache)
+	if time.Now().After(rc.until) {
+		h.redirects.Delete(key)
+		return ""
+	}
+	return rc.finalURL
+}
+
+// storeRedirect 记住某频道解析型源的最终拉流地址（滚动续期）。
+func (h *Handler) storeRedirect(key, finalURL string) {
+	h.redirects.Store(key, &redirectCache{finalURL: finalURL, until: time.Now().Add(redirectTTL)})
+}
+
+// clearRedirect 清除某频道解析型源的最终地址缓存（失效回退时调用）。
+func (h *Handler) clearRedirect(key string) { h.redirects.Delete(key) }
 
 // storeResources 登记某频道的 token->上游URL 映射（带过期，超量时惰性清理）。
 // 用 LoadOrStore + 每 key 一把锁，保证并发登记/读取同一频道不产生 map 数据竞争。

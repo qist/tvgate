@@ -434,3 +434,70 @@ func TestServeCatchupPhpRtsp(t *testing.T) {
 		t.Fatalf("php token 应走解释器分派(502), got %d %s", rr3.Code, rr3.Body.String())
 	}
 }
+
+// TestServeHTTPRedirectCache：302 解析型源（如 gdlt.php）的最终地址应缓存，
+// m3u8 刷新不再重复执行解析脚本；缓存失效时回退重新解析。
+func TestServeHTTPRedirectCache(t *testing.T) {
+	b := false
+	config.Cfg.HTTP.InsecureSkipVerify = &b
+	config.Cfg.HTTP.DisableKeepAlives = &b
+
+	phpHits := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/tv.txt":
+			w.Header().Set("Content-Type", "text/plain")
+			w.Write([]byte("央视,#genre#\nCCTV1,http://" + r.Host + "/live/gdlt.php?id=1\n"))
+		case "/live/gdlt.php":
+			phpHits++
+			http.Redirect(w, r, "/live/1.m3u8", http.StatusFound)
+		case "/live/1.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			w.Write([]byte("#EXTM3U\n#EXTINF:6,\nseg0.ts\n"))
+		case "/live/seg0.ts":
+			w.Write([]byte("TS"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer up.Close()
+
+	setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: up.URL + "/tv.txt"}, t)
+	mgr := NewManager(&config.Cfg.Player)
+	mgr.httpClient = up.Client()
+	mgr.Reload()
+	h := NewHandler(mgr)
+	h.httpClient = up.Client()
+	key := mgr.Channels()[0].Key
+
+	// 两次 m3u8 刷新：第二次应命中缓存，不再访问解析脚本
+	for i := 0; i < 2; i++ {
+		rr := httptest.NewRecorder()
+		h.ServePull(rr, httptest.NewRequest("GET", "/player/"+key, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("m3u8 刷新 #%d 应 200, got %d %s", i+1, rr.Code, rr.Body.String())
+		}
+	}
+	if phpHits != 1 {
+		t.Fatalf("解析脚本应只执行 1 次, got %d", phpHits)
+	}
+
+	// 分片 token 拉流仍正常（token 基于 m3u8 重写）
+	m3u8 := ""
+	rr := httptest.NewRecorder()
+	h.ServePull(rr, httptest.NewRequest("GET", "/player/"+key, nil))
+	m3u8 = rr.Body.String()
+	tok := ""
+	for _, line := range strings.Split(m3u8, "\n") {
+		l := strings.TrimSpace(line)
+		if l != "" && !strings.HasPrefix(l, "#") {
+			tok = strings.TrimPrefix(l, "/player/"+key+"/")
+			break
+		}
+	}
+	rr2 := httptest.NewRecorder()
+	h.ServePull(rr2, httptest.NewRequest("GET", "/player/"+key+"/"+tok, nil))
+	if rr2.Code != http.StatusOK || rr2.Body.String() != "TS" {
+		t.Fatalf("分片拉流应 200 TS, got %d %s", rr2.Code, rr2.Body.String())
+	}
+}
