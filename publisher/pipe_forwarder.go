@@ -928,6 +928,11 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				pushStderr := pf.pushStderr
 				pushWg.Go(func() {
 					err := pushCmd.Wait()
+					if pf.ctx.Err() != nil {
+						// 主动关闭（Stop/切流）触发的 signal: killed / exit status
+						// 属于正常关闭，不计入错误
+						err = nil
+					}
 					if err != nil && pf.ctx.Err() == nil {
 						detail := ""
 						if pushStderr != nil {

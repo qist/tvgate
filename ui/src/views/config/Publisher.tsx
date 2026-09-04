@@ -199,6 +199,10 @@ export function PublisherPage() {
   })();
 
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  // 回放面板：流名 + 起止时间（datetime-local 值）
+  const [pbOpen, setPbOpen] = useState<string | null>(null);
+  const [pbStart, setPbStart] = useState("");
+  const [pbEnd, setPbEnd] = useState("");
   const copyPlayUrl = async (key: string, url: string) => {
     try {
       if (navigator.clipboard) {
@@ -406,6 +410,28 @@ export function PublisherPage() {
                           <MonitorPlay className="h-3 w-3" aria-hidden="true" />
                           播放
                         </button>
+                        {!!hlsItem?.hls_enable_playback && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (pbOpen === name) {
+                                setPbOpen(null);
+                                return;
+                              }
+                              // 默认近 1 小时
+                              const end = new Date();
+                              const start = new Date(end.getTime() - 3600_000);
+                              const fmtLocal = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+                              setPbStart(fmtLocal(start));
+                              setPbEnd(fmtLocal(end));
+                              setPbOpen(name);
+                            }}
+                            className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded border border-sky-500/30 px-1.5 py-0.5 text-sky-600 text-[11px] transition-colors hover:bg-sky-500/10 dark:border-sky-300/25 dark:text-sky-300 dark:hover:bg-sky-300/10"
+                            title="选择时间段回放录像"
+                          >
+                            回放
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => copyPlayUrl(name + ":hls", hlsRaw)}
@@ -447,6 +473,50 @@ export function PublisherPage() {
                     </>
                   )}
                 </dl>
+                {pbOpen === name && (
+                  <div className="mx-3 mb-2 space-y-2 rounded border border-sky-500/30 bg-sky-500/5 p-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-[11px] text-muted-foreground">
+                        开始时间
+                        <Input
+                          type="datetime-local"
+                          className="mt-0.5 h-8 text-xs"
+                          value={pbStart}
+                          onChange={(e) => setPbStart(e.target.value)}
+                        />
+                      </label>
+                      <label className="text-[11px] text-muted-foreground">
+                        结束时间
+                        <Input
+                          type="datetime-local"
+                          className="mt-0.5 h-8 text-xs"
+                          value={pbEnd}
+                          onChange={(e) => setPbEnd(e.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      disabled={!pbStart || !pbEnd}
+                      onClick={() => {
+                        // datetime-local 值（"YYYY-MM-DDTHH:MM[:SS]" 本地墙上时间）
+                        // → 与播放器 toYmdHis 一致的 14 位本地时间 YYYYMMDDHHMMSS（补足秒位）
+                        const toSeek = (s: string) => {
+                          const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+                          return m ? `${m[1]}${m[2]}${m[3]}${m[4]}${m[5]}${m[6] ?? "00"}` : "";
+                        };
+                        const s = toSeek(pbStart);
+                        const e = toSeek(pbEnd);
+                        if (!s || !e) return;
+                        const m3u8 = `${window.location.origin}${pubBase}play/${playName}.m3u8?playseek=${s}-${e}`;
+                        window.open(window.location.origin + "/pp?live=" + encodeURIComponent(m3u8), "_blank", "noopener");
+                      }}
+                    >
+                      <MonitorPlay className="mr-1 h-4 w-4" /> 打开回放
+                    </Button>
+                  </div>
+                )}
                 {p?.last_error && (
                   <div className="mx-3 mb-2 rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">{p.last_error}</div>
                 )}
