@@ -7,12 +7,15 @@ export const THEME_LABEL_KEYS = {
   dark: "themeDark",
 } as const satisfies Record<ThemeMode, string>;
 
-export const PLAYER_APPEARANCES = ["fancy", "simple"] as const;
+export const PLAYER_APPEARANCES = ["fancy", "simple", "ocean", "emerald", "sunset"] as const;
 export type PlayerAppearance = (typeof PLAYER_APPEARANCES)[number];
 
 export const PLAYER_APPEARANCE_LABEL_KEYS = {
   fancy: "appearanceFancy",
   simple: "appearanceSimple",
+  ocean: "appearanceOcean",
+  emerald: "appearanceEmerald",
+  sunset: "appearanceSunset",
 } as const satisfies Record<PlayerAppearance, string>;
 
 export const PICTURE_IN_PICTURE_MODES = ["document", "video"] as const;

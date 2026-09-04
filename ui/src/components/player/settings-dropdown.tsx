@@ -39,7 +39,7 @@ const SETTING_LABEL_CLASS = "block px-0.5 font-medium text-slate-500 text-xs lea
 const SETTING_SWITCH_CLASS = "min-h-6 gap-3 px-0.5";
 const SETTING_SWITCH_LABEL_CLASS = "flex-1 font-medium text-slate-600 text-xs leading-4 dark:text-violet-50/65";
 const SETTING_SWITCH_CONTROL_CLASS =
-  "border-violet-900/10 bg-slate-200/75 shadow-inner data-[state=checked]:border-violet-300/35 data-[state=checked]:bg-violet-500 data-[state=checked]:shadow-[0_0_16px_rgba(139,92,246,0.24)] dark:border-violet-100/10 dark:bg-slate-800/80";
+  "border-violet-900/10 bg-slate-200/75 shadow-inner data-[state=checked]:border-violet-300/35 data-[state=checked]:bg-violet-500 data-[state=checked]:shadow-[0_0_16px_rgba(var(--pg-rgb),0.24)] dark:border-violet-100/10 dark:bg-slate-800/80";
 const SETTINGS_POPOVER_ID = "player-settings-popover";
 
 interface SettingSelectProps<Value extends string> {
@@ -135,7 +135,7 @@ function SettingsDropdownComponent({
         aria-haspopup="dialog"
         aria-expanded={isOpen}
         aria-controls={SETTINGS_POPOVER_ID}
-        className="player-performance-effect player-performance-motion flex size-8 cursor-pointer items-center justify-center rounded-xl border border-transparent p-0 text-slate-500 transition-[color,background-color,border-color,box-shadow,transform] motion-reduce:transition-none hover:border-violet-400/20 hover:bg-violet-400/10 hover:text-violet-700 hover:shadow-[0_0_18px_rgba(139,92,246,0.1)] motion-safe:active:scale-95 dark:text-slate-400 dark:hover:text-violet-200 md:size-9"
+        className="player-performance-effect player-performance-motion flex size-8 cursor-pointer items-center justify-center rounded-xl border border-transparent p-0 text-slate-500 transition-[color,background-color,border-color,box-shadow,transform] motion-reduce:transition-none hover:border-violet-400/20 hover:bg-violet-400/10 hover:text-violet-700 hover:shadow-[0_0_18px_rgba(var(--pg-rgb),0.1)] motion-safe:active:scale-95 dark:text-slate-400 dark:hover:text-violet-200 md:size-9"
         title={t("settings")}
       >
         <Settings className="h-5 w-5" />

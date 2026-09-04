@@ -51,7 +51,7 @@ const ChannelListItemComponent = forwardRef<HTMLButtonElement, ChannelListItemPr
             "player-performance-motion relative z-10 flex h-5 min-w-7 shrink-0 items-center justify-center rounded-lg px-1.5 font-semibold text-[10px] transition-[color,background-color,box-shadow] duration-300 ease-out motion-reduce:transition-none md:h-6 md:min-w-8 md:px-2 md:text-xs",
             isCurrentChannel
               ? "player-performance-channel-number-selected bg-violet-400/24 text-violet-700 shadow-[0_6px_16px_-10px_rgba(124,58,237,0.7),inset_0_1px_0_rgba(255,255,255,0.46),0_0_0_1px_rgba(167,139,250,0.28)] dark:text-violet-100"
-              : "player-performance-channel-number-default bg-violet-500/13 text-violet-700 shadow-[0_0_0_1px_rgba(139,92,246,0.1)] dark:text-violet-200",
+              : "player-performance-channel-number-default bg-violet-500/13 text-violet-700 shadow-[0_0_0_1px_rgba(var(--pg-rgb),0.1)] dark:text-violet-200",
           )}
         >
           {channel.id}

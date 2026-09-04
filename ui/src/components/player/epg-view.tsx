@@ -86,7 +86,7 @@ const EPGProgramItem = memo(function EPGProgramItem({
         <div className="flex shrink-0">
           {playing ? (
             <div
-              className="h-8 w-1 rounded-full bg-[linear-gradient(to_bottom,#8b5cf6,#6366f1)] shadow-[0_0_12px_rgba(139,92,246,0.48)] md:h-10"
+              className="h-8 w-1 rounded-full bg-[linear-gradient(to_bottom,var(--pg-grad-a),var(--pg-grad-c))] shadow-[0_0_12px_rgba(var(--pg-rgb),0.48)] md:h-10"
               title={t("nowPlaying")}
             />
           ) : isPast && supportsCatchup ? (
@@ -120,7 +120,7 @@ const EPGProgramItem = memo(function EPGProgramItem({
         <div className="flex h-8 md:h-10 w-3 md:w-4 shrink-0 items-center justify-center">
           {onAir && (
             <span title={t("onAir")}>
-              <Circle className="h-2.5 w-2.5 fill-current text-violet-500 drop-shadow-[0_0_5px_rgba(139,92,246,0.65)] md:h-3 md:w-3" />
+              <Circle className="h-2.5 w-2.5 fill-current text-violet-500 drop-shadow-[0_0_5px_rgba(var(--pg-rgb),0.65)] md:h-3 md:w-3" />
             </span>
           )}
           {isPast && supportsCatchup && (

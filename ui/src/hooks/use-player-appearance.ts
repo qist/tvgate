@@ -17,7 +17,12 @@ export function usePlayerAppearance() {
   );
 
   useEffect(() => {
-    document.documentElement.classList.toggle("player-theme-simple", appearance === "simple");
+    const root = document.documentElement;
+    // simple 为扁平性能模式；ocean/emerald/sunset 为 fancy 基础上的整体配色风格
+    root.classList.toggle("player-theme-simple", appearance === "simple");
+    root.classList.toggle("player-theme-ocean", appearance === "ocean");
+    root.classList.toggle("player-theme-emerald", appearance === "emerald");
+    root.classList.toggle("player-theme-sunset", appearance === "sunset");
   }, [appearance]);
 
   return useMemo(() => ({ appearance, setAppearance }), [appearance, setAppearance]);

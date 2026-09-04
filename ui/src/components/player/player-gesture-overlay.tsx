@@ -11,7 +11,7 @@ import { PlayerSelectedGlassLayers } from "./player-selected-glass-layers";
 const FADE_OUT_MS = 200;
 
 const ICON_CLASS =
-  "h-7 w-7 shrink-0 text-violet-100 drop-shadow-[0_0_14px_rgba(139,92,246,0.5)] md:h-9 md:w-9 [@container_video_(max-height:_320px)]:h-6 [@container_video_(max-height:_320px)]:w-6 md:[@container_video_(max-height:_320px)]:h-6 md:[@container_video_(max-height:_320px)]:w-6";
+  "h-7 w-7 shrink-0 text-violet-100 drop-shadow-[0_0_14px_rgba(var(--pg-rgb),0.5)] md:h-9 md:w-9 [@container_video_(max-height:_320px)]:h-6 [@container_video_(max-height:_320px)]:w-6 md:[@container_video_(max-height:_320px)]:h-6 md:[@container_video_(max-height:_320px)]:w-6";
 
 function formatSeekDelta(deltaSeconds: number): string {
   const rounded = Math.round(deltaSeconds);
@@ -35,7 +35,7 @@ function VolumeIndicator({ volume }: { volume: number }) {
       )}
       <div className="h-1.5 w-28 overflow-hidden rounded-full bg-violet-50/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.45)] ring-1 ring-white/10 md:w-40">
         <div
-          className="player-performance-progress-fill h-full rounded-full bg-[linear-gradient(90deg,#8b5cf6_0%,#38bdf8_52%,#6366f1_100%)] shadow-[0_0_18px_rgba(139,92,246,0.4)]"
+          className="player-performance-progress-fill h-full rounded-full bg-[linear-gradient(90deg,var(--pg-grad-a)_0%,var(--pg-grad-b)_52%,var(--pg-grad-c)_100%)] shadow-[0_0_18px_rgba(var(--pg-rgb),0.4)]"
           style={{ width: `${percent}%` }}
         />
       </div>

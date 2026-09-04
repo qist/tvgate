@@ -1856,7 +1856,7 @@ function VideoPlayerComponent({
                   className={clsx(
                     "player-performance-motion shrink-0 rounded-md px-1 py-0.5 font-semibold text-[10px] transition-[color,background-color,box-shadow,scale] duration-300 md:px-1.5 md:text-xs md:[@container_video_(max-height:_320px)]:px-1 md:[@container_video_(max-height:_320px)]:text-[10px]",
                     digitBuffer
-                      ? "scale-110 bg-violet-600 bg-[linear-gradient(135deg,#8b5cf6,#6366f1)] text-white shadow-[0_0_20px_rgba(139,92,246,0.45)] ring-2 ring-violet-200/40"
+                      ? "scale-110 bg-violet-600 bg-[linear-gradient(135deg,var(--pg-grad-a),var(--pg-grad-c))] text-white shadow-[0_0_20px_rgba(var(--pg-rgb),0.45)] ring-2 ring-violet-200/40"
                       : "bg-violet-100/10 text-violet-50/65 ring-1 ring-violet-100/10",
                   )}
                 >
@@ -1888,7 +1888,7 @@ function VideoPlayerComponent({
           onClick={handleUserInteraction}
         >
           <div className="flex flex-col items-center gap-4 text-white">
-            <Play className="h-20 w-20 fill-violet-100/20 text-violet-100 opacity-95 drop-shadow-[0_0_24px_rgba(139,92,246,0.55)]" />
+            <Play className="h-20 w-20 fill-violet-100/20 text-violet-100 opacity-95 drop-shadow-[0_0_24px_rgba(var(--pg-rgb),0.55)]" />
             <div className="max-w-lg px-2 text-center">
               <div className="mb-2 font-semibold text-2xl tracking-tight text-violet-50">{t("clickToPlay")}</div>
               <div className="text-pretty text-violet-50/65 text-sm leading-5">{t("autoplayBlocked")}</div>

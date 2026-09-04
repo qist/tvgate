@@ -34,6 +34,7 @@
       transform: scale(1);
       opacity: 1;
     }
+
     100% {
       transform: scale(1.4);
       opacity: 0;
@@ -109,7 +110,9 @@
     font: inherit;
   }
 }
+
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {
@@ -128,28 +131,177 @@
   height: 100vh;
 }
 
+/* ===== 播放器配色风格（appearance: ocean / emerald / sunset） =====
+ * 与 player-theme-simple 同属"界面风格"，由 usePlayerAppearance 挂到 <html>。
+ * 实现：重定义 Tailwind 的 --color-violet-* 色阶变量 + 渐变/光晕变量，
+ * 精准替换 UI 配色；完全不触碰 img/video，画面与台标色彩保持原样。
+ */
+:root {
+  --pg-rgb: 139, 92, 246;
+  /* 主色光晕（violet-500） */
+  --pg-rgb-2: 217, 70, 239;
+  /* 副光晕（fuchsia-500） */
+  --pg-grad-a: #8b5cf6;
+  /* 进度条/高亮渐变起点 */
+  --pg-grad-b: #d946ef;
+  /* 渐变中点 */
+  --pg-grad-c: #6366f1;
+  /* 渐变终点 */
+}
+
+/* —— 深海（sky 蓝） —— */
+html.player-theme-ocean {
+  --pg-rgb: 14, 165, 233;
+  --pg-rgb-2: 34, 211, 238;
+  --pg-grad-a: #0ea5e9;
+  --pg-grad-b: #38bdf8;
+  --pg-grad-c: #2563eb;
+  --color-violet-50: oklch(0.977 0.013 236.62);
+  --color-violet-100: oklch(0.951 0.026 236.824);
+  --color-violet-200: oklch(0.901 0.058 230.902);
+  --color-violet-300: oklch(0.828 0.111 230.318);
+  --color-violet-400: oklch(0.746 0.16 232.661);
+  --color-violet-500: oklch(0.685 0.169 237.323);
+  --color-violet-600: oklch(0.588 0.158 241.966);
+  --color-violet-700: oklch(0.5 0.134 242.749);
+  --color-violet-800: oklch(0.443 0.11 240.79);
+  --color-violet-900: oklch(0.391 0.09 240.876);
+  --color-violet-950: oklch(0.293 0.066 243.157);
+}
+
+/* —— 翡翠（emerald 绿） —— */
+html.player-theme-emerald {
+  --pg-rgb: 16, 185, 129;
+  --pg-rgb-2: 45, 212, 191;
+  --pg-grad-a: #10b981;
+  --pg-grad-b: #2dd4bf;
+  --pg-grad-c: #047857;
+  --color-violet-50: oklch(0.979 0.021 166.113);
+  --color-violet-100: oklch(0.95 0.052 163.051);
+  --color-violet-200: oklch(0.905 0.093 164.15);
+  --color-violet-300: oklch(0.845 0.143 164.978);
+  --color-violet-400: oklch(0.765 0.177 163.223);
+  --color-violet-500: oklch(0.696 0.17 162.48);
+  --color-violet-600: oklch(0.596 0.145 163.225);
+  --color-violet-700: oklch(0.508 0.118 165.612);
+  --color-violet-800: oklch(0.432 0.095 166.913);
+  --color-violet-900: oklch(0.378 0.077 168.94);
+  --color-violet-950: oklch(0.262 0.051 172.552);
+}
+
+/* —— 落日（orange/rose 暖色） —— */
+html.player-theme-sunset {
+  --pg-rgb: 249, 115, 22;
+  --pg-rgb-2: 244, 63, 94;
+  --pg-grad-a: #f97316;
+  --pg-grad-b: #f43f5e;
+  --pg-grad-c: #f59e0b;
+  --color-violet-50: oklch(0.98 0.016 73.684);
+  --color-violet-100: oklch(0.954 0.038 75.164);
+  --color-violet-200: oklch(0.901 0.076 70.697);
+  --color-violet-300: oklch(0.837 0.128 66.29);
+  --color-violet-400: oklch(0.75 0.183 55.934);
+  --color-violet-500: oklch(0.705 0.213 47.604);
+  --color-violet-600: oklch(0.646 0.222 41.116);
+  --color-violet-700: oklch(0.553 0.195 38.402);
+  --color-violet-800: oklch(0.47 0.157 37.304);
+  --color-violet-900: oklch(0.408 0.123 38.172);
+  --color-violet-950: oklch(0.266 0.079 36.259);
+}
+
+/* 页面底色与光晕（覆盖 TSX 内联的紫调渐变；加载页/错误页同钩子统一生效） */
+html.player-theme-ocean .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 92% 8%, rgba(14, 165, 233, 0.14), transparent 28%),
+    radial-gradient(circle at 72% 92%, rgba(34, 211, 238, 0.12), transparent 32%),
+    linear-gradient(145deg, #f8fbff, #e8f3fc);
+}
+
+html.dark.player-theme-ocean .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 88% 10%, rgba(14, 165, 233, 0.1), transparent 30%),
+    radial-gradient(circle at 70% 88%, rgba(34, 211, 238, 0.11), transparent 34%),
+    linear-gradient(145deg, #040a16, #0a1526);
+}
+
+html.player-theme-emerald .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 92% 8%, rgba(16, 185, 129, 0.13), transparent 28%),
+    radial-gradient(circle at 72% 92%, rgba(45, 212, 191, 0.12), transparent 32%),
+    linear-gradient(145deg, #f7fcf9, #e6f6ee);
+}
+
+html.dark.player-theme-emerald .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 88% 10%, rgba(16, 185, 129, 0.1), transparent 30%),
+    radial-gradient(circle at 70% 88%, rgba(45, 212, 191, 0.1), transparent 34%),
+    linear-gradient(145deg, #04100b, #0a1f16);
+}
+
+html.player-theme-sunset .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 92% 8%, rgba(249, 115, 22, 0.13), transparent 28%),
+    radial-gradient(circle at 72% 92%, rgba(244, 63, 94, 0.11), transparent 32%),
+    linear-gradient(145deg, #fffbf7, #fdeee0);
+}
+
+html.dark.player-theme-sunset .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 88% 10%, rgba(249, 115, 22, 0.1), transparent 30%),
+    radial-gradient(circle at 70% 88%, rgba(244, 63, 94, 0.1), transparent 34%),
+    linear-gradient(145deg, #140804, #26120a);
+}
+
+/* 设置面板底色与投影（settings-dropdown） */
+html.player-theme-ocean .player-performance-panel-background {
+  background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(224, 242, 254, 0.82));
+  box-shadow: 0 20px 55px rgba(2, 132, 199, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+html.dark.player-theme-ocean .player-performance-panel-background {
+  background-image: linear-gradient(145deg, rgba(5, 10, 22, 0.94), rgba(12, 28, 58, 0.9));
+  box-shadow: 0 22px 60px rgba(2, 6, 16, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+html.player-theme-emerald .player-performance-panel-background {
+  background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(209, 250, 229, 0.82));
+  box-shadow: 0 20px 55px rgba(5, 150, 105, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+html.dark.player-theme-emerald .player-performance-panel-background {
+  background-image: linear-gradient(145deg, rgba(4, 14, 10, 0.94), rgba(10, 34, 26, 0.9));
+  box-shadow: 0 22px 60px rgba(2, 10, 7, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+html.player-theme-sunset .player-performance-panel-background {
+  background-image: linear-gradient(145deg, rgba(255, 251, 244, 0.92), rgba(255, 237, 213, 0.84));
+  box-shadow: 0 20px 55px rgba(234, 88, 12, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+html.dark.player-theme-sunset .player-performance-panel-background {
+  background-image: linear-gradient(145deg, rgba(20, 9, 4, 0.94), rgba(44, 18, 10, 0.9));
+  box-shadow: 0 22px 60px rgba(12, 5, 2, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
 /* Simple theme uses explicit semantic hooks to avoid matching every player descendant. */
 html.player-theme-simple .player-performance-effect,
-html.player-theme-simple
-  :is(
-    .player-performance-page-background,
-    .player-performance-panel-background,
-    .player-performance-overlay-background,
-    .player-performance-warning-background,
-    .player-performance-error-background,
-    .player-performance-controls-background,
-    .player-performance-progress-track,
-    .player-performance-progress-fill,
-    .player-performance-logo-background,
-    .player-performance-epg-header,
-    .player-performance-list-surface-selected,
-    .player-performance-list-surface-default,
-    .player-performance-channel-groups,
-    .player-performance-group-selected,
-    .player-performance-group-default,
-    .player-performance-channel-number-selected,
-    .player-performance-channel-number-default
-  ) {
+html.player-theme-simple :is(.player-performance-page-background,
+  .player-performance-panel-background,
+  .player-performance-overlay-background,
+  .player-performance-warning-background,
+  .player-performance-error-background,
+  .player-performance-controls-background,
+  .player-performance-progress-track,
+  .player-performance-progress-fill,
+  .player-performance-logo-background,
+  .player-performance-epg-header,
+  .player-performance-list-surface-selected,
+  .player-performance-list-surface-default,
+  .player-performance-channel-groups,
+  .player-performance-group-selected,
+  .player-performance-group-default,
+  .player-performance-channel-number-selected,
+  .player-performance-channel-number-default) {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   box-shadow: none;

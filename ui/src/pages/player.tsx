@@ -793,7 +793,7 @@ function PlayerPage() {
     return (
       <div
         ref={pageContainerRef}
-        className="player-performance-page-background player-performance-scope player-viewport-height relative flex flex-col bg-[radial-gradient(circle_at_92%_8%,rgba(139,92,246,0.15),transparent_28%),radial-gradient(circle_at_72%_92%,rgba(217,70,239,0.13),transparent_32%),linear-gradient(145deg,#fbfaff,#f1edff)] dark:bg-[radial-gradient(circle_at_88%_10%,rgba(139,92,246,0.1),transparent_30%),radial-gradient(circle_at_70%_88%,rgba(217,70,239,0.12),transparent_34%),linear-gradient(145deg,#070516,#0d0a26)]"
+        className="player-performance-page-background player-performance-scope player-viewport-height relative flex flex-col bg-[radial-gradient(circle_at_92%_8%,rgba(var(--pg-rgb),0.15),transparent_28%),radial-gradient(circle_at_72%_92%,rgba(217,70,239,0.13),transparent_32%),linear-gradient(145deg,#fbfaff,#f1edff)] dark:bg-[radial-gradient(circle_at_88%_10%,rgba(var(--pg-rgb),0.1),transparent_30%),radial-gradient(circle_at_70%_88%,rgba(217,70,239,0.12),transparent_34%),linear-gradient(145deg,#070516,#0d0a26)]"
       >
         <title>{t("title")}</title>
 
@@ -849,7 +849,7 @@ function PlayerPage() {
                   className={clsx(
                     "player-performance-motion min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap border-b-2 px-3 py-2 text-center font-semibold text-xs leading-5 tracking-[0.01em] transition-[color,background-color,border-color,box-shadow] md:px-4 md:py-3 md:text-sm",
                     selectedSidebarView === view
-                      ? "border-violet-500 bg-[linear-gradient(to_top,rgba(139,92,246,0.12),transparent)] text-violet-700 shadow-[inset_0_-1px_0_rgba(139,92,246,0.18)] dark:border-violet-300 dark:text-violet-200"
+                      ? "border-violet-500 bg-[linear-gradient(to_top,rgba(var(--pg-rgb),0.12),transparent)] text-violet-700 shadow-[inset_0_-1px_0_rgba(var(--pg-rgb),0.18)] dark:border-violet-300 dark:text-violet-200"
                       : "cursor-pointer border-transparent text-slate-500 hover:bg-violet-400/5 hover:text-violet-700 dark:text-slate-400 dark:hover:text-violet-100",
                   )}
                 >
@@ -889,13 +889,13 @@ function PlayerPage() {
         {isLoading && (
           <div
             className={clsx(
-              "player-performance-page-background player-performance-motion absolute inset-0 z-50 flex items-center justify-center bg-[radial-gradient(circle_at_center,rgba(139,92,246,0.16),transparent_28%),radial-gradient(circle_at_65%_60%,rgba(217,70,239,0.14),transparent_35%),linear-gradient(145deg,#fbfaff,#f1edff)] pt-[max(1rem,env(safe-area-inset-top))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] dark:bg-[radial-gradient(circle_at_center,rgba(139,92,246,0.11),transparent_30%),radial-gradient(circle_at_65%_60%,rgba(217,70,239,0.12),transparent_38%),linear-gradient(145deg,#070516,#0d0a26)]",
+              "player-performance-page-background player-performance-motion absolute inset-0 z-50 flex items-center justify-center bg-[radial-gradient(circle_at_center,rgba(var(--pg-rgb),0.16),transparent_28%),radial-gradient(circle_at_65%_60%,rgba(217,70,239,0.14),transparent_35%),linear-gradient(145deg,#fbfaff,#f1edff)] pt-[max(1rem,env(safe-area-inset-top))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] dark:bg-[radial-gradient(circle_at_center,rgba(var(--pg-rgb),0.11),transparent_30%),radial-gradient(circle_at_65%_60%,rgba(217,70,239,0.12),transparent_38%),linear-gradient(145deg,#070516,#0d0a26)]",
               isRevealing && "animate-zoom-fade-out",
             )}
           >
             <div className="text-center space-y-4">
               {/* Loading spinner */}
-              <div className="player-performance-loading-spinner mx-auto h-12 w-12 animate-spin rounded-full border-4 border-violet-950/10 border-t-violet-500 border-r-fuchsia-500 shadow-[0_0_28px_rgba(139,92,246,0.22)] dark:border-violet-100/10 dark:border-t-violet-300 dark:border-r-fuchsia-400" />
+              <div className="player-performance-loading-spinner mx-auto h-12 w-12 animate-spin rounded-full border-4 border-violet-950/10 border-t-violet-500 border-r-(--pg-grad-b) shadow-[0_0_28px_rgba(var(--pg-rgb),0.22)] dark:border-violet-100/10 dark:border-t-violet-300 dark:border-r-(--pg-grad-b)" />
             </div>
           </div>
         )}
@@ -907,7 +907,7 @@ function PlayerPage() {
   const errorMessage = error ? t(error) : null;
 
   return (
-    <div className="player-performance-page-background player-performance-scope player-viewport-height overflow-y-auto bg-[radial-gradient(circle_at_18%_14%,rgba(139,92,246,0.16),transparent_28%),radial-gradient(circle_at_84%_82%,rgba(217,70,239,0.16),transparent_32%),linear-gradient(145deg,#fbfaff,#f1edff)] dark:bg-[radial-gradient(circle_at_18%_14%,rgba(139,92,246,0.1),transparent_30%),radial-gradient(circle_at_84%_82%,rgba(217,70,239,0.13),transparent_34%),linear-gradient(145deg,#070516,#0d0a26)]">
+    <div className="player-performance-page-background player-performance-scope player-viewport-height overflow-y-auto bg-[radial-gradient(circle_at_18%_14%,rgba(var(--pg-rgb),0.16),transparent_28%),radial-gradient(circle_at_84%_82%,rgba(217,70,239,0.16),transparent_32%),linear-gradient(145deg,#fbfaff,#f1edff)] dark:bg-[radial-gradient(circle_at_18%_14%,rgba(var(--pg-rgb),0.1),transparent_30%),radial-gradient(circle_at_84%_82%,rgba(217,70,239,0.13),transparent_34%),linear-gradient(145deg,#070516,#0d0a26)]">
       <title>{t("title")}</title>
       <div className="mx-auto flex min-h-full w-[calc(100%-2rem)] max-w-5xl items-center py-8 sm:w-[calc(100%-3rem)]">
         <Card className="player-performance-panel-background min-w-0 w-full overflow-hidden rounded-3xl border-violet-900/10 bg-white/72 shadow-[0_28px_80px_rgba(91,33,182,0.16),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-2xl dark:border-violet-100/12 dark:bg-[linear-gradient(145deg,rgba(16,10,40,0.9),rgba(32,22,84,0.82))] dark:shadow-[0_30px_90px_rgba(9,4,26,0.62),inset_0_1px_0_rgba(255,255,255,0.08)]">
@@ -934,7 +934,7 @@ function PlayerPage() {
                   {playlistErrorHints.map((hint) => (
                     <li key={hint} className="flex min-w-0 gap-2">
                       <span
-                        className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500 shadow-[0_0_8px_rgba(139,92,246,0.45)]"
+                        className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500 shadow-[0_0_8px_rgba(var(--pg-rgb),0.45)]"
                         aria-hidden="true"
                       />
                       <span className="min-w-0 break-words">{hint}</span>

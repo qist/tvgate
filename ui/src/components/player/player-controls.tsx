@@ -301,7 +301,7 @@ const PlayerTimeline = memo(function PlayerTimeline({
           "player-performance-progress-track group relative h-1.5 touch-none select-none rounded-full bg-violet-50/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.45)] ring-1 ring-white/10 transition-[height,box-shadow] duration-150 before:absolute before:-inset-y-3 before:inset-x-0 before:content-[''] md:h-2",
           "[@container_video_(max-height:_320px)]:h-1 md:[@container_video_(max-height:_320px)]:h-1",
           isCatchupSupported
-            ? "cursor-pointer hover:h-2 hover:shadow-[0_0_20px_rgba(139,92,246,0.16),inset_0_1px_3px_rgba(0,0,0,0.45)] md:hover:h-3"
+            ? "cursor-pointer hover:h-2 hover:shadow-[0_0_20px_rgba(var(--pg-rgb),0.16),inset_0_1px_3px_rgba(0,0,0,0.45)] md:hover:h-3"
             : "cursor-default",
           isScrubbing &&
             "h-2 [@container_video_(max-height:_320px)]:h-2 md:h-3 md:[@container_video_(max-height:_320px)]:h-2",
@@ -315,7 +315,7 @@ const PlayerTimeline = memo(function PlayerTimeline({
       >
         <div
           className={clsx(
-            "player-performance-progress-fill absolute top-0 left-0 h-full rounded-full bg-[linear-gradient(90deg,#8b5cf6_0%,#d946ef_52%,#6366f1_100%)] shadow-[0_0_18px_rgba(139,92,246,0.4)]",
+            "player-performance-progress-fill absolute top-0 left-0 h-full rounded-full bg-[linear-gradient(90deg,var(--pg-grad-a)_0%,var(--pg-grad-b)_52%,var(--pg-grad-c)_100%)] shadow-[0_0_18px_rgba(var(--pg-rgb),0.4)]",
             !isScrubbing && "transition-[width] duration-150",
           )}
           style={{ width: `${displayPosition}%` }}
@@ -490,7 +490,7 @@ function PlayerControlsComponent({
                   onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
                   className="relative z-10 m-0 block h-16 w-1 cursor-pointer appearance-none bg-transparent [writing-mode:vertical-lr] [direction:rtl] md:h-20"
                   style={{
-                    background: `linear-gradient(to top, #8b5cf6 0%, #6366f1 ${(isMuted ? 0 : volume) * 100}%, rgba(237,233,254,0.18) ${(isMuted ? 0 : volume) * 100}%, rgba(237,233,254,0.18) 100%)`,
+                    background: `linear-gradient(to top, var(--pg-grad-a) 0%, var(--pg-grad-c) ${(isMuted ? 0 : volume) * 100}%, rgba(var(--pg-rgb),0.18) ${(isMuted ? 0 : volume) * 100}%, rgba(var(--pg-rgb),0.18) 100%)`,
                   }}
                 />
               </div>
