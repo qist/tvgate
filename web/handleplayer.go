@@ -19,13 +19,14 @@ func (h *ConfigHandler) handlePlayerConfig(w http.ResponseWriter, r *http.Reques
 	p := config.Cfg.Player
 	config.CfgMu.RUnlock()
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"enabled":         p.Enabled,
-		"subscription":    p.Subscription,
-		"epg":             p.Epg,
-		"logo":            p.Logo,
-		"logo_dir":        p.LogoDir,
-		"update_interval": p.UpdateInterval.String(),
-		"ua":              p.UA,
+		"enabled":          p.Enabled,
+		"subscription":     p.Subscription,
+		"epg":              p.Epg,
+		"logo":             p.Logo,
+		"logo_dir":         p.LogoDir,
+		"update_interval":  p.UpdateInterval.String(),
+		"ua":               p.UA,
+		"android_autoplay": p.AndroidAutoplayEnabled(),
 	})
 }
 
@@ -143,6 +144,15 @@ func buildPlayerNode(cfg map[string]interface{}) *yaml.Node {
 				&yaml.Node{Kind: yaml.ScalarNode, Value: "ua"},
 				&yaml.Node{Kind: yaml.ScalarNode, Value: s})
 		}
+	}
+	if v, ok := cfg["android_autoplay"]; ok {
+		val := "false"
+		if e, ok := v.(bool); ok && e {
+			val = "true"
+		}
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "android_autoplay"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: val})
 	}
 	return node
 }

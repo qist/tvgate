@@ -118,6 +118,11 @@ export function PlayerPage() {
             <Switch checked={cfg.enabled} onCheckedChange={(v) => setCfg({ ...cfg, enabled: v })} />
             <span className="text-sm">启用播放器模块</span>
           </div>
+          <div className="flex items-center gap-2">
+            <Switch checked={cfg.android_autoplay} onCheckedChange={(v) => setCfg({ ...cfg, android_autoplay: v })} />
+            <span className="text-sm">安卓设备启动进入播放页</span>
+          </div>
+          <p className="text-xs text-muted-foreground">开启时安卓设备打开播放器自动恢复上次频道并起播；关闭则停留在频道列表由用户选台。客户端（App）按此开关决定进入行为。</p>
           <p className="text-xs text-muted-foreground">开启后挂载 /api/player/channels、/player/&lt;key&gt;、/api/player/epg 与播放页 /web/player；/pp/ 为独立播放页入口（不跳转、不暴露后台路径）</p>
           <Field label="订阅源" hint="M3U 或 逗号TXT；此地址 = 允许拉取的源白名单，真实流地址不外露">
             <Input

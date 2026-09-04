@@ -9,6 +9,8 @@ export interface PlayerConfig {
   /** Go time.Duration 字符串（如 2h / 30m），空串表示默认 2h */
   update_interval: string;
   ua: string;
+  /** 安卓设备启动是否自动进入播放页（恢复上次频道并起播） */
+  android_autoplay: boolean;
 }
 
 export async function getPlayer(): Promise<PlayerConfig> {
@@ -23,6 +25,7 @@ export async function getPlayer(): Promise<PlayerConfig> {
     // 默认 2h 时后端返回 "2h0m0s"，按旧版行为显示为空（代表默认）
     update_interval: interval === "2h0m0s" ? "" : interval,
     ua: data.ua || "",
+    android_autoplay: data.android_autoplay !== false,
   };
 }
 

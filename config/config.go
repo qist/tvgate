@@ -147,6 +147,14 @@ type PlayerConfig struct {
 	LogoDir        string        `yaml:"logo_dir"`        // 本地台标目录（如 /opt/TVLogo），频道 logo 用该目录下 <频道名>.png，经 /player/logo/ 服务
 	UpdateInterval time.Duration `yaml:"update_interval"` // 订阅定时刷新间隔，默认 2h
 	UA             string        `yaml:"ua"`              // 默认 User-Agent；频道未指定 ua= 时请求上游使用（部分源限制浏览器 UA）
+	// AndroidAutoplay 安卓设备启动是否自动进入播放页（恢复上次频道并起播）。
+	// 指针类型区分「未配置」（nil，默认 true 保持既有行为）与显式 false（安卓打开播放器停留在频道列表）。
+	AndroidAutoplay *bool `yaml:"android_autoplay,omitempty"`
+}
+
+// AndroidAutoplayEnabled 返回安卓设备启动自动进入播放页开关（未配置默认 true）。
+func (c PlayerConfig) AndroidAutoplayEnabled() bool {
+	return c.AndroidAutoplay == nil || *c.AndroidAutoplay
 }
 
 // PublisherConfig represents the publisher configuration structure
