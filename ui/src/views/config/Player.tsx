@@ -131,6 +131,22 @@ export function PlayerPage() {
               onChange={(e) => setCfg({ ...cfg, subscription: e.target.value })}
               placeholder="https://&lt;your-domain&gt;/sub.m3u 或本地文件路径"
             />
+            <div className="mt-2 space-y-1.5 rounded-lg border border-violet-900/10 bg-violet-50/40 p-3 text-xs leading-5 text-muted-foreground dark:border-violet-100/10 dark:bg-violet-300/5">
+              <p className="font-medium text-foreground">支持的订阅源地址写法：</p>
+              <ul className="list-inside list-disc space-y-0.5">
+                <li><code className="font-mono text-violet-700 dark:text-violet-200">https://… / http://…</code> — 远程订阅 URL</li>
+                <li><code className="font-mono text-violet-700 dark:text-violet-200">/opt/tvgate/tv.txt</code> — 本地绝对路径</li>
+                <li><code className="font-mono text-violet-700 dark:text-violet-200">file:///opt/tvgate/tv.txt</code> — file:// 前缀本地路径</li>
+                <li><code className="font-mono text-violet-700 dark:text-violet-200">php://sub/tv.txt</code> — 相对 PHP docroot（也可 http://&lt;host&gt;/php/sub.php?id=x）</li>
+                <li><code className="font-mono text-violet-700 dark:text-violet-200">tv.txt</code> / <code className="font-mono text-violet-700 dark:text-violet-200">sub</code> — 裸相对路径，基准为 docroot</li>
+              </ul>
+              <p className="pt-1">
+                以上写法均可指向<b className="text-foreground">目录</b>（如 <code className="font-mono">/www/tv/</code>、<code className="font-mono">php://tv/</code>）：
+                递归收集其中 <code className="font-mono">.txt</code> / <code className="font-mono">.m3u</code> / <code className="font-mono">.m3u8</code>
+                （跳过隐藏文件），按路径名排序逐文件解析后合并，同 URL 自动去重，单文件上限 64MB。
+                内容以 <code className="font-mono">#EXTM3U</code> 开头按 M3U 解析，否则按逗号 TXT 解析（详见 <code className="font-mono">doc/PLAYER.md</code>）。
+              </p>
+            </div>
           </Field>
           <Field label="txt 订阅的 EPG 模板（可选）" hint="含 {name}=频道名、{date}=日期；M3U 订阅用 x-tvg-url 的 XMLTV，无需填此项">
             <Input
