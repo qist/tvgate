@@ -422,4 +422,15 @@ func TestServeCatchupPhpRtsp(t *testing.T) {
 	if code, _ := doCatchup("CCTV3"); code != http.StatusBadRequest {
 		t.Fatalf("udp 源 catchup 应 400, got %d", code)
 	}
+
+	// 回看 token 拉流：php:// 地址应走内嵌解释器分派（脚本缺失 → 502 php source failed），
+	// 而不是落入 http 拉流报 unsupported protocol scheme。
+	rr3 := httptest.NewRecorder()
+	h.ServePull(rr3, httptest.NewRequest("GET", "/player/"+keys["CCTV1"]+"/"+parts[1], nil))
+	if strings.Contains(rr3.Body.String(), "unsupported protocol scheme") {
+		t.Fatalf("php token 不应进 http 拉流: %d %s", rr3.Code, rr3.Body.String())
+	}
+	if rr3.Code != http.StatusBadGateway || !strings.Contains(rr3.Body.String(), "php source failed") {
+		t.Fatalf("php token 应走解释器分派(502), got %d %s", rr3.Code, rr3.Body.String())
+	}
 }

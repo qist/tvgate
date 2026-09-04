@@ -313,7 +313,7 @@ func (h *Handler) ServePull(w http.ResponseWriter, r *http.Request) {
 
 	// 子路径：优先按「短 token」查真实上游 URL（m3u8 重写时登记），否则回退同源/来源解析。
 	if sub != "" {
-		if ch.Scheme != "http" && ch.Scheme != "https" && ch.Scheme != "php" {
+		if ch.Scheme != "http" && ch.Scheme != "https" && ch.Scheme != "php" && ch.Scheme != "rtsp" {
 			http.Error(w, "sub resource not allowed", http.StatusForbidden)
 			return
 		}
@@ -331,6 +331,19 @@ func (h *Handler) ServePull(w http.ResponseWriter, r *http.Request) {
 		}
 		if abs == "" {
 			http.Error(w, "sub resource not allowed", http.StatusForbidden)
+			return
+		}
+		// 回看签发的 token 可能解析出 php://（脚本含 playseek 参数）或
+		// rtsp://（源侧时移）地址，需按协议分派，不能直接进 http 拉流。
+		switch {
+		case strings.HasPrefix(abs, "php://"):
+			h.servePHPRaw(w, r, ch, abs)
+			return
+		case strings.HasPrefix(abs, "rtsp://"):
+			addr := strings.TrimPrefix(abs, "rtsp://")
+			r2 := r.Clone(r.Context())
+			r2.URL = &url.URL{Path: "/rtsp/" + addr, RawQuery: r.URL.RawQuery}
+			handler.RtspToHTTPHandler(w, r2)
 			return
 		}
 		h.serveHTTP(w, r, ch, abs)
@@ -369,10 +382,16 @@ func (h *Handler) ServePull(w http.ResponseWriter, r *http.Request) {
 //   - 输出体为 m3u8 → 同 http 源：分片重写为受控短地址
 //   - 其他输出（TS 连流等）→ 原样透传
 func (h *Handler) servePHP(w http.ResponseWriter, r *http.Request, ch *Channel) {
+	h.servePHPRaw(w, r, ch, ch.RawURL)
+}
+
+// servePHPRaw 执行 php:// 脚本地址（raw 可为频道源地址或回看等场景拼好
+// playseek 参数后的地址），输出处理同上。
+func (h *Handler) servePHPRaw(w http.ResponseWriter, r *http.Request, ch *Channel, rawURL string) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	raw := strings.TrimPrefix(ch.RawURL, "php://")
+	raw := strings.TrimPrefix(rawURL, "php://")
 	rel := raw
 	query := url.Values{}
 	if i := strings.Index(raw, "?"); i >= 0 {
@@ -392,7 +411,7 @@ func (h *Handler) servePHP(w http.ResponseWriter, r *http.Request, ch *Channel) 
 
 	status, hdr, body, err := php.Capture(rel, query)
 	if err != nil {
-		logger.LogPrintf("[player] php 源执行失败 key=%s src=%s err=%v", ch.Key, ch.RawURL, err)
+		logger.LogPrintf("[player] php 源执行失败 key=%s src=%s err=%v", ch.Key, rawURL, err)
 		http.Error(w, "php source failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
