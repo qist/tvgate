@@ -344,16 +344,24 @@ func RegisterJXAndProxyMux(mux *http.ServeMux, cfg *config.Config) {
 		mux.Handle("/api/player/epg", SecurityHeaders(http.HandlerFunc(ph.ServeEPG)))
 		mux.Handle("/api/player/catchup", SecurityHeaders(http.HandlerFunc(ph.ServeCatchup)))
 		mux.Handle("/player/", SecurityHeaders(http.HandlerFunc(ph.ServePull)))
-		// 旧版 /pp/ 独立播放页已迁移到 SPA（webPath+player），保留旧地址重定向（透传 my_token）
-		ppRedirect := func(w http.ResponseWriter, r *http.Request) {
-			target := cfg.Web.Path + "player"
+		// 旧版 /pp/ 独立播放页：直接服务 SPA 播放器（不跳转后台路径，
+		// 避免 Location 头泄露隐藏的 web.path）；/pp/<key> → /pp#<key> 深链（透传 query）
+		ppPage := web.ServeStandalonePlayer(cfg.Web.Path)
+		mux.Handle("/pp", SecurityHeaders(ppPage))
+		mux.Handle("/pp/", SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := strings.Trim(strings.TrimPrefix(r.URL.Path, "/pp/"), "/")
+			if key == "" {
+				ppPage(w, r)
+				return
+			}
+			target := "/pp"
 			if r.URL.RawQuery != "" {
+				// query 必须在 fragment 之前，否则 my_token 进不了 location.search
 				target += "?" + r.URL.RawQuery
 			}
-			http.Redirect(w, r, target, http.StatusMovedPermanently)
-		}
-		mux.Handle("/pp/", SecurityHeaders(http.HandlerFunc(ppRedirect)))
-		mux.Handle("/pp", SecurityHeaders(http.RedirectHandler(cfg.Web.Path+"player", http.StatusMovedPermanently)))
+			target += "#" + key
+			http.Redirect(w, r, target, http.StatusFound)
+		})))
 		if cfg.Player.LogoDir != "" {
 			mux.Handle("/player/logo/", SecurityHeaders(http.StripPrefix("/player/logo/", http.FileServer(http.Dir(cfg.Player.LogoDir)))))
 		}

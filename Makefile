@@ -29,6 +29,8 @@ UI_DIR      := ui
 DIST_STAMP  := web/dist/.built
 # 前端源码变化时自动重建 dist（go:embed 依赖此产物，避免二进制嵌入过期前端）
 UI_SRCS     := $(shell find $(UI_DIR)/src -type f 2>/dev/null)
+# Go 源码变化时自动重编（所有平台二进制目标的公共依赖，避免改代码后 make 判定"无需重建"）
+GO_SRCS     := $(shell find . -name '*.go' -not -path './ui/*' 2>/dev/null) go.mod go.sum
 
 .PHONY: web-ui ui-install go-only
 web-ui: $(DIST_STAMP)
@@ -49,113 +51,113 @@ go-only:
 # ==================== Linux ====================
 
 linux-64: $(DIST_STAMP) $(OUT_DIR)/TVGate-linux-64
-$(OUT_DIR)/TVGate-linux-64: $(DIST_STAMP)
+$(OUT_DIR)/TVGate-linux-64: $(DIST_STAMP) $(GO_SRCS)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,amd64)
 
 linux-arm64-v8a: $(OUT_DIR)/TVGate-linux-arm64-v8a
-$(OUT_DIR)/TVGate-linux-arm64-v8a:
+$(OUT_DIR)/TVGate-linux-arm64-v8a: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,arm64)
 
 linux-arm32-v7a: $(OUT_DIR)/TVGate-linux-arm32-v7a
-$(OUT_DIR)/TVGate-linux-arm32-v7a:
+$(OUT_DIR)/TVGate-linux-arm32-v7a: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,arm,7)
 
 linux-arm32-v6: $(OUT_DIR)/TVGate-linux-arm32-v6
-$(OUT_DIR)/TVGate-linux-arm32-v6:
+$(OUT_DIR)/TVGate-linux-arm32-v6: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,arm,6)
 
 linux-arm32-v5: $(OUT_DIR)/TVGate-linux-arm32-v5
-$(OUT_DIR)/TVGate-linux-arm32-v5:
+$(OUT_DIR)/TVGate-linux-arm32-v5: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,arm,5)
 
 linux-32: $(OUT_DIR)/TVGate-linux-32
-$(OUT_DIR)/TVGate-linux-32:
+$(OUT_DIR)/TVGate-linux-32: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,386)
 
 linux-loong64: $(OUT_DIR)/TVGate-linux-loong64
-$(OUT_DIR)/TVGate-linux-loong64:
+$(OUT_DIR)/TVGate-linux-loong64: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,loong64)
 
 linux-mips32: $(OUT_DIR)/TVGate-linux-mips32
-$(OUT_DIR)/TVGate-linux-mips32:
+$(OUT_DIR)/TVGate-linux-mips32: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,mips)
 
 linux-mips32le: $(OUT_DIR)/TVGate-linux-mips32le
-$(OUT_DIR)/TVGate-linux-mips32le:
+$(OUT_DIR)/TVGate-linux-mips32le: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,mipsle)
 
 linux-mips64: $(OUT_DIR)/TVGate-linux-mips64
-$(OUT_DIR)/TVGate-linux-mips64:
+$(OUT_DIR)/TVGate-linux-mips64: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,mips64)
 
 linux-mips64le: $(OUT_DIR)/TVGate-linux-mips64le
-$(OUT_DIR)/TVGate-linux-mips64le:
+$(OUT_DIR)/TVGate-linux-mips64le: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,mips64le)
 
 linux-ppc64: $(OUT_DIR)/TVGate-linux-ppc64
-$(OUT_DIR)/TVGate-linux-ppc64:
+$(OUT_DIR)/TVGate-linux-ppc64: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,ppc64)
 
 linux-ppc64le: $(OUT_DIR)/TVGate-linux-ppc64le
-$(OUT_DIR)/TVGate-linux-ppc64le:
+$(OUT_DIR)/TVGate-linux-ppc64le: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,ppc64le)
 
 linux-riscv64: $(OUT_DIR)/TVGate-linux-riscv64
-$(OUT_DIR)/TVGate-linux-riscv64:
+$(OUT_DIR)/TVGate-linux-riscv64: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,riscv64)
 
 linux-s390x: $(OUT_DIR)/TVGate-linux-s390x
-$(OUT_DIR)/TVGate-linux-s390x:
+$(OUT_DIR)/TVGate-linux-s390x: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,linux,s390x)
 
 # ==================== Windows ====================
 
 windows-64: $(OUT_DIR)/TVGate-windows-64.exe
-$(OUT_DIR)/TVGate-windows-64.exe:
+$(OUT_DIR)/TVGate-windows-64.exe: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,windows,amd64)
 
 windows-32: $(OUT_DIR)/TVGate-windows-32.exe
-$(OUT_DIR)/TVGate-windows-32.exe:
+$(OUT_DIR)/TVGate-windows-32.exe: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,windows,386)
 
 windows-arm64-v8a: $(OUT_DIR)/TVGate-windows-arm64-v8a.exe
-$(OUT_DIR)/TVGate-windows-arm64-v8a.exe:
+$(OUT_DIR)/TVGate-windows-arm64-v8a.exe: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,windows,arm64)
 
 # ==================== macOS ====================
 
 macos-64: $(OUT_DIR)/TVGate-macos-64
-$(OUT_DIR)/TVGate-macos-64:
+$(OUT_DIR)/TVGate-macos-64: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,darwin,amd64)
 
 macos-arm64-v8a: $(OUT_DIR)/TVGate-macos-arm64-v8a
-$(OUT_DIR)/TVGate-macos-arm64-v8a:
+$(OUT_DIR)/TVGate-macos-arm64-v8a: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,darwin,arm64)
 
 # ==================== Android ====================
 
 android-arm64-v8a: $(OUT_DIR)/TVGate-android-arm64-v8a
-$(OUT_DIR)/TVGate-android-arm64-v8a:
+$(OUT_DIR)/TVGate-android-arm64-v8a: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,android,arm64)
 

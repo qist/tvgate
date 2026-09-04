@@ -34,6 +34,13 @@ function fmtTime(iso?: string): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+/** 从连接 URL 提取播放器频道 key（/player/<key>、/pp/<key>），非直播地址返回 null */
+function liveKeyOf(url?: string): string | null {
+  if (!url) return null;
+  const m = url.match(/\/(?:player|pp)\/([0-9a-fA-F]{6,})(?:\/|\?|#|$)/);
+  return m ? m[1] : null;
+}
+
 /** 概览仪表盘：系统实时状态（含活跃连接/分区/网卡，替代原独立 /status 监控页） */
 export function Dashboard() {
   const [status, setStatus] = useState<SystemStatus>({});
@@ -134,7 +141,21 @@ export function Dashboard() {
                 {clients.map((c, i) => (
                   <TableRow key={c.id || i}>
                     <TableCell className="font-mono text-xs">{c.ip}</TableCell>
-                    <TableCell className="max-w-[260px] truncate font-mono text-xs" title={c.url}>{c.url}</TableCell>
+                    <TableCell className="max-w-[260px] truncate font-mono text-xs" title={c.url}>
+                      {liveKeyOf(c.url) ? (
+                        <a
+                          href={`player#${liveKeyOf(c.url)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-violet-600 underline decoration-violet-300 underline-offset-2 hover:text-violet-500 dark:text-violet-300 dark:decoration-violet-500/60 dark:hover:text-violet-200"
+                          title="点击观看直播"
+                        >
+                          {c.url}
+                        </a>
+                      ) : (
+                        c.url
+                      )}
+                    </TableCell>
                     <TableCell>{c.connection_type}</TableCell>
                     <TableCell className="max-w-[200px] truncate text-xs" title={c.user_agent}>{c.user_agent}</TableCell>
                     <TableCell className="text-xs">{fmtTime(c.connected_at)}</TableCell>

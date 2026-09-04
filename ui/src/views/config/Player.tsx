@@ -58,7 +58,7 @@ export function PlayerPage() {
             <Switch checked={cfg.enabled} onCheckedChange={(v) => setCfg({ ...cfg, enabled: v })} />
             <span className="text-sm">启用播放器模块</span>
           </div>
-          <p className="text-xs text-muted-foreground">开启后挂载 /api/player/channels、/player/&lt;key&gt;、/api/player/epg 与播放页 /web/player（旧地址 /pp/ 自动跳转）</p>
+          <p className="text-xs text-muted-foreground">开启后挂载 /api/player/channels、/player/&lt;key&gt;、/api/player/epg 与播放页 /web/player；/pp/ 为独立播放页入口（不跳转、不暴露后台路径）</p>
           <Field label="订阅源" hint="M3U 或 逗号TXT；此地址 = 允许拉取的源白名单，真实流地址不外露">
             <Input
               className="font-mono"

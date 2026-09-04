@@ -461,7 +461,8 @@ logo=https://logo.example.com/{name}.png
 
 | 路径 | 说明 |
 |---|---|
-| `/web/player` | SPA 播放页（频道列表 / EPG / 回看 / 设置）；旧地址 `/pp/<key>` 自动跳转 |
+| `/web/player` | SPA 播放页（频道列表 / EPG / 回看 / 设置） |
+| `/pp`、`/pp/<key>` | 独立播放页入口（旧版地址保留）：直接服务播放页，**不跳转后台路径**，`/pp/<key>` 转为 `/pp#<key>` 深链 |
 | `/api/player/channels` | 频道列表 API（含不透明 key、分组、台标） |
 | `/api/player/epg?ch=<tvg-id>&date=YYYY-MM-DD` | EPG 节目单 API |
 | `/player/<key>` | 播放流入口；分片走 `/player/<key>/<token>` 短路径 |
