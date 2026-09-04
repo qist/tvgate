@@ -1110,6 +1110,10 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 					}
 				}
 			}
+			// 内置 DateTime 对象方法（modify/format/getTimestamp/setTimestamp）
+			if result, handled, err := e.dateTimeBuiltinMethod(recv, n.Method, n.Args); handled {
+				return result, err
+			}
 			return NewNull(), nil
 		}
 		// 支持异常对象方法调用：$e->getMessage(), $e->getCode() 等
@@ -1324,6 +1328,30 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 		// 找不到则当字符串名（PHP 行为）
 		return NewString(n.Name), nil
 	case *NewExpr:
+		// 内置 DateTime 类：new DateTime($time) → 携带 __ts 的对象（见 class_datetime.go）
+		if strings.EqualFold(n.Class, "DateTime") {
+			arg := ""
+			if len(n.Args) > 0 {
+				v, err := e.evalExpr(n.Args[0])
+				if err != nil {
+					return v, err
+				}
+				arg = v.ToString()
+			}
+			obj := NewObject("DateTime")
+			loc := e.loc
+			if loc == nil {
+				loc = time.UTC
+			}
+			if arg == "" {
+				// new DateTime() → now
+				obj.Object.Properties["__ts"] = NewInt(time.Now().Unix())
+			} else if t, ok := phpStrToTime(arg, loc); ok {
+				obj.Object.Properties["__ts"] = NewInt(t.Unix())
+			}
+			// 解析失败：不带 __ts，后续方法返回 false（安全降级，见 class_datetime.go）
+			return obj, nil
+		}
 		// 检查是否是已注册的用户类
 		if cls, ok := e.classes[n.Class]; ok {
 			obj := NewObject(n.Class)

@@ -49,47 +49,14 @@ func init() {
 		return NewString(strconv.FormatFloat(sec, 'f', 8, 64) + " " + strconv.FormatInt(now.Unix(), 10)), nil
 	}
 	builtins["strtotime"] = func(e *Env, a []Value) (Value, error) {
-		// 简化：尝试解析常见格式（无时区按当前请求默认时区解析）
+		// 解析常见格式（无时区按当前请求默认时区解析）
 		s := a[0].ToString()
 		loc := e.loc
 		if loc == nil {
 			loc = time.UTC
 		}
-		naiveLayouts := []string{
-			"2006-01-02 15:04:05",
-			"2006-01-02 15:04",
-			"2006-01-02",
-			"20060102", // Ymd
-			"20060102150405",
-		}
-		for _, layout := range naiveLayouts {
-			if t, err := time.ParseInLocation(layout, s, loc); err == nil {
-				return NewInt(t.Unix()), nil
-			}
-		}
-		// 带时区/时区偏移的格式
-		zoneLayouts := []string{
-			"2006-01-02T15:04:05Z",
-			time.RFC3339,
-			time.RFC1123,
-			time.RFC1123Z,
-		}
-		for _, layout := range zoneLayouts {
-			if t, err := time.Parse(layout, s); err == nil {
-				return NewInt(t.Unix()), nil
-			}
-		}
-		// Ymd 格式：8位纯数字（如 20260828）
-		if len(s) == 8 {
-			if t, err := time.ParseInLocation("20060102", s, loc); err == nil {
-				return NewInt(t.Unix()), nil
-			}
-		}
-		// YmdHis 格式：14位纯数字
-		if len(s) == 14 {
-			if t, err := time.ParseInLocation("20060102150405", s, loc); err == nil {
-				return NewInt(t.Unix()), nil
-			}
+		if t, ok := phpStrToTime(s, loc); ok {
+			return NewInt(t.Unix()), nil
 		}
 		return NewBool(false), nil
 	}
