@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Tv } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -45,7 +46,19 @@ export function PlayerPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">H5 播放器配置</h1>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-xl font-semibold">H5 播放器配置</h1>
+        <a
+          href="player"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-violet-700 text-sm transition-colors hover:bg-violet-500/20 dark:border-violet-300/30 dark:bg-violet-300/10 dark:text-violet-200 dark:hover:bg-violet-300/20"
+          title="在新标签页打开 H5 播放页"
+        >
+          <Tv className="h-4 w-4" aria-hidden="true" />
+          打开播放页观看
+        </a>
+      </div>
       {notice && (
         <div className={`rounded-lg border px-3 py-2 text-sm ${notice.type === "ok" ? "border-primary/30 bg-primary/10 text-primary" : "border-destructive/30 bg-destructive/10 text-destructive"}`}>
           {notice.msg}

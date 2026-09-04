@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Tv } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getStatus, type SystemStatus } from "@/api/system";
@@ -121,7 +122,21 @@ export function Dashboard() {
 
       {/* 活跃连接 */}
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-base">活跃连接（{clients.length}）</CardTitle></CardHeader>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+            <span>活跃连接（{clients.length}）</span>
+            <a
+              href="player"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-violet-700 text-xs transition-colors hover:bg-violet-500/20 dark:border-violet-300/30 dark:bg-violet-300/10 dark:text-violet-200 dark:hover:bg-violet-300/20"
+              title="在新标签页打开 H5 播放页观看直播"
+            >
+              <Tv className="h-3.5 w-3.5" aria-hidden="true" />
+              打开播放器
+            </a>
+          </CardTitle>
+        </CardHeader>
         <CardContent className="overflow-x-auto">
           {clients.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无活跃连接</p>
