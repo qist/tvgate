@@ -4,6 +4,22 @@
 
 ## Android (tvgate-android)
 
+### v3.1.0
+
+```
+1、直播接口启动自动打开 — config.yaml player.enabled: true 时，服务就绪后自动经 /pp 独立
+   播放页打开直播（信息卡片淡出 + 播放页淡入过渡、沉浸式全屏、自动起播、支持 H5 网页全屏）；
+   返回键退回信息卡片且本次会话不再自动弹出；ConfigParser 新增 player.enabled 解析
+2、消除手机/电视白色元素 — 窗口背景/状态栏/导航栏统一深色 #0D1117；WebView 底色压黑且每次
+   导航重新压黑；document-start 脚本预置播放器 dark 主题（H5 侧 localStorage 为裸字符串
+   比较，不能带 JSON 引号），浅色系统下不再出现白色顶栏
+3、CI 改为仅上传 artifact — 移除 GitHub Release 步骤（权限降为 contents: read），新增
+   setup-node（Node 20）；注意在线更新依赖 releases/latest，无 Release 时检测将静默跳过
+4、build-android.sh 补齐 Web 前端构建 — web/dist 不进 git（.gitignore 只留 .gitkeep），
+   go:embed 缺产物时二进制内为占位页（管理后台/直播播放器均不可用）；现编译 Go 前自动
+   npm 构建（ui 源码比 .built 标记新才重建；npm 缺失直接报错退出）
+```
+
 ### v3.0.10
 
 ```
