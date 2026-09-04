@@ -509,13 +509,14 @@ export function PublisherPage() {
   );
 }
 
-function Field({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
-  return (
-    <div className={className}>
-      <Label className="mb-1 block text-xs text-muted-foreground">{label}</Label>
-      {children}
-    </div>
-  );
+function Field({ label, children, className, hint }: { label: string; children: React.ReactNode; className?: string; hint?: string }) {
+	return (
+		<div className={className}>
+			<Label className="mb-1 block text-xs text-muted-foreground">{label}</Label>
+			{children}
+			{hint && <p className="mt-1 text-[11px] leading-snug text-muted-foreground/80">{hint}</p>}
+		</div>
+	);
 }
 
 function StreamForm({ draft, setDraft }: { draft: StreamItem; setDraft: React.Dispatch<React.SetStateAction<StreamItem>> }) {
@@ -525,6 +526,40 @@ function StreamForm({ draft, setDraft }: { draft: StreamItem; setDraft: React.Di
   const plays = localPlays(stream.local_play_urls);
   const flv = plays.find((x) => x.protocol === "flv");
   const hls = plays.find((x) => x.protocol === "hls");
+
+  // 监控录制模板：一键填好 HLS 录制常用参数组合
+  const [presetKey, setPresetKey] = useState("");
+  const recordingPresets: { key: string; label: string; apply: Partial<PlayOutput> }[] = [
+    {
+      key: "",
+      label: "选择模板（可选，应用后可微调）",
+      apply: {},
+    },
+    {
+      // 监控标准：5 秒分片 + 30 秒直播窗口 + 回放 + 每日归档 + TS 留 1 天
+      key: "monitor",
+      label: "监控标准（5s分片 / 回放 / 每日归档 / TS留1天）",
+      apply: { hls_segment_duration: 5, hls_segment_count: 6, hls_enable_playback: true, hls_daily_archive: true, hls_retention_days: "24h" },
+    },
+    {
+      // 连续录像：归档 MP4 为主，TS 尽快释放
+      key: "record",
+      label: "连续录像（10s分片 / 每日归档 / TS留12小时）",
+      apply: { hls_segment_duration: 10, hls_segment_count: 4, hls_enable_playback: true, hls_daily_archive: true, hls_retention_days: "12h" },
+    },
+    {
+      // 低延迟预览：不录制，ffmpeg 自删旧分片
+      key: "live",
+      label: "低延迟预览（2s分片 / 不录制不归档）",
+      apply: { hls_segment_duration: 2, hls_segment_count: 6, hls_enable_playback: false, hls_daily_archive: false, hls_retention_days: "" },
+    },
+    {
+      // 低存储：更少分片 + TS 留 6 小时
+      key: "storage",
+      label: "低存储（10s分片 / 每日归档 / TS留6小时）",
+      apply: { hls_segment_duration: 10, hls_segment_count: 4, hls_enable_playback: true, hls_daily_archive: true, hls_retention_days: "6h" },
+    },
+  ];
 
   // 所有 set* 均为完全函数式更新：在 updater 内基于最新 draft 计算，
   // 不引用渲染期闭包里的旧对象（避免 React 批处理/StrictMode 下的陈旧引用
@@ -677,6 +712,25 @@ function StreamForm({ draft, setDraft }: { draft: StreamItem; setDraft: React.Di
           )}
           {hls?.enabled && (
             <>
+              <Field
+                label="录制模板"
+                hint="一键填好监控录制的常用参数组合；应用后仍可逐项微调"
+              >
+                <select
+                  className="h-9 w-full rounded-[var(--radius)] border border-input bg-background px-2 text-sm"
+                  value={presetKey}
+                  onChange={(e) => {
+                    const key = e.target.value;
+                    setPresetKey(key);
+                    const p = recordingPresets.find((x) => x.key === key);
+                    if (p) upsertPlay("hls", p.apply);
+                  }}
+                >
+                  {recordingPresets.map((p) => (
+                    <option key={p.key} value={p.key}>{p.label}</option>
+                  ))}
+                </select>
+              </Field>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <Field label="HLS 片段时长（秒）">
                   <Input type="number" min={1} value={(hls as any).hls_segment_duration ?? ""} onChange={(e) => upsertPlay("hls", { hls_segment_duration: Number(e.target.value || 0) })} placeholder="例如 2" />
@@ -686,13 +740,28 @@ function StreamForm({ draft, setDraft }: { draft: StreamItem; setDraft: React.Di
                 </Field>
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <Field label="HLS 存储路径（可选）">
+                <Field
+                  label="HLS 存储路径（可选）"
+                  hint="TS 分片目录，不填默认 /tmp/hls/<流名>。回放和每日归档的数据源；注意 /tmp 重启会清空，长期录制请指定磁盘目录"
+                >
                   <Input value={(hls as any).hls_path || ""} onChange={(e) => upsertPlay("hls", { hls_path: e.target.value })} placeholder="例如 ./hls 或 /data/hls" />
                 </Field>
                 <label className="flex items-end gap-2 pb-2 text-sm">
                   <input type="checkbox" className="accent-[hsl(var(--primary))]" checked={!!(hls as any).hls_enable_playback} onChange={(e) => upsertPlay("hls", { hls_enable_playback: e.target.checked })} />
                   开启回放（保留 TS）
                 </label>
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <label className="flex items-end gap-2 pb-2 text-sm">
+                  <input type="checkbox" className="accent-[hsl(var(--primary))]" checked={!!(hls as any).hls_daily_archive} onChange={(e) => upsertPlay("hls", { hls_daily_archive: e.target.checked })} />
+                  每日归档 MP4（凌晨合并前一天分片，零转码）
+                </label>
+                <Field
+                  label="归档目录（可选，默认 ./archive）"
+                  hint="每天 00:05 将前一天分片合并为 <归档目录>/<流名>/<流名>-YYYYMMDD.mp4；零转码不影响推流，已存在自动跳过"
+                >
+                  <Input value={(hls as any).hls_archive_path || ""} onChange={(e) => upsertPlay("hls", { hls_archive_path: e.target.value })} placeholder="例如 /data/archive" />
+                </Field>
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <Field label="TS 保留时长（例如 24h / 7d，可选）">

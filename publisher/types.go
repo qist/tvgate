@@ -109,6 +109,8 @@ type PlayOutput struct {
 	HlsEnablePlayback  bool           `yaml:"hls_enable_playback,omitempty"`  // 是否开启回放模式
 	HlsRetentionDays   time.Duration  `yaml:"hls_retention_days,omitempty"`   // TS 文件保留天数
 	TSFilenameTemplate string         `yaml:"ts_filename_template,omitempty"` // TS 文件名模板
+	HlsDailyArchive    bool           `yaml:"hls_daily_archive,omitempty"`    // 每日归档：凌晨将前一天 TS 零转码合并为一个 MP4
+	HlsArchivePath     string         `yaml:"hls_archive_path,omitempty"`     // 归档目录（默认 ./archive）
 }
 
 // PlayUrls represents play URLs for different protocols
