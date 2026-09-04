@@ -23,7 +23,9 @@ const base = () => resolveBase() + "api/sync";
 export async function loadConfig(): Promise<SyncEntry[]> {
   const r = await fetch(`${base()}/config`, { credentials: "same-origin" });
   if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  const data = await r.json();
+  // 未配置同步段时后端可能返回 null，兜底空数组避免 .map 崩溃
+  return Array.isArray(data) ? data : [];
 }
 
 export async function saveConfig(entries: SyncEntry[]): Promise<void> {
@@ -45,7 +47,8 @@ export async function fetchBranches(input: { type?: string; host?: string; repo:
   });
   const r = await fetch(`${base()}/branches?${p.toString()}`, { credentials: "same-origin" });
   if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  const data = await r.json();
+  return Array.isArray(data) ? data : [];
 }
 
 export function defaultEntry(): SyncEntry {

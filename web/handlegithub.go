@@ -22,11 +22,17 @@ func (h *ConfigHandler) handleGithubConfig(w http.ResponseWriter, r *http.Reques
 	github := config.Cfg.Github
 	config.CfgMu.RUnlock()
 
+	// 未配置 github 段时 BackupURLs 为 nil，JSON 序列化成 null 会让前端 .map 崩溃；统一回空数组
+	backupURLs := github.BackupURLs
+	if backupURLs == nil {
+		backupURLs = []string{}
+	}
+
 	// 转换为可JSON序列化的格式
 	githubConfig := map[string]interface{}{
 		"enabled":     github.Enabled,
 		"url":         github.URL,
-		"backup_urls": github.BackupURLs,
+		"backup_urls": backupURLs,
 		"timeout":     formatDuration(github.Timeout),
 		"retry":       github.Retry,
 	}

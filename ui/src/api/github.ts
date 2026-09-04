@@ -24,7 +24,12 @@ const base = () => resolveBase();
 export async function loadConfig(): Promise<GithubConfig> {
   const r = await fetch(base() + "api/github/config", { credentials: "same-origin" });
   if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  const data = await r.json();
+  return {
+    ...data,
+    // 旧后端在未配置时返回 null，会覆盖默认空数组导致前端 .map 崩溃
+    backup_urls: Array.isArray(data?.backup_urls) ? data.backup_urls : [],
+  };
 }
 
 export async function saveConfig(cfg: GithubConfig): Promise<void> {
@@ -40,7 +45,8 @@ export async function saveConfig(cfg: GithubConfig): Promise<void> {
 export async function releases(): Promise<Release[]> {
   const r = await fetch(base() + "github/releases", { credentials: "same-origin" });
   if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  const data = await r.json();
+  return Array.isArray(data) ? data : [];
 }
 
 export async function triggerUpdate(version: string): Promise<void> {

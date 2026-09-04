@@ -116,7 +116,8 @@ export async function saveConfig(cfg: Record<string, any>): Promise<void> {
 export async function loadStats(): Promise<{ streams: StreamStatus[]; ts?: number }> {
   const r = await fetch(`${base()}/stats`, { credentials: "same-origin" });
   if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  const data = await r.json();
+  return { streams: Array.isArray(data?.streams) ? data.streams : [], ts: data?.ts };
 }
 
 export async function loadFFmpegStatus(): Promise<FFmpegStatus> {
