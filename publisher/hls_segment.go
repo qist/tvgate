@@ -40,9 +40,10 @@ type HLSSegmentManager struct {
 	retentionDays      time.Duration // 保留 TS 的天数，<=0 表示不按天删除
 	tsFilenameTemplate string        // 模板，支持 {name} 和 {seq}，若为空使用默认 "%s_%03d.ts"
 
-	// 每日归档：凌晨把前一天的分片零转码（-c copy）合并为一个 MP4
-	dailyArchive bool
-	archivePath  string
+	// 每日归档：按用户设定的归档间隔，到期把该时段分片零转码（-c copy）合并为一个 MP4
+	archiveInterval  time.Duration // 0 = 不归档；≥24h 每天一个文件，<24h 按 interval 滚动
+	archiveRetention time.Duration // 归档 MP4 保留期，0 = 永久保留
+	archivePath      string
 
 	// hub 相关
 	hub          *stream.StreamHubs
@@ -131,62 +132,126 @@ func (h *HLSSegmentManager) SetTsFilenameTemplate(tpl string) {
 	h.tsFilenameTemplate = tpl
 }
 
-// SetDailyArchive 启用每日归档（凌晨合并前一天 TS 为 MP4）并设置归档目录（空则 ./archive）
-func (h *HLSSegmentManager) SetDailyArchive(enable bool, archivePath string) {
-	h.dailyArchive = enable
+// SetArchiveInterval 设置归档间隔、MP4 保留期与归档目录。
+// interval > 0 即启用归档，到期把该时段分片零转码（-c copy）合并为一个 MP4：
+//   - interval ≥ 24h：每天 00:05 归档前一天 → <流名>-YYYYMMDD.mp4（每天一个文件）
+//   - interval < 24h：滚动归档，每 interval 出一个 → <流名>-YYYYMMDD-HHMM.mp4
+//   - retention ≤ 0：归档 MP4 永久保留；> 0：超过保留期自动删除
+//
+// 注意：归档间隔应 ≤ TS 保留期，否则分片先被清理会导致 MP4 缺段。
+func (h *HLSSegmentManager) SetArchiveInterval(interval, retention time.Duration, archivePath string) {
+	h.archiveInterval = interval
+	h.archiveRetention = retention
 	if archivePath == "" {
 		archivePath = "./archive"
 	}
 	h.archivePath = archivePath
 }
 
-// dailyArchiveLoop 每日归档循环：等待到次日 00:05 归档前一天分片，循环往复。
-// 启动时先补归档一次昨天（覆盖服务中途重启漏掉的归档）。
-func (h *HLSSegmentManager) dailyArchiveLoop() {
-	if !h.dailyArchive {
+// archiveLoop 归档循环：按用户设定的间隔归档已完成分片，并清理过期 MP4。
+func (h *HLSSegmentManager) archiveLoop() {
+	if h.archiveInterval <= 0 {
 		return
 	}
-	// 启动时补归档昨天（幂等：目标 MP4 已存在则跳过）
-	h.archiveDay(time.Now().AddDate(0, 0, -1))
 
-	for {
-		now := time.Now()
-		next := time.Date(now.Year(), now.Month(), now.Day(), 0, 5, 0, 0, now.Location())
-		if !next.After(now) {
-			next = next.AddDate(0, 0, 1)
+	// 归档 MP4 过期清理（retention ≤ 0 = 永久保留）
+	cleanExpired := func() {
+		if h.archiveRetention <= 0 {
+			return
 		}
-		timer := time.NewTimer(next.Sub(now))
+		cutoff := time.Now().Add(-h.archiveRetention)
+		outDir := filepath.Join(h.archivePath, h.streamName)
+		entries, err := os.ReadDir(outDir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".mp4") {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil || info.ModTime().After(cutoff) {
+				continue
+			}
+			if err := os.Remove(filepath.Join(outDir, e.Name())); err == nil {
+				logger.LogPrintf("[%s] Archive retention: removed expired %s", h.streamName, e.Name())
+			}
+		}
+	}
+
+	// 间隔 ≥ 24h：每日模式（00:05 归档昨天整天，每天一个文件）
+	if h.archiveInterval >= 24*time.Hour {
+		yesterday := time.Now().AddDate(0, 0, -1)
+		h.archiveRange(
+			time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, yesterday.Location()),
+			time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 24, 0, 0, 0, yesterday.Location()),
+			yesterday.Format("20060102"),
+		)
+		for {
+			now := time.Now()
+			next := time.Date(now.Year(), now.Month(), now.Day(), 0, 5, 0, 0, now.Location())
+			if !next.After(now) {
+				next = next.AddDate(0, 0, 1)
+			}
+			timer := time.NewTimer(next.Sub(now))
+			select {
+			case <-h.ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				day := time.Now().AddDate(0, 0, -1)
+				h.archiveRange(
+					time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, day.Location()),
+					time.Date(day.Year(), day.Month(), day.Day(), 24, 0, 0, 0, day.Location()),
+					day.Format("20060102"),
+				)
+				cleanExpired()
+			}
+		}
+	}
+
+	// 间隔 < 24h：滚动归档（每 interval 出一个 MP4）
+	// 游标：从上一周期起点开始，确保启动前的分片也能补归档
+	cursor := time.Now().Add(-h.archiveInterval)
+	// 写入中的分片 mtime 持续变化，留 2×分片时长（≥30s）安全边距不纳入归档
+	margin := time.Duration(h.segmentDuration) * 2 * time.Second
+	if margin < 30*time.Second {
+		margin = 30 * time.Second
+	}
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
 		select {
 		case <-h.ctx.Done():
-			timer.Stop()
 			return
-		case <-timer.C:
-			h.archiveDay(time.Now().AddDate(0, 0, -1))
+		case <-ticker.C:
+			end := time.Now().Add(-margin)
+			if end.Sub(cursor) >= h.archiveInterval {
+				h.archiveRange(cursor, end, cursor.Format("20060102-1504"))
+				cursor = end
+			}
+			cleanExpired()
 		}
 	}
 }
 
-// archiveDay 把 day（自然日）的分片合并为 <归档目录>/<流名>/<流名>-YYYYMMDD.mp4。
-// 分片按 mtime 落在该自然日内筛选（与文件名模板无关），-c copy 零转码合并。
-func (h *HLSSegmentManager) archiveDay(day time.Time) {
-	dayStart := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, day.Location())
-	dayEnd := dayStart.AddDate(0, 0, 1)
-	dateTag := dayStart.Format("20060102")
-
+// archiveRange 把 (start, end] mtime 区间内的分片合并为
+// <归档目录>/<流名>/<流名>-<suffix>.mp4（-c copy 零转码）。
+func (h *HLSSegmentManager) archiveRange(start, end time.Time, suffix string) {
 	outDir := filepath.Join(h.archivePath, h.streamName)
 	if err := os.MkdirAll(outDir, 0755); err != nil {
-		logger.LogPrintf("[%s] Daily archive: failed to create dir %s: %v", h.streamName, outDir, err)
+		logger.LogPrintf("[%s] Archive: failed to create dir %s: %v", h.streamName, outDir, err)
 		return
 	}
-	outFile := filepath.Join(outDir, fmt.Sprintf("%s-%s.mp4", h.streamName, dateTag))
+	outFile := filepath.Join(outDir, fmt.Sprintf("%s-%s.mp4", h.streamName, suffix))
 	if _, err := os.Stat(outFile); err == nil {
-		logger.LogPrintf("[%s] Daily archive: %s already exists, skip", h.streamName, filepath.Base(outFile))
+		logger.LogPrintf("[%s] Archive: %s already exists, skip", h.streamName, filepath.Base(outFile))
 		return
 	}
 
 	entries, err := os.ReadDir(h.segmentPath)
 	if err != nil {
-		logger.LogPrintf("[%s] Daily archive: read dir failed: %v", h.streamName, err)
+		logger.LogPrintf("[%s] Archive: read dir failed: %v", h.streamName, err)
 		return
 	}
 
@@ -200,18 +265,17 @@ func (h *HLSSegmentManager) archiveDay(day time.Time) {
 			continue
 		}
 		mt := info.ModTime()
-		if !mt.Before(dayStart) && mt.Before(dayEnd) {
+		if mt.After(start) && !mt.After(end) {
 			segments = append(segments, filepath.Join(h.segmentPath, e.Name()))
 		}
 	}
 	if len(segments) == 0 {
-		logger.LogPrintf("[%s] Daily archive: no segments for %s, skip", h.streamName, dateTag)
-		return
+		return // 区间内无分片（如流中断），静默跳过
 	}
 	sort.Strings(segments)
 
 	// concat 列表文件
-	listFile := filepath.Join(outDir, fmt.Sprintf(".%s-%s.concat.txt", h.streamName, dateTag))
+	listFile := filepath.Join(outDir, fmt.Sprintf(".%s-%s.concat.txt", h.streamName, suffix))
 	var sb strings.Builder
 	for _, seg := range segments {
 		sb.WriteString("file '")
@@ -219,7 +283,7 @@ func (h *HLSSegmentManager) archiveDay(day time.Time) {
 		sb.WriteString("'\n")
 	}
 	if err := os.WriteFile(listFile, []byte(sb.String()), 0644); err != nil {
-		logger.LogPrintf("[%s] Daily archive: write list failed: %v", h.streamName, err)
+		logger.LogPrintf("[%s] Archive: write list failed: %v", h.streamName, err)
 		return
 	}
 	defer os.Remove(listFile)
@@ -230,20 +294,20 @@ func (h *HLSSegmentManager) archiveDay(day time.Time) {
 		"-movflags", "+faststart",
 		outFile,
 	}
-	start := time.Now()
+	archiveStart := time.Now()
 	cmd := exec.Command("ffmpeg", args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{}
 	setSysProcAttr(cmd.SysProcAttr)
 	stderrTail := newStderrTail(8 * 1024)
 	cmd.Stderr = stderrTail
 	if err := cmd.Run(); err != nil {
-		logger.LogPrintf("[%s] Daily archive FAILED for %s (%d segments): %v | stderr: %s",
-			h.streamName, dateTag, len(segments), err, tailLines(stderrTail.Tail(), 3))
+		logger.LogPrintf("[%s] Archive FAILED for %s (%d segments): %v | stderr: %s",
+			h.streamName, suffix, len(segments), err, tailLines(stderrTail.Tail(), 3))
 		os.Remove(outFile) // 删除可能的不完整输出
 		return
 	}
-	logger.LogPrintf("[%s] Daily archive OK: %s (%d segments, %d bytes, took %s)",
-		h.streamName, filepath.Base(outFile), len(segments), fileSizeOrZero(outFile), time.Since(start).Round(time.Second))
+	logger.LogPrintf("[%s] Archive OK: %s (%d segments, %d bytes, took %s)",
+		h.streamName, filepath.Base(outFile), len(segments), fileSizeOrZero(outFile), time.Since(archiveStart).Round(time.Second))
 }
 
 func fileSizeOrZero(path string) int64 {
@@ -433,8 +497,8 @@ func (h *HLSSegmentManager) Start() error {
 	h.ffmpegIn = stdin
 	h.mutex.Unlock()
 
-	// 每日归档循环（凌晨合并前一天 TS 为 MP4）
-	h.wg.Go(h.dailyArchiveLoop)
+	// 归档循环（按 TS 保留期自动选择每日/滚动模式）
+	h.wg.Go(h.archiveLoop)
 
 	// 启动数据推送（来自 hub）
 	if h.clientBuffer != nil {

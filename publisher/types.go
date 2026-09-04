@@ -99,18 +99,20 @@ type Source struct {
 
 // PlayOutput represents play URLs for different protocols
 type PlayOutput struct {
-	Protocol           string         `yaml:"protocol"` // flv/hls/…
-	Enabled            bool           `yaml:"enabled"`
-	FlvFFmpegOptions   *FFmpegOptions `yaml:"flv_ffmpeg_options,omitempty"`
-	HlsFFmpegOptions   *FFmpegOptions `yaml:"hls_ffmpeg_options,omitempty"`
-	HlsSegmentDuration int            `yaml:"hls_segment_duration,omitempty"` // HLS片段时长（秒）
-	HlsSegmentCount    int            `yaml:"hls_segment_count,omitempty"`    // 保留的HLS片段数量
-	HlsPath            string         `yaml:"hls_path,omitempty"`             // HLS文件存储路径
-	HlsEnablePlayback  bool           `yaml:"hls_enable_playback,omitempty"`  // 是否开启回放模式
-	HlsRetentionDays   time.Duration  `yaml:"hls_retention_days,omitempty"`   // TS 文件保留天数
-	TSFilenameTemplate string         `yaml:"ts_filename_template,omitempty"` // TS 文件名模板
-	HlsDailyArchive    bool           `yaml:"hls_daily_archive,omitempty"`    // 每日归档：凌晨将前一天 TS 零转码合并为一个 MP4
-	HlsArchivePath     string         `yaml:"hls_archive_path,omitempty"`     // 归档目录（默认 ./archive）
+	Protocol            string         `yaml:"protocol"` // flv/hls/…
+	Enabled             bool           `yaml:"enabled"`
+	FlvFFmpegOptions    *FFmpegOptions `yaml:"flv_ffmpeg_options,omitempty"`
+	HlsFFmpegOptions    *FFmpegOptions `yaml:"hls_ffmpeg_options,omitempty"`
+	HlsSegmentDuration  int            `yaml:"hls_segment_duration,omitempty"` // HLS片段时长（秒）
+	HlsSegmentCount     int            `yaml:"hls_segment_count,omitempty"`    // 保留的HLS片段数量
+	HlsPath             string         `yaml:"hls_path,omitempty"`             // HLS文件存储路径
+	HlsEnablePlayback   bool           `yaml:"hls_enable_playback,omitempty"`  // 是否开启回放模式
+	HlsRetentionDays    time.Duration  `yaml:"hls_retention_days,omitempty"`   // TS 文件保留天数
+	TSFilenameTemplate  string         `yaml:"ts_filename_template,omitempty"` // TS 文件名模板
+	HlsDailyArchive     bool           `yaml:"hls_daily_archive,omitempty"`
+	HlsArchiveInterval  time.Duration  `yaml:"hls_archive_interval,omitempty"`  // 归档间隔（如 24h/12h/6h/1h）：非空即启用归档，到期把该时段分片零转码合并为一个 MP4
+	HlsArchiveRetention time.Duration  `yaml:"hls_archive_retention,omitempty"` // 归档 MP4 保留期：0/空 = 永久保留，超过自动删除
+	HlsArchivePath      string         `yaml:"hls_archive_path,omitempty"`      // 归档目录（默认 ./archive）
 }
 
 // PlayUrls represents play URLs for different protocols

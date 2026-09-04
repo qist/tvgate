@@ -35,6 +35,8 @@ export interface PlayOutput {
   hls_retention_days?: string;
   ts_filename_template?: string;
   hls_daily_archive?: boolean;
+  hls_archive_interval?: string;
+  hls_archive_retention?: string;
   hls_archive_path?: string;
 }
 

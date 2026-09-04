@@ -404,7 +404,8 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 	hlsRetentionDays = 7 * 24 * time.Hour // 默认7天
 	tsFilenameTemplate := "name_index"
 	hlsEnablePlayback := false // 默认不启用回放模式
-	hlsDailyArchive := false
+	hlsArchiveInterval := time.Duration(0)
+	hlsArchiveRetention := time.Duration(0)
 	hlsArchivePath := ""
 
 	manager := GetManager()
@@ -437,7 +438,8 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 						tsFilenameTemplate = playURL.TSFilenameTemplate
 					}
 					hlsEnablePlayback = playURL.HlsEnablePlayback // 直接赋值，不管是否为true或false
-					hlsDailyArchive = playURL.HlsDailyArchive
+					hlsArchiveInterval = playURL.HlsArchiveInterval
+					hlsArchiveRetention = playURL.HlsArchiveRetention
 					hlsArchivePath = playURL.HlsArchivePath
 					break
 				}
@@ -465,8 +467,8 @@ func NewPipeForwarder(streamName string, rtmpURL string, enabled bool, needPull 
 	hlsManager.tsFilenameTemplate = tsFilenameTemplate // 设置TS文件名模板
 	hlsManager.enablePlayback = hlsEnablePlayback      // 设置回放模式
 	// 先不要直接绑定到本地 h；优先使用全局 StreamHub 的 hub（避免不同 hub 导致数据不通）
-	// 每日归档配置（在 enablePlayback 分支里已从 playURL 读取 dailyArchive/archivePath）
-	hlsManager.SetDailyArchive(hlsDailyArchive, hlsArchivePath)
+	// 归档配置：interval 非空即启用（≥24h 每天一个文件，<24h 按间隔滚动），retention 为 MP4 保留期
+	hlsManager.SetArchiveInterval(hlsArchiveInterval, hlsArchiveRetention, hlsArchivePath)
 	streamHub := GetStreamHub(streamName)
 	if streamHub != nil && streamHub.hub != nil {
 		hlsManager.SetHub(streamHub.hub)

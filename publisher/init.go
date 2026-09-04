@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
@@ -169,14 +170,21 @@ func convertLocalPlayUrls(outputs []config.PlayOutput, sourceOpts *FFmpegOptions
 		sourceCopy := copyFFmpegOptions(sourceOpts)
 
 		res[i] = PlayOutput{
-			Protocol:           output.Protocol,
-			Enabled:            output.Enabled,
-			HlsSegmentDuration: output.HlsSegmentDuration,
-			HlsSegmentCount:    output.HlsSegmentCount,
-			HlsPath:            output.HlsPath,
-			HlsEnablePlayback:  output.HlsEnablePlayback,
-			HlsRetentionDays:   output.HlsRetentionDays,
-			TSFilenameTemplate: output.TSFilenameTemplate,
+			Protocol:            output.Protocol,
+			Enabled:             output.Enabled,
+			HlsSegmentDuration:  output.HlsSegmentDuration,
+			HlsSegmentCount:     output.HlsSegmentCount,
+			HlsPath:             output.HlsPath,
+			HlsEnablePlayback:   output.HlsEnablePlayback,
+			HlsRetentionDays:    output.HlsRetentionDays,
+			TSFilenameTemplate:  output.TSFilenameTemplate,
+			HlsArchiveInterval:  output.HlsArchiveInterval,
+			HlsArchiveRetention: output.HlsArchiveRetention,
+			HlsArchivePath:      output.HlsArchivePath,
+		}
+		// 兼容旧布尔开关：hls_daily_archive: true 且未设间隔 → 默认每天归档
+		if output.HlsDailyArchive && res[i].HlsArchiveInterval <= 0 {
+			res[i].HlsArchiveInterval = 24 * time.Hour
 		}
 
 		switch output.Protocol {

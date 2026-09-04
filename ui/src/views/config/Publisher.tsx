@@ -536,28 +536,28 @@ function StreamForm({ draft, setDraft }: { draft: StreamItem; setDraft: React.Di
       apply: {},
     },
     {
-      // 监控标准：5 秒分片 + 30 秒直播窗口 + 回放 + 每日归档 + TS 留 1 天
+      // 监控标准：5 秒分片 + 30 秒直播窗口 + 回放 + 每天一个 MP4（间隔 24h）+ TS 留 26h
       key: "monitor",
-      label: "监控标准（5s分片 / 回放 / 每日归档 / TS留1天）",
-      apply: { hls_segment_duration: 5, hls_segment_count: 6, hls_enable_playback: true, hls_daily_archive: true, hls_retention_days: "24h" },
+      label: "监控标准（5s分片 / 回放 / 每天一个MP4 / TS留26h）",
+      apply: { hls_segment_duration: 5, hls_segment_count: 6, hls_enable_playback: true, hls_archive_interval: "24h", hls_archive_retention: "", hls_retention_days: "26h" },
     },
     {
-      // 连续录像：归档 MP4 为主，TS 尽快释放
+      // 连续录像：每 6 小时一个 MP4，TS 留 12h
       key: "record",
-      label: "连续录像（10s分片 / 每日归档 / TS留12小时）",
-      apply: { hls_segment_duration: 10, hls_segment_count: 4, hls_enable_playback: true, hls_daily_archive: true, hls_retention_days: "12h" },
+      label: "连续录像（10s分片 / 每6小时一个MP4 / TS留12h）",
+      apply: { hls_segment_duration: 10, hls_segment_count: 4, hls_enable_playback: true, hls_archive_interval: "6h", hls_archive_retention: "30d", hls_retention_days: "12h" },
     },
     {
       // 低延迟预览：不录制，ffmpeg 自删旧分片
       key: "live",
       label: "低延迟预览（2s分片 / 不录制不归档）",
-      apply: { hls_segment_duration: 2, hls_segment_count: 6, hls_enable_playback: false, hls_daily_archive: false, hls_retention_days: "" },
+      apply: { hls_segment_duration: 2, hls_segment_count: 6, hls_enable_playback: false, hls_archive_interval: "", hls_archive_retention: "", hls_retention_days: "" },
     },
     {
-      // 低存储：更少分片 + TS 留 6 小时
+      // 低存储：每 3 小时一个 MP4，TS 留 6h，MP4 留 7 天
       key: "storage",
-      label: "低存储（10s分片 / 每日归档 / TS留6小时）",
-      apply: { hls_segment_duration: 10, hls_segment_count: 4, hls_enable_playback: true, hls_daily_archive: true, hls_retention_days: "6h" },
+      label: "低存储（10s分片 / 每3小时一个MP4 / TS留6h / MP4留7天）",
+      apply: { hls_segment_duration: 10, hls_segment_count: 4, hls_enable_playback: true, hls_archive_interval: "3h", hls_archive_retention: "168h", hls_retention_days: "6h" },
     },
   ];
 
@@ -752,17 +752,25 @@ function StreamForm({ draft, setDraft }: { draft: StreamItem; setDraft: React.Di
                 </label>
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <label className="flex items-end gap-2 pb-2 text-sm">
-                  <input type="checkbox" className="accent-[hsl(var(--primary))]" checked={!!(hls as any).hls_daily_archive} onChange={(e) => upsertPlay("hls", { hls_daily_archive: e.target.checked })} />
-                  每日归档 MP4（凌晨合并前一天分片，零转码）
-                </label>
                 <Field
-                  label="归档目录（可选，默认 ./archive）"
-                  hint="每天 00:05 将前一天分片合并为 <归档目录>/<流名>/<流名>-YYYYMMDD.mp4；零转码不影响推流，已存在自动跳过"
+                  label="归档间隔（可选，如 24h / 12h / 6h / 1h）"
+                  hint="填写即启用归档：到期把该时段分片零转码合并为一个 MP4。≥24h 每天一个文件（<流名>-YYYYMMDD.mp4）；<24h 按间隔滚动（<流名>-YYYYMMDD-HHMM.mp4）。应 ≤ TS 保留期，否则分片先被清理导致 MP4 缺段"
                 >
-                  <Input value={(hls as any).hls_archive_path || ""} onChange={(e) => upsertPlay("hls", { hls_archive_path: e.target.value })} placeholder="例如 /data/archive" />
+                  <Input value={(hls as any).hls_archive_interval || ""} onChange={(e) => upsertPlay("hls", { hls_archive_interval: e.target.value })} placeholder="例如 24h，留空不归档" />
+                </Field>
+                <Field
+                  label="归档 MP4 保留期（可选，留空 = 永久保留）"
+                  hint="超过保留期的归档 MP4 自动删除，例如 30d / 720h"
+                >
+                  <Input value={(hls as any).hls_archive_retention || ""} onChange={(e) => upsertPlay("hls", { hls_archive_retention: e.target.value })} placeholder="例如 30d，留空永久保留" />
                 </Field>
               </div>
+              <Field
+                label="归档目录（可选，默认 ./archive）"
+                hint="归档文件存放于 <归档目录>/<流名>/ 下"
+              >
+                <Input value={(hls as any).hls_archive_path || ""} onChange={(e) => upsertPlay("hls", { hls_archive_path: e.target.value })} placeholder="例如 /data/archive" />
+              </Field>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <Field label="TS 保留时长（例如 24h / 7d，可选）">
                   <Input value={(hls as any).hls_retention_days || ""} onChange={(e) => upsertPlay("hls", { hls_retention_days: e.target.value })} placeholder="例如 24h" />
