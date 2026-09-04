@@ -94,7 +94,7 @@ export function CodePage() {
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState<{ type: "ok" | "err" | "warn"; msg: string } | null>(null);
   const [busy, setBusy] = useState("");
-  const [findOpen, setFindOpen] = useState<null | { focusReplace: boolean }>(null);
+  const [findOpen, setFindOpen] = useState<null | { focusReplace: boolean; initialFind: string }>(null);
   const [replOpen, setReplOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -329,6 +329,13 @@ export function CodePage() {
     });
   };
 
+  // 打开查找/替换：编辑器里有选中内容（单行）则自动带入查找框
+  const openFind = (focusReplace: boolean) => {
+    const ta = taRef.current;
+    const sel = ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : "";
+    setFindOpen({ focusReplace, initialFind: sel && !sel.includes("\n") ? sel : "" });
+  };
+
   // 快捷键
   const onEditorKeyDown = (e: React.KeyboardEvent) => {
     const mod = e.ctrlKey || e.metaKey;
@@ -342,10 +349,10 @@ export function CodePage() {
       save();
     } else if (k === "f") {
       e.preventDefault();
-      setFindOpen({ focusReplace: false });
+      openFind(false);
     } else if (k === "h") {
       e.preventDefault();
-      setFindOpen({ focusReplace: true });
+      openFind(true);
     } else if (k === "q" || e.key === "/") {
       e.preventDefault();
       toggleComment();
@@ -473,7 +480,7 @@ export function CodePage() {
                 <Button size="sm" className="h-7 text-xs" onClick={save}>
                   <Save className="h-3.5 w-3.5" /> 保存
                 </Button>
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setFindOpen({ focusReplace: false })} title="查找/替换 (Ctrl+F / Ctrl+H)">
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openFind(false)} title="查找/替换 (Ctrl+F / Ctrl+H)">
                   <Search className="h-3.5 w-3.5" /> 查找替换
                 </Button>
                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={toggleComment} title="注释/取消注释 (Ctrl+Q 或 Ctrl+/)">
@@ -577,13 +584,12 @@ export function CodePage() {
 
       {notice && (
         <div
-          className={`fixed inset-x-0 top-16 z-40 mx-auto w-fit max-w-[90vw] rounded-lg border px-3 py-2 text-sm shadow-lg ${
-            notice.type === "ok"
-              ? "border-primary/30 bg-primary/10 text-primary"
-              : notice.type === "warn"
-                ? "border-amber-500/40 bg-amber-500/10 text-amber-600"
-                : "border-destructive/30 bg-destructive/10 text-destructive"
-          }`}
+          className={`fixed inset-x-0 top-16 z-40 mx-auto w-fit max-w-[90vw] rounded-lg border px-3 py-2 text-sm shadow-lg ${notice.type === "ok"
+            ? "border-primary/30 bg-primary/10 text-primary"
+            : notice.type === "warn"
+              ? "border-amber-500/40 bg-amber-500/10 text-amber-600"
+              : "border-destructive/30 bg-destructive/10 text-destructive"
+            }`}
         >
           <pre className="max-h-60 overflow-auto whitespace-pre-wrap font-sans">{notice.msg}</pre>
         </div>
@@ -594,6 +600,7 @@ export function CodePage() {
           content={content}
           taRef={taRef}
           focusReplace={findOpen.focusReplace}
+          initialFind={findOpen.initialFind}
           onContent={(c) => {
             setContent(c);
             setDirty(true);
@@ -629,21 +636,24 @@ function FindReplace({
   content,
   taRef,
   focusReplace,
+  initialFind,
   onContent,
   onClose,
 }: {
   content: string;
   taRef: React.RefObject<HTMLTextAreaElement | null>;
   focusReplace: boolean;
+  initialFind: string;
   onContent: (c: string) => void;
   onClose: () => void;
 }) {
-  const [find, setFind] = useState("");
+  const [find, setFind] = useState(initialFind);
   const [rep, setRep] = useState("");
   const [matchCase, setMatchCase] = useState(false);
   const [isRegex, setIsRegex] = useState(false);
   const [cur, setCur] = useState(0);
   const replaceRef = useRef<HTMLInputElement>(null);
+  const findInputRef = useRef<HTMLInputElement>(null);
 
   const matches = useMemo(() => findMatches(content, find, !matchCase, isRegex), [content, find, matchCase, isRegex]);
 
@@ -655,18 +665,24 @@ function FindReplace({
     if (focusReplace) replaceRef.current?.focus();
   }, [focusReplace]);
 
-  // 当前匹配同步到 textarea 选区
+  // 带入选中内容时全选输入框，直接输入即可覆盖
   useEffect(() => {
-    const ta = taRef.current;
-    if (!ta || matches.length === 0) return;
-    const m = matches[cur % matches.length];
-    ta.focus();
-    ta.setSelectionRange(m.idx, m.idx + m.len);
-  }, [cur, matches, taRef]);
+    if (initialFind) findInputRef.current?.select();
+  }, [initialFind]);
 
+  // 跳转时才移动 textarea 选区并滚动到可见位置；
+  // 输入查找词只更新计数与状态，不抢焦点、不跳动
   const goto = (delta: number) => {
     if (!matches.length) return;
-    setCur((c) => (c + delta + matches.length) % matches.length);
+    const next = (cur + delta + matches.length) % matches.length;
+    setCur(next);
+    const m = matches[next];
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.focus();
+    ta.setSelectionRange(m.idx, m.idx + m.len);
+    const line = content.slice(0, m.idx).split("\n").length - 1;
+    ta.scrollTop = Math.max(0, line * 20 - ta.clientHeight / 3);
   };
 
   const replaceOne = () => {
@@ -722,6 +738,7 @@ function FindReplace({
         <div className="space-y-2">
           <div className="flex gap-2">
             <input
+              ref={findInputRef}
               autoFocus={!focusReplace}
               className="h-8 flex-1 rounded border bg-background px-2 font-mono text-sm"
               placeholder="查找…"
@@ -793,7 +810,7 @@ function replaceText(s: string, from: string, to: string, caseSensitive: boolean
   let count = 0;
   let out = "";
   let i = 0;
-  for (;;) {
+  for (; ;) {
     const k = lo.indexOf(pin, i);
     if (k === -1) {
       out += s.slice(i);
