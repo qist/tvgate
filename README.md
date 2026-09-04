@@ -13,6 +13,8 @@
 - [使用示例](#使用示例外网访问路径)
 - [jx 视频解析接口](#-jx-视频解析接口)
 - [PHP 模块（纯 Go phpgo runtime）](#php-模块纯-go-phpgo-runtime)
+- [H5 播放器](#h5-播放器订阅直播--回看)
+- [定时任务](#定时任务cron-调度--php-脚本)
 - [配置示例](#配置configyaml示例)
 - [Nginx 反向代理](#nginx-反向代理配置参考)
 - [Linux 内核优化](#linux-内核优化建议)
@@ -31,6 +33,8 @@
 - 将内网 RTP / 组播 转为可通过 HTTP 访问（类似 udpxy）
 - 将运营商提供的 RTSP / HTTP 单播转发并通过外网访问
 - 将局域网内的 PHP 动态脚本通过外网访问（如 `huya.php`）
+- H5 播放器：订阅 IPTV 频道清单，浏览器直接看直播/回看（真实源不外露）
+- 定时任务：cron 调度执行系统命令或 docroot 内 PHP 脚本（安卓无原生 php 也可用）
 
 ### 代理
 支持上游代理（`socks5`、`socks4`、`http`），可为不同域名 / IP / 子网 指定不同上游代理，实现跨区域、跨运营商访问受限内容。
@@ -337,6 +341,8 @@ php:
 
 > **静态文件支持**：`/php/` 前缀下既支持 PHP 解释执行，也直接服务静态资源。判断规则：扩展名为 `.php/.php3/.php4/.phtml/.inc`，或内容含 `<?php` / `<?=` / `<?` 标签的文件由 phpgo 解释；其余（`.html` / `.css` / `.js` / 无扩展名等）按原文件以正确的 MIME 类型直接返回，无需 PHP 标签。例如 `http://<IP>:<port>/php/index.html` 会直接返回静态 HTML（phpgo 不会丢弃标签外内容）。
 
+> **内部执行（php://）**：除通过 `/php/` HTTP 访问外，docroot 脚本还可被其他模块**内部调用**——不走 HTTP 回环、不依赖 IP、不经过鉴权：H5 播放器的 `php://` 频道源、定时任务的 `php://` 命令（见下文两章节）。写法均为 `php://<docroot相对路径>?参数`，兼容 `php://php/xxx.php` 与 `php://xxx.php` 两种路径形式。
+
 ### 全局 Token 验证
 
 PHP 模块已集成 `global_auth` 全局 token 验证，与 HTTP / UDP / RTSP handler 行为一致。当 `config.yaml` 中 `global_auth.tokens_enabled: true` 时，访问 `/php/` 下的任何脚本都需要在 URL 参数中携带有效的 token。
@@ -362,6 +368,80 @@ http://<IP>:<port>/php/huya.php?id=12345&juieieiri=tertwertw
 | 下载 | 下载备份文件 |
 | 删除 | 删除单个或批量删除备份文件 |
 | 自动清理 | 按设定保留天数自动清理过期备份 |
+
+---
+
+## H5 播放器（订阅直播 / 回看）
+
+内置 H5 播放器模块：服务端解析 IPTV 订阅（M3U 或逗号 TXT），为每个频道生成**不透明 key**（源地址哈希）对外发布，真实源地址与抓流 UA 全程只存在于服务器侧，浏览器/前端不可见。支持直播、EPG 节目单、回看（源具备 catchup 时）、换台与画中画等能力，自研播放引擎（MSE + wasm 转封装）随 SPA 构建，单二进制即可提供服务。
+
+### 配置段
+
+```yaml
+player:
+  enabled: true                    # 是否启用播放器模块（热加载，挂载/摘除路由无需重启）
+  subscription: tv.txt             # 订阅源：HTTP(S) URL 或本地文件（绝对路径 / file:// / php://相对docroot / docroot相对路径）
+  epg: ""                          # TXT 订阅的 EPG 模板，含 {name}/{date} 占位符；M3U 订阅无需此项
+  logo: ""                         # TXT 订阅的台标模板，含 {name} 占位符；M3U 自带 tvg-logo 时优先
+  logo_dir: ""                     # 本地台标目录（如 /opt/TVLogo）：取 <频道名>.png，优先于上方模板
+  update_interval: 2h              # 订阅定时刷新间隔
+  ua: ""                           # 默认抓流 UA；频道行带 ua=xxx 时优先
+```
+
+### 订阅格式
+
+- **M3U**：标准 `#EXTINF` 条目，支持 `tvg-id` / `tvg-name` / `tvg-logo` / 分组属性；EPG 由 `#EXTM3U x-tvg-url=` 指向 XMLTV 文件（自动识别 `epg.xml` / `epg.xml.gz` gzip 魔数，服务端定时下载解析）。
+- **逗号 TXT**：`分类,#genre#` 声明分类，`名称,URL` 为频道行（可追加 `,ua=xxx`）；EPG 与台标用上方配置模板填充。
+- 订阅地址即**源白名单**：仅订阅内的频道可经播放器访问。
+
+### 频道源协议
+
+| 前缀 | 说明 |
+|---|---|
+| `http://` `https://` | 直连或代理拉流，302 跳转服务端自动跟随并重写 |
+| `udp://` `rtp://` `rtsp://` | 组播/单播转 HTTP 播放 |
+| `php://xxx.php?id=...` | docroot 脚本由内嵌 phpgo **内部执行**（不走 HTTP 回环）：302 Location 解析为真实源后续走 http 链路；m3u8 输出自动重写分片 |
+
+### 访问入口
+
+| 路径 | 说明 |
+|---|---|
+| `/web/player` | SPA 播放页（频道列表 / EPG / 回看 / 设置）；旧地址 `/pp/<key>` 自动跳转 |
+| `/api/player/channels` | 频道列表 API（含不透明 key、分组、台标） |
+| `/api/player/epg?ch=<tvg-id>&date=YYYY-MM-DD` | EPG 节目单 API |
+| `/player/<key>` | 播放流入口；分片走 `/player/<key>/<token>` 短路径 |
+
+非白名单 key 的请求返回 `403 Forbidden`。Web 后台「播放器」页提供可视化配置（订阅源、EPG/台标模板、刷新间隔、默认 UA）。
+
+---
+
+## 定时任务（cron 调度 + php:// 脚本）
+
+内置定时任务模块：按标准 5 段 cron 表达式调度执行命令，Web 后台可视化配置、立即执行、查看状态（上次结果 / 耗时 / 输出摘要 / 下次执行时间）。
+
+### 配置段
+
+```yaml
+tasks:
+  - name: 每日备份                 # 任务名称（标识用途，可空）
+    enabled: true                  # 是否启用
+    group: 运维                    # 分组（仅用于 Web 列表分类展示）
+    cron: "0 4 * * *"              # 标准 5 段：分 时 日 月 周，支持 */n 步长
+    command: php://backup/run.php?type=full   # 执行命令，见下文两种方式
+    timeout: 60s                   # 单次执行超时（0 = 不限）
+    notes: 全量备份 docroot        # 备注（可选）
+```
+
+### 命令执行方式
+
+| 形式 | 说明 |
+|---|---|
+| 系统命令 | 经系统 shell 执行（Linux `sh -c`，Windows `cmd /C`），如 `/usr/bin/php /path/x.php` |
+| `php://xxx.php?key=val` | 内嵌 phpgo 解释器直接执行 docroot 脚本——**无需系统安装 php**（安卓等环境友好）；GET 语义注入 `$_GET`；脚本输出体作为任务输出；脚本不存在或返回 HTTP ≥ 400 判为失败 |
+
+php:// 内部执行不走 HTTP 回环、不依赖 IP、不经过鉴权，与播放器 `php://` 频道源同一条链路。
+
+> **超时说明**：phpgo 为进程内同步执行，`timeout` 到期后仅不再等待，无法强杀运行中的脚本；请避免任务脚本自身长时间阻塞。
 
 ---
 
@@ -644,6 +724,26 @@ global_auth:
         enable_static: false
         token: token123
         expire_hours: 1h
+
+# H5 播放器（订阅白名单 + 不透明频道 key，真实源不外露）
+player:
+    enabled: false                 # 启用后挂载 /web/player、/player/<key>、/api/player/*（热加载）
+    subscription: tv.txt           # 订阅源：M3U 或 逗号TXT；本地路径（相对 docroot）或 HTTP(S) URL
+    epg: ""                        # TXT 订阅的 EPG 模板（{name}/{date}）；M3U 用 x-tvg-url 的 XMLTV
+    logo: ""                       # TXT 订阅的台标模板（{name}）；M3U 自带 tvg-logo 时优先
+    logo_dir: ""                   # 本地台标目录：取 <频道名>.png，优先于 logo 模板
+    update_interval: 2h            # 订阅刷新间隔
+    ua: ""                         # 默认抓流 UA（频道行 ua= 优先）
+
+# 定时任务（cron 调度；command 支持系统命令与 php:// 内部执行 docroot 脚本）
+tasks:
+    - name: 示例任务               # 任务名称（可空，空则用命令片段标识）
+      enabled: false               # 是否启用
+      group: 运维                  # Web 列表分组（仅展示）
+      cron: "0 4 * * *"            # 标准 5 段：分 时 日 月 周，支持 */n 步长
+      command: echo hello          # 或 php://backup/run.php?type=full（内嵌 phpgo 执行）
+      timeout: 60s                 # 单次执行超时（0 = 不限）
+      notes: ""                    # 备注
 
 # 仓库同步（将 GitHub/GitLab 仓库单向同步到本地 docroot 子目录，支持多仓库）
 sync:

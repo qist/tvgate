@@ -315,7 +315,7 @@ type TaskConfig struct {
 	Enabled bool          `yaml:"enabled"` // 是否启用
 	Group   string        `yaml:"group"`   // 分组（仅用于前端列表分类展示，扁平结构）
 	Cron    string        `yaml:"cron"`    // Cron 表达式（标准 5 段：分 时 日 月 周）
-	Command string        `yaml:"command"` // 要执行的 Shell 命令（可调用 PHP 脚本），经系统 shell 执行
+	Command string        `yaml:"command"` // 要执行的命令：系统 shell 命令，或 php://xxx.php（内嵌 phpgo 执行 docroot 脚本）
 	Timeout time.Duration `yaml:"timeout"` // 单次执行超时（0 = 不限）
 	Notes   string        `yaml:"notes"`   // 备注（可选，仅展示说明）
 }
