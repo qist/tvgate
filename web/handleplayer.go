@@ -26,7 +26,7 @@ func (h *ConfigHandler) handlePlayerConfig(w http.ResponseWriter, r *http.Reques
 		"logo_dir":         p.LogoDir,
 		"update_interval":  p.UpdateInterval.String(),
 		"ua":               p.UA,
-		"android_autoplay": p.AndroidAutoplayEnabled(),
+		"android_autoplay": p.AndroidAutoplay, // YAML 标记位原样透出（*bool：null=未配置）
 	})
 }
 
@@ -69,7 +69,27 @@ func (h *ConfigHandler) handlePlayerConfigSave(w http.ResponseWriter, r *http.Re
 			for i := 0; i < len(doc.Content); i += 2 {
 				keyNode := doc.Content[i]
 				if keyNode.Kind == yaml.ScalarNode && keyNode.Value == "player" {
-					doc.Content[i+1] = buildPlayerNode(cfg)
+					oldNode := doc.Content[i+1]
+					newNode := buildPlayerNode(cfg)
+					// 保留 android_autoplay 标记位：后台 UI 不编辑该标记（由安卓客户端读取），
+					// 重建 player 节点时原样带过去，避免后台保存把 YAML 里的标记抹掉。
+					// 仅当提交里没有该键时才回填，防止写入重复键。
+					hasFlag := false
+					for j := 0; j+1 < len(newNode.Content); j += 2 {
+						if newNode.Content[j].Kind == yaml.ScalarNode && newNode.Content[j].Value == "android_autoplay" {
+							hasFlag = true
+							break
+						}
+					}
+					if !hasFlag {
+						for j := 0; j+1 < len(oldNode.Content); j += 2 {
+							if oldNode.Content[j].Kind == yaml.ScalarNode && oldNode.Content[j].Value == "android_autoplay" {
+								newNode.Content = append(newNode.Content, oldNode.Content[j], oldNode.Content[j+1])
+								break
+							}
+						}
+					}
+					doc.Content[i+1] = newNode
 					found = true
 					break
 				}
@@ -145,6 +165,7 @@ func buildPlayerNode(cfg map[string]interface{}) *yaml.Node {
 				&yaml.Node{Kind: yaml.ScalarNode, Value: s})
 		}
 	}
+	// android_autoplay：YAML 标记位，安卓客户端读取后自行控制启动行为
 	if v, ok := cfg["android_autoplay"]; ok {
 		val := "false"
 		if e, ok := v.(bool); ok && e {

@@ -132,9 +132,8 @@ func (h *Handler) ServeChannels(w http.ResponseWriter, r *http.Request) {
 		chans = []*Channel{}
 	}
 	writeJSON(w, map[string]interface{}{
-		"channels":        chans,
-		"epg":             h.mgr.EPGSource(),
-		"android_autoplay": readPlayerCfg().AndroidAutoplayEnabled(),
+		"channels": chans,
+		"epg":      h.mgr.EPGSource(),
 	})
 }
 
