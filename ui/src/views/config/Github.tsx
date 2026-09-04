@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus, RefreshCw, Rocket, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import * as api from "@/api/github";
 import type { GithubConfig, GithubStatus, Release } from "@/api/github";
 
@@ -14,6 +15,10 @@ export function GithubPage() {
   const [upStatus, setUpStatus] = useState<GithubStatus | null>(null);
   const [note, setNote] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  // 升级流程提示：confirmVer=待确认目标版本；upgrading=已触发、等待结果的目标版本
+  const [confirmVer, setConfirmVer] = useState<string | null>(null);
+  const [upgrading, setUpgrading] = useState<string | null>(null);
+  const preUpgradeVersionRef = useRef<string>("");
 
   const notify = useCallback((type: "ok" | "err", msg: string) => {
     setNote({ type, msg });
@@ -33,11 +38,26 @@ export function GithubPage() {
 
   useEffect(() => {
     refresh();
-    const t = setInterval(() => {
-      api.status().then(setUpStatus).catch(() => undefined);
-    }, 2000);
-    return () => clearInterval(t);
   }, [refresh]);
+
+  // 升级状态轮询：失败/成功主动提示（升级会重启服务，重启后版本号变化即成功）
+  useEffect(() => {
+    if (!upgrading) return;
+    const t = setInterval(() => {
+      api.status().then((st) => {
+        setUpStatus(st);
+        if (st.state === "error" || st.state === "panic") {
+          notify("err", `升级失败：${st.message || st.state}`);
+          setUpgrading(null);
+        } else if (st.state === "idle" && st.version && st.version !== preUpgradeVersionRef.current) {
+          notify("ok", `升级成功，当前版本 ${st.version}`);
+          setUpgrading(null);
+          void refresh();
+        }
+      }).catch(() => undefined); // 升级重启间隙连接失败属正常，等新进程起来
+    }, 1500);
+    return () => clearInterval(t);
+  }, [upgrading, notify, refresh]);
 
   const set = (patch: Partial<GithubConfig>) => setCfg((c) => ({ ...c, ...patch }));
   const setBackup = (i: number, v: string) => set({ backup_urls: cfg.backup_urls.map((u, j) => (j === i ? v : u)) });
@@ -58,10 +78,12 @@ export function GithubPage() {
   };
 
   const doUpdate = async (version: string) => {
-    if (!window.confirm(`确定要升级到版本 ${version} 吗？升级过程会重启服务。`)) return;
+    setConfirmVer(null);
     try {
+      preUpgradeVersionRef.current = upStatus?.version || "";
       await api.triggerUpdate(version);
-      notify("ok", "开始升级，请关注升级状态");
+      setUpgrading(version);
+      notify("ok", `开始升级到 ${version}，过程中服务会短暂重启，请勿关闭页面`);
     } catch (e) {
       notify("err", "升级请求失败: " + (e as Error).message);
     }
@@ -69,6 +91,22 @@ export function GithubPage() {
 
   const statusText = upStatus?.state || "idle";
   const statusState = upStatus?.state;
+  // 升级状态机步骤（与后端 SetStatus 调用序一致），用于进度条展示
+  const UPGRADE_STEPS: [string, string][] = [
+    ["starting", "启动升级"],
+    ["downloading", "下载新版本"],
+    ["backing_up", "备份当前程序"],
+    ["unzipping", "解压新版本"],
+    ["restarting", "重启服务"],
+  ];
+  const curStepIdx = (() => {
+    if (!upgrading) return -1;
+    if (statusState === "running") return 0;
+    const i = UPGRADE_STEPS.findIndex(([s]) => s === statusState);
+    return i === -1 ? 0 : i;
+  })();
+  const upgradeDone = statusState === "idle" && !!upgrading && !!upStatus?.version && upStatus.version !== preUpgradeVersionRef.current;
+  const upgradePct = upgradeDone ? 100 : Math.round(((curStepIdx + 1) / UPGRADE_STEPS.length) * 100);
 
   return (
     <div className="space-y-4">
@@ -87,6 +125,48 @@ export function GithubPage() {
         <div className={`rounded-lg border px-3 py-2 text-sm ${note.type === "ok" ? "border-primary/30 bg-primary/10 text-primary" : "border-destructive/30 bg-destructive/10 text-destructive"}`}>
           {note.msg}
         </div>
+      )}
+
+      {/* 升级进度条：状态机步骤 + 百分比 */}
+      {upgrading && (
+        <Card>
+          <CardContent className="space-y-3 p-4">
+            <div className="flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <Rocket className="h-4 w-4 animate-pulse text-violet-600 dark:text-violet-300" />
+                正在升级到 <span className="font-mono">{upgrading}</span>
+              </h3>
+              <span className="font-mono text-sm text-violet-700 dark:text-violet-200">{upgradePct}%</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-violet-500/10">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${upgradeDone ? "bg-green-500" : "bg-violet-600"}`}
+                style={{ width: `${upgradePct}%` }}
+              />
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              {UPGRADE_STEPS.map(([s, label], i) => (
+                <span key={s} className={i < curStepIdx || upgradeDone ? "text-green-600 dark:text-green-400" : i === curStepIdx ? "font-medium text-violet-700 dark:text-violet-200" : "text-muted-foreground/60"}>
+                  {i < curStepIdx || upgradeDone ? "✓ " : i === curStepIdx ? "● " : "○ "}
+                  {label}
+                </span>
+              ))}
+              {upgradeDone && <span className="font-medium text-green-600 dark:text-green-400">✓ 升级成功</span>}
+              {(statusState === "error" || statusState === "panic") && <span className="font-medium text-destructive">✗ 升级失败</span>}
+            </div>
+            {upStatus?.message && <p className="text-xs text-muted-foreground">{upStatus.message}</p>}
+            <p className="text-xs text-muted-foreground/70">升级过程中服务会短暂重启，页面自动恢复，请勿关闭。</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {confirmVer !== null && (
+        <ConfirmDialog
+          title="确认升级版本"
+          description={`确定要升级到版本 ${confirmVer} 吗？升级过程中服务会短暂重启（下载 → 备份 → 解压 → 重启），期间播放与管理界面会短暂不可用。`}
+          onConfirm={() => doUpdate(confirmVer)}
+          onClose={() => setConfirmVer(null)}
+        />
       )}
 
       <Card>
@@ -156,8 +236,8 @@ export function GithubPage() {
               {releases.map((r) => (
                 <li key={r.tag_name} className="flex items-center justify-between gap-2 py-2">
                   <span className="font-mono text-sm">{r.tag_name}</span>
-                  <Button size="sm" disabled={statusState === "running"} onClick={() => doUpdate(r.tag_name)}>
-                    <Rocket className="mr-1 h-4 w-4" /> 升级到此版本
+                  <Button size="sm" disabled={!!upgrading} onClick={() => setConfirmVer(r.tag_name)}>
+                    <Rocket className="mr-1 h-4 w-4" /> {upgrading === r.tag_name ? "升级中…" : "升级到此版本"}
                   </Button>
                 </li>
               ))}
