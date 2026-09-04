@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Tv } from "lucide-react";
+import { Link2, Tv } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,33 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 export function PlayerPage() {
   const [cfg, setCfg] = useState<PlayerConfig | null>(null);
   const [notice, setNotice] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  // 独立播放入口外链（跟随当前访问的 host:port）。只展示 /pp——
+  // 它是不暴露后台路径的公开地址，可直接分享给电视/手机/其他播放器。
+  const externalLink = `${window.location.origin}/pp`;
+
+  const copyExternal = async () => {
+    // HTTP 局域网环境无 navigator.clipboard（非安全上下文），退化为 execCommand
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(externalLink);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = externalLink;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setNotice({ type: "err", msg: `复制失败，请手动复制：${externalLink}` });
+      setTimeout(() => setNotice(null), 6000);
+    }
+  };
 
   const refresh = useCallback(async () => setCfg(await getPlayer()), []);
   useEffect(() => {
@@ -48,17 +75,35 @@ export function PlayerPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">H5 播放器配置</h1>
-        <a
-          href="player"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-violet-700 text-sm transition-colors hover:bg-violet-500/20 dark:border-violet-300/30 dark:bg-violet-300/10 dark:text-violet-200 dark:hover:bg-violet-300/20"
-          title="在新标签页打开 H5 播放页"
-        >
-          <Tv className="h-4 w-4" aria-hidden="true" />
-          打开播放页观看
-        </a>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={copyExternal}
+            className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors"
+            title="复制独立播放入口外链（可分享给电视/手机，不含后台路径）"
+          >
+            <Link2 className="h-4 w-4" aria-hidden="true" />
+            {copied ? "已复制" : "复制外链"}
+          </button>
+          <a
+            href="player"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-violet-700 text-sm transition-colors hover:bg-violet-500/20 dark:border-violet-300/30 dark:bg-violet-300/10 dark:text-violet-200 dark:hover:bg-violet-300/20"
+            title="在新标签页打开 H5 播放页"
+          >
+            <Tv className="h-4 w-4" aria-hidden="true" />
+            打开播放页观看
+          </a>
+        </div>
       </div>
+      {cfg.enabled && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-violet-500/15 bg-violet-500/5 px-3 py-2 text-xs dark:border-violet-300/15 dark:bg-violet-300/5">
+          <span className="text-muted-foreground">外链（分享给电视/手机，不含后台路径）：</span>
+          <code className="font-mono text-violet-700 dark:text-violet-200">{externalLink}</code>
+          <code className="text-muted-foreground">/pp/&lt;频道key&gt;</code>
+        </div>
+      )}
       {notice && (
         <div className={`rounded-lg border px-3 py-2 text-sm ${notice.type === "ok" ? "border-primary/30 bg-primary/10 text-primary" : "border-destructive/30 bg-destructive/10 text-destructive"}`}>
           {notice.msg}
