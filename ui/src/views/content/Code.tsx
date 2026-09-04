@@ -727,8 +727,9 @@ function FindReplace({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 p-4 pt-20" onClick={onClose}>
-      <div className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg" onClick={(e) => e.stopPropagation()}>
+    // 点击遮罩不关闭：查找/替换需要持续可用（换词、逐个跳转），仅 Esc / × 关闭
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 p-4 pt-20">
+      <div className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold">查找 / 替换</h3>
           <button className="text-muted-foreground hover:text-foreground" onClick={onClose}>
