@@ -30,6 +30,8 @@ func (h *ConfigHandler) handlePublisherStats(w http.ResponseWriter, r *http.Requ
 		Protocol   string                        `json:"protocol,omitempty"`
 		Primary    *publisher.FFmpegProcessStats `json:"primary,omitempty"`
 		HasManager bool                          `json:"has_manager"`
+		FlvViewers int                           `json:"flv_viewers"`
+		HlsViewers int                           `json:"hls_viewers"`
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -59,6 +61,11 @@ func (h *ConfigHandler) handlePublisherStats(w http.ResponseWriter, r *http.Requ
 		}
 		if manager != nil {
 			st.Primary = manager.GetFFmpegStats(name, 1)
+		}
+		// 本地播放活跃数：FLV 观看客户端数 + HLS 播放器（60s 内有 m3u8/分片请求的 IP 数）
+		if sh := publisher.PeekStreamHub(name); sh != nil {
+			st.FlvViewers = sh.FLVViewers()
+			st.HlsViewers = sh.HLSViewers()
 		}
 		streams = append(streams, st)
 	}

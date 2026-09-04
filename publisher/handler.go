@@ -49,11 +49,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if strings.Contains(streamPath, "/") {
 					streamID = strings.Split(streamPath, "/")[0]
 				} else {
-					// fallback到简单方式
-					parts := strings.Split(strings.TrimSuffix(streamPath, ".ts"), "_")
-					if len(parts) > 0 {
-						streamID = parts[0]
-					}
+					// 文件名形如 <流名>_<seq>.ts 或 <流名>-<strftime>.ts（模板不同分隔符不同），
+					// 按已配置的流名做最长前缀匹配；查不到再按分隔符兜底拆分
+					base := strings.TrimSuffix(streamPath, ".ts")
+					streamID = matchStreamIDByPrefix(base)
 				}
 			}
 
@@ -75,6 +74,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					streamManager.pipeForwarder.ServeHLS(w, r)
 					return
 				}
+			}
+
+			// 分片文件名不含流名的模板（epoch_hls/epoch_dash/numeric/date_* 等
+			// strftime 格式）：无法从文件名推断流，遍历各流 HLS 目录反查
+			segmentName := streamPath
+			if idx := strings.LastIndex(streamPath, "/"); idx >= 0 {
+				segmentName = streamPath[idx+1:]
+			}
+			if streamHubManager.ServeSegmentByName(w, r, segmentName) {
+				return
 			}
 
 			http.Error(w, "Stream not found", http.StatusNotFound)
@@ -103,4 +112,33 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// matchStreamIDByPrefix 按已配置的流名对 TS 分片文件名做最长前缀匹配。
+// 分片文件名格式随 ts_filename_template 不同而不同（如 <name>_295.ts、
+// <name>-20260904-134845-hls.ts），分隔符不固定，不能简单按某个分隔符拆。
+// 匹配不到时回退到按 '_' 拆分（兼容旧逻辑）。
+func matchStreamIDByPrefix(base string) string {
+	manager := GetManager()
+	if manager != nil {
+		manager.mutex.RLock()
+		best := ""
+		for name := range manager.streams {
+			if base == name || strings.HasPrefix(base, name+"_") || strings.HasPrefix(base, name+"-") {
+				if len(name) > len(best) {
+					best = name
+				}
+			}
+		}
+		manager.mutex.RUnlock()
+		if best != "" {
+			return best
+		}
+	}
+
+	// 兜底：按 '_' 拆（旧 name_index 模板 <name>_<seq>.ts）
+	if idx := strings.Index(base, "_"); idx > 0 {
+		return base[:idx]
+	}
+	return base
 }

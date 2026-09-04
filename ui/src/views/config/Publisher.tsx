@@ -345,6 +345,15 @@ export function PublisherPage() {
                         >
                           {flvRaw}
                         </a>
+                        {!!st?.flv_viewers && (
+                          <span
+                            className="inline-flex shrink-0 items-center gap-0.5 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400"
+                            title="当前正在观看的客户端连接数"
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            {st.flv_viewers}
+                          </span>
+                        )}
                         <button
                           type="button"
                           onClick={() => playDirect(flvRaw)}
@@ -379,6 +388,15 @@ export function PublisherPage() {
                         >
                           {hlsRaw}
                         </a>
+                        {!!st?.hls_viewers && (
+                          <span
+                            className="inline-flex shrink-0 items-center gap-0.5 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400"
+                            title="最近 60 秒有访问的播放器数"
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            {st.hls_viewers}
+                          </span>
+                        )}
                         <button
                           type="button"
                           onClick={() => playDirect(hlsRaw)}
@@ -508,35 +526,45 @@ function StreamForm({ draft, setDraft }: { draft: StreamItem; setDraft: React.Di
   const flv = plays.find((x) => x.protocol === "flv");
   const hls = plays.find((x) => x.protocol === "hls");
 
+  // 所有 set* 均为完全函数式更新：在 updater 内基于最新 draft 计算，
+  // 不引用渲染期闭包里的旧对象（避免 React 批处理/StrictMode 下的陈旧引用
+  // 导致 checkbox/Switch 点击后状态弹回）
   const set = (patch: Partial<StreamItem>) => setDraft((d) => ({ ...d, ...patch }));
-  const setStream = (patch: Partial<typeof stream>) => setDraft((d) => ({ ...d, stream: { ...d.stream, ...patch } }));
-  const setSource = (patch: Partial<typeof source>) => setStream({ source: { ...stream.source, ...patch } });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const setStream = (make: (st: any) => any) =>
+    setDraft((d) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const st = ensureObject(d as any, "stream");
+      return { ...d, stream: { ...st, ...make(st) } };
+    });
+  const upsertPlay = (protocol: string, patch: Partial<PlayOutput>) =>
+    setStream((st: any) => {
+      const list = localPlays(st.local_play_urls);
+      const idx = list.findIndex((x: any) => x.protocol === protocol);
+      if (idx >= 0) list[idx] = { ...list[idx], protocol, ...patch };
+      else list.push({ protocol, enabled: true, ...patch } as PlayOutput);
+      return { local_play_urls: list };
+    });
+  const removePlay = (protocol: string) =>
+    setStream((st: any) => ({ local_play_urls: localPlays(st.local_play_urls).filter((x: any) => x.protocol !== protocol) }));
+  const setSource = (patch: Record<string, any>) =>
+    setStream((st: any) => ({ source: { ...ensureObject(st, "source"), ...patch } }));
+  const setSk = (patch: Partial<NonNullable<StreamItem["streamkey"]>>) =>
+    setDraft((d) => {
+      if (!d.streamkey?.type) return d;
+      return { ...d, streamkey: { ...d.streamkey, ...patch } };
+    });
+  const setReceiver = (key: "primary" | "backup", pushUrl: string) =>
+    setStream((st: any) => {
+      const recs = ensureObject(st, "receivers");
+      const cur = recs[key];
+      const item: ReceiverItem = cur && typeof cur === "object" ? { ...cur, push_url: pushUrl } : { push_url: pushUrl };
+      return { receivers: { ...recs, [key]: item } };
+    });
+  const setAllReceivers = (list: ReceiverItem[]) =>
+    setStream((st: any) => ({ receivers: { ...ensureObject(st, "receivers"), all: list } }));
 
-  // local play urls 更新辅助
-  const upsertPlay = (protocol: string, patch: Partial<PlayOutput>) => {
-    const list = localPlays(stream.local_play_urls);
-    const idx = list.findIndex((x) => x.protocol === protocol);
-    if (idx >= 0) list[idx] = { ...list[idx], protocol, ...patch };
-    else list.push({ protocol, enabled: true, ...patch } as PlayOutput);
-    setStream({ local_play_urls: list });
-  };
-  const removePlay = (protocol: string) => {
-    setStream({ local_play_urls: localPlays(stream.local_play_urls).filter((x) => x.protocol !== protocol) });
-  };
-
-  const setSk = (patch: Partial<typeof sk>) => {
-    if (!sk.type) return;
-    set({ streamkey: { ...sk, ...patch } });
-  };
-
-  const receivers = ensureObject(stream, "receivers");
-  const setReceiver = (key: "primary" | "backup", pushUrl: string) => {
-    const cur = receivers[key];
-    const item: ReceiverItem = cur && typeof cur === "object" ? { ...cur, push_url: pushUrl } : { push_url: pushUrl };
-    setStream({ receivers: { ...receivers, [key]: item } });
-  };
-  const setAllReceivers = (list: ReceiverItem[]) => setStream({ receivers: { ...receivers, all: list } });
-
+  const receivers = stream.receivers || {};
   const allList: ReceiverItem[] = Array.isArray(receivers.all) ? receivers.all.map((x: any) => (typeof x === "object" && x ? { ...x } : { push_url: "" })) : [];
 
   // TS 模板选项
@@ -557,7 +585,7 @@ function StreamForm({ draft, setDraft }: { draft: StreamItem; setDraft: React.Di
             </select>
           </Field>
           <Field label="模式">
-            <select className="h-9 w-full rounded-[var(--radius)] border border-input bg-background px-2 text-sm" value={stream.mode || "primary-backup"} onChange={(e) => setStream({ mode: e.target.value })}>
+            <select className="h-9 w-full rounded-[var(--radius)] border border-input bg-background px-2 text-sm" value={stream.mode || "primary-backup"} onChange={(e) => setStream(() => ({ mode: e.target.value }))}>
               <option value="primary-backup">primary-backup（主推/备推）</option>
               <option value="all">all（同时推多个）</option>
               <option value="local-only">local-only（不推送，仅本地播放/录制）</option>
@@ -639,7 +667,6 @@ function StreamForm({ draft, setDraft }: { draft: StreamItem; setDraft: React.Di
               <input type="checkbox" className="accent-[hsl(var(--primary))]" checked={!!hls?.enabled} onChange={(e) => (e.target.checked ? upsertPlay("hls", { enabled: true, protocol: "hls" }) : removePlay("hls"))} />
               开启本地 HLS（可用于录制/回放）
             </label>
-            <Switch className="hidden" checked={false} onCheckedChange={() => undefined} aria-hidden />
           </div>
 
           {flv?.enabled && (
@@ -705,8 +732,8 @@ function StreamForm({ draft, setDraft }: { draft: StreamItem; setDraft: React.Di
               <Input value={receivers.backup?.push_url || ""} onChange={(e) => setReceiver("backup", e.target.value)} placeholder="例如 rtmp://host/app" />
             </Field>
           </div>
-          <FFmpegEditor key="primary" title="Primary 自定义 FFmpegOptions" value={receivers.primary?.ffmpeg_options} onChange={(v) => setStream({ receivers: { ...receivers, primary: { push_url: receivers.primary?.push_url || "", ffmpeg_options: v } } })} />
-          <FFmpegEditor key="backup" title="Backup 自定义 FFmpegOptions" value={receivers.backup?.ffmpeg_options} onChange={(v) => setStream({ receivers: { ...receivers, backup: { push_url: receivers.backup?.push_url || "", ffmpeg_options: v } } })} />
+          <FFmpegEditor key="primary" title="Primary 自定义 FFmpegOptions" value={receivers.primary?.ffmpeg_options} onChange={(v) => setStream(() => ({ receivers: { ...receivers, primary: { push_url: receivers.primary?.push_url || "", ffmpeg_options: v } } }))} />
+          <FFmpegEditor key="backup" title="Backup 自定义 FFmpegOptions" value={receivers.backup?.ffmpeg_options} onChange={(v) => setStream(() => ({ receivers: { ...receivers, backup: { push_url: receivers.backup?.push_url || "", ffmpeg_options: v } } }))} />
         </section>
       )}
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/utils/buffer/ringbuffer"
 	tsync "github.com/qist/tvgate/utils/sync"
@@ -47,10 +49,15 @@ type HLSSegmentManager struct {
 	ffmpegIn  io.WriteCloser
 
 	// 控制与同步
-	ctx    context.Context
-	cancel context.CancelFunc
-	mutex  sync.Mutex
-	wg     tsync.WaitGroup
+	parentCtx context.Context // 用于 Restart 时重建 ctx
+	ctx       context.Context
+	cancel    context.CancelFunc
+	mutex     sync.Mutex
+	wg        tsync.WaitGroup
+
+	// HLS 播放器活跃跟踪：m3u8/分片请求 IP -> 最后访问时间（unix 秒）
+	viewersMu sync.Mutex
+	viewers   map[string]int64
 }
 
 // NewHLSSegmentManager 创建新的管理器，每个流独立目录
@@ -85,6 +92,7 @@ func NewHLSSegmentManager(parentCtx context.Context, streamName, baseDir string,
 		segmentCount:    5,                  // 默认保留 5 个片段，可调整
 		needPull:        true,               // 默认为 true，后续会根据实际配置调整
 		ffmpegOptions:   ffmpegOptions,
+		parentCtx:       parentCtx,
 		ctx:             ctx,
 		cancel:          cancel,
 		// 默认 TS 文件名模板为 name_index：{name}_{seq}.ts（例如 cctv1_239.ts）
@@ -398,22 +406,8 @@ func (h *HLSSegmentManager) Start() error {
 func (h *HLSSegmentManager) Stop() error {
 	h.cancel()
 
-	// 等待所有goroutine完成，设置超时
-	done := make(chan struct{})
-	var waitWg tsync.WaitGroup
-	waitWg.Go(func() {
-		h.wg.Wait()
-		close(done)
-	})
-
-	select {
-	case <-done:
-		// 正常完成
-	case <-time.After(5 * time.Second):
-		// 超时，强制清理
-		logger.LogPrintf("[%s] HLS manager stop timeout, forcing cleanup", h.streamName)
-	}
-
+	// 先杀 ffmpeg：若 writer goroutine 阻塞在 stdin Write，不先杀进程会导致
+	// 下面的 wg.Wait 一直超时（5s），拖慢 Stop/Restart
 	h.mutex.Lock()
 	if h.ffmpegIn != nil {
 		_ = h.ffmpegIn.Close()
@@ -435,9 +429,30 @@ func (h *HLSSegmentManager) Stop() error {
 		}
 		h.ffmpegCmd = nil
 	}
+	h.mutex.Unlock()
 
-	// 清理clientBuffer
+	// 等待所有goroutine完成，设置超时
+	done := make(chan struct{})
+	var waitWg tsync.WaitGroup
+	waitWg.Go(func() {
+		h.wg.Wait()
+		close(done)
+	})
+
+	select {
+	case <-done:
+		// 正常完成
+	case <-time.After(3 * time.Second):
+		// 超时，强制清理
+		logger.LogPrintf("[%s] HLS manager stop timeout, forcing cleanup", h.streamName)
+	}
+
+	// 清理clientBuffer（从 hub 移除，防止 hub 客户端列表随重启/停止泄漏）
+	h.mutex.Lock()
 	if h.clientBuffer != nil {
+		if h.hub != nil {
+			h.hub.RemoveClient(h.clientBuffer)
+		}
 		h.clientBuffer.Close()
 		h.clientBuffer = nil
 	}
@@ -447,7 +462,25 @@ func (h *HLSSegmentManager) Stop() error {
 	return nil
 }
 
+// Restart 重启 HLS ffmpeg 进程。主备切换等场景下新流的时间戳/编码参数与旧流
+// 不连续，旧 ffmpeg 进程无法续用（输出错乱或卡住），必须以全新状态接收新流。
+func (h *HLSSegmentManager) Restart() error {
+	logger.LogPrintf("[%s] Restarting HLS manager (stream switched)", h.streamName)
+	if err := h.Stop(); err != nil {
+		logger.LogPrintf("[%s] HLS manager stop during restart: %v", h.streamName, err)
+	}
+
+	// Stop 已取消 ctx，重建后才能再次 Start
+	h.mutex.Lock()
+	h.ctx, h.cancel = context.WithCancel(h.parentCtx)
+	h.mutex.Unlock()
+
+	return h.Start()
+}
+
 func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request) {
+	h.markViewer(r)
+	h.registerViewer(r)
 	playseek := r.URL.Query().Get("playseek")
 	if playseek == "" {
 		// 直播模式
@@ -623,8 +656,77 @@ func (h *HLSSegmentManager) ServePlaylist(w http.ResponseWriter, r *http.Request
 	_, _ = w.Write([]byte(b.String()))
 }
 
+// SegmentExists 检查分片文件是否存在于本流目录（Base 防路径穿越）
+func (h *HLSSegmentManager) SegmentExists(segmentName string) bool {
+	p := filepath.Join(h.segmentPath, filepath.Base(segmentName))
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// registerViewer 登记活跃客户端（仪表盘活跃连接可见本地 HLS 播放者）。
+// connID 按流+IP 固定：播放器周期性拉 m3u8/分片时 Register 更新 LastActive 保活，
+// 停止拉流后由 Cleaner（10s 超时）移除。
+func (h *HLSSegmentManager) registerViewer(r *http.Request) {
+	clientIP := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(clientIP); err == nil {
+		clientIP = host
+	}
+	connID := "hls-" + h.streamName + "-" + clientIP
+	monitor.ActiveClients.Register(connID, &monitor.ClientConnection{
+		IP:             clientIP,
+		URL:            r.URL.RequestURI(),
+		UserAgent:      r.UserAgent(),
+		Referer:        r.Referer(),
+		ConnectionType: "HLS",
+		LastActive:     time.Now(),
+	})
+}
+
+// markViewer 记录一次 HLS 访问（m3u8/分片），按客户端 IP 跟踪
+func (h *HLSSegmentManager) markViewer(r *http.Request) {
+	if r == nil {
+		return
+	}
+	ip := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(ip); err == nil {
+		ip = host
+	}
+	now := time.Now().Unix()
+
+	h.viewersMu.Lock()
+	defer h.viewersMu.Unlock()
+	if h.viewers == nil {
+		h.viewers = make(map[string]int64)
+	}
+	h.viewers[ip] = now
+	// 惰性清理：超过 5 分钟未访问的 IP 移除
+	for k, ts := range h.viewers {
+		if now-ts > 300 {
+			delete(h.viewers, k)
+		}
+	}
+}
+
+// HLSViewers 返回活跃播放器数（60 秒内有过 m3u8/分片请求的客户端 IP 数）
+func (h *HLSSegmentManager) HLSViewers() int {
+	cutoff := time.Now().Unix() - 60
+	h.viewersMu.Lock()
+	defer h.viewersMu.Unlock()
+	n := 0
+	for _, ts := range h.viewers {
+		if ts >= cutoff {
+			n++
+		}
+	}
+	return n
+}
+
 // ServeSegment 提供 ts 文件
 func (h *HLSSegmentManager) ServeSegment(w http.ResponseWriter, r *http.Request, segmentName string) {
+	h.markViewer(r)
+	h.registerViewer(r)
+	// Base 防路径穿越（segmentName 来自用户请求）
+	segmentName = filepath.Base(segmentName)
 	segmentPath := filepath.Join(h.segmentPath, segmentName)
 	if _, err := os.Stat(segmentPath); os.IsNotExist(err) {
 		log.Printf("[%s] Segment not found: %s", h.streamName, segmentPath)

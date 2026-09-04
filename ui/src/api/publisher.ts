@@ -87,6 +87,8 @@ export interface StreamStatus {
   protocol?: string;
   has_manager: boolean;
   primary?: ProcessStats;
+  flv_viewers?: number;
+  hls_viewers?: number;
 }
 
 const base = () => resolveBase() + "api/publisher";

@@ -57,11 +57,11 @@ func (m *ActiveConnectionsManager) Unregister(connID string, connType string) {
 	defer m.mu.Unlock()
 
 	if conn, ok := m.conns[connID]; ok {
-		if connType == "RTSP" || connType == "UDP" {
-			// RTSP/UDP → 立即删除
+		if connType == "RTSP" || connType == "UDP" || connType == "FLV" {
+			// RTSP/UDP/FLV → 立即删除（连接断开即无效）
 			delete(m.conns, connID)
 		} else {
-			// HTTP/HTTPS → 更新最后活跃，等待 Cleaner 清理
+			// HTTP/HTTPS/HLS → 更新最后活跃，等待 Cleaner 清理
 			conn.LastActive = time.Now()
 		}
 	}
