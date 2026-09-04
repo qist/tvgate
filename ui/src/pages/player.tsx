@@ -141,6 +141,33 @@ function toYmdHis(value: string): string {
   );
 }
 
+/**
+ * 独立直播入口：`?live=<URL 编码后的播放地址>`（推流发布页本地 FLV/HLS 用它跳转）。
+ * 只接受同源地址（发布流的 /<path>/play/<name>.flv|m3u8），拒绝跨源地址，
+ * 避免把播放器变成任意 URL 转发代理。返回绝对地址或 null。
+ */
+function getLiveDirectUrl(): string | null {
+  try {
+    const raw = new URLSearchParams(window.location.search).get("live");
+    if (!raw) return null;
+    const url = new URL(raw, window.location.origin);
+    if (url.origin !== window.location.origin) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+/** 从播放地址取频道名（/live/play/cctv1.flv → cctv1）。 */
+function channelNameFromUrl(url: string): string {
+  try {
+    const name = new URL(url).pathname.split("/").filter(Boolean).pop() || "";
+    return name.replace(/\.(?:flv|m3u8)$/i, "") || "直播";
+  } catch {
+    return "直播";
+  }
+}
+
 /** 服务端 /api/player/channels → 播放器 Channel 模型。源地址为受控短地址 /player/<key>。 */
 function mapChannels(payload: TvgateChannelPayload[]): { channels: Channel[]; groups: string[] } {
   const channels: Channel[] = [];
@@ -562,30 +589,46 @@ function PlayerPage() {
     ];
   }, [metadata, currentChannel]);
 
+  // 独立直播入口（?live=）：直接播放推流发布页的同源本地 FLV/HLS 地址
+  const directLiveUrl = useMemo(getLiveDirectUrl, []);
+
   const loadPlaylist = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
       epgLoadedRef.current = new Set();
 
-      const response = await fetch(withToken("/api/player/channels"));
-      if (!response.ok) {
-        throw new Error("failedToLoadPlaylist");
-      }
+      let mapped: { channels: Channel[]; groups: string[] };
+      if (directLiveUrl) {
+        // 不加载订阅频道列表，直接用 ?live= 指定的同源地址（不经过 tvgate 转发，浏览器直连）
+        const name = channelNameFromUrl(directLiveUrl);
+        const liveChannel: Channel = {
+          id: `direct-${name}`,
+          name,
+          groups: [],
+          sources: [{ url: withToken(directLiveUrl) }],
+        };
+        mapped = { channels: [liveChannel], groups: [] };
+      } else {
+        const response = await fetch(withToken("/api/player/channels"));
+        if (!response.ok) {
+          throw new Error("failedToLoadPlaylist");
+        }
 
-      const data = (await response.json()) as TvgateChannelsResponse;
-      const mapped = mapChannels(data.channels ?? []);
+        const data = (await response.json()) as TvgateChannelsResponse;
+        mapped = mapChannels(data.channels ?? []);
 
-      if (mapped.channels.length === 0) {
-        throw new Error("emptyPlaylist");
+        if (mapped.channels.length === 0) {
+          throw new Error("emptyPlaylist");
+        }
       }
 
       setMetadata({ channels: mapped.channels, groups: mapped.groups });
 
-      const deepLinkChannel = findDeepLinkChannel(mapped.channels);
+      const deepLinkChannel = directLiveUrl ? mapped.channels[0] : findDeepLinkChannel(mapped.channels);
       const lastChannelId = getLastChannelId();
       const channelToSelect =
-        deepLinkChannel ?? mapped.channels.find((channel) => channel.id === lastChannelId) ?? mapped.channels[0];
+        directLiveUrl ? mapped.channels[0] : deepLinkChannel ?? mapped.channels.find((channel) => channel.id === lastChannelId) ?? mapped.channels[0];
       selectChannel(channelToSelect);
 
       // Show empty-EPG fallback immediately so startup is not blocked by EPG fetching.
@@ -601,7 +644,7 @@ function PlayerPage() {
       setError(err instanceof Error ? err.message : "failedToLoadPlaylist");
       setIsLoading(false);
     }
-  }, [selectChannel]);
+  }, [selectChannel, directLiveUrl]);
 
   // Load playlist on mount
   useEffect(() => {

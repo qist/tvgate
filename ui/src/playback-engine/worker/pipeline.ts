@@ -3,6 +3,7 @@ import { createDefaultConfig } from "../config";
 import { WorkerAudioDecoder } from "../decoder/worker-audio-decoder";
 import TSDemuxer from "../demux/ts-demuxer";
 import { type DemuxErrorDetail, type LoaderErrorDetail, PlayerErrors } from "../errors";
+import FLVDemuxer, { type FLVProbeResult } from "../demux/flv-demuxer";
 import {
   containsMoov,
   getSegmentStartTime,
@@ -136,7 +137,7 @@ class Pipeline {
   private _hlsSource: HlsSource | null = null;
   private _sourceMode: SourceMode = "static-ts-list";
 
-  private _demuxer: TSDemuxer | null = null;
+  private _demuxer: TSDemuxer | FLVDemuxer | null = null;
   private _remuxer: MP4Remuxer | null = null;
   /** Separate pair for HLS audio renditions (EXT-X-MEDIA), fed by track:"audio" segments. */
   private _audioDemuxer: TSDemuxer | null = null;
@@ -833,6 +834,20 @@ class Pipeline {
       return this._demuxer?.parseChunks(data, byteStart) ?? 0;
     }
 
+    // HTTP-FLV（直播，如推流发布的本地 FLV 地址）：直接走 FLV demuxer
+    const flvProbe = FLVDemuxer.probe(data);
+    if (flvProbe.match) {
+      this._setupFLVDemuxerRemuxer(flvProbe, meta);
+      if (this._ioctl && this._demuxer) {
+        const demuxer = this._demuxer;
+        this._ioctl.onDataArrival = (chunk, chunkByteStart) => {
+          this._recordInputBytes(chunk.byteLength);
+          return demuxer.parseChunks(chunk, chunkByteStart);
+        };
+      }
+      return this._demuxer?.parseChunks(data, byteStart) ?? 0;
+    }
+
     if (probeFmp4(data)) {
       this._fmp4Mode = true;
       if (this._ioctl) {
@@ -860,7 +875,7 @@ class Pipeline {
     const canReuseTsInputBoundary = this._sourceMode !== "hls" && this._demuxer !== null && this._remuxer !== null;
     const canReuse = canReuseHls || canReuseTsInputBoundary;
     if (canReuse) {
-      this._demuxer?.resetSegmentBoundary(probeData as ConstructorParameters<typeof TSDemuxer>[0], {
+      (this._demuxer as TSDemuxer).resetSegmentBoundary(probeData as ConstructorParameters<typeof TSDemuxer>[0], {
         resetAudioParserState: canReuseTsInputBoundary,
       });
       this._remuxer?.setTsSegmentContinuityNormalization(canReuseTsInputBoundary);
@@ -933,7 +948,59 @@ class Pipeline {
     this._callbacks.onDemuxError(type, info);
   }
 
-  // ---- Separate audio rendition (EXT-X-MEDIA) path ----
+  // ---- HTTP-FLV（直播）路径 ----
+
+  private _setupFLVDemuxerRemuxer(probeData: FLVProbeResult, _meta: SegmentMeta): void {
+    if (this._demuxer) {
+      this._demuxer.destroy();
+    }
+    const demuxer = new FLVDemuxer(probeData, {
+      waitForInitialVideoKeyframe: true,
+    });
+    this._demuxer = demuxer;
+
+    if (!this._remuxer) {
+      this._remuxer = new MP4Remuxer();
+      if (this._pendingDtsOffsetMs !== 0) {
+        this._remuxer.setDtsBaseOffset(this._pendingDtsOffsetMs);
+        this._pendingDtsOffsetMs = 0;
+      }
+    }
+    this._remuxer.setTsSegmentContinuityNormalization(false);
+
+    demuxer.onError = this._onDemuxException.bind(this);
+    demuxer.timestampBase = 0;
+    demuxer.onTrackDiscontinuity = (track) => {
+      if (track === "video") {
+        this._remuxer?.flushStashedSamples();
+        this._remuxer?.insertDiscontinuity();
+      }
+      this._workerAudioDecoder?.reset();
+      this._resetAudioTiming();
+    };
+
+    this._remuxer.bindDataSource(
+      demuxer as unknown as {
+        onDataAvailable: (...args: unknown[]) => void;
+        onTrackMetadata: (...args: unknown[]) => void;
+      },
+    );
+    const remuxTrackMetadata = demuxer.onTrackMetadata;
+    demuxer.onTrackMetadata = (type, metadata) => {
+      this._handleTsTrackMetadata(type, metadata);
+      remuxTrackMetadata?.(type, metadata);
+    };
+
+    this._remuxer.onInitSegment = (type, initSegment) => {
+      this._callbacks.onInitSegment(type, initSegment as unknown as Parameters<PipelineCallbacks["onInitSegment"]>[1]);
+    };
+    this._remuxer.onMediaSegment = (type, mediaSegment) => {
+      this._callbacks.onMediaSegment(
+        type,
+        mediaSegment as unknown as Parameters<PipelineCallbacks["onMediaSegment"]>[1],
+      );
+    };
+  }
 
   private _onAudioProbeChunk(meta: SegmentMeta, data: Uint8Array, byteStart: number): number {
     const probeData = TSDemuxer.probe(data);

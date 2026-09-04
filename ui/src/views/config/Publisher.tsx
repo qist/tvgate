@@ -220,6 +220,12 @@ export function PublisherPage() {
     }
   };
 
+  // 同源播放：跳转独立播放入口（/pp）并注入 live 参数，播放器页直接用浏览器播放该 FLV/HLS。
+  // 只在 /pp 公开入口打开，不经过 web.path，也不泄露后台路径。
+  const playDirect = (url: string) => {
+    window.open(window.location.origin + "/pp?live=" + encodeURIComponent(url), "_blank", "noopener");
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -285,6 +291,8 @@ export function PublisherPage() {
           // 本地播放地址用节点名（服务端按名称提供 /<path>/play/<名称>.flv|m3u8）；
           // streamkey 仅用于远端 RTMP 推流目标
           const playName = name;
+          const flvRaw = flvItem?.enabled ? window.location.origin + pubBase + "play/" + playName + ".flv" : null;
+          const hlsRaw = hlsItem?.enabled ? window.location.origin + pubBase + "play/" + playName + ".m3u8" : null;
           return (
             <Card key={name}>
               <CardContent className="p-0">
@@ -324,16 +332,31 @@ export function PublisherPage() {
                       {getNested(item, "stream.receivers.primary.push_url") || "-"}
                     </dd>
                   </div>
-                  {flvItem?.enabled && (
+                  {flvItem?.enabled && flvRaw && (
                     <div className="flex gap-2">
                       <dt className="w-20 shrink-0 text-muted-foreground">本地 FLV</dt>
                       <dd className="flex min-w-0 items-center gap-1.5">
-                        <a className="truncate text-primary hover:underline" href={window.location.origin + pubBase + "play/" + playName + ".flv"} target="_blank" rel="noreferrer">
-                          {window.location.origin + pubBase + "play/" + playName + ".flv"}
+                        <a
+                          className="truncate text-primary hover:underline"
+                          href={window.location.origin + "/pp?live=" + encodeURIComponent(flvRaw)}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="点击用浏览器播放（同源，不经 TVGate 转发）"
+                        >
+                          {flvRaw}
                         </a>
                         <button
                           type="button"
-                          onClick={() => copyPlayUrl(name + ":flv", window.location.origin + pubBase + "play/" + playName + ".flv")}
+                          onClick={() => playDirect(flvRaw)}
+                          className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded border border-primary/30 px-1.5 py-0.5 text-primary text-[11px] transition-colors hover:bg-primary/10"
+                          title="点击用浏览器播放（同源，不经 TVGate 转发）"
+                        >
+                          <MonitorPlay className="h-3 w-3" aria-hidden="true" />
+                          播放
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => copyPlayUrl(name + ":flv", flvRaw)}
                           className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded border border-violet-500/25 px-1.5 py-0.5 text-violet-600 text-[11px] transition-colors hover:bg-violet-500/10 dark:border-violet-300/25 dark:text-violet-300 dark:hover:bg-violet-300/10"
                           title="复制 FLV 地址到剪贴板（可粘贴到 VLC/播放器）"
                         >
@@ -343,16 +366,31 @@ export function PublisherPage() {
                       </dd>
                     </div>
                   )}
-                  {hlsItem?.enabled && (
+                  {hlsItem?.enabled && hlsRaw && (
                     <div className="flex gap-2">
                       <dt className="w-20 shrink-0 text-muted-foreground">本地 HLS</dt>
                       <dd className="flex min-w-0 items-center gap-1.5">
-                        <a className="truncate text-primary hover:underline" href={window.location.origin + pubBase + "play/" + playName + ".m3u8"} target="_blank" rel="noreferrer">
-                          {window.location.origin + pubBase + "play/" + playName + ".m3u8"}
+                        <a
+                          className="truncate text-primary hover:underline"
+                          href={window.location.origin + "/pp?live=" + encodeURIComponent(hlsRaw)}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="点击用浏览器播放（同源，不经 TVGate 转发）"
+                        >
+                          {hlsRaw}
                         </a>
                         <button
                           type="button"
-                          onClick={() => copyPlayUrl(name + ":hls", window.location.origin + pubBase + "play/" + playName + ".m3u8")}
+                          onClick={() => playDirect(hlsRaw)}
+                          className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded border border-primary/30 px-1.5 py-0.5 text-primary text-[11px] transition-colors hover:bg-primary/10"
+                          title="点击用浏览器播放（同源，不经 TVGate 转发）"
+                        >
+                          <MonitorPlay className="h-3 w-3" aria-hidden="true" />
+                          播放
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => copyPlayUrl(name + ":hls", hlsRaw)}
                           className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded border border-violet-500/25 px-1.5 py-0.5 text-violet-600 text-[11px] transition-colors hover:bg-violet-500/10 dark:border-violet-300/25 dark:text-violet-300 dark:hover:bg-violet-300/10"
                           title="复制 HLS 地址到剪贴板（可粘贴到 VLC/播放器）"
                         >
