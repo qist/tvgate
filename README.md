@@ -402,9 +402,51 @@ player:
 
 ### 订阅格式
 
-- **M3U**：以 `#EXTM3U` 开头的标准清单，`#EXTINF` 条目支持 `tvg-id` / `tvg-name` / `tvg-logo` / 分组属性；EPG 由 `x-tvg-url`（或 `url-tvg`）属性指向 XMLTV 文件（自动识别 `epg.xml` / `epg.xml.gz` gzip 魔数，服务端定时下载解析）。
-- **逗号 TXT**：`分类,#genre#` 声明分类，`名称,URL` 为频道行；UA 两种写法——独立 `ua=xxx` 行作用于后续所有频道，或频道行尾 `名称,URL,ua=xxx`（优先级更高）；EPG 与台标用上方配置模板填充。
-- 订阅地址即**源白名单**：仅订阅内的频道可经播放器访问。
+按内容自动识别：以 `#EXTM3U` 开头按 M3U 解析，否则按逗号 TXT 解析。频道 URL 必须为支持的前缀（`http://` `https://` `udp://` `rtp://` `rtsp://` `php://`），否则该行跳过。
+
+**M3U（.m3u / .m3u8）**
+
+```m3u
+#EXTM3U x-tvg-url="https://epg.example.com/epg.xml.gz"
+#EXTINF:-1 tvg-id="CCTV1" tvg-name="CCTV1" tvg-logo="https://logo.example.com/CCTV1.png" group-title="央视" ua="okhttp/3.8.1",CCTV1
+http://source.example.com/cctv1.m3u8
+```
+
+| 位置 | 字段 | 说明 |
+|---|---|---|
+| 头行 | `x-tvg-url=` / `url-tvg=` | XMLTV EPG 地址（`.gz` 自动解压，服务端定时下载解析） |
+| EXTINF | `tvg-id="..."` | EPG 匹配 ID |
+| EXTINF | `tvg-name="..."` | EPG 匹配名（缺省回落 tvg-id） |
+| EXTINF | `tvg-logo="..."` | 台标地址 |
+| EXTINF | `group-title="..."` | 分组名 |
+| EXTINF | `ua="..."` | 该频道抓流 UA |
+| EXTINF | 最后一个逗号后 | 频道显示名 |
+
+`#EXTINF` 后第一个非 `#` 行为该频道 URL；其余 `#` 行忽略（`#EXTVLCOPT` 等不解析，UA 用 `ua=` 属性）。
+
+**逗号 TXT（.txt）**
+
+```txt
+央视,#genre#
+ua=okhttp/3.8.1
+CCTV1,http://source.example.com/cctv1.m3u8
+CCTV2,http://source.example.com/cctv2.m3u8,ua=Mozilla/5.0
+epg=https://epg.example.com/?ch={name}&date={date}
+logo=https://logo.example.com/{name}.png
+```
+
+| 行格式 | 说明 |
+|---|---|
+| `分类,#genre#` | 声明分组，作用于后续频道（行首 `#` 可省略） |
+| `ua=xxx` | 组/文件级默认 UA，作用于后续所有频道；`ua=`（空值）恢复 `player.ua` 默认；再次出现覆盖 |
+| `名称,URL` | 频道行（URL 取最后一个逗号之后，名称可含逗号） |
+| `名称,URL,ua=xxx` | 频道级 UA，优先于组级 `ua=` |
+| `epg=模板或地址` | 含 `{`（如 `{name}`/`{date}`）按模板逐频道请求 EPG；`http` 开头且不含 `{` 视为整份 XMLTV 地址 |
+| `logo=模板` | 台标模板，需含 `{name}` |
+
+> **回看**：`http/https` 源自动支持（服务端按 `playseek=<起>-<止>` 参数向源请求），订阅内无需额外声明。
+>
+> **源白名单**：订阅内容即允许播放的频道清单，仅订阅内的频道可经播放器访问。
 
 ### 频道源协议
 
