@@ -15,6 +15,7 @@
 - [PHP 模块（纯 Go phpgo runtime）](#php-模块纯-go-phpgo-runtime)
 - [H5 播放器](#h5-播放器订阅直播--回看)
 - [定时任务](#定时任务cron-调度--php-脚本)
+- [Web 管理后台（登录与二次授权）](#web-管理后台登录与二次授权)
 - [配置示例](#配置configyaml示例)
 - [Nginx 反向代理](#nginx-反向代理配置参考)
 - [Linux 内核优化](#linux-内核优化建议)
@@ -467,6 +468,8 @@ logo=https://logo.example.com/{name}.png
 
 非白名单 key 的请求返回 `403 Forbidden`。Web 后台「播放器」页提供可视化配置（订阅源、EPG/台标模板、刷新间隔、默认 UA）。
 
+> **布局**：桌面/电视端频道列表与节目单在视频**左侧**（可折叠），移动端在视频下方；界面固定简体中文，支持触摸与遥控器（方向键/数字换台）操作。
+
 ---
 
 ## 定时任务（cron 调度 + php:// 脚本）
@@ -496,6 +499,47 @@ tasks:
 php:// 内部执行不走 HTTP 回环、不依赖 IP、不经过鉴权，与播放器 `php://` 频道源同一条链路。
 
 > **超时说明**：phpgo 为进程内同步执行，`timeout` 到期后仅不再等待，无法强杀运行中的脚本；请避免任务脚本自身长时间阻塞。
+
+---
+
+## Web 管理后台（登录与二次授权）
+
+Web 后台为单页应用（SPA，随二进制嵌入），默认入口 `http://<IP>:<port>/web/`（路径可由 `web.path` 自定义）。登录页 `#/login` 公开访问、零鉴权请求；未认证访问后台接口返回 401，由前端内部跳转登录页。
+
+### 模块一览
+
+| 分类 | 页面 |
+|---|---|
+| 概览 | 仪表盘（版本/系统/CPU/内存/连接/资源/网络/应用进程） |
+| 配置 | 定时任务、代理组、视频解析（jx）、推流发布、域名映射、播放器、全局认证、组播配置、TS 缓存、配置查看 |
+| 服务 | 服务器、HTTP、DNS、PHP 模块、重载、Web 设置、日志配置 |
+| 内容 | 代码文件管理、仓库同步、GitHub 加速 |
+| 运维 | 实时日志、配置备份、备份中心 |
+| 工具 | YAML 编辑器 |
+
+### 二次授权（敏感操作保护）
+
+登录 Cookie 之外，**敏感操作还需二次输入登录密码**（独立短 TTL 授权 Cookie，默认 10 分钟，HttpOnly + SameSite=Strict）：
+
+- 查看整份配置：`GET <webPath>config`（含「配置查看」页与 YAML 编辑器加载）
+- 保存配置：`POST <webPath>config/save`
+- 配置备份下载/恢复：`<webPath>config/backup/download`、`<webPath>config/backup/restore`（以及备份中心对应的 `api/backup/download`、`api/backup/restore`）
+
+流程：
+
+```
+POST <webPath>api/v1/elevate   {"password": "<登录密码>"}   # 解锁，颁发 10 分钟授权 Cookie
+GET  <webPath>api/v1/elevate                                 # 查询当前授权状态与 TTL
+```
+
+- 未二次授权访问敏感接口返回 `403` JSON（`{"code":403,"msg":"需要二次验证：请输入登录密码"}`），前端弹窗引导输入密码后自动重试。
+- 密码校验与登录一致（常量时间比较 + 空口令拒绝）。
+- Web 未启用或未配置密码时，二次验证自动豁免。
+- 备份列表/删除等非敏感操作仅要求登录态。
+
+### GitHub 加速配置
+
+`config.github`（主地址 + 备用地址 + 超时/重试）为**双用途加速配置**：仓库同步（`sync` 模块拉取 GitHub/GitLab/Gitee 内容）与版本升级（获取 Release 列表与下载包）共用。Web 后台「GitHub 加速」页可视化配置。
 
 ---
 
