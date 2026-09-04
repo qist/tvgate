@@ -792,6 +792,9 @@ func (sm *StreamManager) startStreaming() {
 					// 在 all 模式下，只有一个实例从源拉取数据，其他实例从共享 hub 读取数据
 					// 所以所有实例都应该使用 needPull=false
 					pipeForwarder := NewPipeForwarder(pipeName, rtmpURL, true, false, sm.pipeForwarder.hub)
+					// extra 转发器禁用 HLS：NewPipeForwarder 默认启动 HLS，会与主转发器
+					// 写同一个 /tmp/hls/<name>/ 目录（两个 ffmpeg 互相覆盖分片）
+					pipeForwarder.EnableHLS(false)
 					sm.mutex.Lock()
 					sm.extraPipeForwarders = append(sm.extraPipeForwarders, pipeForwarder)
 					sm.mutex.Unlock()
@@ -800,6 +803,11 @@ func (sm *StreamManager) startStreaming() {
 					streamHub := GetStreamHub(sm.name)
 					if streamHub != nil {
 						streamHub.AddExtraForwarder(pipeForwarder)
+						// 恢复 HLS 管理器引用（NewPipeForwarder 把它覆盖成了 extra 的，
+						// 但 HLS 只应由主转发器提供）
+						if sm.pipeForwarder.hlsManager != nil {
+							streamHub.hlsManager = sm.pipeForwarder.hlsManager
+						}
 					}
 
 					// 启动额外的管道转发器

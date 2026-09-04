@@ -526,11 +526,13 @@ func (pf *PipeForwarder) Start(ffmpegArgs []string) error {
 	pf.patPmtBuf.Reset()
 	pf.headerMutex.Unlock()
 
-	// 启动 HLS 管理器
-	if err := pf.hlsManager.Start(); err != nil {
-		logger.LogPrintf("[%s] Warning: Failed to start HLS manager: %v", pf.streamName, err)
-	} else {
-		logger.LogPrintf("[%s] HLS manager started successfully", pf.streamName)
+	// 启动 HLS 管理器（仅当启用时；extra 转发器禁用 HLS，避免与主转发器写同一分片目录）
+	if pf.hlsEnabled && pf.hlsManager != nil {
+		if err := pf.hlsManager.Start(); err != nil {
+			logger.LogPrintf("[%s] Warning: Failed to start HLS manager: %v", pf.streamName, err)
+		} else {
+			logger.LogPrintf("[%s] HLS manager started successfully", pf.streamName)
+		}
 	}
 
 	// 启动数据转发 goroutine

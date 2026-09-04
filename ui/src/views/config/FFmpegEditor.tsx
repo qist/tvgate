@@ -198,7 +198,10 @@ export function FFmpegEditor({
   value?: FFmpegOptions;
   onChange: (v?: FFmpegOptions) => void;
 }) {
-  const enabled = hasAnyOpts(value);
+  // 开启状态 = 用户显式启用（value 非 undefined，含空对象 {}）。
+  // 不能用 hasAnyOpts 判断：开启时 onChange({}) 传空参数集，hasAnyOpts({})
+  // 为 false 会导致开关刚点开就被弹回关闭状态，永远无法开启。
+  const enabled = value != null;
   const o: FFmpegOptions = value || {};
   const [open, setOpen] = useState(false);
 
