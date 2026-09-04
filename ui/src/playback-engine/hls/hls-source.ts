@@ -198,6 +198,11 @@ export class HlsSource implements SegmentSource {
     return this.audioRendition !== null;
   }
 
+  /** True while the media playlist is a live window (segments may be evicted by the CDN before we fetch them). */
+  get isLive(): boolean {
+    return this.live;
+  }
+
   private async initialize(): Promise<void> {
     const playlist = await this.fetchPlaylist();
     if (playlist === null) {

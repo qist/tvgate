@@ -74,6 +74,9 @@ const BITRATE_STABLE_AFTER_MS = 500;
 const BITRATE_UPDATE_INTERVAL_MS = 1000;
 const BITRATE_MINIMUM_SAMPLES = 2;
 const SEGMENT_BITRATE_SAMPLE_COUNT = 5;
+// 直播边缘分片可能已被上游 CDN 驱逐（404）：跳过并等播放列表刷新追上，
+// 连续失败达到该上限才判定流不可用（每次成功加载后清零）。
+const MAX_LIVE_SEGMENT_SKIPS = 8;
 
 type MediaInfoVideo = NonNullable<PlayerMediaInfo["video"]>;
 type MediaInfoAudio = NonNullable<PlayerMediaInfo["audio"]>;
@@ -141,6 +144,9 @@ class Pipeline {
   private _ioctl: FetchLoader | null = null;
   /** Settles the in-flight segment load promise (so a cancelled loop can exit). */
   private _cancelLoad: (() => void) | null = null;
+
+  /** 直播模式连续跳过的分片数（成功加载一次即清零） */
+  private _liveSegmentSkips = 0;
 
   private _paused = false;
   private _resumeGate: (() => void) | null = null;
@@ -640,6 +646,7 @@ class Pipeline {
         }
         await this._loadSegment(meta);
         if (this._runId !== runId) return;
+        this._liveSegmentSkips = 0;
         if (!isAudioTrack && (this._sourceMode === "hls" || this._fmp4Mode)) {
           this._publishSegmentBitrate(meta.duration);
         }
@@ -662,6 +669,19 @@ class Pipeline {
         }
       } catch (e) {
         if (this._runId !== runId || e === CANCELLED) return;
+        if (e instanceof LoadError && this._isLiveSource()) {
+          // 直播窗口的分片可能在上游 CDN 已被驱逐（典型为 404）：跳过该分片，
+          // 让 source.next() 刷新播放列表追到直播边缘，而不是把整个播放打死。
+          this._liveSegmentSkips++;
+          Log.w(
+            this.TAG,
+            `Live segment failed (${this._liveSegmentSkips}/${MAX_LIVE_SEGMENT_SKIPS}): code=${e.info.code} msg=${e.info.msg}`,
+          );
+          if (this._liveSegmentSkips < MAX_LIVE_SEGMENT_SKIPS) {
+            continue;
+          }
+          Log.e(this.TAG, `Live segment failures exceeded ${MAX_LIVE_SEGMENT_SKIPS}, giving up`);
+        }
         if (e instanceof LoadError) {
           Log.e(this.TAG, `IOException: type = ${e.errorType}, code = ${e.info.code}, msg = ${e.info.msg}`);
           this._callbacks.onIOError(e.errorType, e.info);
@@ -739,6 +759,11 @@ class Pipeline {
     this._audioSamplesSinceAnchor = 0;
     this._audioSampleRate = 0;
     this._pendingPcm = [];
+  }
+
+  /** 直播源判定：HLS 播放列表为 live 窗口时，分片可能在上游过期，可跳过等待刷新 */
+  private _isLiveSource(): boolean {
+    return this._sourceMode === "hls" && (this._hlsSource?.isLive ?? false);
   }
 
   private _loadSegment(meta: SegmentMeta): Promise<void> {
