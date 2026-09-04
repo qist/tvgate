@@ -70,6 +70,54 @@
 
 ## 服务端 (tvgate)
 
+### v3.1.0
+
+```
+1、新增 H5 播放器模块 — 服务端解析 IPTV 订阅（M3U / 逗号TXT，支持多文件目录合并加载），
+   频道生成不透明 key（源地址哈希）对外发布，订阅即白名单（非白名单 key 返回 403），
+   真实源地址与抓流 UA 全程不出服务器；受控拉流 /player/<key>，分片走 /player/<key>/<token> 短路径
+2、播放页双入口 — 管理后台 /web/player 与独立入口 /pp（不跳转后台路径，避免 Location 头
+   泄露隐藏的 web.path）；/pp/<key> 转为 /pp#<key> 深链（透传 my_token）；
+   仪表盘活跃连接表中的直播地址可点击，新标签直接观看
+3、自研 playback-engine — MSE + wasm 转封装随 SPA 构建；三级智能播放策略 + 后台持续播放保活；
+   修复 Chrome/Edge 后台标签断流；直播/回看徽标按播放模式即时切换；遥控器（方向键/ChannelUp/
+   Down/数字换台）与触摸操作，分组栏可折叠；EXT-X-MEDIA 分离音轨播放，音画同步（A/V drift ~6ms）；
+   直播分片加载失败（上游 CDN 短窗口驱逐分片 404 / 瞬时 EOF）自动跳过并刷新列表追直播边缘，
+   连续 8 次失败才报错（点播/回看保持立即报错）；移动 OTT 源回看 PLTV 路径替换为 TVOD
+4、频道源支持 php:// — docroot 脚本由内嵌 phpgo 解释器内部执行（不走 HTTP 回环、不依赖 IP、
+   不经鉴权），302 Location 解析出的真实源自动接入代理拉流链路，m3u8 输出重写为受控短地址
+5、播放器 http/https 上游接入代理组 — 与原生 /https:// 转发同链路（规则匹配 → 节点选择 → 健康
+   标记）；频道级代理组亲和记忆（IPTV 分片 CDN 常为 IP 主机，域名规则匹配不到）；301/302 跳转
+   回写域名→IP 映射，后续 IP 分片命中同组
+6、修复重定向链两处 bug — cache/redirect.go 链记录条件写反（跳过新 IP、追加重复）且无长度上限
+   （补 maxChainLen=32）；domainmap doWithRedirect 重建请求丢失原始 UA/Referer（改为 Clone/恢复）；
+   移除 httpclient NewHTTPClient 中 ErrUseLastResponse 下的无效 req.URL 重写
+7、新增定时任务模块 — 标准 5 段 cron 调度执行命令（支持 */n 步长），command 经系统 shell 执行，
+   或 php://xxx.php 由内嵌 phpgo 执行（安卓无原生 php 环境可用，GET 语义注入 $_GET，脚本输出为
+   任务输出，脚本缺失/HTTP≥400 判失败）；Web 可视化配置（每分钟/每小时/每天/每周/每月，cron
+   回显解析）、立即执行、状态展示（上次结果/耗时/输出摘要/下次时间）
+8、Web 管理后台全量迁移 React SPA（单二进制嵌入，双入口构建）— 登录页迁移（公开访问零鉴权
+   请求、去品牌特征、noindex）、监控/仪表盘迁入并清理旧 /status；仪表盘重构（顶部 6 卡 + 资源/
+   网络/应用三卡 + 启动时间，CPU 温度 -0.9 修复：哨兵值 -1 经 round1 截断变形，改 tempOrNull
+   显示"不支持"）；代理组节点状态展示、编辑布局修复（grid 防塌缩）、协议仅保留 http/https/
+   socks5/socks4、新增组置顶插入；定时任务卡片状态增强、编辑行防轮询覆盖
+9、新增二次授权（elevated session）— 配置查看/保存、备份下载/恢复需重输登录密码；独立短 TTL
+   Cookie（10 分钟，HttpOnly+SameSite=Strict），常量时间比较；403 由前端弹窗引导解锁；
+   ApiError 统一使 YAML/备份模块 403 正确触发弹窗
+10、代码文件管理重构为左右分栏（文件树 + 浏览/编辑双模式），恢复语法检测（.php 工具栏按钮）、
+    目录递归批量替换、查找替换弹窗、zip 解压、代码文件↔备份中心互跳；修复 GBK 残留文件名重复
+    显示（列表跳过非 UTF-8 名，上传/解压统一 normalizeFilename → UTF-8 落盘）
+11、「GitHub 升级」更名「GitHub 加速配置」— 同一份 config.github 双用途（仓库同步拉取 + 版本
+    升级加速）
+12、phpgo 兼容性增强 — 支持 UTF-8 标识符 / or-and-xor 运算符 / 命名空间；修复带键追加赋值
+    $arr[$key][] = $val 丢失前置下标
+13、Makefile 构建依赖修复 — 前端源码（ui/src）与 Go 源码变化自动触发 dist 重建/二进制重编；
+    此前二进制目标无依赖，改代码后 make 判定"无需重建"，部署到过期产物
+14、修复组播配置页渲染崩溃 — 配置接口数组字段 null 兜底
+15、文档 — README 补充 H5 播放器（订阅地址形式/订阅格式规范/频道源协议/访问入口）、定时任务、
+    Web 管理后台与二次授权章节；新增 README 订阅示例与解析器一致性守卫测试
+```
+
 ### v3.0.10
 
 ```

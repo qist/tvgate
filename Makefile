@@ -30,7 +30,7 @@ DIST_STAMP  := web/dist/.built
 # 前端源码变化时自动重建 dist（go:embed 依赖此产物，避免二进制嵌入过期前端）
 UI_SRCS     := $(shell find $(UI_DIR)/src -type f 2>/dev/null)
 # Go 源码变化时自动重编（所有平台二进制目标的公共依赖，避免改代码后 make 判定"无需重建"）
-GO_SRCS     := $(shell find . -name '*.go' -not -path './ui/*' 2>/dev/null) go.mod go.sum
+GO_SRCS     := $(shell find . -name '*.go' -not -path './ui/*' 2>/dev/null) go.mod go.sum config/version
 
 .PHONY: web-ui ui-install go-only
 web-ui: $(DIST_STAMP)
