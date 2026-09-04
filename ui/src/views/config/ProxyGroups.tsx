@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, X, GripVertical } from "lucide-react";
+import { Plus, Pencil, Trash2, X, GripVertical, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -94,9 +94,8 @@ export function ProxyGroupsPage() {
 
       {notice && (
         <div
-          className={`rounded-lg border px-3 py-2 text-sm ${
-            notice.type === "ok" ? "border-primary/30 bg-primary/10 text-primary" : "border-destructive/30 bg-destructive/10 text-destructive"
-          }`}
+          className={`rounded-lg border px-3 py-2 text-sm ${notice.type === "ok" ? "border-primary/30 bg-primary/10 text-primary" : "border-destructive/30 bg-destructive/10 text-destructive"
+            }`}
         >
           {notice.msg}
         </div>
@@ -104,7 +103,7 @@ export function ProxyGroupsPage() {
 
       {entries.map((e, i) =>
         editing.has(i) ? (
-          <GroupEditCard key={i} entry={e} onChange={(p) => set(i, p)} onName={(n) => setEntries((prev) => prev.map((x, idx) => (idx === i ? { ...x, name: n } : x)))} onCancel={() => setEditing((prev) => { const n = new Set(prev); n.delete(i); return n; })} onDelete={() => askDelete(i)} />
+          <GroupEditCard key={i} entry={e} onChange={(p) => set(i, p)} onName={(n) => setEntries((prev) => prev.map((x, idx) => (idx === i ? { ...x, name: n } : x)))} onSave={save} onCancel={() => setEditing((prev) => { const n = new Set(prev); n.delete(i); return n; })} onDelete={() => askDelete(i)} />
         ) : (
           <GroupViewCard key={i} entry={e} onEdit={() => setEditing((prev) => new Set(prev).add(i))} onDelete={() => askDelete(i)} />
         ),
@@ -220,12 +219,14 @@ function GroupEditCard({
   entry,
   onChange,
   onName,
+  onSave,
   onCancel,
   onDelete,
 }: {
   entry: Entry;
   onChange: (p: Partial<ProxyGroup>) => void;
   onName: (n: string) => void;
+  onSave: () => void;
   onCancel: () => void;
   onDelete: () => void;
 }) {
@@ -235,6 +236,7 @@ function GroupEditCard({
       <CardHeader className="flex-row items-center justify-between gap-2">
         <CardTitle className="text-base">编辑代理组</CardTitle>
         <div className="flex gap-1.5">
+          <Button size="sm" onClick={onSave}><Save className="mr-1 h-4 w-4" />保存</Button>
           <Button variant="outline" size="sm" onClick={onCancel}><X className="mr-1 h-4 w-4" />取消</Button>
           <Button variant="destructive" size="sm" onClick={onDelete}><Trash2 className="h-4 w-4" /></Button>
         </div>
