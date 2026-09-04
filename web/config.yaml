@@ -1,9 +1,6 @@
 server:
   #监听端口
   port: 8888
-# 监控配置
-monitor:
-  path: "/status" # 状态信息
 
 # 配置文件编辑接口
 web:
