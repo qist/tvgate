@@ -270,12 +270,12 @@ publisher:
               video_codec: copy
 ```
 
-### 模板 6：实际运行示例（双流：all 多平台 + 主备回放）
+### 模板 6：综合场景示例（双流：all 多平台 + 主备回放）
 
-当前环境实际运行的两路推流，可直接对照修改：
+两路典型推流配置，可直接对照修改（地址均为示例）：
 
-**cctv1 — all 模式**：局域网源同时推华丽云直播（8m 高清）和局域网 Nginx-RTMP
-（4m 低码率），本地 FLV/HLS 直播可用，不录像。
+**cctv1 — all 模式**：局域网源同时推云端直播平台（8m 高清）和局域网
+Nginx-RTMP（4m 低码率），本地 FLV/HLS 直播可用，不录像。
 
 ```yaml
 publisher:
@@ -290,8 +290,8 @@ publisher:
     stream:
       source:
         type: http
-        url: http://192.168.100.1/live/bestvlive.php?id=cctv13
-        backup_url: http://192.168.100.1/live/bestv.php?id=cctv1&cdn=5&d=fjdxzpps
+        url: http://iptv.example.com/live/source1.php?id=cctv13
+        backup_url: http://iptv.example.com/live/source2.php?id=cctv1&cdn=5
         ffmpeg_options:
           input_pre_args: [-re]
       local_play_urls:
@@ -311,25 +311,25 @@ publisher:
       mode: all
       receivers:
         all:
-          - push_url: rtmp://hwpushpc01.vhallyun.com/live/
+          - push_url: rtmp://push.example.com/live/
             play_urls:
-              flv: http://hwhlslivepc02.vhallyun.com/live/
+              flv: http://play.example.com/live/
             ffmpeg_options:
               video_codec: libx264
               video_bitrate: 8m
               preset: ultrafast
-          - push_url: rtmp://192.168.2.186/live/
+          - push_url: rtmp://192.0.2.186/live/
             play_urls:
-              flv: http://192.168.2.186:8080/live/
+              flv: http://192.0.2.186:8080/live/
             ffmpeg_options:
               video_codec: libx264
               video_bitrate: 4m
               preset: ultrafast
 ```
 
-**cctv2 — primary-backup 模式 + 回放**：主备双源（bestv 主 / bestvlive 备），
-主推华丽云、备推局域网，本地 HLS 开启 5 秒分片回放（TS 留 24 小时），
-`streamkey` 用 fixed 固定值（拉流鉴权）。
+**cctv2 — primary-backup 模式 + 回放**：主备双源，主推云端平台、备推局域网，
+本地 HLS 开启 5 秒分片回放（TS 留 24 小时），`streamkey` 用 fixed 固定值
+（拉流鉴权）。
 
 ```yaml
 publisher:
@@ -339,12 +339,12 @@ publisher:
     protocol: ffmpeg
     streamkey:
       type: fixed
-      value: neCVOtRJZaW1mrtjC1Lthqmymm3wOvUZ4567
+      value: your_fixed_stream_key
     stream:
       source:
         type: http
-        url: http://192.168.100.1/live/bestv.php?id=cctv2&cdn=5&d=fjdxzpps
-        backup_url: http://192.168.100.1/live/bestvlive.php?id=cctv2
+        url: http://iptv.example.com/live/source2.php?id=cctv2&cdn=5
+        backup_url: http://iptv.example.com/live/source1.php?id=cctv2
         ffmpeg_options:
           input_pre_args: [-re]
       local_play_urls:
@@ -360,17 +360,17 @@ publisher:
       mode: primary-backup
       receivers:
         primary:
-          push_url: rtmp://hwpushpc01.vhallyun.com/live/
+          push_url: rtmp://push.example.com/live/
           play_urls:
-            flv: http://hwhlslivepc02.vhallyun.com/live/
+            flv: http://play.example.com/live/
           ffmpeg_options:
             video_codec: libx264
             video_bitrate: 8m
             preset: ultrafast
         backup:
-          push_url: rtmp://192.168.2.186/live/
+          push_url: rtmp://192.0.2.186/live/
           play_urls:
-            flv: http://192.168.2.186:8080/live/
+            flv: http://192.0.2.186:8080/live/
           ffmpeg_options:
             video_codec: libx264
             video_bitrate: 8m
