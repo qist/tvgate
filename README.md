@@ -31,6 +31,7 @@
 | GitHub 加速 | [doc/GITHUB.md](doc/GITHUB.md) | 仓库同步与版本升级共用的加速地址配置 |
 | DNS | [doc/DNS.md](doc/DNS.md) | 自定义 DNS 与三级解析兜底链 |
 | 日志 | [doc/LOG.md](doc/LOG.md) | 日志输出与轮转 |
+| 梅林部署 | [doc/MERLIN.md](doc/MERLIN.md) | Asuswrt-Merlin 路由器 Entware 一键安装 |
 | 性能调优 | [doc/TUNING.md](doc/TUNING.md) | 内核参数 / conntrack / CPU 性能模式 |
 | 配置总示例 | [doc/config.yaml](doc/config.yaml) | 全模块配置样例（字段注释） |
 | 更新日志 | [doc/CHANGELOG.md](doc/CHANGELOG.md) | 版本变更记录 |
@@ -127,6 +128,11 @@
 > [luci-app-tvgate](https://github.com/qist/luci-app-tvgate) — OpenWrt LuCI 管理界面插件，可在路由器上直接管理 TVGate。
 
 前往 [luci-app-tvgate Releases](https://github.com/qist/luci-app-tvgate/releases) 下载 ipk/apk 安装包。
+
+### 梅林固件（Asuswrt-Merlin）
+
+> 华硕路由器梅林固件用户可通过 Entware 一键部署：U 盘安装、开机自启、U 盘弹出自动停止。
+> 教程见 [doc/MERLIN.md](doc/MERLIN.md)，一键脚本 [doc/scripts/merlin-install.sh](doc/scripts/merlin-install.sh)。
 
 ---
 
