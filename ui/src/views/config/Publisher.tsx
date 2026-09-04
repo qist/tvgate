@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
+  Copy,
   MonitorPlay,
   Plus,
   RefreshCw,
@@ -190,13 +191,34 @@ export function PublisherPage() {
   };
 
   const statFor = (name: string) => statsMap[name];
-  const skValue = (name: string) => getNested(cfg, name + ".streamkey.value") || name;
   // 播放地址前缀跟随配置的 Publisher Path（路由按它挂载），不能硬编码
   const pubBase = (() => {
     const p = (path || "").trim();
     const norm = p.startsWith("/") ? p : "/" + p;
     return norm.endsWith("/") ? norm : norm + "/";
   })();
+
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const copyPlayUrl = async (key: string, url: string) => {
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 2000);
+    } catch {
+      notify("err", "复制失败，请手动复制地址");
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -260,7 +282,9 @@ export function PublisherPage() {
           const p = st?.primary;
           const flvItem = localPlays(getNested(item, "stream.local_play_urls")).find((x) => x.protocol === "flv");
           const hlsItem = localPlays(getNested(item, "stream.local_play_urls")).find((x) => x.protocol === "hls");
-          const sk = skValue(name);
+          // 本地播放地址用节点名（服务端按名称提供 /<path>/play/<名称>.flv|m3u8）；
+          // streamkey 仅用于远端 RTMP 推流目标
+          const playName = name;
           return (
             <Card key={name}>
               <CardContent className="p-0">
@@ -277,8 +301,21 @@ export function PublisherPage() {
                   </div>
                   <div className="flex gap-2">
                     <dt className="w-20 shrink-0 text-muted-foreground">源地址</dt>
-                    <dd className="truncate" title={getNested(item, "stream.source.url") || "-"}>
-                      {getNested(item, "stream.source.url") || "-"}
+                    <dd className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate" title={getNested(item, "stream.source.url") || "-"}>
+                        {getNested(item, "stream.source.url") || "-"}
+                      </span>
+                      {getNested(item, "stream.source.url") && (
+                        <button
+                          type="button"
+                          onClick={() => copyPlayUrl(name + ":src", getNested(item, "stream.source.url"))}
+                          className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded border px-1.5 py-0.5 text-[11px] transition-colors"
+                          title="复制源地址：外部播放器（VLC 等）可直连此地址，不经 TVGate 转发流量"
+                        >
+                          <Copy className="h-3 w-3" aria-hidden="true" />
+                          {copiedKey === name + ":src" ? "已复制" : "直连"}
+                        </button>
+                      )}
                     </dd>
                   </div>
                   <div className="flex gap-2">
@@ -290,20 +327,38 @@ export function PublisherPage() {
                   {flvItem?.enabled && (
                     <div className="flex gap-2">
                       <dt className="w-20 shrink-0 text-muted-foreground">本地 FLV</dt>
-                      <dd className="truncate">
-                        <a className="text-primary hover:underline" href={window.location.origin + pubBase + "play/" + sk + ".flv"} target="_blank" rel="noreferrer">
-                          {window.location.origin + pubBase + "play/" + sk + ".flv"}
+                      <dd className="flex min-w-0 items-center gap-1.5">
+                        <a className="truncate text-primary hover:underline" href={window.location.origin + pubBase + "play/" + playName + ".flv"} target="_blank" rel="noreferrer">
+                          {window.location.origin + pubBase + "play/" + playName + ".flv"}
                         </a>
+                        <button
+                          type="button"
+                          onClick={() => copyPlayUrl(name + ":flv", window.location.origin + pubBase + "play/" + playName + ".flv")}
+                          className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded border border-violet-500/25 px-1.5 py-0.5 text-violet-600 text-[11px] transition-colors hover:bg-violet-500/10 dark:border-violet-300/25 dark:text-violet-300 dark:hover:bg-violet-300/10"
+                          title="复制 FLV 地址到剪贴板（可粘贴到 VLC/播放器）"
+                        >
+                          <Copy className="h-3 w-3" aria-hidden="true" />
+                          {copiedKey === name + ":flv" ? "已复制" : "复制"}
+                        </button>
                       </dd>
                     </div>
                   )}
                   {hlsItem?.enabled && (
                     <div className="flex gap-2">
                       <dt className="w-20 shrink-0 text-muted-foreground">本地 HLS</dt>
-                      <dd className="truncate">
-                        <a className="text-primary hover:underline" href={window.location.origin + pubBase + "play/" + sk + ".m3u8"} target="_blank" rel="noreferrer">
-                          {window.location.origin + pubBase + "play/" + sk + ".m3u8"}
+                      <dd className="flex min-w-0 items-center gap-1.5">
+                        <a className="truncate text-primary hover:underline" href={window.location.origin + pubBase + "play/" + playName + ".m3u8"} target="_blank" rel="noreferrer">
+                          {window.location.origin + pubBase + "play/" + playName + ".m3u8"}
                         </a>
+                        <button
+                          type="button"
+                          onClick={() => copyPlayUrl(name + ":hls", window.location.origin + pubBase + "play/" + playName + ".m3u8")}
+                          className="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded border border-violet-500/25 px-1.5 py-0.5 text-violet-600 text-[11px] transition-colors hover:bg-violet-500/10 dark:border-violet-300/25 dark:text-violet-300 dark:hover:bg-violet-300/10"
+                          title="复制 HLS 地址到剪贴板（可粘贴到 VLC/播放器）"
+                        >
+                          <Copy className="h-3 w-3" aria-hidden="true" />
+                          {copiedKey === name + ":hls" ? "已复制" : "复制"}
+                        </button>
                       </dd>
                     </div>
                   )}

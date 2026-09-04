@@ -10,10 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-
-	// "strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -248,6 +247,9 @@ type PipeForwarder struct {
 	rtmpURL    string // RTMP推流URL（如果有）
 	enabled    bool
 	needPull   bool // 新增标志，标识是否需要拉流
+
+	// RTMP 推流累计字节（供 FFmpeg 运行统计/码率展示）
+	pushBytes atomic.Uint64
 
 	ffmpegCmd *exec.Cmd
 
@@ -800,14 +802,24 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 					pf.streamName, pf.rtmpURL, pf.ffmpegPush.Process.Pid)
 				logger.LogPrintf("[%s] RTMP push command: ffmpeg %s", pf.streamName, strings.Join(cmd, " "))
 
+				// 登记 FFmpeg 推流统计（key=<streamName>_1，与 Web 端"运行状态"读取一致），
+				// 否则推流已在跑界面却显示"等待启动"
+				if manager := GetManager(); manager != nil {
+					manager.updateFFmpegStats(pf.streamName, 1, int32(pf.ffmpegPush.Process.Pid), true, nil, 0, time.Now())
+				}
+
 				pf.Wg.Go(func() {
-					if err := pf.ffmpegPush.Wait(); err != nil && pf.ctx.Err() == nil {
+					err := pf.ffmpegPush.Wait()
+					if err != nil && pf.ctx.Err() == nil {
 						logger.LogPrintf("[%s] RTMP push ffmpeg exited with error: %v", pf.streamName, err)
 					} else {
 						logger.LogPrintf("[%s] RTMP push ffmpeg exited normally", pf.streamName)
 					}
 
-					// 推流结束后清理
+					// 推流结束后更新统计并清理
+					if manager := GetManager(); manager != nil {
+						manager.updateFFmpegStats(pf.streamName, 1, 0, false, err, pf.pushBytes.Load(), time.Now())
+					}
 					pf.ffmpegLock.Lock()
 					pf.ffmpegPush = nil
 					pf.ffmpegLock.Unlock()
@@ -839,6 +851,8 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 	if ffIn != nil {
 		ffOut := ffIn
 		ffCh = make(chan []byte, 1024)
+		var statLastBytes uint64
+		statLastTime := time.Now()
 		pf.Wg.Go(func() {
 			for {
 				select {
@@ -865,6 +879,18 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 						}
 						closeFFIn()
 						return
+					}
+					// 累计推流字节；统计刷新按 ≥1MB 且 ≥2s 节流——间隔太短会让
+					// current_bitrate（按时间差折算）被高估
+					total := pf.pushBytes.Add(uint64(len(data)))
+					if delta := total - statLastBytes; delta >= 1<<20 && time.Since(statLastTime) >= 2*time.Second {
+						currentTime := time.Now()
+						// 传增量：CurrentBitrate = 增量*8/时间差，传累计值会持续虚高
+						statLastBytes = total
+						statLastTime = currentTime
+						if manager := GetManager(); manager != nil {
+							manager.updateFFmpegStats(pf.streamName, 1, 0, true, nil, delta, currentTime)
+						}
 					}
 				}
 			}
