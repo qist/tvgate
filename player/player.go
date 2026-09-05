@@ -58,6 +58,9 @@ type Manager struct {
 	httpClient   *http.Client
 	subscription string
 	stop         chan struct{}
+	// resetCh 配置热加载通知：收到后立即按新配置重载并重置刷新计时
+	// （否则新 update_interval 要等当前周期计时器到期才生效，最长延迟一个周期）。
+	resetCh chan struct{}
 }
 
 func NewManager(cfg *config.PlayerConfig) *Manager {
@@ -68,6 +71,7 @@ func NewManager(cfg *config.PlayerConfig) *Manager {
 		httpClient: httpclient.NewHTTPClient(&config.Cfg, nil),
 		epg:        NewEPGBank(),
 		stop:       make(chan struct{}),
+		resetCh:    make(chan struct{}),
 	}
 }
 
@@ -103,9 +107,30 @@ func (m *Manager) Start() {
 				return
 			case <-t.C:
 				m.Reload()
+			case <-m.resetCh:
+				// 配置热加载：立即按新配置重载订阅，随后循环顶部用新间隔重新计时
+				t.Stop()
+				m.Reload()
 			}
 		}
 	}()
+}
+
+// NotifyConfigChanged 配置热加载后通知 player 管理器：立即按新配置重载订阅
+// 并重置刷新计时（update_interval / 订阅源等变更即时生效，无需等当前周期到期）。
+// 非阻塞：正在处理时跳过（本次变更并入下一次处理）。
+func NotifyConfigChanged() {
+	if globalHandler == nil {
+		return
+	}
+	m := globalHandler.mgr
+	if m == nil {
+		return
+	}
+	select {
+	case m.resetCh <- struct{}{}:
+	default:
+	}
 }
 
 func (m *Manager) Stop() {

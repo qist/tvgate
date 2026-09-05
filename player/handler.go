@@ -137,6 +137,7 @@ func (h *Handler) ServeChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	chans := h.mgr.Channels()
 	if chans == nil {
 		chans = []*Channel{}
