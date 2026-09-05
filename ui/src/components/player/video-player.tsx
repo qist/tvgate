@@ -438,10 +438,11 @@ function VideoPlayerComponent({
   });
 
   // Progress seek: in-buffer → buffer seek; outside buffer → seek-needed → onSeek rebuild
-  const handleSeek = useEffectEvent((seekTime: Date) => {
+  const handleSeek = useEffectEvent((seekTime: Date, goingLiveHint?: boolean) => {
     const activePlayer = getActivePlayer();
     if (!activePlayer) return;
-    const goingLive = isNearLiveEdge(seekTime);
+    // "返回直播"按钮显式带 goingLive，绕过墙钟判定的回看期漂移
+    const goingLive = goingLiveHint ?? isNearLiveEdge(seekTime);
 
     if (goingLive) {
       userPausedRef.current = false;
@@ -1245,7 +1246,8 @@ function VideoPlayerComponent({
     const duration = player?.getState().duration;
     if (onSeek && duration && Number.isFinite(duration)) {
       const seekTime = mseToWallClock(duration, streamStartTime);
-      onSeek(seekTime, isNearLiveWallClock(seekTime, liveSessionAnchor, streamStartTime));
+      // 回看列表播尽即已到直播边缘：强制重建直播流，避免 catchup 追尾循环
+      onSeek(seekTime, true);
     }
   });
 

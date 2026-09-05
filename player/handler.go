@@ -282,6 +282,9 @@ func (h *Handler) ServeCatchup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "catchup not supported for this source", http.StatusBadRequest)
 		return
 	}
+	// 回看启动即失效该频道的直播解析缓存（会话切换，返回直播时重新解析）
+	h.clearRedirect(key)
+
 	u := catchupURL(ch.RawURL, start, end)
 	tok := shortHash(u)
 	h.storeResources(key, map[string]string{tok: u})

@@ -33,7 +33,7 @@ interface PlayerControlsProps {
   // Whether we're in live mode or catchup mode
   isLive: boolean;
   // Callback when user seeks to a new position
-  onSeek: (seekTime: Date) => void;
+  onSeek: (seekTime: Date, goingLive?: boolean) => void;
   // Keep the player controls visible while the user scrubs the timeline
   onScrubbingChange: (isScrubbing: boolean) => void;
   // Locale for translations
@@ -517,7 +517,7 @@ function PlayerControlsComponent({
           ) : (
             <button
               type="button"
-              onClick={() => onSeek(new Date())}
+              onClick={() => onSeek(new Date(), true)}
               className={clsx(
                 PLAYER_CONTROL_BUTTON_CLASS,
                 "cursor-pointer whitespace-nowrap bg-violet-300/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-50 md:px-2.5 md:py-1.5 md:text-sm",
