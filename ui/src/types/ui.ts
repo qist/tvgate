@@ -18,6 +18,17 @@ export const PLAYER_APPEARANCE_LABEL_KEYS = {
   sunset: "appearanceSunset",
 } as const satisfies Record<PlayerAppearance, string>;
 
+/** 节目单/侧栏面板透明度档位（百分比不透明度，100 = 现状默认） */
+export const PLAYER_PANEL_ALPHAS = ["100", "85", "70", "55"] as const;
+export type PlayerPanelAlpha = (typeof PLAYER_PANEL_ALPHAS)[number];
+
+export const PLAYER_PANEL_ALPHA_LABEL_KEYS = {
+  "100": "panelAlpha100",
+  "85": "panelAlpha85",
+  "70": "panelAlpha70",
+  "55": "panelAlpha55",
+} as const satisfies Record<PlayerPanelAlpha, string>;
+
 export const PICTURE_IN_PICTURE_MODES = ["document", "video"] as const;
 export type PictureInPictureMode = (typeof PICTURE_IN_PICTURE_MODES)[number];
 

@@ -9,6 +9,9 @@ import {
   PLAYER_APPEARANCE_LABEL_KEYS,
   PLAYER_APPEARANCES,
   type PlayerAppearance,
+  PLAYER_PANEL_ALPHA_LABEL_KEYS,
+  PLAYER_PANEL_ALPHAS,
+  type PlayerPanelAlpha,
   THEME_LABEL_KEYS,
   THEME_MODES,
   type ThemeMode,
@@ -22,6 +25,8 @@ interface SettingsDropdownProps {
   onThemeChange: (theme: ThemeMode) => void;
   appearance: PlayerAppearance;
   onAppearanceChange: (appearance: PlayerAppearance) => void;
+  panelAlpha: PlayerPanelAlpha;
+  onPanelAlphaChange: (alpha: PlayerPanelAlpha) => void;
   pictureInPictureMode: PictureInPictureMode;
   onPictureInPictureModeChange: (mode: PictureInPictureMode) => void;
   seamlessSwitch: boolean;
@@ -80,6 +85,8 @@ function SettingsDropdownComponent({
   onThemeChange,
   appearance,
   onAppearanceChange,
+  panelAlpha,
+  onPanelAlphaChange,
   pictureInPictureMode,
   onPictureInPictureModeChange,
   seamlessSwitch,
@@ -100,6 +107,10 @@ function SettingsDropdownComponent({
   const appearanceOptions = PLAYER_APPEARANCES.map((value) => ({
     value,
     label: t(PLAYER_APPEARANCE_LABEL_KEYS[value]),
+  }));
+  const panelAlphaOptions = PLAYER_PANEL_ALPHAS.map((value) => ({
+    value,
+    label: t(PLAYER_PANEL_ALPHA_LABEL_KEYS[value]),
   }));
   const pictureInPictureModeOptions = PICTURE_IN_PICTURE_MODES.map((value) => ({
     value,
@@ -162,6 +173,13 @@ function SettingsDropdownComponent({
               value={appearance}
               options={appearanceOptions}
               onChange={onAppearanceChange}
+            />
+            <SettingSelect
+              id="player-settings-panel-alpha"
+              label={t("panelAlpha")}
+              value={panelAlpha}
+              options={panelAlphaOptions}
+              onChange={onPanelAlphaChange}
             />
             {showPictureInPictureMode && (
               <SettingSelect

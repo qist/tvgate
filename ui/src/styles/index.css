@@ -131,6 +131,88 @@
   height: 100vh;
 }
 
+/* ===== Win11 亚克力面板（节目单/侧栏透明度档位） =====
+ * 设置里选择非"不透明"档位后启用：面板背景半透明 + 背景模糊 + 饱和度提升
+ * （Fluent Acrylic 质感），透出页面光晕；文本/图标不透明保持可读性。
+ * 档位由 usePlayerPanelAlpha 挂 html.panel-alpha-* 类。
+ */
+html.panel-alpha-85 {
+  --pa: 0.85;
+  --pa-row: 0.32;
+}
+
+html.panel-alpha-70 {
+  --pa: 0.70;
+  --pa-row: 0.18;
+}
+
+html.panel-alpha-55 {
+  --pa: 0.55;
+  --pa-row: 0.15;
+}
+
+/* 设置弹窗（[role="dialog"]）不参与面板透明度：恢复原有样式 */
+html[class*="panel-alpha-"] .player-performance-panel-background:not([role="dialog"]) {
+  background-color: rgb(255 255 255 / var(--pa));
+  background-image: none;
+  -webkit-backdrop-filter: blur(30px) saturate(160%);
+  backdrop-filter: blur(30px) saturate(160%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.55);
+}
+
+html.dark[class*="panel-alpha-"] .player-performance-panel-background:not([role="dialog"]) {
+  background-color: rgb(15 11 38 / var(--pa));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07);
+}
+
+html[class*="panel-alpha-"] .player-performance-epg-header {
+  background-color: rgb(255 255 255 / calc(var(--pa) - 0.02));
+  background-image: none;
+  -webkit-backdrop-filter: blur(30px) saturate(160%);
+  backdrop-filter: blur(30px) saturate(160%);
+}
+
+html.dark[class*="panel-alpha-"] .player-performance-epg-header {
+  background-color: rgb(20 17 44 / var(--pa));
+}
+
+html[class*="panel-alpha-"] .player-performance-channel-groups {
+  background-color: rgb(238 242 255 / calc(var(--pa) - 0.12));
+  background-image: none;
+}
+
+html.dark[class*="panel-alpha-"] .player-performance-channel-groups {
+  background-color: rgb(18 15 42 / var(--pa));
+}
+
+html[class*="panel-alpha-"] .player-performance-input-background {
+  background-color: rgb(255 255 255 / calc(var(--pa) - 0.06));
+  background-image: none;
+}
+
+html.dark[class*="panel-alpha-"] .player-performance-input-background {
+  background-color: rgb(12 10 32 / var(--pa));
+}
+
+/* 列表行：透明档位下更通透，选中行保持较高不透明度以突出 */
+html[class*="panel-alpha-"] .player-performance-list-surface-default {
+  background-color: rgb(255 255 255 / var(--pa-row));
+  background-image: none;
+}
+
+html.dark[class*="panel-alpha-"] .player-performance-list-surface-default {
+  background-color: rgb(20 16 46 / calc(var(--pa-row) * 0.8));
+}
+
+html[class*="panel-alpha-"] .player-performance-list-surface-selected {
+  background-color: rgb(238 236 253 / calc(var(--pa) * 0.9));
+  background-image: none;
+}
+
+html.dark[class*="panel-alpha-"] .player-performance-list-surface-selected {
+  background-color: rgb(46 16 101 / calc(var(--pa) * 0.9));
+}
+
 /* ===== 播放器配色风格（appearance: ocean / emerald / sunset） =====
  * 与 player-theme-simple 同属"界面风格"，由 usePlayerAppearance 挂到 <html>。
  * 实现：重定义 Tailwind 的 --color-violet-* 色阶变量 + 渐变/光晕变量，
@@ -147,6 +229,14 @@
   /* 渐变中点 */
   --pg-grad-c: #6366f1;
   /* 渐变终点 */
+}
+
+/* 页面底色渐变端点（透明档位光晕增强用，随配色风格覆盖） */
+:root {
+  --pg-bg-a: #fbfaff;
+  --pg-bg-b: #f1edff;
+  --pg-bg-dark-a: #070516;
+  --pg-bg-dark-b: #0d0a26;
 }
 
 /* —— 深海（sky 蓝） —— */
@@ -539,4 +629,21 @@ html.player-theme-simple .player-performance-channel-number-default {
 
 html.dark.player-theme-simple .player-performance-channel-number-default {
   background-color: #1e293b;
+}
+
+/* ===== 透明面板档位：页面光晕增强 =====
+ * 面板透明后需有可辨识内容可透，光晕浓度提升且色相跟随配色风格变量。
+ */
+html[class*="panel-alpha-"] .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 92% 8%, rgba(var(--pg-rgb), 0.3), transparent 30%),
+    radial-gradient(circle at 72% 92%, rgba(var(--pg-rgb-2), 0.26), transparent 34%),
+    linear-gradient(145deg, var(--pg-bg-a), var(--pg-bg-b));
+}
+
+html.dark[class*="panel-alpha-"] .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 88% 10%, rgba(var(--pg-rgb), 0.26), transparent 32%),
+    radial-gradient(circle at 70% 88%, rgba(var(--pg-rgb-2), 0.22), transparent 36%),
+    linear-gradient(145deg, var(--pg-bg-dark-a), var(--pg-bg-dark-b));
 }

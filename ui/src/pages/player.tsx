@@ -24,6 +24,7 @@ import { Button, buttonVariants } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { usePersistedEnum } from "../hooks/use-persisted-enum";
 import { usePlayerAppearance } from "../hooks/use-player-appearance";
+import { usePlayerPanelAlpha } from "../hooks/use-player-panel-alpha";
 import { usePlayerTranslation } from "../hooks/use-player-translation";
 import { useTheme } from "../hooks/use-player-theme";
 import { isDocumentPictureInPictureSupported } from "../lib/document-picture-in-picture";
@@ -253,6 +254,7 @@ function PlayerPage() {
   const supportsDocumentPictureInPicture = isDocumentPictureInPictureSupported();
   const { theme, setTheme } = useTheme("tvgate-player-theme");
   const { appearance, setAppearance } = usePlayerAppearance();
+  const { panelAlpha, setPanelAlpha } = usePlayerPanelAlpha();
   const [pictureInPictureMode, setPictureInPictureMode] = usePersistedEnum<PictureInPictureMode>(
     "tvgate-player-picture-in-picture-mode",
     "document",
@@ -755,6 +757,8 @@ function PlayerPage() {
           onThemeChange={handleThemeChange}
           appearance={appearance}
           onAppearanceChange={handleAppearanceChange}
+          panelAlpha={panelAlpha}
+          onPanelAlphaChange={setPanelAlpha}
           pictureInPictureMode={pictureInPictureMode}
           onPictureInPictureModeChange={setPictureInPictureMode}
           showPictureInPictureMode={supportsDocumentPictureInPicture}
@@ -773,6 +777,7 @@ function PlayerPage() {
     locale,
     theme,
     appearance,
+    panelAlpha,
     pictureInPictureMode,
     seamlessSwitch,
     autoDeinterlace,
