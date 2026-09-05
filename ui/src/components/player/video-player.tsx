@@ -836,7 +836,16 @@ function VideoPlayerComponent({
     if (!video || (playbackBackendKind === "mse" && !isMSEPlaybackSupported())) return null;
 
     const existing = slotPlayerRef(slotId).current;
-    if (existing) return existing;
+    if (existing) {
+      // 后端类型与环境不匹配（如 MSE 支持状态变化后复用旧 MSE 后端会
+      // new MediaSource() 崩溃）→ 销毁重建
+      if (existing.kind !== playbackBackendKind) {
+        existing.destroy();
+        slotPlayerRef(slotId).current = null;
+      } else {
+        return existing;
+      }
+    }
 
     const p = createPlaybackBackend(video, {
       wasmDecoders: { mp2: mp2WasmUrl },
@@ -1823,8 +1832,8 @@ function VideoPlayerComponent({
           visible={showControls || showLoading}
           loading={showLoading}
           loadingText={`${channel && channel.sources.length > 1
-              ? `[${channel.sources[activeSourceIndex]?.label || `${t("source")} ${activeSourceIndex + 1}`}] `
-              : ""
+            ? `[${channel.sources[activeSourceIndex]?.label || `${t("source")} ${activeSourceIndex + 1}`}] `
+            : ""
             }${t("loadingVideo")}${retryCount - retryBaseline > 0 ? ` (${retryCount - retryBaseline}/${MAX_RETRIES})` : ""}`}
         />
       )}

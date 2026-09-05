@@ -33,6 +33,32 @@ export function createNativePlaybackBackend(video: HTMLVideoElement, config?: Pa
   let shouldPlay = false;
   let loadGeneration = 0;
   let detachLoadListeners: (() => void) | null = null;
+  /** Native <video> 起播超时检测：无法解码/格式不支持的流常静默停在 NETWORK_EMPTY。 */
+  let startTimeout: ReturnType<typeof setTimeout> | null = null;
+  const clearStartTimeout = () => {
+    if (startTimeout !== null) {
+      clearTimeout(startTimeout);
+      startTimeout = null;
+    }
+  };
+  const scheduleStartTimeout = (generation: number) => {
+    clearStartTimeout();
+    startTimeout = setTimeout(() => {
+      startTimeout = null;
+      if (destroyed || generation !== loadGeneration || video.error) return;
+      // 8s 仍无 metadata（readyState<2）且未前进：视为格式不支持/无法起播，
+      // 抛给上层显示错误并可切源，避免无限"加载中"黑屏
+      if (video.readyState < 2 && video.networkState !== 2 && video.currentTime === 0) {
+        events.emit("error", {
+          category: "demux",
+          detail: PlayerErrors.FORMAT_UNSUPPORTED,
+          info: "Native playback could not start: the stream format may be unsupported",
+          code: undefined,
+          url: video.currentSrc || currentEntry()?.url,
+        });
+      }
+    }, 8000);
+  };
 
   const currentEntry = () => entries[segmentIndex];
   const isLiveSource = () => entries.length === 1 && (entries[0]?.duration ?? 0) === 0;
@@ -66,7 +92,10 @@ export function createNativePlaybackBackend(video: HTMLVideoElement, config?: Pa
     };
     const onTimeUpdate = () => updateLogicalTime(generation);
     const onCanPlay = (event: Event) => {
-      if (isCurrentLoad()) events.emit("playback-state-change", "canplay", event.timeStamp);
+      if (isCurrentLoad()) {
+        clearStartTimeout();
+        events.emit("playback-state-change", "canplay", event.timeStamp);
+      }
     };
     const onPlaying = (event: Event) => {
       if (isCurrentLoad()) events.emit("playback-state-change", "playing", event.timeStamp);
@@ -136,6 +165,7 @@ export function createNativePlaybackBackend(video: HTMLVideoElement, config?: Pa
     attachLoadListeners(generation);
     video.src = entry.url;
     video.load();
+    scheduleStartTimeout(generation);
     events.emit("time-update", logicalTime);
     if (autoplay) {
       void video.play().catch((error: Error) => {

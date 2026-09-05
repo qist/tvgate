@@ -1,5 +1,5 @@
 import { isLGWebOS } from "../lib/platform";
-import { createMSEPlaybackBackend } from "./backends/mse-playback-backend";
+import { createMSEPlaybackBackend, isMSEPlaybackSupported } from "./backends/mse-playback-backend";
 import { createNativePlaybackBackend } from "./backends/native-playback-backend";
 import type { PlayerConfig } from "./config";
 import type { PlaybackBackend } from "./types";
@@ -25,7 +25,9 @@ export type {
 } from "./types";
 
 export function getPlaybackBackendKind(): "mse" | "native" {
-  return isLGWebOS() ? "native" : "mse";
+  // 低版本安卓电视/盒子的 WebView 常缺失或只部分支持 MSE：此时回退 native
+  // 播放（<video src> 直播 HLS/HTTP 流），避免 MSE 链路静默黑屏。
+  return isLGWebOS() || !isMSEPlaybackSupported() ? "native" : "mse";
 }
 
 export function createPlaybackBackend(video: HTMLVideoElement, config?: Partial<PlayerConfig>): PlaybackBackend {

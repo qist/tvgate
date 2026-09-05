@@ -148,5 +148,10 @@ export function isMSEPlaybackSupported(): boolean {
   const managedMse = (self as unknown as Record<string, unknown>).ManagedMediaSource as
     | { isTypeSupported?: (type: string) => boolean }
     | undefined;
-  return !!(mse?.isTypeSupported?.(avcMime) || managedMse?.isTypeSupported?.(avcMime));
+  try {
+    return !!(mse?.isTypeSupported?.(avcMime) || managedMse?.isTypeSupported?.(avcMime));
+  } catch {
+    // 低版本 WebView 的 MSE 半实现可能在探测时抛异常 → 视为不支持，回退 native
+    return false;
+  }
 }
