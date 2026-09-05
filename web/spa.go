@@ -39,23 +39,40 @@ func servePlayerPage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-// ServeStandalonePlayer 返回独立播放入口 handler（如挂载在 /pp）：
+// 独立播放页（/pp）的公开资源前缀：页面资源经此路径服务，
+// 与隐藏的 web.path 完全解耦——否则 HTML 里的资源 URL 会把
+// 后台路径名暴露给任何打开播放页的访客。
+const standaloneAssetsPrefix = "/pp/assets/"
+
+// ServeStandalonePlayer 返回独立播放入口 handler（挂载在 /pp）：
 // 直接服务 player.html，不跳转后台路径——web.path 是隐藏路径，
 // 任何重定向都会经 Location 头把后台路径名暴露给访客。
-// 页面里的相对资源引用 ./assets/* 重写为 <webPath>assets/* 绝对路径，
-// 使页面可挂在任意公开路径下渲染（API 为根路径挂载，不受影响）。
-func ServeStandalonePlayer(webPath string) http.HandlerFunc {
+// 页面里的相对资源引用 ./assets/* 重写为 /pp/assets/* 公开路径，
+// 使页面不引用任何 web.path 下的资源（API 为根路径挂载，不受影响）。
+func ServeStandalonePlayer() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		data, err := distFS.ReadFile(playerIndexPath)
 		if err != nil {
 			http.Error(w, "播放器页面缺失，请先构建 ui/（make web-ui）", http.StatusNotFound)
 			return
 		}
-		html := strings.ReplaceAll(string(data), "./assets/", webPath+"assets/")
+		html := strings.ReplaceAll(string(data), "./assets/", standaloneAssetsPrefix)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store, must-revalidate")
 		_, _ = w.Write([]byte(html))
 	}
+}
+
+// ServePublicAssets 以公开路径服务 dist/assets（供 /pp/assets/ 等独立入口使用）。
+// 仅服务带内容 hash 的静态产物，不含入口 HTML，不泄露 web.path。
+func ServePublicAssets() http.HandlerFunc {
+	sub, err := fs.Sub(distFS, "dist/assets")
+	if err != nil {
+		return func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "前端资源缺失，请先构建 ui/（make web-ui）", http.StatusNotFound)
+		}
+	}
+	return http.FileServer(http.FS(sub)).ServeHTTP
 }
 
 // registerSPARoutes 注册 SPA 资源：/web/ 入口 + /web/assets/* 静态产物 + /web/player 播放器入口。

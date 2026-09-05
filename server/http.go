@@ -345,8 +345,10 @@ func RegisterJXAndProxyMux(mux *http.ServeMux, cfg *config.Config) {
 		mux.Handle("/api/player/catchup", SecurityHeaders(http.HandlerFunc(ph.ServeCatchup)))
 		mux.Handle("/player/", SecurityHeaders(http.HandlerFunc(ph.ServePull)))
 		// 旧版 /pp/ 独立播放页：直接服务 SPA 播放器（不跳转后台路径，
-		// 避免 Location 头泄露隐藏的 web.path）；/pp/<key> → /pp#<key> 深链（透传 query）
-		ppPage := web.ServeStandalonePlayer(cfg.Web.Path)
+		// 避免 Location 头泄露隐藏的 web.path）；页面资源走 /pp/assets/
+		// 公开路径，HTML 中不出现任何 web.path；/pp/<key> → /pp#<key> 深链
+		mux.Handle("/pp/assets/", SecurityHeaders(http.StripPrefix("/pp/assets/", web.ServePublicAssets())))
+		ppPage := web.ServeStandalonePlayer()
 		mux.Handle("/pp", SecurityHeaders(ppPage))
 		mux.Handle("/pp/", SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := strings.Trim(strings.TrimPrefix(r.URL.Path, "/pp/"), "/")
