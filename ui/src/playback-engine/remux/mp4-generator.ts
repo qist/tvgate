@@ -121,7 +121,7 @@ class MP4 {
     };
 
     for (const name in MP4.types) {
-      if (Object.hasOwn(MP4.types, name)) {
+      if (Object.prototype.hasOwnProperty.call(MP4.types, name)) {
         MP4.types[name] = [name.charCodeAt(0), name.charCodeAt(1), name.charCodeAt(2), name.charCodeAt(3)];
       }
     }

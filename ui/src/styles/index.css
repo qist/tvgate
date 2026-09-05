@@ -124,6 +124,8 @@
 }
 
 .player-viewport-height {
+  height: 100vh;
+  /* 旧 WebView 无 dvh 支持时兜底 */
   height: 100dvh;
 }
 

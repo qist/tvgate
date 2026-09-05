@@ -339,7 +339,7 @@ class Pipeline {
     }
 
     const firstSample = this._tsBitrateSamples[0];
-    const lastSample = this._tsBitrateSamples.at(-1);
+    const lastSample = this._tsBitrateSamples[this._tsBitrateSamples.length - 1];
     if (!firstSample || !lastSample) return;
     const elapsedPcr = lastSample.pcrBase - firstSample.pcrBase;
     const elapsedMediaMilliseconds = (elapsedPcr * 1000) / PCR_TIMESCALE;

@@ -218,7 +218,12 @@ export function getCurrentProgram(channelId: string, epgData: EPGData, time: Dat
   }
 
   // Use findLast to search backwards - more likely to hit recent/current programs
-  return programs.findLast((p) => p.start <= time && p.end > time) || null;
+  // 兼容旧 WebView：不用 Array.prototype.findLast（Chromium 97+）
+  for (let i = programs.length - 1; i >= 0; i--) {
+    const p = programs[i];
+    if (p.start <= time && p.end > time) return p;
+  }
+  return null;
 }
 
 /**

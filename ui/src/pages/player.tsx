@@ -1,3 +1,4 @@
+import "../lib/polyfills"; // 旧 WebView 兼容 polyfill，必须在业务代码前
 import { clsx } from "clsx";
 import { AlertTriangle, ListChecks, RefreshCw } from "lucide-react";
 import {

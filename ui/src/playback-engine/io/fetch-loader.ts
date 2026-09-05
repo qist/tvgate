@@ -247,7 +247,7 @@ class FetchLoader {
 
     const headers = new self.Headers();
     for (const key in seekConfig.headers) {
-      if (Object.hasOwn(seekConfig.headers, key)) {
+      if (Object.prototype.hasOwnProperty.call(seekConfig.headers, key)) {
         headers.append(key, seekConfig.headers[key]);
       }
     }

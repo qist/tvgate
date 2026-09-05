@@ -6,7 +6,7 @@ function normalizeCodec(codec: string | undefined): string {
     codec
       ?.trim()
       .toLowerCase()
-      .replaceAll(/[^a-z0-9]/g, "") ?? ""
+      .replace(/[^a-z0-9]/g, "") ?? ""
   );
 }
 
