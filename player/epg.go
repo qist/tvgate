@@ -53,6 +53,15 @@ type EPGBank struct {
 	loaded   bool
 	interval time.Duration
 	stop     chan struct{}
+	// 刷新循环状态：Reload 会反复调用 startRefresh，必须幂等，
+	// 否则每次 Reload 泄漏一个「周期拉取+解析 XMLTV」的 goroutine
+	// （update_interval 越短泄漏越快，最终并发解析吃满 CPU）。
+	refreshURL  string
+	refreshLive bool
+	// Load 去重：进行中标志 + 上次尝试时间（Reload 每次都 go Load，
+	// 节流 1 分钟避免 update_interval 很小时反复全量下载+解析 XMLTV）。
+	loading     bool
+	lastAttempt time.Time
 }
 
 func NewEPGBank() *EPGBank {
@@ -64,7 +73,22 @@ func NewEPGBank() *EPGBank {
 }
 
 // Load 下载（自动识别 gzip 魔数 0x1f 0x8b）并解析 XMLTV。
+// 去重：进行中跳过；1 分钟内已尝试过也跳过（Reload 每次都会触发 Load）。
 func (b *EPGBank) Load(rawURL string) {
+	b.mu.Lock()
+	if b.loading || time.Since(b.lastAttempt) < time.Minute {
+		b.mu.Unlock()
+		return
+	}
+	b.loading = true
+	b.lastAttempt = time.Now()
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		b.loading = false
+		b.mu.Unlock()
+	}()
+
 	client := httpclient.NewHTTPClient(&config.Cfg, nil)
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -104,13 +128,29 @@ func (b *EPGBank) startRefresh(rawURL string, interval time.Duration) {
 	if interval <= 0 {
 		interval = 2 * time.Hour
 	}
+	b.mu.Lock()
+	// 幂等：同 URL 同间隔且循环已在跑 → 直接返回（Reload 每次都会调到这里）
+	if b.refreshLive && b.refreshURL == rawURL && b.interval == interval {
+		b.mu.Unlock()
+		return
+	}
+	// URL 或间隔变化：停掉旧刷新循环，重新起一个
+	if b.stop != nil {
+		close(b.stop)
+	}
+	b.stop = make(chan struct{})
+	b.refreshURL = rawURL
 	b.interval = interval
+	b.refreshLive = true
+	stop := b.stop
+	b.mu.Unlock()
+
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {
-			case <-b.stop:
+			case <-stop:
 				return
 			case <-t.C:
 				b.Load(rawURL)
