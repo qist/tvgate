@@ -4,6 +4,15 @@
 
 ## Android (tvgate-android)
 
+### v3.1.1
+
+```
+1、player.android_autoplay 默认值落地 — 未配置（null）与 false 一致：启动停留在
+   信息界面；显式 true 才自动进入直播页（此前版本未配置即自动进入）
+2、内嵌服务端同步至 v3.1.1（解析型源 Referer/重试修复、UA 分组作用域、配置热加载
+   即时生效、深链编码标识、播放页黑屏 legacy 兼容等）
+```
+
 ### v3.1.0
 
 ```
