@@ -757,10 +757,8 @@ function VideoPlayerComponent({
     if (retryCount < retryBaseline + MAX_RETRIES) {
       setRetryCount(retryCount + 1);
       if (!decodingErrorRetry) {
-        console.log(`Retrying playback (attempt ${retryCount + 1 - retryBaseline}/${MAX_RETRIES})...`);
       } else {
         setRetryBaseline(retryBaseline + 1);
-        console.log(`Retrying playback due to decoding error...`);
       }
       isRetrySeekRef.current = true;
       if (onSeek) {
@@ -779,7 +777,6 @@ function VideoPlayerComponent({
 
     // Max retries reached, try fallback to next source
     if (channel && onSourceChange && activeSourceIndex + 1 < channel.sources.length) {
-      console.log("Falling back to next source...");
       onSourceChange(activeSourceIndex + 1);
       return;
     }
@@ -1065,7 +1062,6 @@ function VideoPlayerComponent({
     const activePlayer = slotPlayerRef(activeId).current ?? createPlayerForSlot(activeId);
     if (!activePlayer) return;
 
-    console.log("Loading segments...");
 
     if (stablePlaybackTimeoutRef.current) {
       window.clearTimeout(stablePlaybackTimeoutRef.current);
@@ -1225,7 +1221,6 @@ function VideoPlayerComponent({
 
     stablePlaybackTimeoutRef.current = window.setTimeout(() => {
       if (retryCount > retryBaseline) {
-        console.log(`Resetting accepted retry count after stable playback`);
         setRetryBaseline(retryCount);
       }
     }, 30000);
@@ -1287,7 +1282,6 @@ function VideoPlayerComponent({
 
     if (playMode === "live" && (mediaDead || behindLiveMs > staleLiveMs)) {
       // Dead session or stale buffer — rebuild the stream at the live edge
-      console.log("Reloading at live edge after background suspension");
       shouldAutoPlayRef.current = true;
       onSeek?.(new Date(), true);
       return;
@@ -1295,7 +1289,6 @@ function VideoPlayerComponent({
 
     if (mediaDead) {
       // Catchup: rebuild the stream at the current position
-      console.log("Reloading at current position after background suspension");
       shouldAutoPlayRef.current = true;
       const seekTime = mseToWallClock(currentVideoTimeRef.current, streamStartTime);
       onSeek?.(seekTime, isNearLiveWallClock(seekTime, liveSessionAnchor, streamStartTime));

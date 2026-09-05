@@ -8,6 +8,13 @@ const UNDERRUN_BACKOFF_STEP = 1;
 /** Upper bound for the adaptive latency increase (seconds). */
 const UNDERRUN_BACKOFF_MAX = 6;
 
+/** Maximum buffered-gap width the heal step will jump across (seconds). */
+const GAP_HEAL_MAX = 1.5;
+/** Retry budget per stall for gap healing (covers appends still in flight). */
+const GAP_HEAL_RETRIES = 8;
+/** Interval between gap-heal retries (ms). */
+const GAP_HEAL_RETRY_MS = 600;
+
 /** Forward buffer seconds ahead of currentTime within the containing range. */
 function forwardBufferAhead(video: HTMLMediaElement): number {
   const t = video.currentTime;
@@ -18,6 +25,37 @@ function forwardBufferAhead(video: HTMLMediaElement): number {
     }
   }
   return 0;
+}
+
+/**
+ * Jump the playhead across a hairline gap between buffered ranges. Segment
+ * boundaries can carry slightly discontinuous DTS (0.06-0.3s slits, larger
+ * after skipped segments); HTMLMediaElement never advances across them and
+ * stalls forever even though continuous data follows.
+ */
+function healBufferedGap(video: HTMLMediaElement): boolean {
+  const t = video.currentTime;
+  const buffered = video.buffered;
+  for (let i = 0; i < buffered.length; i++) {
+    if (t < buffered.start(i) || t > buffered.end(i)) {
+      continue;
+    }
+    if (i + 1 >= buffered.length) {
+      return false;
+    }
+    const gap = buffered.start(i + 1) - buffered.end(i);
+    if (gap > 0.001 && gap <= GAP_HEAL_MAX) {
+      const target = buffered.start(i + 1) + 0.001;
+      Log.w(
+        TAG,
+        `Healing buffered gap: playhead ${t.toFixed(3)} -> ${target.toFixed(3)} (gap ${gap.toFixed(3)}s)`,
+      );
+      video.currentTime = target;
+      return true;
+    }
+    return false;
+  }
+  return false;
 }
 
 /** Sets up live latency synchronization by adjusting playbackRate on timeupdate events. */
@@ -38,10 +76,42 @@ export function setupLiveSync(
   }
 
   let extraLatency = 0;
+  let gapHealTimer: ReturnType<typeof setTimeout> | null = null;
+  let gapHealTries = 0;
+
+  /** Retarget the gap-heal retry while a stall persists (appends may still be landing). */
+  function scheduleGapHeal(): void {
+    if (gapHealTries >= GAP_HEAL_RETRIES) return;
+    gapHealTries++;
+    if (gapHealTimer !== null) clearTimeout(gapHealTimer);
+    gapHealTimer = setTimeout(() => {
+      gapHealTimer = null;
+      if (video.paused || video.seeking || video.readyState >= 3) {
+        gapHealTries = 0;
+        return;
+      }
+      if (!healBufferedGap(video)) {
+        scheduleGapHeal();
+      } else {
+        gapHealTries = 0;
+      }
+    }, GAP_HEAL_RETRY_MS);
+  }
+
+  function resetGapHeal(): void {
+    gapHealTries = 0;
+    if (gapHealTimer !== null) {
+      clearTimeout(gapHealTimer);
+      gapHealTimer = null;
+    }
+  }
 
   function onTimeUpdate(): void {
     if (!config.liveSync) return;
     if (!canAdjustPlaybackRate()) return;
+
+    // Playhead advanced: any pending gap-heal attempt is no longer needed
+    resetGapHeal();
 
     const latency = getLiveEdgeLatency();
     if (latency === null) return;
@@ -71,6 +141,14 @@ export function setupLiveSync(
     // Seek/Go Live often fires waiting while data is still buffered ahead — not an underrun.
     if (video.seeking) return;
 
+    // Playhead may be stuck on a hairline buffered gap: heal it (with retries,
+    // since the chunk bridging the slit may still be appending) instead of
+    // stalling forever while continuous data sits in the following range.
+    if (gapHealTries === 0 && healBufferedGap(video)) {
+      return;
+    }
+    scheduleGapHeal();
+
     const lag = getLiveEdgeLatency();
     if (lag === null) return;
 
@@ -99,6 +177,7 @@ export function setupLiveSync(
     Log.v(TAG, "Video playback rate reset to 1, live sync disabled");
     video.removeEventListener("timeupdate", onTimeUpdate);
     video.removeEventListener("waiting", onWaiting);
+    resetGapHeal();
     video.playbackRate = 1;
   };
 }

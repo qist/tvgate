@@ -481,8 +481,13 @@ export class HlsSource implements SegmentSource {
   }
 
   private async refreshVideo(): Promise<void> {
-    // Per spec: reload after targetDuration; after an unchanged playlist, retry after half of it
-    const delayMs = (this.lastPlaylistHadNews ? this.targetDuration : this.targetDuration / 2) * 1000;
+    // Per spec: reload after targetDuration; after an unchanged playlist, retry after half of it.
+    // When the queue is nearly drained (small live windows of ~3 segments) waiting
+    // the full target duration drains the client buffer before the next top-up
+    // lands — refresh almost immediately instead.
+    const queued = this.segments.length - this.nextIndex;
+    const delayMs =
+      queued <= 1 ? 500 : (this.lastPlaylistHadNews ? this.targetDuration : this.targetDuration / 2) * 1000;
     await this.sleep(delayMs);
     if (this.destroyed) return;
 
