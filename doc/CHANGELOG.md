@@ -100,6 +100,30 @@
 
 ## 服务端 (tvgate)
 
+### v3.1.1
+
+```
+1、修复解析型源 403/垃圾内容 — Go 跟随重定向会自动把上一跳 URL 设为 Referer，
+   防盗链 CDN（腾讯云直播等）见外站 Referer 直接 403；播放器与代理拉流客户端
+   跟随重定向时剥离 Referer。上游响应可用性判定（非 2xx 或内容非 m3u8/TS/
+   MP4/FLV）失败自动清解析缓存重新解析，最多 3 次，对付解析脚本随机死链
+2、transport 强制 ForceAttemptHTTP2 — 自定义 DialContext/TLSClientConfig 会关闭
+   Go 自动 h2，ALPN 仅 http/1.1 的 TLS 指纹易被 CDN 风控拦截
+3、订阅 ua= 作用域修正 — 只作用于所在分组，组边界（#genre#）重置；修复文件头
+   ua= 跨组泄漏导致未配置分组被动继承、修改全局 player.ua 不生效的问题；
+   未配置 UA 的分组回落全局 player.ua；频道行尾 ,ua= 优先级不变
+4、player 配置热加载即时生效 — 改 ua/update_interval/订阅源立即重载订阅并重置
+   刷新计时（此前要等当前周期计时器到期，最长延迟一个周期）；
+   /api/player/channels、/api/player/epg 补 Cache-Control: no-cache
+5、播放器深链标识改为组名+频道名编码（12 位 hex，不暴露明文），比频道 key 更
+   稳定（换源不改链接）；历史链接（明文名字/频道 key）全部兼容
+6、配置页按钮统一"重新加载"+ 加载状态（转圈/禁用防连点），定时任务页残留
+   "重置"一并处理
+7、Android/Windows 版本升级入口隐藏、YAML 编辑器查找条等前端体验修复
+8、Docker 构建修复 — UI 阶段固定构建平台（node:20-alpine 无 riscv64 manifest）、
+   ui 产物路径修正
+```
+
 ### v3.1.0
 
 ```
