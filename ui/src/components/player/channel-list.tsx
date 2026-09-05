@@ -18,6 +18,9 @@ import type { Locale } from "../../lib/locale";
 import type { Channel } from "../../types/player";
 import { ChannelListItem } from "./channel-list-item";
 
+/** localStorage key remembering the last picked channel group across sessions. */
+const GROUP_STORAGE_KEY = "tvgate-player-channel-group";
+
 interface ChannelListProps {
   channels?: Channel[];
   groups?: string[];
@@ -109,9 +112,27 @@ function ChannelListComponent({
   const t = usePlayerTranslation(locale);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  // Remember the last picked group across sessions (falls back to "All" when absent/stale)
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(() => {
+    try {
+      return window.localStorage.getItem(GROUP_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
   /** Group grid is collapsed by default (saves space on phones; friendlier for TV remote navigation). */
   const [groupsOpen, setGroupsOpen] = useState(false);
+  // The remembered group may no longer exist after a subscription change — fall back to "All"
+  useEffect(() => {
+    if (selectedGroup && groups && !groups.includes(selectedGroup)) {
+      setSelectedGroup(null);
+      try {
+        window.localStorage.removeItem(GROUP_STORAGE_KEY);
+      } catch {
+        /* storage unavailable */
+      }
+    }
+  }, [groups, selectedGroup]);
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const deferredSelectedGroup = useDeferredValue(selectedGroup);
   const currentChannelRef = useRef<HTMLButtonElement>(null);
@@ -264,6 +285,15 @@ function ChannelListComponent({
                   key={group ?? "all"}
                   onClick={() => {
                     setSelectedGroup(group);
+                    try {
+                      if (group === null) {
+                        window.localStorage.removeItem(GROUP_STORAGE_KEY);
+                      } else {
+                        window.localStorage.setItem(GROUP_STORAGE_KEY, group);
+                      }
+                    } catch {
+                      /* storage unavailable */
+                    }
                     setGroupsOpen(false);
                   }}
                   onFocus={(e) => e.currentTarget.scrollIntoView({ block: "nearest" })}
