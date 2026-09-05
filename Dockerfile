@@ -6,8 +6,10 @@
 #       PHP 脚本从磁盘读取，默认目录 /www（部署时把 PHP 代码放该路径）。
 # ========================================================
 # Stage: ui —— React 管理后台（Vite 构建，产物给 go:embed）
+# 固定 BUILDPLATFORM：node:20-alpine 无 riscv64 等目标平台 manifest，
+# 前端产物与目标架构无关，只需在构建机平台构建一次再 COPY 到各目标平台。
 # ========================================================
-FROM node:20-alpine AS ui
+FROM --platform=$BUILDPLATFORM node:20-alpine AS ui
 WORKDIR /ui
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci
