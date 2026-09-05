@@ -1,17 +1,19 @@
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-/** 删除确认弹窗：卡片删除前确认，防止误点立即删除 */
+/** 通用确认弹窗（默认删除确认样式）：卡片删除/危险操作前确认，防止误点 */
 export function ConfirmDialog({
   title,
   description,
   confirmText = "删除",
+  variant = "destructive",
   onConfirm,
   onClose,
 }: {
   title: string;
   description?: string;
   confirmText?: string;
+  variant?: "default" | "destructive";
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -30,7 +32,7 @@ export function ConfirmDialog({
           <Button variant="outline" size="sm" onClick={onClose}>
             取消
           </Button>
-          <Button variant="destructive" size="sm" onClick={onConfirm}>
+          <Button variant={variant} size="sm" onClick={onConfirm}>
             {confirmText}
           </Button>
         </div>

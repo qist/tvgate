@@ -40,7 +40,8 @@ export function GithubPage() {
     refresh();
   }, [refresh]);
 
-  // 升级状态轮询：失败/成功主动提示（升级会重启服务，重启后版本号变化即成功）
+  // 升级状态轮询：失败/成功主动提示（升级会重启服务，重启后由新进程上报 idle）
+  // 成功判定：版本号变化，或达到目标版本（兼容同版本重装——版本号不变的升级）
   useEffect(() => {
     if (!upgrading) return;
     const t = setInterval(() => {
@@ -49,7 +50,7 @@ export function GithubPage() {
         if (st.state === "error" || st.state === "panic") {
           notify("err", `升级失败：${st.message || st.state}`);
           setUpgrading(null);
-        } else if (st.state === "idle" && st.version && st.version !== preUpgradeVersionRef.current) {
+        } else if (st.state === "idle" && (st.version === upgrading || (st.version && st.version !== preUpgradeVersionRef.current))) {
           notify("ok", `升级成功，当前版本 ${st.version}`);
           setUpgrading(null);
           void refresh();
@@ -105,7 +106,7 @@ export function GithubPage() {
     const i = UPGRADE_STEPS.findIndex(([s]) => s === statusState);
     return i === -1 ? 0 : i;
   })();
-  const upgradeDone = statusState === "idle" && !!upgrading && !!upStatus?.version && upStatus.version !== preUpgradeVersionRef.current;
+  const upgradeDone = statusState === "idle" && !!upgrading && (!!upStatus?.version && (upStatus.version === upgrading || upStatus.version !== preUpgradeVersionRef.current));
   const upgradePct = upgradeDone ? 100 : Math.round(((curStepIdx + 1) / UPGRADE_STEPS.length) * 100);
 
   return (
@@ -164,6 +165,8 @@ export function GithubPage() {
         <ConfirmDialog
           title="确认升级版本"
           description={`确定要升级到版本 ${confirmVer} 吗？升级过程中服务会短暂重启（下载 → 备份 → 解压 → 重启），期间播放与管理界面会短暂不可用。`}
+          confirmText="确定升级"
+          variant="default"
           onConfirm={() => doUpdate(confirmVer)}
           onClose={() => setConfirmVer(null)}
         />
