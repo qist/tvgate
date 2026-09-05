@@ -332,7 +332,7 @@ function VideoPlayerComponent({
   const setSlotRenderState = (slotId: SlotId, renderState: PlayerRenderState) =>
     setSlotRenderStates((previousStates) =>
       previousStates[slotId].active === renderState.active &&
-      previousStates[slotId].deinterlacing === renderState.deinterlacing
+        previousStates[slotId].deinterlacing === renderState.deinterlacing
         ? previousStates
         : { ...previousStates, [slotId]: renderState },
     );
@@ -733,9 +733,8 @@ function VideoPlayerComponent({
         const status = [playerError.code, playerError.info]
           .filter((value) => value !== undefined && value !== "" && value !== -1)
           .join(" ");
-        errorMessage = `${t("upstreamRequestFailed")}${isHttpStatusError && status ? `: HTTP ${status}` : ""}${
-          playerError.url ? ` (${playerError.url})` : ""
-        }`;
+        errorMessage = `${t("upstreamRequestFailed")}${isHttpStatusError && status ? `: HTTP ${status}` : ""}${playerError.url ? ` (${playerError.url})` : ""
+          }`;
         errorDisplay = {
           message: t("upstreamRequestFailed"),
           description: t("upstreamRequestFailedDescription"),
@@ -1183,6 +1182,18 @@ function VideoPlayerComponent({
     handleLoadSegments(segments);
   }, [segments]);
 
+  // 返回直播（catchup → live）：错误重试路径可能设置了 segments 加载跳过标记
+  // 并预约了回看地址的重载（ts2hls 回看列表是 live 型、会滚动"成功"），导致
+  // 返回直播后永远播回看片段。这里清除标记并强制硬切回直播分片。
+  const prevPlayModeRef = useRef(playMode);
+  useEffect(() => {
+    if (prevPlayModeRef.current === "catchup" && playMode === "live") {
+      skipNextSegmentsLoadRef.current = false;
+      handleLoadSegments(segments, true);
+    }
+    prevPlayModeRef.current = playMode;
+  }, [playMode, segments]);
+
   const handleVideoCanPlay = useEffectEvent((slotId: SlotId) => {
     if (slotId !== getActiveSlotId() && pendingTransitionRef.current?.slotId !== slotId) return;
     setIsLoading(false);
@@ -1451,7 +1462,7 @@ function VideoPlayerComponent({
   useEffect(() => {
     const attachSlot = (slotId: SlotId) => {
       const video = (slotId === "a" ? slotAVideoRef : slotBVideoRef).current;
-      if (!video) return () => {};
+      if (!video) return () => { };
 
       const listeners: Array<[string, EventListener]> = [
         ["seeked", () => handleVideoTimelineChange(slotId)],
@@ -1811,11 +1822,10 @@ function VideoPlayerComponent({
         <PlayerTopLeftOverlay
           visible={showControls || showLoading}
           loading={showLoading}
-          loadingText={`${
-            channel && channel.sources.length > 1
+          loadingText={`${channel && channel.sources.length > 1
               ? `[${channel.sources[activeSourceIndex]?.label || `${t("source")} ${activeSourceIndex + 1}`}] `
               : ""
-          }${t("loadingVideo")}${retryCount - retryBaseline > 0 ? ` (${retryCount - retryBaseline}/${MAX_RETRIES})` : ""}`}
+            }${t("loadingVideo")}${retryCount - retryBaseline > 0 ? ` (${retryCount - retryBaseline}/${MAX_RETRIES})` : ""}`}
         />
       )}
 
