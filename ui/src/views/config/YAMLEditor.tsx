@@ -256,7 +256,7 @@ export function YAMLEditorPage() {
 
       {needElevate && <ElevateDialog onDone={onElevated} />}
 
-      <Card className="relative overflow-hidden">
+      <Card className="relative h-[70vh] overflow-hidden">
         {/* 查找条：输入只更新计数与高亮，Enter/箭头跳转，Esc 关闭 */}
         {findOpen && (
           <div className="absolute top-2 right-3 z-10 flex items-center gap-1.5 rounded-lg border bg-background/95 px-2 py-1.5 shadow-md backdrop-blur">
