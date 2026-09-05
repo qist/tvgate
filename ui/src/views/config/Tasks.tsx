@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, CircleDashed, Plus, Play, Pencil, Trash2, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AsyncActionButton } from "@/components/config/async-action-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -294,10 +295,10 @@ export function TasksPage() {
 
       {shown.length > 0 && (
         <div className="flex gap-2">
-          <Button onClick={save}>保存全部配置</Button>
-          <Button variant="secondary" onClick={refresh}>
-            重置
-          </Button>
+          <AsyncActionButton action={save} busyText="保存中…">保存全部配置</AsyncActionButton>
+          <AsyncActionButton variant="secondary" action={refresh} busyText="加载中…">
+            重新加载
+          </AsyncActionButton>
         </div>
       )}
     </div>

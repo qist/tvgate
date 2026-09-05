@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link2, Tv, Save } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { AsyncActionButton } from "@/components/config/async-action-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -76,8 +76,8 @@ export function PlayerPage() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">H5 播放器配置</h1>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" onClick={refresh}>重新加载</Button>
-          <Button onClick={save}><Save className="mr-1 h-4 w-4" />保存配置</Button>
+          <AsyncActionButton variant="secondary" action={refresh} busyText="加载中…">重新加载</AsyncActionButton>
+          <AsyncActionButton action={save} busyText="保存中…"><Save className="mr-1 h-4 w-4" />保存配置</AsyncActionButton>
           <button
             type="button"
             onClick={copyExternal}

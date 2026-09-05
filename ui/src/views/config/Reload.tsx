@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { AsyncActionButton } from "@/components/config/async-action-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,8 +45,8 @@ export function ReloadPage() {
         </CardContent>
       </Card>
       <div className="flex gap-2">
-        <Button onClick={save}>保存</Button>
-        <Button variant="secondary" onClick={refresh}>重置</Button>
+        <AsyncActionButton action={save} busyText="保存中…">保存</AsyncActionButton>
+        <AsyncActionButton variant="secondary" action={refresh} busyText="加载中…">重新加载</AsyncActionButton>
       </div>
     </div>
   );

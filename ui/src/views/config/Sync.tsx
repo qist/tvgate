@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AsyncActionButton } from "@/components/config/async-action-button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -132,9 +133,9 @@ export function SyncPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">仓库同步</h1>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={load}>
-            <RefreshCw className="mr-1 h-4 w-4" /> 重置
-          </Button>
+          <AsyncActionButton variant="outline" size="sm" action={load} busyText="加载中…">
+            <RefreshCw className="mr-1 h-4 w-4" /> 重新加载
+          </AsyncActionButton>
           <Button size="sm" onClick={addEntry}>
             <Plus className="mr-1 h-4 w-4" /> 添加仓库
           </Button>

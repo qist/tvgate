@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Pencil, Trash2, X, GripVertical, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AsyncActionButton } from "@/components/config/async-action-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -88,8 +89,8 @@ export function ProxyGroupsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">代理组</h1>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={refresh}>重置</Button>
-          <Button onClick={save}><Save className="mr-1 h-4 w-4" />保存全部配置</Button>
+          <AsyncActionButton variant="secondary" action={refresh} busyText="加载中…">重新加载</AsyncActionButton>
+          <AsyncActionButton action={save} busyText="保存中…"><Save className="mr-1 h-4 w-4" />保存全部配置</AsyncActionButton>
           <Button onClick={addGroup}>
             <Plus className="mr-1 h-4 w-4" /> 添加代理组
           </Button>
