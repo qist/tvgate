@@ -913,11 +913,17 @@ class Pipeline {
       this._recordTsPcr(pcrBase, bytePosition, discontinuity);
     };
 
-    // Set up software audio decode callback when MP2 WASM URL is configured
-    if (this._config.wasmDecoders.mp2) {
+    // Set up software audio decode callbacks: MP2 always soft-decodes when a
+    // wasm URL is configured; AC-3/E-AC-3 additionally needs the demuxer's
+    // soft-decode switch (the wasm only provides it when MSE can't decode
+    // ac-3 natively — decided on the main thread).
+    if (this._config.wasmDecoders.mp2 || this._config.wasmDecoders.ac3) {
       demuxer.onRawAudioData = (frame) => {
         this._handleRawAudioFrame(frame);
       };
+    }
+    if (this._config.wasmDecoders.ac3) {
+      demuxer.ac3SoftDecode = true;
     }
 
     this._remuxer.bindDataSource(
@@ -1205,14 +1211,23 @@ class Pipeline {
     }
   }
 
-  // ---- MP2 software audio decode ----
+  // ---- Software audio decode (MP2 / AC-3 / E-AC-3) ----
 
-  private _handleRawAudioFrame(frame: { codec: "mp2"; data: Uint8Array; pts: number }): void {
-    // Lazily create WorkerAudioDecoder on first raw audio frame
+  private _workerDecoderCodec: "mp2" | "ac3" | "eac3" | null = null;
+
+  private _handleRawAudioFrame(frame: { codec: "mp2" | "ac3" | "eac3"; data: Uint8Array; pts: number }): void {
+    // Lazily create (or re-create on codec change) the WorkerAudioDecoder
+    if (this._workerAudioDecoder && this._workerDecoderCodec !== frame.codec) {
+      this._workerAudioDecoder.destroy();
+      this._workerAudioDecoder = null;
+      this._workerAudioDecoderInitPromise = null;
+    }
     if (!this._workerAudioDecoder) {
-      const mp2Url = this._config.wasmDecoders.mp2;
-      if (!mp2Url) return;
-      this._workerAudioDecoder = new WorkerAudioDecoder(mp2Url);
+      const url =
+        frame.codec === "mp2" ? this._config.wasmDecoders.mp2 : this._config.wasmDecoders.ac3;
+      if (!url) return;
+      this._workerAudioDecoder = new WorkerAudioDecoder(url, frame.codec);
+      this._workerDecoderCodec = frame.codec;
       this._workerAudioDecoderInitPromise = this._workerAudioDecoder.initDecoder();
     }
 

@@ -92,21 +92,21 @@ type MP3AudioMetadata = {
 };
 type AudioData =
   | {
-      codec: "aac";
-      data: AACFrame;
-    }
+    codec: "aac";
+    data: AACFrame;
+  }
   | {
-      codec: "ac-3";
-      data: AC3Frame;
-    }
+    codec: "ac-3";
+    data: AC3Frame;
+  }
   | {
-      codec: "ec-3";
-      data: EAC3Frame;
-    }
+    codec: "ec-3";
+    data: EAC3Frame;
+  }
   | {
-      codec: "mp3";
-      data: MP3Data;
-    };
+    codec: "mp3";
+    data: MP3Data;
+  };
 
 const VIDEO_PID_KEYS: readonly CommonPidKey[] = ["h264", "h265"];
 const AUDIO_PID_KEYS: readonly CommonPidKey[] = ["adts_aac", "loas_aac", "ac3", "eac3", "mp3"];
@@ -126,8 +126,15 @@ class TSDemuxer {
   public onDataAvailable: OnDataAvailableCallback | null = null;
   public onTrackDiscontinuity: OnTrackDiscontinuityCallback | null = null;
   public onPcr: OnPcrCallback | null = null;
-  /** Software audio decode support (MP2) */
-  public onRawAudioData: ((frame: { codec: "mp2"; data: Uint8Array; pts: number }) => void) | null = null;
+  /** Software audio decode support (MP2 / AC-3 / E-AC-3). For AC-3/E-AC-3 the
+   *  branch only activates when `ac3SoftDecode` is enabled AND the wasm decoder
+   *  is wired up (set together with onRawAudioData by the pipeline). */
+  public onRawAudioData: ((frame: { codec: "mp2" | "ac3" | "eac3"; data: Uint8Array; pts: number }) => void) | null =
+    null;
+  /** AC-3/E-AC-3 software decode switch: when true (and onRawAudioData set),
+   *  Dolby payloads bypass MSE remuxing — MSE on most browsers can't decode
+   *  ac-3, so the audio would be silently dropped otherwise. */
+  public ac3SoftDecode = false;
 
   private ts_packet_size_: number;
   private sync_offset_: number;
@@ -151,11 +158,11 @@ class TSDemuxer {
     pps: H264NaluAVC1 | H265NaluHVC1 | undefined;
     details: Record<string, unknown>;
   } = {
-    vps: undefined,
-    sps: undefined,
-    pps: undefined,
-    details: {} as Record<string, unknown>,
-  };
+      vps: undefined,
+      sps: undefined,
+      pps: undefined,
+      details: {} as Record<string, unknown>,
+    };
 
   private audio_metadata_: AACAudioMetadata | AC3AudioMetadata | EAC3AudioMetadata | MP3AudioMetadata = {
     codec: undefined as unknown as "aac",
@@ -182,7 +189,7 @@ class TSDemuxer {
   private video_discontinuity_pending_ = false;
   private loas_previous_frame: LOASAACFrame | null = null;
 
-  private soft_decode_audio_codec_: "mp2" | null = null;
+  private soft_decode_audio_codec_: "mp2" | "ac3" | "eac3" | null = null;
   private audio_drop_until_sync_ = false;
   private drop_video_until_keyframe_ = true;
 
@@ -270,7 +277,7 @@ class TSDemuxer {
     while (sync_offset === -1) {
       const scan_window = Math.min(1000, data.byteLength - 3 * ts_packet_size);
 
-      for (let i = 0; i < scan_window; ) {
+      for (let i = 0; i < scan_window;) {
         // sync_byte should all be 0x47
         if (data[i] === 0x47 && data[i + ts_packet_size] === 0x47 && data[i + 2 * ts_packet_size] === 0x47) {
           sync_offset = i;
@@ -582,7 +589,7 @@ class TSDemuxer {
         }
       }
 
-      for (let i = 1 + pointer_field; i < data.byteLength; ) {
+      for (let i = 1 + pointer_field; i < data.byteLength;) {
         const table_id = data[i + 0];
         if (table_id === 0xff) {
           break;
@@ -914,7 +921,7 @@ class TSDemuxer {
     const info_start_index = 12 + program_info_length;
     const info_bytes = section_length - 9 - program_info_length - 4;
 
-    for (let i = info_start_index; i < info_start_index + info_bytes; ) {
+    for (let i = info_start_index; i < info_start_index + info_bytes;) {
       const stream_type = data[i] as StreamType;
       const elementary_PID = ((data[i + 1] & 0x1f) << 8) | data[i + 2];
       const ES_info_length = ((data[i + 3] & 0x0f) << 8) | data[i + 4];
@@ -948,7 +955,7 @@ class TSDemuxer {
         pmt.common_pids.mp3 = elementary_PID;
       } else if (stream_type === StreamType.kPESPrivateData && ES_info_length > 0) {
         // parse descriptors to detect DVB AC-3 / E-AC-3 in private PES
-        for (let offset = i + 5; offset < i + 5 + ES_info_length; ) {
+        for (let offset = i + 5; offset < i + 5 + ES_info_length;) {
           const tag = data[offset + 0];
           const length = data[offset + 1];
           if (tag === 0x05) {
@@ -1207,7 +1214,7 @@ class TSDemuxer {
       Log.v(
         this.TAG,
         `Video: Coded Resolution changed from ` +
-          `${old_codec_size.width}x${old_codec_size.height} to ${new_codec_size.width}x${new_codec_size.height}`,
+        `${old_codec_size.width}x${old_codec_size.height} to ${new_codec_size.width}x${new_codec_size.height}`,
       );
       return true;
     }
@@ -1625,6 +1632,38 @@ class TSDemuxer {
       return;
     }
 
+    // AC-3 软解路径：浏览器 MSE 无法解码 ac-3 时（ac3SoftDecode 由 pipeline
+    // 按 wasm 配置与浏览器能力预先决定），Dolby payload 整段交给 WASM 解码器
+    // ——帧跨 PES 由解码器内部 carry，时间轴沿用 silent AAC 机制（remuxer
+    // 按 video DTS 生成静音帧维持 MSE 时钟）。仅在帧头对齐的 payload 上启动，
+    // 后续 payload 可能从帧中间开始，直接交给解码器拼接。
+    if (this.ac3SoftDecode && this.onRawAudioData) {
+      if (data.length < 2 || data[0] !== 0x0b || data[1] !== 0x77) {
+        // 未对齐（帧跨 PES）：丢弃直到帧头对齐
+        return;
+      }
+      const head_parser = new AC3Parser(data);
+      const head_frame = head_parser.readNextAC3Frame();
+      if (head_frame == null) {
+        return;
+      }
+      if (this.soft_decode_audio_codec_ == null) {
+        this.soft_decode_audio_codec_ = "ac3";
+        Log.i(this.TAG, `AC-3 audio detected, enabling software decode`);
+      }
+      const sample = { codec: "ac-3", data: head_frame } as const;
+      if (this.audio_init_segment_dispatched_ === false) {
+        this.setAC3AudioMetadata(head_frame);
+        this.dispatchAudioInitSegment(sample);
+      } else if (this.detectAudioMetadataChange(sample)) {
+        this.dispatchAudioMediaSegment();
+        this.setAC3AudioMetadata(head_frame);
+        this.dispatchAudioInitSegment(sample);
+      }
+      this.onRawAudioData({ codec: "ac3", data, pts: base_pts_ms });
+      return;
+    }
+
     const adts_parser = new AC3Parser(data);
     let ac3_frame: AC3Frame | null = null;
     let sample_pts_ms = base_pts_ms;
@@ -1723,6 +1762,33 @@ class TSDemuxer {
       }
     } else if (pts === undefined) {
       Log.w(this.TAG, `EAC3: Unknown pts`);
+      return;
+    }
+
+    // E-AC-3 软解路径：同 parseAC3Payload 的 AC-3 软解分支
+    if (this.ac3SoftDecode && this.onRawAudioData) {
+      if (data.length < 2 || data[0] !== 0x0b || data[1] !== 0x77) {
+        return;
+      }
+      const head_parser = new EAC3Parser(data);
+      const head_frame = head_parser.readNextEAC3Frame();
+      if (head_frame == null) {
+        return;
+      }
+      if (this.soft_decode_audio_codec_ == null) {
+        this.soft_decode_audio_codec_ = "eac3";
+        Log.i(this.TAG, `E-AC-3 audio detected, enabling software decode`);
+      }
+      const sample = { codec: "ec-3", data: head_frame } as const;
+      if (this.audio_init_segment_dispatched_ === false) {
+        this.setEAC3AudioMetadata(head_frame);
+        this.dispatchAudioInitSegment(sample);
+      } else if (this.detectAudioMetadataChange(sample)) {
+        this.dispatchAudioMediaSegment();
+        this.setEAC3AudioMetadata(head_frame);
+        this.dispatchAudioInitSegment(sample);
+      }
+      this.onRawAudioData({ codec: "eac3", data, pts: base_pts_ms });
       return;
     }
 
@@ -1933,7 +1999,7 @@ class TSDemuxer {
         Log.v(
           this.TAG,
           `AAC: AudioObjectType changed from ` +
-            `${this.audio_metadata_.audio_object_type} to ${frame.audio_object_type}`,
+          `${this.audio_metadata_.audio_object_type} to ${frame.audio_object_type}`,
         );
         return true;
       }
@@ -1942,7 +2008,7 @@ class TSDemuxer {
         Log.v(
           this.TAG,
           `AAC: SamplingFrequencyIndex changed from ` +
-            `${this.audio_metadata_.sampling_freq_index} to ${frame.sampling_freq_index}`,
+          `${this.audio_metadata_.sampling_freq_index} to ${frame.sampling_freq_index}`,
         );
         return true;
       }
@@ -1951,7 +2017,7 @@ class TSDemuxer {
         Log.v(
           this.TAG,
           `AAC: Channel configuration changed from ` +
-            `${this.audio_metadata_.channel_config} to ${frame.channel_config}`,
+          `${this.audio_metadata_.channel_config} to ${frame.channel_config}`,
         );
         return true;
       }
@@ -1961,7 +2027,7 @@ class TSDemuxer {
         Log.v(
           this.TAG,
           `AC3: Sampling Frequency changed from ` +
-            `${this.audio_metadata_.sampling_frequency} to ${frame.sampling_frequency}`,
+          `${this.audio_metadata_.sampling_frequency} to ${frame.sampling_frequency}`,
         );
         return true;
       }
@@ -1970,7 +2036,7 @@ class TSDemuxer {
         Log.v(
           this.TAG,
           `AC3: Bit Stream Identification changed from ` +
-            `${this.audio_metadata_.bit_stream_identification} to ${frame.bit_stream_identification}`,
+          `${this.audio_metadata_.bit_stream_identification} to ${frame.bit_stream_identification}`,
         );
         return true;
       }
@@ -1992,7 +2058,7 @@ class TSDemuxer {
         Log.v(
           this.TAG,
           `AC3: Low Frequency Effects Channel On changed from ` +
-            `${this.audio_metadata_.low_frequency_effects_channel_on} to ${frame.low_frequency_effects_channel_on}`,
+          `${this.audio_metadata_.low_frequency_effects_channel_on} to ${frame.low_frequency_effects_channel_on}`,
         );
         return true;
       }
@@ -2002,7 +2068,7 @@ class TSDemuxer {
         Log.v(
           this.TAG,
           `EAC3: Sampling Frequency changed from ` +
-            `${this.audio_metadata_.sampling_frequency} to ${frame.sampling_frequency}`,
+          `${this.audio_metadata_.sampling_frequency} to ${frame.sampling_frequency}`,
         );
         return true;
       }
@@ -2011,7 +2077,7 @@ class TSDemuxer {
         Log.v(
           this.TAG,
           `EAC3: Bit Stream Identification changed from ` +
-            `${this.audio_metadata_.bit_stream_identification} to ${frame.bit_stream_identification}`,
+          `${this.audio_metadata_.bit_stream_identification} to ${frame.bit_stream_identification}`,
         );
         return true;
       }
@@ -2033,7 +2099,7 @@ class TSDemuxer {
         Log.v(
           this.TAG,
           `EAC3: Low Frequency Effects Channel On changed from ` +
-            `${this.audio_metadata_.low_frequency_effects_channel_on} to ${frame.low_frequency_effects_channel_on}`,
+          `${this.audio_metadata_.low_frequency_effects_channel_on} to ${frame.low_frequency_effects_channel_on}`,
         );
         return true;
       }

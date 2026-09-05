@@ -454,7 +454,9 @@ export class PCMAudioPlayer {
     }
     this.stretcherLoading = true;
 
-    const wasmUrl = this.config.wasmDecoders.mp2;
+    // WasmStretcher（wsola 变速）依赖解码 wasm 内编入的 wsola 模块：
+    // MP2 用 mp2 wasm；AC-3 软解场景下 mp2 wasm 可能未配置，回落 ac3 wasm
+    const wasmUrl = this.config.wasmDecoders.mp2 ?? this.config.wasmDecoders.ac3;
     const promise = wasmUrl
       ? WasmStretcher.create(wasmUrl, chunk.sampleRate, chunk.channels)
       : Promise.reject(new Error("MP2 WASM URL is not configured"));

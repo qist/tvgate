@@ -13,12 +13,31 @@ function resolveConfig(config?: Partial<PlayerConfig>): PlayerConfig {
   fullConfig.logLevel = Log.LOG_LEVEL;
 
   // Resolve WASM URLs to absolute so they work inside inline blob workers.
-  if (fullConfig.wasmDecoders.mp2) {
-    fullConfig.wasmDecoders = {
-      ...fullConfig.wasmDecoders,
-      mp2: new URL(fullConfig.wasmDecoders.mp2, document.baseURI).href,
-    };
+  const wasmDecoders: PlayerConfig["wasmDecoders"] = { ...fullConfig.wasmDecoders };
+  if (wasmDecoders.mp2) {
+    wasmDecoders.mp2 = new URL(wasmDecoders.mp2, document.baseURI).href;
   }
+  // AC-3 wasm 只在浏览器 MSE 无法原生解码 ac-3 时启用：原生支持的平台
+  // （部分 Android TV / Edge）走 MSE remux 路径零成本。E-AC-3 检测包含在
+  // ac-3 决策里（同一 wasm 提供）。
+  if (wasmDecoders.ac3) {
+    const MSE = (self as unknown as Record<string, unknown>).MediaSource as
+      | { isTypeSupported?: (type: string) => boolean }
+      | undefined;
+    const managedMse = (self as unknown as Record<string, unknown>).ManagedMediaSource as
+      | { isTypeSupported?: (type: string) => boolean }
+      | undefined;
+    const nativeAc3 =
+      !!MSE?.isTypeSupported?.('audio/mp4; codecs="ac-3"') || !!managedMse?.isTypeSupported?.('audio/mp4; codecs="ac-3"');
+    const nativeEac3 =
+      !!MSE?.isTypeSupported?.('audio/mp4; codecs="ec-3"') || !!managedMse?.isTypeSupported?.('audio/mp4; codecs="ec-3"');
+    if (nativeAc3 && nativeEac3) {
+      delete wasmDecoders.ac3;
+    } else {
+      wasmDecoders.ac3 = new URL(wasmDecoders.ac3, document.baseURI).href;
+    }
+  }
+  fullConfig.wasmDecoders = wasmDecoders;
 
   return fullConfig;
 }
