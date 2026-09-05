@@ -13,11 +13,15 @@
 2、消除手机/电视白色元素 — 窗口背景/状态栏/导航栏统一深色 #0D1117；WebView 底色压黑且每次
    导航重新压黑；document-start 脚本预置播放器 dark 主题（H5 侧 localStorage 为裸字符串
    比较，不能带 JSON 引号），浅色系统下不再出现白色顶栏
-3、CI 改为仅上传 artifact — 移除 GitHub Release 步骤（权限降为 contents: read），新增
-   setup-node（Node 20）；注意在线更新依赖 releases/latest，无 Release 时检测将静默跳过
+3、CI 上传 artifact 并创建 GitHub Release — 构建产物（APK 命名 TVGate-<版本>-<abi>.apk）
+   发布到对应版本 Release，App 在线更新（依赖 releases/latest）可检测新版本并在线升级；
+   新增 setup-node（Node 20）
 4、build-android.sh 补齐 Web 前端构建 — web/dist 不进 git（.gitignore 只留 .gitkeep），
    go:embed 缺产物时二进制内为占位页（管理后台/直播播放器均不可用）；现编译 Go 前自动
    npm 构建（ui 源码比 .built 标记新才重建；npm 缺失直接报错退出）
+5、支持 player.android_autoplay 标记位 — false 时启动停留在信息界面不自动打开直播页
+   （Web 后台播放器页可开关）；修复返回键无法退出播放页（返回统一走 onBackPressed：
+   HTML5 全屏 → 退播放页 → WebView 历史 → 退后台，退出播放页清空历史防止再次导回）
 ```
 
 ### v3.0.10
