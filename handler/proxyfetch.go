@@ -105,6 +105,8 @@ func FetchViaProxyGroup(ctx context.Context, targetURL string, header http.Heade
 				}
 			}
 			logger.LogPrintf("[proxyfetch] ↪️ 跟随重定向: %v -> %v", prev, req.URL)
+			// 剥离 Referer：防盗链 CDN 会因外站 Referer 403，且泄露中间解析链
+			req.Header.Del("Referer")
 			return nil
 		}
 

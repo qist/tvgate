@@ -1,6 +1,7 @@
 package player
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/md5"
@@ -84,6 +85,9 @@ func NewHandler(mgr *Manager) *Handler {
 		if len(via) >= 10 {
 			return fmt.Errorf("too many redirects")
 		}
+		// 剥离 Referer：Go 会自动把上一跳 URL 设为 Referer，
+		// 带 Referer 访问部分 CDN（如腾讯云直播防盗链）会 403，且泄露中间解析链
+		req.Header.Del("Referer")
 		return nil
 	}
 	sc.Timeout = 0
@@ -534,20 +538,52 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 		return resp, nil
 	}
 
-	resp, err := doFetch(abs)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return // 客户端断开
+	// 上游解析型源（第三方 php 302）不稳定：偶发分流到失效备用链接（返回
+	// favicon/HTML 等非媒体内容）或 CDN 风控 403。先判定响应可用性，无效则
+	// 重新解析重试（最多 3 次），避免把垃圾内容透传给播放器报"格式不支持"。
+	usable := func(resp *http.Response) (bool, int, string, string) {
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			return false, resp.StatusCode, "", ""
 		}
-		logger.LogPrintf("[player] upstream fetch error key=%s abs=%s err=%v", ch.Key, abs, err)
-		http.Error(w, "upstream fetch failed: "+err.Error(), http.StatusBadGateway)
-		return
+		br := bufio.NewReader(resp.Body)
+		head, _ := br.Peek(16)
+		resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(head), br))
+		trimmed := bytes.TrimLeft(head, " \t\r\n")
+		final := ""
+		if resp.Request != nil && resp.Request.URL != nil {
+			final = resp.Request.URL.String()
+		}
+		switch {
+		case bytes.HasPrefix(trimmed, []byte("#EXT")):
+			return true, resp.StatusCode, string(head), final
+		case len(head) > 0 && head[0] == 0x47:
+			return true, resp.StatusCode, "TS", final
+		case len(head) >= 12 && string(head[4:8]) == "ftyp":
+			return true, resp.StatusCode, "MP4", final
+		case bytes.HasPrefix(head, []byte("FLV")):
+			return true, resp.StatusCode, "FLV", final
+		default:
+			// 兜底：最终 URL 带常见媒体扩展名也视为可用
+			p := ""
+			if resp.Request != nil && resp.Request.URL != nil {
+				p = strings.ToLower(resp.Request.URL.Path)
+			}
+			ok := strings.HasSuffix(p, ".ts") || strings.HasSuffix(p, ".flv") ||
+				strings.HasSuffix(p, ".mp4") || strings.HasSuffix(p, ".m3u8") ||
+				strings.HasSuffix(p, ".aac") || strings.HasSuffix(p, ".mp3")
+			return ok, resp.StatusCode, string(head), final
+		}
 	}
-	// 缓存的最终地址已失效（非 2xx）→ 清缓存，回退原始解析地址重试一次
-	if abs != origin && (resp.StatusCode < 200 || resp.StatusCode > 299) {
-		h.clearRedirect(ch.Key)
-		_ = resp.Body.Close()
-		abs = origin
+	const maxUpstreamAttempts = 3
+	var resp *http.Response
+	for attempt := 0; attempt < maxUpstreamAttempts; attempt++ {
+		if attempt > 0 {
+			// 无效响应：丢弃缓存/失效地址，回到频道原始地址重跑 302 解析链
+			h.clearRedirect(ch.Key)
+			abs = origin
+			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+		}
+		var err error
 		resp, err = doFetch(abs)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -557,6 +593,19 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 			http.Error(w, "upstream fetch failed: "+err.Error(), http.StatusBadGateway)
 			return
 		}
+		if ok, code, head, final := usable(resp); ok {
+			break
+		} else {
+			logger.LogPrintf("[player] upstream invalid key=%s 状态=%d 内容=%q 最终=%s", ch.Key, code, head, final)
+		}
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<20))
+		resp.Body.Close()
+		resp = nil
+	}
+	if resp == nil {
+		logger.LogPrintf("[player] upstream invalid after %d attempts key=%s origin=%s", maxUpstreamAttempts, ch.Key, origin)
+		http.Error(w, "upstream stream unavailable", http.StatusBadGateway)
+		return
 	}
 	// 成功且最终地址与原始地址不同（发生解析重定向）→ 记住并滚动续期。
 	// 仅缓存"从频道原始地址（直播）解析"的结果：回看等场景传入的 abs 是

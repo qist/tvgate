@@ -31,6 +31,10 @@ func newTransport(c *config.Config) *http.Transport {
 
 	// ✅ 自定义 DialContext，强制走 dns.GetInstance()
 	return &http.Transport{
+		// TLS ALPN 必须提供 h2：部分 CDN（如腾讯云直播）按 TLS 指纹风控，
+		// ALPN 只有 http/1.1 的 Go 客户端会被 403。自定义 DialContext/TLSClientConfig
+		// 会关闭 Go 的自动 h2，这里强制开启（NextProtos 恢复为 h2+http/1.1）。
+		ForceAttemptHTTP2: true,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
