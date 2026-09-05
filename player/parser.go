@@ -105,6 +105,9 @@ func parseTXT(content []byte, src string) ([]*Channel, EPGSource) {
 		}
 		if strings.HasSuffix(line, "#genre#") {
 			group = strings.Trim(strings.TrimSuffix(line, "#genre#"), " ,")
+			// 组边界重置 UA：ua= 只作用于所在分组，未配置的分组回落 player.ua 全局默认，
+			// 避免上一个分组的 ua= 泄漏到未配置 UA 的后续分组
+			curUA = ""
 			continue
 		}
 		// EPG：epg=... 含占位符 {name}/{date} → template；否则若为 http 固定文件 → xml（整份 XMLTV）

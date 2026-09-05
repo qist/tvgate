@@ -44,13 +44,13 @@ func TestParseTXT(t *testing.T) {
 }
 
 func TestParseTXTUA(t *testing.T) {
-	// 行尾 ua= 优先；组级 ua= 行作用于后续所有频道；ua= 空值恢复默认
+	// 行尾 ua= 优先；组级 ua= 行作用于所在分组的后续频道；
+	// 进入新分组时重置（未配置 ua= 的分组回落 player.ua 全局默认，即空）
 	content := []byte("蜀小果,#genre#\n" +
 		"ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) Edg/152\n" +
 		"峨眉电影4K,http://192.168.100.1/live/xg.php?id=emdy4k\n" +
 		"CCTV1,http://192.168.100.1/live/xg.php?id=cctv1\n" +
 		"特例,http://192.168.100.1/live/ahbst.php?id=cctv2,ua=okhttp/3.8.1\n" +
-		"ua=\n" +
 		"百视通,#genre#\n" +
 		"CCTV3,http://192.168.100.1/live/ahbst.php?id=cctv3\n")
 	chans, _ := parseSubscription(content, "sub")
@@ -61,13 +61,13 @@ func TestParseTXTUA(t *testing.T) {
 		t.Fatalf("组级 ua= 未生效: %+v", chans[0])
 	}
 	if chans[1].UA != "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Edg/152" {
-		t.Fatalf("组级 ua= 未延续到后续频道: %+v", chans[1])
+		t.Fatalf("组级 ua= 未延续到组内后续频道: %+v", chans[1])
 	}
 	if chans[2].UA != "okhttp/3.8.1" {
 		t.Fatalf("行尾 ,ua= 应覆盖组级: %+v", chans[2])
 	}
 	if chans[3].UA != "" {
-		t.Fatalf("ua= 空值应恢复默认(空): %+v", chans[3])
+		t.Fatalf("新分组未配置 ua= 应重置为空(回落全局默认): %+v", chans[3])
 	}
 }
 
