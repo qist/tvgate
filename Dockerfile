@@ -72,4 +72,7 @@ RUN rm -f /etc/fail2ban/jail.d/alpine-ssh.conf \
 
 RUN chmod +x /app/TVGate
 
+# 服务监听端口（默认配置 server.port: 8888；启用 HTTP/3 时同端口还需映射 UDP）
+EXPOSE 8888
+
 CMD [ "./TVGate", "-config=/etc/tvgate/config.yaml" ]
