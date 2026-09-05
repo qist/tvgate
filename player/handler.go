@@ -557,9 +557,12 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 			return
 		}
 	}
-	// 成功且最终地址与原始地址不同（发生解析重定向）→ 记住并滚动续期
+	// 成功且最终地址与原始地址不同（发生解析重定向）→ 记住并滚动续期。
+	// 仅缓存"从频道原始地址（直播）解析"的结果：回看等场景传入的 abs 是
+	// 带 playseek 的会话地址，写入会把回看地址混入直播缓存，导致返回直播
+	// 时命中回看缓存。
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.Request != nil && resp.Request.URL != nil {
-		if final := resp.Request.URL.String(); final != origin {
+		if final := resp.Request.URL.String(); final != origin && origin == ch.RawURL {
 			h.storeRedirect(ch.Key, final)
 		}
 	}
@@ -601,6 +604,7 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 const segOriginTTL = 30 * time.Minute
 const tokenTTL = 30 * time.Minute
 const segGroupTTL = 30 * time.Minute
+
 // 解析结果仅在同一活跃会话内复用：连续轮询间隔（≈ targetDuration）远小于该窗口，
 // 而换台/回看/返回直播等场景的间隔必然更久 → 重新请求上游获取播放地址。
 const redirectActiveWindow = 45 * time.Second

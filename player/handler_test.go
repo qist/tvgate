@@ -451,7 +451,15 @@ func TestServeHTTPRedirectCache(t *testing.T) {
 			w.Write([]byte("央视,#genre#\nCCTV1,http://" + r.Host + "/live/gdlt.php?id=1\n"))
 		case "/live/gdlt.php":
 			phpHits++
+			// 回看会话（带 playseek）→ 解析到不同的回看地址，用于检测缓存污染
+			if r.URL.Query().Get("playseek") != "" {
+				http.Redirect(w, r, "/live/catchup.m3u8", http.StatusFound)
+				return
+			}
 			http.Redirect(w, r, "/live/1.m3u8", http.StatusFound)
+		case "/live/catchup.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			w.Write([]byte("#EXTM3U\n#EXT-X-ENDLIST\n#EXTINF:6,\ncatchup0.ts\n"))
 		case "/live/1.m3u8":
 			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 			w.Write([]byte("#EXTM3U\n#EXTINF:6,\nseg0.ts\n"))
@@ -512,5 +520,22 @@ func TestServeHTTPRedirectCache(t *testing.T) {
 	h.ServePull(rr4, httptest.NewRequest("GET", "/player/"+key+"/"+tok, nil))
 	if rr4.Code != http.StatusOK || rr4.Body.String() != "TS" {
 		t.Fatalf("分片拉流应 200 TS, got %d %s", rr4.Code, rr4.Body.String())
+	}
+
+	// 回看路径：传入的 abs 是带 playseek 的会话地址（≠ RawURL），解析成功
+	// 不得写入直播缓存，否则返回直播时会命中回看缓存。
+	var liveCh *Channel
+	for _, c := range mgr.Channels() {
+		liveCh = c
+		break
+	}
+	rr5 := httptest.NewRecorder()
+	h.serveHTTP(rr5, httptest.NewRequest("GET", "/player/"+key+"/x", nil), liveCh,
+		liveCh.RawURL+"&playseek=20260905080000-20260905110815")
+	if rr5.Code != http.StatusOK {
+		t.Fatalf("回看拉流应 200, got %d", rr5.Code)
+	}
+	if got := h.getRedirect(key); got != "" && !strings.HasSuffix(got, "/live/1.m3u8") {
+		t.Fatalf("回看解析污染直播缓存, got %q", got)
 	}
 }
