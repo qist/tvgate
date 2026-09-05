@@ -2,6 +2,7 @@ package player
 
 import (
 	"encoding/json"
+	"time"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -495,9 +496,21 @@ func TestServeHTTPRedirectCache(t *testing.T) {
 			break
 		}
 	}
-	rr2 := httptest.NewRecorder()
-	h.ServePull(rr2, httptest.NewRequest("GET", "/player/"+key+"/"+tok, nil))
-	if rr2.Code != http.StatusOK || rr2.Body.String() != "TS" {
-		t.Fatalf("分片拉流应 200 TS, got %d %s", rr2.Code, rr2.Body.String())
+	// 会话窗口超时（换台/回看/返回直播等间隔较久）→ 应重新请求解析脚本
+	v, _ := h.redirects.Load(key)
+	v.(*redirectCache).lastUsed = time.Now().Add(-2 * redirectActiveWindow)
+	rr3 := httptest.NewRecorder()
+	h.ServePull(rr3, httptest.NewRequest("GET", "/player/"+key, nil))
+	if rr3.Code != http.StatusOK {
+		t.Fatalf("窗口超时后的 m3u8 刷新应 200, got %d", rr3.Code)
+	}
+	if phpHits != 2 {
+		t.Fatalf("窗口超时后应重新执行解析脚本, phpHits=%d", phpHits)
+	}
+
+	rr4 := httptest.NewRecorder()
+	h.ServePull(rr4, httptest.NewRequest("GET", "/player/"+key+"/"+tok, nil))
+	if rr4.Code != http.StatusOK || rr4.Body.String() != "TS" {
+		t.Fatalf("分片拉流应 200 TS, got %d %s", rr4.Code, rr4.Body.String())
 	}
 }

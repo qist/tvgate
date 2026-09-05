@@ -45,10 +45,11 @@ type Handler struct {
 	redirects sync.Map // key -> *redirectCache
 }
 
-// redirectCache 记录某频道解析型源的最终拉流地址（带过期，过期/失效后回退重新解析）。
+// redirectCache 记录某频道解析型源的最终拉流地址与最近使用时刻。
+// 仅活跃会话（连续轮询间隔内）复用：换台/回看/返回直播等间隔较久的访问重新解析。
 type redirectCache struct {
 	finalURL string
-	until    time.Time
+	lastUsed time.Time
 }
 
 // segGroup 记录某频道的代理组，带过期时间（超时后重新按域名规则匹配，跟进配置变更）。
@@ -597,25 +598,29 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 const segOriginTTL = 30 * time.Minute
 const tokenTTL = 30 * time.Minute
 const segGroupTTL = 30 * time.Minute
-const redirectTTL = 30 * time.Minute
+// 解析结果仅在同一活跃会话内复用：连续轮询间隔（≈ targetDuration）远小于该窗口，
+// 而换台/回看/返回直播等场景的间隔必然更久 → 重新请求上游获取播放地址。
+const redirectActiveWindow = 45 * time.Second
 
-// getRedirect 返回某频道解析型源的缓存最终地址（未学/过期则为空）。
+// getRedirect 返回某频道解析型源的缓存最终地址（未学/会话窗口超时则为空）。
 func (h *Handler) getRedirect(key string) string {
 	v, ok := h.redirects.Load(key)
 	if !ok {
 		return ""
 	}
 	rc := v.(*redirectCache)
-	if time.Now().After(rc.until) {
+	now := time.Now()
+	if now.Sub(rc.lastUsed) > redirectActiveWindow {
 		h.redirects.Delete(key)
 		return ""
 	}
+	rc.lastUsed = now
 	return rc.finalURL
 }
 
-// storeRedirect 记住某频道解析型源的最终拉流地址（滚动续期）。
+// storeRedirect 记住某频道解析型源的最终拉流地址（活跃会话内滚动续期）。
 func (h *Handler) storeRedirect(key, finalURL string) {
-	h.redirects.Store(key, &redirectCache{finalURL: finalURL, until: time.Now().Add(redirectTTL)})
+	h.redirects.Store(key, &redirectCache{finalURL: finalURL, lastUsed: time.Now()})
 }
 
 // clearRedirect 清除某频道解析型源的最终地址缓存（失效回退时调用）。
