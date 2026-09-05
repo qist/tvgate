@@ -122,7 +122,7 @@ export function PlayerPage() {
             <Switch checked={cfg.android_autoplay} onCheckedChange={(v) => setCfg({ ...cfg, android_autoplay: v })} />
             <span className="text-sm">安卓设备启动进入播放页</span>
           </div>
-          <p className="text-xs text-muted-foreground">YAML 标记位（player.android_autoplay）：安卓客户端 App 读取该标记自行控制启动是否进入播放页；本服务不做任何行为控制。</p>
+          <p className="text-xs text-muted-foreground">YAML 标记位（player.android_autoplay）：安卓客户端 App 读取该标记自行控制启动是否进入播放页；未配置默认不进入，显式开启后才自动进入。本服务不做任何行为控制。</p>
           <p className="text-xs text-muted-foreground">开启后挂载 /api/player/channels、/player/&lt;key&gt;、/api/player/epg 与播放页 /web/player；/pp/ 为独立播放页入口（不跳转、不暴露后台路径）</p>
           <Field label="订阅源" hint="M3U 或 逗号TXT；此地址 = 允许拉取的源白名单，真实流地址不外露">
             <Input

@@ -19,9 +19,10 @@
 4、build-android.sh 补齐 Web 前端构建 — web/dist 不进 git（.gitignore 只留 .gitkeep），
    go:embed 缺产物时二进制内为占位页（管理后台/直播播放器均不可用）；现编译 Go 前自动
    npm 构建（ui 源码比 .built 标记新才重建；npm 缺失直接报错退出）
-5、支持 player.android_autoplay 标记位 — false 时启动停留在信息界面不自动打开直播页
-   （Web 后台播放器页可开关）；修复返回键无法退出播放页（返回统一走 onBackPressed：
-   HTML5 全屏 → 退播放页 → WebView 历史 → 退后台，退出播放页清空历史防止再次导回）
+5、支持 player.android_autoplay 标记位 — 显式 true 时启动自动进入直播页，未配置默认
+   不进入（Web 后台播放器页可开关）；修复返回键无法退出播放页（返回统一走
+   onBackPressed：HTML5 全屏 → 退播放页 → WebView 历史 → 退后台，退出播放页清空
+   历史防止再次导回）
 ```
 
 ### v3.0.10
@@ -153,7 +154,8 @@
 23、配置页交互优化 — 保存/重置按钮统一移至标题行右上角、代理组编辑卡片增加保存按钮；
     github/sync/publisher 接口数组字段 null 兜底；卡片删除统一确认弹窗；播放器配置页展示外链与
     一键复制；后台补常驻直播入口
-24、player 节点新增 android_autoplay 标记位 — 配置标记的频道启动自动播放
+24、player 节点新增 android_autoplay 标记位 — 安卓客户端启动是否进入播放页（纯标记位，
+    未配置默认不进入、显式 true 才自动进入；客户端 App 读取自行控制，服务端不做行为控制）
 25、推流发布（publisher）增强 — 播放器支持同源 FLV 直播直连与发布页播放入口；主备切换稳定性修复；
     HLS 每日归档 MP4 + 监控录制模板，归档间隔/MP4 保留期可配置；本地播放地址跟随 Publisher Path；
     本地 HLS 回放时间段选择，主动关闭推流不再报错

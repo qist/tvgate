@@ -25,8 +25,8 @@ export async function getPlayer(): Promise<PlayerConfig> {
     // 默认 2h 时后端返回 "2h0m0s"，按旧版行为显示为空（代表默认）
     update_interval: interval === "2h0m0s" ? "" : interval,
     ua: data.ua || "",
-    // 后端未配置时返回 null/undefined，按开启显示；显式 false 才显示关闭
-    android_autoplay: data.android_autoplay !== false,
+    // 后端未配置时返回 null/undefined，按关闭显示；显式 true 才显示开启
+    android_autoplay: data.android_autoplay === true,
   };
 }
 

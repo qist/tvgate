@@ -162,7 +162,7 @@ player:
   logo_dir: /opt/TVLogo                             # 本地台标目录：<频道名>.png，优先于 logo 模板
   update_interval: 30m
   ua: okhttp/3.8.12                                 # 部分 IPTV 源拒绝浏览器 UA 时按需设置
-  android_autoplay: false                           # 安卓启动进入播放页标记位（App 读取，服务端不控制）
+  android_autoplay: false                           # 安卓启动进入播放页标记位（未配置默认不进入；显式 true 才自动进入。App 读取，服务端不控制）
 ```
 
 ## 注意事项
