@@ -142,7 +142,33 @@ func goSprintf(spec string, arg interface{}) string {
 	}
 	verb := spec[len(spec)-1]
 	if verb == 'b' {
-		return strconv.FormatInt(toInt64(arg), 2)
+		// PHP %b：负数按 64 位无符号二进制输出；支持 [0][width] 零填充
+		// （如 sprintf('%016b', 2) === "0000000000000010"）。Go fmt 不支持 %b 的
+		// 宽度/填充，Go 的 %b 对负数还带负号——这里手动实现，WebSocket 帧长度
+		// 编码（str_split(sprintf('%016b', $len), 8)）等场景依赖此行为。
+		s := strconv.FormatUint(uint64(toInt64(arg)), 2)
+		if len(spec) > 2 {
+			body := spec[1 : len(spec)-1]
+			pad := byte(' ')
+			if len(body) > 0 && body[0] == '0' {
+				pad = '0'
+				body = body[1:]
+			}
+			left := true // 默认右对齐（左侧填充）
+			if len(body) > 0 && body[0] == '-' {
+				left = false
+				body = body[1:]
+			}
+			if w, err := strconv.Atoi(body); err == nil && len(s) < w {
+				padding := strings.Repeat(string(pad), w-len(s))
+				if left {
+					s = padding + s
+				} else {
+					s = s + padding
+				}
+			}
+		}
+		return s
 	}
 	// PHP sprintf 自动类型转换：%f/%e/%g 传整数/数字字符串→转 float；%d/%u/%x/%o/%c 传浮点/数字字符串→转 int
 	switch verb {

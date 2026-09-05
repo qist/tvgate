@@ -214,6 +214,10 @@ func defaultPHPConsts() map[string]Value {
 	c["PHP_INT_MIN"] = NewInt(-9223372036854775808)
 	c["DIRECTORY_SEPARATOR"] = NewString("/")
 	c["PATH_SEPARATOR"] = NewString(":")
+	// STREAM 客户端常量（stream_socket_client 的 flags 参数）
+	c["STREAM_CLIENT_CONNECT"] = NewInt(4)
+	c["STREAM_CLIENT_ASYNC_CONNECT"] = NewInt(2)
+	c["STREAM_CLIENT_PERSISTENT"] = NewInt(1)
 	// SORT
 	c["SORT_ASC"] = NewInt(4)
 	c["SORT_DESC"] = NewInt(3)
@@ -1756,6 +1760,9 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 			"preg_replace_callback_array": {3: true},
 			"parse_str":                   {1: true},
 			"curl_multi_exec":             {1: true},
+			// stream/fsockopen 的 errno/errstr 出参
+			"stream_socket_client": {1: true, 2: true},
+			"fsockopen":            {2: true, 3: true},
 			// 原地修改数组/变量的函数（第 0 参按引用传递，供 writeRef 写回）
 			"sort":         {0: true},
 			"rsort":        {0: true},

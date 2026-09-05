@@ -1,7 +1,6 @@
 package phpgo
 
 import (
-	"io"
 	"os"
 )
 
@@ -66,7 +65,9 @@ func init() {
 		return NewBool(true), nil
 	}
 
-	// fread：从句柄读取指定长度字节
+	// fread：从句柄读取指定长度字节。
+	// PHP 语义是「最多读 length，读到多少返回多少」（网络流单次 recv），
+	// 不能用 io.ReadFull 等满——否则 socket 上小帧数据会一直阻塞到超时。
 	builtins["fread"] = func(e *Env, a []Value) (Value, error) {
 		if len(a) < 2 {
 			return NewString(""), nil
@@ -74,11 +75,11 @@ func init() {
 		fd := int(a[0].ToInt())
 		n := int(a[1].ToInt())
 		f, ok := e.files[fd]
-		if !ok {
+		if !ok || n <= 0 {
 			return NewString(""), nil
 		}
 		buf := make([]byte, n)
-		m, err := io.ReadFull(f, buf)
+		m, err := f.Read(buf)
 		if err != nil && m == 0 {
 			return NewString(""), nil
 		}
