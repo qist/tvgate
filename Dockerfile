@@ -34,7 +34,8 @@ RUN go mod download
 
 COPY . .
 # 用前端真实构建产物覆盖占位 dist（go:embed 编入单二进制）
-COPY --from=ui /ui/dist /app/web/dist
+# 注意: vite outDir 为 ui/../web/dist，在 ui 阶段（WORKDIR /ui）产物位于 /web/dist
+COPY --from=ui /web/dist /app/web/dist
 
 # 针对 ARM 处理 GOARM
 RUN if [ "$TARGETARCH" = "arm" ]; then \
