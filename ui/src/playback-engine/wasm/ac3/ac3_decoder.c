@@ -47,6 +47,10 @@ typedef struct {
     int sample_rate;
     unsigned char carry[CARRY_MAX];
     int carry_size;
+    /* 复用拼装缓冲（carry + input 拼接区）：避免每 payload 一次 malloc/free。
+     * 与 mp2_decoder.c 的 work 缓冲同策略。 */
+    unsigned char* work;
+    int work_capacity;
     int error_count;
 } Ac3Decoder;
 
@@ -106,6 +110,7 @@ void ac3_decoder_destroy(Ac3Decoder* d) {
     av_packet_free(&d->pkt);
     av_frame_free(&d->frame);
     avcodec_free_context(&d->ctx);
+    free(d->work);
     free(d);
 }
 
@@ -156,10 +161,16 @@ int ac3_decode_payload(
     if (total_in == 0) {
         return 0;
     }
-    unsigned char* work = (unsigned char*)malloc(total_in);
-    if (!work) {
-        return 0;
+    if (total_in > d->work_capacity) {
+        int new_cap = total_in < 8192 ? 8192 : total_in;
+        unsigned char* grown = (unsigned char*)realloc(d->work, new_cap);
+        if (!grown) {
+            return 0;
+        }
+        d->work = grown;
+        d->work_capacity = new_cap;
     }
+    unsigned char* work = d->work;
     if (carry_at_start > 0) {
         memcpy(work, d->carry, carry_at_start);
     }
@@ -257,7 +268,6 @@ int ac3_decode_payload(
     }
     d->carry_size = remaining;
 
-    free(work);
     out_info[0] = total_samples;
     out_info[1] = d->sample_rate;
     out_info[2] = 2;
