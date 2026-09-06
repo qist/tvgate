@@ -3,7 +3,11 @@ package web
 import (
 	"embed"
 	"io/fs"
+	"mime"
 	"net/http"
+	"path"
+	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -72,14 +76,81 @@ func ServePublicAssets() http.HandlerFunc {
 			http.Error(w, "前端资源缺失，请先构建 ui/（make web-ui）", http.StatusNotFound)
 		}
 	}
-	return http.FileServer(http.FS(sub)).ServeHTTP
+	return gzipAssets(sub, http.FileServer(http.FS(sub))).ServeHTTP
+}
+
+// assetGzipContentTypes 显式声明静态产物 Content-Type：不依赖运行时系统
+// mime.types，保证 .wasm/.js/.css 在任意平台返回一致类型。
+var assetGzipContentTypes = map[string]string{
+	".js":    "text/javascript; charset=utf-8",
+	".css":   "text/css; charset=utf-8",
+	".html":  "text/html; charset=utf-8",
+	".wasm":  "application/wasm",
+	".json":  "application/json; charset=utf-8",
+	".svg":   "image/svg+xml",
+	".png":   "image/png",
+	".jpg":   "image/jpeg",
+	".jpeg":  "image/jpeg",
+	".gif":   "image/gif",
+	".ico":   "image/x-icon",
+	".woff":  "font/woff",
+	".woff2": "font/woff2",
+	".ttf":   "font/ttf",
+	".otf":   "font/otf",
+	".txt":   "text/plain; charset=utf-8",
+}
+
+// gzipAssets 包装静态文件服务器：客户端接受 gzip 且存在构建期预压缩的
+// <name>.gz（dist/assets 由 ui/build-post.mjs 生成；wasm 520KB→218KB）时
+// 直接返回压缩字节，否则回退 http.FileServer 原样服务。
+func gzipAssets(fsys fs.FS, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 统一 Vary，让缓存同时保留压缩/未压缩变体
+		w.Header().Add("Vary", "Accept-Encoding")
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rel := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		if rel == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		gzName := rel + ".gz"
+		info, err := fs.Stat(fsys, gzName)
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		gz, err := fs.ReadFile(fsys, gzName)
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ext := strings.ToLower(filepath.Ext(rel))
+		contentType := assetGzipContentTypes[ext]
+		if contentType == "" {
+			contentType = mime.TypeByExtension(ext)
+		}
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Length", strconv.Itoa(len(gz)))
+		w.Header().Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write(gz)
+		}
+	})
 }
 
 // registerSPARoutes 注册 SPA 资源：/web/ 入口 + /web/assets/* 静态产物 + /web/player 播放器入口。
 func registerSPARoutes(mux *http.ServeMux, webPath string) {
-	// 带 hash 的静态产物（长期缓存）
+	// 带 hash 的静态产物（长期缓存）；优先返回预压缩 .gz
 	if sub, err := fs.Sub(distFS, "dist/assets"); err == nil {
-		fileServer := http.FileServer(http.FS(sub))
+		fileServer := gzipAssets(sub, http.FileServer(http.FS(sub)))
 		mux.Handle(webPath+"assets/", http.StripPrefix(webPath+"assets/", fileServer))
 	}
 	// SPA 入口（精确 /web/）
