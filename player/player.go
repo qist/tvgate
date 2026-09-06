@@ -215,15 +215,16 @@ func (m *Manager) Reload() {
 	newOrder := make([]*Channel, 0, len(chans))
 	newGroups := make([]string, 0, 32)
 	seenGroup := map[string]bool{}
+	seenIdentity := make(map[string]bool, len(chans))
 	for _, c := range chans {
 		if _, dup := newByURL[c.RawURL]; dup {
 			// 同源去重（同 URL 不同名取其一），保持 key 稳定
 			continue
 		}
-		c.Key = m.assignKey(c.RawURL, newByURL)
 		if c.Group == "" {
 			c.Group = "默认"
 		}
+		c.Key = m.assignStableKey(c, seenIdentity, newByURL)
 		if c.TVGLogo == "" {
 			if logoDir != "" && c.Name != "" {
 				if f := logoFilePath(logoDir, c.Name); f != "" {
@@ -404,17 +405,38 @@ func logoFilePath(dir, name string) string {
 	return ""
 }
 
-// assignKey 生成稳定不透明 key（md5 前 8 + sha1 前 4 = 12 hex），冲突时加盐。
-func (m *Manager) assignKey(rawURL string, used map[string]string) string {
-	h1 := md5.Sum([]byte(rawURL))
-	h2 := sha1.Sum([]byte(rawURL))
-	key := hex.EncodeToString(h1[:])[:8] + hex.EncodeToString(h2[:])[:4]
-	// 若 key 已被占用且不同源，追加递增后缀
+// assignStableKey 生成跨订阅刷新/编辑稳定的频道 key（md5 前 8 + sha1 前 4 = 12 hex）。
+//
+// 早期按 URL 派生，但订阅源 URL 常带轮换 token 或被订阅方编辑（换源、改参数），
+// URL 文本一变 key 就全量轮换：分享的 /pp#key 深链失效，正在播放的频道中途
+// "消失"（/player/<key>/... 全部 404），表现为播放卡死。频道身份以「名称+分组」
+// 为准（用户认知的台号）；匿名频道或同名同组的第 2 路及以后的多源条目才退回
+// 按 URL 派生（URL 变化只影响该路源自身的 key）。
+func (m *Manager) assignStableKey(c *Channel, seenIdentity map[string]bool, used map[string]string) string {
+	if c.Name != "" {
+		identity := c.Name + "\x00" + c.Group
+		if !seenIdentity[identity] {
+			seenIdentity[identity] = true
+			return uniqueKey(hashKey(identity), used)
+		}
+	}
+	return uniqueKey(hashKey(c.RawURL), used)
+}
+
+// hashKey 生成 12 hex 短哈希（md5 前 8 + sha1 前 4）。
+func hashKey(s string) string {
+	h1 := md5.Sum([]byte(s))
+	h2 := sha1.Sum([]byte(s))
+	return hex.EncodeToString(h1[:])[:8] + hex.EncodeToString(h2[:])[:4]
+}
+
+// uniqueKey 冲突时追加递增后缀，保证 used 集合内唯一。
+func uniqueKey(base string, used map[string]string) string {
 	i := 0
 	for {
-		k := key
+		k := base
 		if i > 0 {
-			k = fmt.Sprintf("%s%d", key, i)
+			k = fmt.Sprintf("%s%d", base, i)
 		}
 		if _, exists := used[k]; !exists {
 			return k

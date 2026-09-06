@@ -545,8 +545,15 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 		if resp.StatusCode < 200 || resp.StatusCode > 299 {
 			return false, resp.StatusCode, "", ""
 		}
+		// 探测响应头 16 字节判定媒体类型。必须「真实消费」这 16 字节：
+		// bufio.Peek 只窥视不消费，若之后仍用同一个 bufio.Reader 回放，
+		// 会从缓冲区位置 0 重放（大响应=整个 bufio 缓冲），相当于在响应
+		// 开头重复插入 16 字节——m3u8 出现垃圾前缀行，TS 分片起始失步
+		// （解复用器每个分段都要重新同步，视频卡顿、音频 PTS 锚点错乱）。
 		br := bufio.NewReader(resp.Body)
-		head, _ := br.Peek(16)
+		head := make([]byte, 16)
+		n, _ := io.ReadFull(br, head)
+		head = head[:n]
 		resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(head), br))
 		trimmed := bytes.TrimLeft(head, " \t\r\n")
 		final := ""

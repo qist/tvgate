@@ -46,7 +46,6 @@ import {
   wallClockToMse,
 } from "../../playback-engine/timeline/wall-clock";
 import mp2WasmUrl from "../../playback-engine/wasm/minimp3/mp2_decoder.wasm?url";
-import ac3WasmUrl from "../../playback-engine/wasm/ac3/ac3_decoder.wasm?url";
 import type { Channel, EPGProgram } from "../../types/player";
 import type { PictureInPictureMode } from "../../types/ui";
 import { PLAYER_OVERLAY_SURFACE_CLASS } from "./classnames";
@@ -849,7 +848,7 @@ function VideoPlayerComponent({
     }
 
     const p = createPlaybackBackend(video, {
-      wasmDecoders: { mp2: mp2WasmUrl, ac3: ac3WasmUrl },
+      wasmDecoders: { mp2: mp2WasmUrl },
       renderCanvas: slotCanvasRef(slotId).current ?? undefined,
       autoDeinterlace,
       pictureEnhancement,
