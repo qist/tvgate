@@ -102,7 +102,7 @@ func (h *ConfigHandler) handlePlayerConfigSave(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	saveAndResponse(w, configPath, data, &fullNode)
+	saveAndResponse(w, configPath, &fullNode)
 }
 
 // buildPlayerNode 根据前端提交的配置构建 player YAML 节点

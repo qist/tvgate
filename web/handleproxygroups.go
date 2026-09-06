@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/qist/tvgate/config"
 	// "github.com/qist/tvgate/logger"
@@ -528,11 +527,8 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 
 	// logger.LogPrintf("YAML序列化完成，数据长度: %d 字节", len(newData))
 
-	// 创建备份文件
-	backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
-	// logger.LogPrintf("创建备份文件: %s", backupPath)
-	if err := os.WriteFile(backupPath, data, 0644); err != nil {
-		// logger.LogPrintf("错误：创建备份文件失败: %v", err)
+	// 创建备份文件（内容未有变化或已有同态快照时自动跳过）
+	if _, err := backupConfigFile(configPath, newData); err != nil {
 		http.Error(w, "创建备份文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

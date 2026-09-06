@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/qist/tvgate/config"
 	"gopkg.in/yaml.v3"
@@ -116,8 +115,7 @@ func (h *ConfigHandler) handleHTTPConfigSave(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
-	if err := os.WriteFile(backupPath, data, 0644); err != nil {
+	if _, err := backupConfigFile(configPath, newData); err != nil {
 		http.Error(w, "创建备份文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

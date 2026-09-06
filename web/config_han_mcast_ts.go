@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/qist/tvgate/config"
 	"gopkg.in/yaml.v3"
@@ -182,7 +181,7 @@ func (h *ConfigHandler) handleMulticastConfigSave(w http.ResponseWriter, r *http
 		}
 	}
 
-	saveAndResponse(w, configPath, data, &fullNode)
+	saveAndResponse(w, configPath, &fullNode)
 }
 
 // handleTSConfigSave 处理TS缓存配置保存请求
@@ -286,26 +285,25 @@ func (h *ConfigHandler) handleTSConfigSave(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	saveAndResponse(w, configPath, data, &fullNode)
+	saveAndResponse(w, configPath, &fullNode)
 }
 
 // saveAndResponse 辅助函数，保存配置并返回响应
-func saveAndResponse(w http.ResponseWriter, configPath string, oldData []byte, fullNode *yaml.Node) {
+func saveAndResponse(w http.ResponseWriter, configPath string, fullNode *yaml.Node) {
 	newData, err := yaml.Marshal(fullNode)
 	if err != nil {
 		http.Error(w, "序列化配置失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
-	if err := os.WriteFile(backupPath, oldData, 0644); err != nil {
+	// 备份旧配置（内容无变化或已有同态快照时自动跳过）
+	if _, err := backupConfigFile(configPath, newData); err != nil {
 		http.Error(w, "创建备份文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if err := os.WriteFile(configPath, newData, 0644); err != nil {
-		os.WriteFile(configPath, oldData, 0644)
-		http.Error(w, "写入配置文件失败，已恢复备份: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "写入配置文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 

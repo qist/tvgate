@@ -95,7 +95,7 @@ func (h *ConfigHandler) handlePHPConfigSave(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	saveAndResponse(w, configPath, data, &fullNode)
+	saveAndResponse(w, configPath, &fullNode)
 }
 
 // buildPHPNode 根据前端提交的配置构建 php YAML 节点

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,6 +17,68 @@ import (
 
 // ConfigBackupHandler 处理配置备份管理
 type ConfigBackupHandler struct{}
+
+// backupConfigFile 各配置编辑接口保存前的统一备份入口（带内容比对）。
+// 返回生成的备份路径（跳过时为空串），err 非 nil 表示备份失败。
+// 规则（只与磁盘当前配置和最近一份备份对比，避免每次保存全量扫描成百上千份历史备份）：
+//  1. 新内容与当前磁盘配置一致（点了保存但没实际改动）→ 不备份
+//  2. 当前磁盘状态与最近一份备份内容一致（刚保存过同状态）→ 不重复归档
+//
+// 备份内容始终为「改动前」的当前配置，还原点语义与历史一致。
+func backupConfigFile(configPath string, newContent []byte) (string, error) {
+	cur, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", fmt.Errorf("读取当前配置失败: %w", err)
+	}
+	if bytes.Equal(cur, newContent) {
+		// 内容没变化：不产生备份
+		return "", nil
+	}
+	if latest, lerr := latestConfigBackup(configPath); lerr == nil {
+		if b, berr := os.ReadFile(latest); berr == nil && bytes.Equal(b, cur) {
+			// 当前状态刚备份过，不重复归档
+			return "", nil
+		}
+	}
+	return writeConfigBackup(configPath, cur)
+}
+
+// listConfigBackups 返回配置文件的所有备份路径（按文件名时间戳倒序，最新在前）。
+func listConfigBackups(configPath string) ([]string, error) {
+	dir := filepath.Dir(configPath)
+	files, err := filepath.Glob(filepath.Join(dir, filepath.Base(configPath)+".backup.*"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(files)))
+	return files, nil
+}
+
+// latestConfigBackup 返回配置目录下最新的备份文件路径。
+func latestConfigBackup(configPath string) (string, error) {
+	files, err := listConfigBackups(configPath)
+	if err != nil || len(files) == 0 {
+		return "", fmt.Errorf("无备份文件")
+	}
+	return files[0], nil
+}
+
+// writeConfigBackup 立即把 content 写入一份带时间戳的备份文件。
+// 时间戳精确到毫秒；同一毫秒内再次写入时追加递增后缀，避免互相覆盖。
+func writeConfigBackup(configPath string, content []byte) (string, error) {
+	base := configPath + ".backup." + time.Now().Format("20060102150405.000")
+	backupPath := base
+	for i := 2; ; i++ {
+		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+			break
+		}
+		backupPath = fmt.Sprintf("%s.%d", base, i)
+	}
+	if err := os.WriteFile(backupPath, content, 0644); err != nil {
+		return "", err
+	}
+	return backupPath, nil
+}
 
 // handleListBackups 返回 JSON 备份列表，按时间从新到旧排序
 func (h *ConfigBackupHandler) handleListBackups(w http.ResponseWriter, r *http.Request) {
@@ -134,10 +197,11 @@ func (h *ConfigBackupHandler) handleRestoreBackup(w http.ResponseWriter, r *http
 		return
 	}
 
-	// 先备份当前配置
-	origData, _ := os.ReadFile(configPath)
-	backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
-	os.WriteFile(backupPath, origData, 0644)
+	// 先备份当前配置（内容比对：与待还原内容一致或已有同态快照时跳过）
+	if _, err := backupConfigFile(configPath, data); err != nil {
+		http.Error(w, "创建备份失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	// 写入备份内容到当前配置
 	if err := os.WriteFile(configPath, data, 0644); err != nil {
@@ -286,4 +350,100 @@ func (h *ConfigBackupHandler) handleBatchDeleteBackups(w http.ResponseWriter, r 
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(respMessage))
 	}
+}
+
+// handleCreateManualBackup 手动备份当前配置（配置备份管理页「手动备份」按钮）。
+// 当前内容与最近一份备份一致时不重复归档。
+func (h *ConfigBackupHandler) handleCreateManualBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "只支持 POST 请求", http.StatusMethodNotAllowed)
+		return
+	}
+	configPath := *config.ConfigFilePath
+	cur, err := os.ReadFile(configPath)
+	if err != nil {
+		http.Error(w, "读取当前配置失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if latest, lerr := latestConfigBackup(configPath); lerr == nil {
+		if b, berr := os.ReadFile(latest); berr == nil && bytes.Equal(b, cur) {
+			writeJSONResponse(w, http.StatusOK, map[string]interface{}{
+				"status":  "success",
+				"message": "当前配置与最近备份一致，未重复备份",
+				"created": false,
+			})
+			return
+		}
+	}
+	backupPath, err := writeConfigBackup(configPath, cur)
+	if err != nil {
+		http.Error(w, "创建备份失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"status":  "success",
+		"message": "已备份当前配置",
+		"created": true,
+		"file":    filepath.Base(backupPath),
+	})
+}
+
+// handleCleanupBackups 清理备份：按原始配置文件分组，每份保留最新 keep 个。
+func (h *ConfigBackupHandler) handleCleanupBackups(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "只支持 POST 请求", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Keep int `json:"keep"` // 每个文件保留几份备份（0=全删）
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "解析请求失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Keep < 0 {
+		http.Error(w, "keep 不能为负数", http.StatusBadRequest)
+		return
+	}
+
+	configPath := *config.ConfigFilePath
+	dir := filepath.Dir(configPath)
+	files, err := filepath.Glob(filepath.Join(dir, "*.backup.*"))
+	if err != nil {
+		http.Error(w, "扫描备份失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// 按原始文件名分组
+	groups := make(map[string][]string)
+	for _, p := range files {
+		base := filepath.Base(p)
+		idx := strings.Index(base, ".backup.")
+		if idx < 0 {
+			continue
+		}
+		groups[base[:idx]] = append(groups[base[:idx]], p)
+	}
+	deleted := 0
+	for _, group := range groups {
+		// 时间戳串在文件名中按字典序可排序：倒序 = 最新在前
+		sort.Sort(sort.Reverse(sort.StringSlice(group)))
+		for i := req.Keep; i < len(group); i++ {
+			if os.Remove(group[i]) == nil {
+				deleted++
+			}
+		}
+	}
+	writeJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"status":  "success",
+		"message": fmt.Sprintf("已清理 %d 个备份，每组保留 %d 份", deleted, req.Keep),
+		"deleted": deleted,
+		"keep":    req.Keep,
+	})
+}
+
+// writeJSONResponse 输出 JSON 响应
+func writeJSONResponse(w http.ResponseWriter, status int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(payload)
 }

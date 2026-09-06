@@ -129,8 +129,7 @@ func (h *ConfigHandler) handleSyncConfigSave(w http.ResponseWriter, r *http.Requ
 	}
 
 	// 备份后写入
-	backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
-	if err := os.WriteFile(backupPath, data, 0644); err != nil {
+	if _, err := backupConfigFile(configPath, updatedData); err != nil {
 		http.Error(w, "创建备份文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

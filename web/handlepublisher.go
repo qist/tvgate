@@ -214,8 +214,7 @@ func (h *ConfigHandler) handlePublisherConfigSave(w http.ResponseWriter, r *http
 		return
 	}
 
-	backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
-	if err := os.WriteFile(backupPath, oldData, 0644); err != nil {
+	if _, err := backupConfigFile(configPath, newData); err != nil {
 		http.Error(w, "创建备份文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

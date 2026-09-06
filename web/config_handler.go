@@ -205,6 +205,8 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/backup/batch-delete", h.cookieAuth(backupHandler.handleBatchDeleteBackups))
 	mux.HandleFunc(webPath+"config/backup/restore", h.cookieAuth(h.requireElevated(backupHandler.handleRestoreBackup)))
 	mux.HandleFunc(webPath+"config/backup/download", h.cookieAuth(h.requireElevated(backupHandler.handleDownloadBackup)))
+	mux.HandleFunc(webPath+"config/backup/create", h.cookieAuth(backupHandler.handleCreateManualBackup))
+	mux.HandleFunc(webPath+"config/backup/cleanup", h.cookieAuth(backupHandler.handleCleanupBackups))
 
 	// GitHub 配置相关路由
 	mux.HandleFunc(webPath+"api/github/config", h.cookieAuth(h.handleGithubConfig))
@@ -598,9 +600,9 @@ func (h *ConfigHandler) handleConfigSave(w http.ResponseWriter, r *http.Request)
 		// 获取配置文件路径
 		configPath := *config.ConfigFilePath
 
-		// 备份当前配置文件
-		backupPath := configPath + ".backup." + time.Now().Format("20060102150405")
-		if err := copyFile(configPath, backupPath); err != nil {
+		// 备份当前配置文件（内容无变化或已有同态快照时返回空路径，不重复备份）
+		backupPath, err := backupConfigFile(configPath, content)
+		if err != nil {
 			http.Error(w, "Failed to create backup: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -608,7 +610,9 @@ func (h *ConfigHandler) handleConfigSave(w http.ResponseWriter, r *http.Request)
 		// 尝试将新配置写入文件，确保使用正确的权限
 		if err := os.WriteFile(configPath, content, 0644); err != nil {
 			// 如果写入失败，尝试恢复备份
-			os.Rename(backupPath, configPath)
+			if backupPath != "" {
+				os.Rename(backupPath, configPath)
+			}
 			http.Error(w, "Failed to save config: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
