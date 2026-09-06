@@ -84,6 +84,10 @@ function findMatches(text: string, needle: string, caseFold: boolean, isRegex: b
 
 // ================= 页面 =================
 
+/** 超过该体积的文件视为大文件：关闭软换行（wrap=off），避免每次光标/
+ * IME 组合更新时对全文做软换行布局重排（大文件 + 中文输入法会明显卡顿） */
+const BIG_FILE_THRESHOLD = 1024 * 1024;
+
 export function CodePage() {
   const navigate = useNavigate();
   const [dir, setDir] = useState("");
@@ -98,6 +102,23 @@ export function CodePage() {
   const [replOpen, setReplOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+
+  /** 编辑器当前文本：以 DOM 为真相源（打字不走 React state，超大文件不卡） */
+  const textNow = useCallback((): string => taRef.current?.value ?? content, [content]);
+
+  /**
+   * 程序化修改编辑器内容（替换/注释/批量替换同步等）：直接写 DOM，
+   * 同时写回 state 供查找/保存等逻辑使用。受控→非受控后这些操作若只
+   * setState，textarea 不会自动更新，必须手动同步 ta.value。
+   * 注意：直接给 textarea.value 赋值会把光标重置到末尾，调用方负责在
+   * requestAnimationFrame 里恢复选区（见 toggleComment）。
+   */
+  const applyContent = useCallback((c: string) => {
+    const ta = taRef.current;
+    if (ta && ta.value !== c) ta.value = c;
+    setContent(c);
+    setDirty(true);
+  }, []);
 
   const notify = useCallback((type: "ok" | "err" | "warn", msg: string) => {
     setNotice({ type, msg });
@@ -124,6 +145,7 @@ export function CodePage() {
 
   const openFile = async (rel: string) => {
     try {
+      setBusy("加载中…");
       const c = await code.read(rel);
       setCurrent(rel);
       setContent(c);
@@ -131,6 +153,8 @@ export function CodePage() {
       setNotice(null);
     } catch (e) {
       notify("err", "打开失败: " + (e as Error).message);
+    } finally {
+      setBusy("");
     }
   };
 
@@ -157,6 +181,9 @@ export function CodePage() {
     setContent("");
   };
 
+  /** 大文件用 wrap=off（横向滚动），规避软换行全量重排导致的 IME/键入卡顿 */
+  const isBigFile = useMemo(() => content.length > BIG_FILE_THRESHOLD, [content]);
+
   const goRoot = () => {
     setDir("");
     setCurrent(null);
@@ -173,7 +200,7 @@ export function CodePage() {
   const save = async () => {
     if (!current) return;
     try {
-      await code.saveFile(current, content);
+      await code.saveFile(current, textNow());
       setDirty(false);
       notify("ok", `已保存 ${current}`);
     } catch (e) {
@@ -200,7 +227,12 @@ export function CodePage() {
     if (!newName || newName === it.name) return;
     try {
       await code.rename(rel, newName);
-      if (current === rel) setCurrent(dir ? `${dir}/${newName}` : newName);
+      if (current === rel) {
+        // key 依赖 current 重建 textarea：先把 DOM 当前内容同步回 state，
+        // 避免重建后丢掉未保存的修改
+        setContent(taRef.current?.value ?? content);
+        setCurrent(dir ? `${dir}/${newName}` : newName);
+      }
       notify("ok", "已重命名");
       refresh();
     } catch (e) {
@@ -258,7 +290,7 @@ export function CodePage() {
     if (!current) return;
     setBusy("语法检测中…");
     try {
-      const r = await code.check(content);
+      const r = await code.check(textNow());
       if (r.ok) {
         const warns = r.issues.map((i) => `  ⚠ 第 ${i.line} 行: ${i.message}`).join("\n");
         notify("ok", warns ? `✅ 语法检测通过（含提示）：\n${warns}` : "✅ 语法检测通过，未发现问题");
@@ -289,15 +321,17 @@ export function CodePage() {
       let out: string, selStart: number, selEnd: number;
       if (sel.startsWith(open) && sel.endsWith(close)) {
         out = sel.slice(open.length, sel.length - close.length).replace(/^ | $/g, "");
-        setContent(value.slice(0, selectionStart) + out + value.slice(selectionEnd));
+        ta.value = value.slice(0, selectionStart) + out + value.slice(selectionEnd);
         selStart = selectionStart;
         selEnd = selectionStart + out.length;
       } else {
         out = `${open} ${sel} ${close}`;
-        setContent(value.slice(0, selectionStart) + out + value.slice(selectionEnd));
+        ta.value = value.slice(0, selectionStart) + out + value.slice(selectionEnd);
         selStart = selectionStart;
         selEnd = selectionStart + out.length;
       }
+      setContent(ta.value);
+      setDirty(true);
       requestAnimationFrame(() => {
         ta.focus();
         ta.setSelectionRange(selStart, selEnd);
@@ -322,7 +356,9 @@ export function CodePage() {
         return prefix + " " + l;
       })
       .join("\n");
-    setContent(value.slice(0, startLine) + out + value.slice(endLine));
+    ta.value = value.slice(0, startLine) + out + value.slice(endLine);
+    setContent(ta.value);
+    setDirty(true);
     requestAnimationFrame(() => {
       ta.focus();
       ta.setSelectionRange(startLine, startLine + out.length);
@@ -507,13 +543,12 @@ export function CodePage() {
               </div>
             </div>
             <textarea
+              key={current}
               ref={taRef}
               className="min-h-0 w-full flex-1 resize-none bg-background p-3 font-mono text-sm leading-relaxed"
-              value={content}
-              onChange={(e) => {
-                setContent(e.target.value);
-                setDirty(true);
-              }}
+              wrap={isBigFile ? "off" : "soft"}
+              defaultValue={content}
+              onChange={() => setDirty(true)}
               onKeyDown={onEditorKeyDown}
               spellCheck={false}
             />
@@ -597,14 +632,11 @@ export function CodePage() {
 
       {findOpen && current && (
         <FindReplace
-          content={content}
+          content={textNow()}
           taRef={taRef}
           focusReplace={findOpen.focusReplace}
           initialFind={findOpen.initialFind}
-          onContent={(c) => {
-            setContent(c);
-            setDirty(true);
-          }}
+          onContent={applyContent}
           onClose={() => setFindOpen(null)}
         />
       )}
@@ -613,10 +645,7 @@ export function CodePage() {
         <BatchReplace
           dir={dir}
           currentPath={current}
-          onContent={(c) => {
-            setContent(c);
-            setDirty(true);
-          }}
+          onContent={applyContent}
           onClose={() => setReplOpen(false)}
           onDone={(msg) => {
             notify("ok", msg);
