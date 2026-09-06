@@ -79,6 +79,16 @@ const SEGMENT_BITRATE_SAMPLE_COUNT = 5;
 // 连续失败达到该上限才判定流不可用（每次成功加载后清零）。
 const MAX_LIVE_SEGMENT_SKIPS = 8;
 
+/**
+ * 音频 PTS 重新锚定阈值（ms）。不同编码器都会对音频 PES PTS 做周期性再定时，
+ * 实测桥接量可达 256ms/1024ms/**5120ms**（都是 AC-3 帧长 32ms 的整数倍），但
+ * PCM 内容始终连续。若被这些跳变触发重锚+bridging，会压缩音频时间轴导致声音
+ * 相对图像持续超前。故正常播放绝不重锚，恒定在连续样本时钟上；仅对 ≥10s 的
+ * 真正切台/节目级不连续（切台/seek 本就整链路重置）才重锚，速率差交由主线程
+ * 漂移控制器平滑吸收。
+ */
+const AUDIO_PTS_REANCHOR_THRESHOLD_MS = 10000;
+
 type MediaInfoVideo = NonNullable<PlayerMediaInfo["video"]>;
 type MediaInfoAudio = NonNullable<PlayerMediaInfo["audio"]>;
 
@@ -1253,7 +1263,7 @@ class Pipeline {
         this._audioSampleRate = sr;
       } else {
         const extrapolatedMs = this._audioAnchorPtsMs + (this._audioSamplesSinceAnchor / sr) * 1000;
-        if (Math.abs(decodedStartPts - extrapolatedMs) > 100) {
+        if (Math.abs(decodedStartPts - extrapolatedMs) > AUDIO_PTS_REANCHOR_THRESHOLD_MS) {
           Log.v(
             this.TAG,
             `Audio PTS discontinuity: decoded=${decodedStartPts.toFixed(1)}ms extrap=${extrapolatedMs.toFixed(1)}ms`,
