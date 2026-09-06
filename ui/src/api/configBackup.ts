@@ -42,3 +42,32 @@ export async function batchDelete(files: string[]): Promise<string> {
 export function downloadUrl(file: string): string {
   return `${base()}/download?file=${encodeURIComponent(file)}`;
 }
+
+/** 手动备份当前配置 → { message, created } */
+export async function create(): Promise<{ message: string; created: boolean }> {
+  const r = await fetch(`${base()}/create`, { method: "POST", credentials: "same-origin" });
+  const text = await r.text();
+  if (!r.ok) throw new Error(text);
+  try {
+    return JSON.parse(text) as { message: string; created: boolean };
+  } catch {
+    return { message: text, created: true };
+  }
+}
+
+/** 清理备份：每个文件保留最近 keep 份 → { message, deleted } */
+export async function cleanup(keep: number): Promise<{ message: string; deleted: number }> {
+  const r = await fetch(`${base()}/cleanup`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ keep }),
+  });
+  const text = await r.text();
+  if (!r.ok) throw new Error(text);
+  try {
+    return JSON.parse(text) as { message: string; deleted: number };
+  } catch {
+    return { message: text, deleted: 0 };
+  }
+}

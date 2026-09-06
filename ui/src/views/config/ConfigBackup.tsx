@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { Download, Eraser, RefreshCw, RotateCcw, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "./Checkbox";
@@ -96,6 +96,34 @@ export function ConfigBackupPage() {
     }
   };
 
+  const doManualBackup = async () => {
+    try {
+      const res = await api.create();
+      notify(res.created ? "ok" : "ok", res.message);
+      load();
+    } catch (e) {
+      notify("err", "手动备份失败: " + (e as Error).message);
+    }
+  };
+
+  const doCleanup = async () => {
+    const raw = window.prompt("每个文件保留最近多少份备份？（0 = 全部删除）", "5");
+    if (raw === null) return;
+    const keep = Number.parseInt(raw, 10);
+    if (!Number.isInteger(keep) || keep < 0) {
+      notify("err", "请输入非负整数");
+      return;
+    }
+    if (!window.confirm(`确认清理备份，每个文件保留最近 ${keep} 份吗？`)) return;
+    try {
+      const res = await api.cleanup(keep);
+      notify("ok", res.message);
+      load();
+    } catch (e) {
+      notify("err", "清理失败: " + (e as Error).message);
+    }
+  };
+
   const fileName = (f: string) => f.split(/[\\/]/).pop() || f;
 
   return (
@@ -103,6 +131,12 @@ export function ConfigBackupPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">配置备份</h1>
         <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={doManualBackup} title="立即把当前配置存一份快照">
+            <Save className="mr-1 h-4 w-4" /> 手动备份
+          </Button>
+          <Button variant="outline" size="sm" onClick={doCleanup} title="按保留份数清理历史备份">
+            <Eraser className="mr-1 h-4 w-4" /> 清理
+          </Button>
           <Button variant="outline" size="sm" onClick={load}>
             <RefreshCw className="mr-1 h-4 w-4" /> 刷新列表
           </Button>
