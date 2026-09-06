@@ -1,6 +1,7 @@
 package player
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/sha1"
 	"encoding/hex"
@@ -20,6 +21,13 @@ import (
 	"github.com/qist/tvgate/logger"
 	httpclient "github.com/qist/tvgate/utils/http"
 )
+
+// subscriptionFetchTimeout 订阅/EPG 这类短拉取的总超时。
+// 全局 HTTP.Timeout 默认 0（不限制，供流式长连接使用）；若源在响应头之后就
+// 半挂（body 卡死），io.ReadAll 会无限阻塞——把订阅刷新循环 goroutine 永久
+// 卡死（热加载失效、订阅永不再刷新），或让 EPG 的 loading 标志永占导致
+// 再无法刷新。这里用独立超时兜底。
+const subscriptionFetchTimeout = 30 * time.Second
 
 // Channel 解析自订阅的单个频道。
 // RawURL 为真实源地址，仅存在于服务端；对外只暴露 Key。
@@ -343,7 +351,10 @@ func (m *Manager) fetchAll(src string) []subFile {
 // fetch 支持本地文件路径与 http(s) URL。
 func (m *Manager) fetch(src string) []byte {
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-		req, err := http.NewRequest(http.MethodGet, src, nil)
+		// 订阅拉取是短请求，加总超时兜底（见 subscriptionFetchTimeout 注释）
+		ctx, cancel := context.WithTimeout(context.Background(), subscriptionFetchTimeout)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, nil)
 		if err != nil {
 			return nil
 		}

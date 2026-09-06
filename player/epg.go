@@ -3,6 +3,7 @@ package player
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/xml"
 	"io"
 	"net/http"
@@ -90,7 +91,11 @@ func (b *EPGBank) Load(rawURL string) {
 	}()
 
 	client := httpclient.NewHTTPClient(&config.Cfg, nil)
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	// XMLTV 是短拉取，加总超时兜底：源半挂时 io.ReadAll 不再无限阻塞，
+	// loading 标志能按时释放，后续刷新不被永久挡住
+	ctx, cancel := context.WithTimeout(context.Background(), subscriptionFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return
 	}

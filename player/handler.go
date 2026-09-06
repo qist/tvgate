@@ -165,7 +165,7 @@ func (h *Handler) ServeEPG(w http.ResponseWriter, r *http.Request) {
 	es := h.mgr.EPGSource()
 	if es.Type == "template" && es.URL != "" && name != "" {
 		u := fillEpgURL(es.URL, name, date)
-		progs = h.fetchTemplateEPG(u)
+		progs = h.fetchTemplateEPG(r.Context(), u)
 	} else {
 		// M3U 或固定 XMLTV：按 ch(tvg-id)，缺时按 name（txt 无 tvg-id 用频道名匹配）
 		q := ch
@@ -188,8 +188,11 @@ func fillEpgURL(tpl, name, date string) string {
 }
 
 // fetchTemplateEPG 服务端拉取 txt 模板 EPG（规避 CORS），尽量解析 XMLTV <programme> 或 JSON。
-func (h *Handler) fetchTemplateEPG(u string) []Program {
-	req, err := http.NewRequest(http.MethodGet, u, nil)
+// 绑定请求 context + 超时：客户端断开或源半挂时不会无限阻塞（否则每次查询泄漏一个挂死 goroutine）。
+func (h *Handler) fetchTemplateEPG(ctx context.Context, u string) []Program {
+	ctx, cancel := context.WithTimeout(ctx, subscriptionFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil
 	}
