@@ -336,6 +336,14 @@ server {
 
 ---
 
+## 许可证
+
+- 本项目主体以 [MPL-2.0](LICENSE) 协议开源。
+- [ui/src/playback-engine/](ui/src/playback-engine/)（网页播放器引擎）移植自 [stackia/rtp2httpd](https://github.com/stackia/rtp2httpd) 的前端代码（上游 [oskar456/rtp2httpd](https://github.com/oskar456/rtp2httpd)），按其原始 **GPL-2.0** 协议单独授权，含后续全部衍生改进；详见该目录下的 [LICENSE](ui/src/playback-engine/LICENSE) 与 [README](ui/src/playback-engine/README.md)。
+- `ui/src/playback-engine/wasm/ac3/` 构建时链接裁剪的 FFmpeg 库（LGPL-2.1+，未启用 GPL 组件），对应源码获取方式见 `wasm/ac3/Makefile` 内说明。
+
+---
+
 ## 相关项目
 
 | 项目 | 说明 | 下载 |
