@@ -256,17 +256,14 @@ export class AACLOASParser {
           if (audioMuxVersion) {
             this.getLATMValue(gb);
           } else {
-            let otherDataLenBits = 0;
+            // LATM OtherDataLenBits：多字节大端长度，仅消费字节，长度值用不到
             while (true) {
-              otherDataLenBits = otherDataLenBits << 8;
               const otherDataLenEsc = gb.readBool();
-              const otherDataLenTmp = gb.readByte();
-              otherDataLenBits += otherDataLenTmp;
+              gb.readByte();
               if (!otherDataLenEsc) {
                 break;
               }
             }
-            console.log(otherDataLenBits);
           }
         }
 

@@ -49,10 +49,9 @@ export function createMSEPlaybackController(
   let watermarkPaused = false;
   let bufferFullPaused = false;
 
-  // PCM audio player for software-decoded audio (MP2)
+  // PCM audio player for software-decoded audio (MP2 / AC-3)
   let pcmPlayer: PCMAudioPlayer | null = null;
   let pcmPlayerInitPromise: Promise<void> | null = null;
-  let startupRateControlActive = false;
 
   function ensurePCMPlayer(): PCMAudioPlayer {
     if (!pcmPlayer) {
@@ -76,9 +75,6 @@ export function createMSEPlaybackController(
           info: "Software-decoded audio could not establish an initial shared timeline with video",
         });
       };
-      pcmPlayer.onStartupRateControlChange = (active) => {
-        startupRateControlActive = active;
-      };
       pcmPlayerInitPromise = pcmPlayer.init();
       pcmPlayer.attachVideo(video);
     }
@@ -91,7 +87,6 @@ export function createMSEPlaybackController(
       pcmPlayer = null;
       pcmPlayerInitPromise = null;
     }
-    startupRateControlActive = false;
   }
 
   // Init segments are batched and flushed together when the first non-init message
@@ -451,7 +446,7 @@ export function createMSEPlaybackController(
 
   function initLiveHelpers(): void {
     if (!destroyLiveSync && liveSyncEnabled) {
-      destroyLiveSync = setupLiveSync(video, config, getLiveEdgeLatency, () => !startupRateControlActive);
+      destroyLiveSync = setupLiveSync(video, config, getLiveEdgeLatency);
     }
   }
 
@@ -489,7 +484,7 @@ export function createMSEPlaybackController(
     setLiveSync(enabled: boolean) {
       if (enabled && !destroyLiveSync) {
         liveSyncEnabled = true;
-        destroyLiveSync = setupLiveSync(video, config, getLiveEdgeLatency, () => !startupRateControlActive);
+        destroyLiveSync = setupLiveSync(video, config, getLiveEdgeLatency);
       } else if (!enabled && destroyLiveSync) {
         liveSyncEnabled = false;
         destroyLiveSync();

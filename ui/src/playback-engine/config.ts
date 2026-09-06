@@ -10,8 +10,10 @@ export interface PlayerConfig {
   liveSyncPlaybackRate: number;
 
   /** URLs to WASM decoder files, keyed by codec. Omit to disable software decoding for that codec.
-   *  e.g. `{ mp2: "/assets/mp2_decoder.wasm" }` */
-  wasmDecoders: { mp2?: string };
+   *  e.g. `{ mp2: "/assets/mp2_decoder.wasm", ac3: "/assets/ac3_decoder.wasm" }`.
+   *  `ac3` enables AC-3/E-AC-3 software decoding when MSE can't decode ac-3
+   *  natively (the same wasm provides both codecs). */
+  wasmDecoders: { mp2?: string; ac3?: string };
 
   /** Max backward buffer duration in seconds. Cleanup triggers when buffer exceeds this. @default 180 */
   bufferCleanupMaxBackward: number;

@@ -8,6 +8,14 @@ const UNDERRUN_BACKOFF_STEP = 1;
 /** Upper bound for the adaptive latency increase (seconds). */
 const UNDERRUN_BACKOFF_MAX = 6;
 
+/**
+ * Hysteresis guard against rate thrashing: chasing (rate > 1) only restarts
+ * once latency exceeds max + backoff + this margin, while it already stopped
+ * at the (much lower) target. Together they form a deadband where the current
+ * rate is kept instead of toggling 1 ↔ 1.2 on every timeupdate jitter.
+ */
+const CHASE_HYSTERESIS = 1.0;
+
 /** Maximum buffered-gap width the heal step will jump across (seconds). */
 const GAP_HEAL_MAX = 1.5;
 /** Retry budget per stall for gap healing (covers appends still in flight). */
@@ -116,7 +124,10 @@ export function setupLiveSync(
     const latency = getLiveEdgeLatency();
     if (latency === null) return;
 
-    if (latency > config.liveSyncMaxLatency + extraLatency) {
+    // Start chasing only when latency clearly exceeds the budget: the reset
+    // threshold (target) is far below it, so a jittery latency measurement
+    // oscillating around the boundary no longer toggles the rate every event.
+    if (latency > config.liveSyncMaxLatency + extraLatency + CHASE_HYSTERESIS) {
       const targetRate = Math.min(2, Math.max(1, config.liveSyncPlaybackRate));
       if (targetRate !== video.playbackRate) {
         Log.v(TAG, `Video playback rate set to ${targetRate}`);
