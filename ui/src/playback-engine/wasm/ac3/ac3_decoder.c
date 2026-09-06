@@ -67,8 +67,10 @@ static int ac3_frame_length(const unsigned char* p, int is_eac3) {
         }
         return ac3_frame_sizes[fscod][frmsizecod] * 2;
     }
-    /* E-AC-3: frmsiz = 14 bits ((p[2]&0x03)<<12 | p[3]<<4 | p[4]>>4)，帧长 = (frmsiz+1)*2 */
-    int frmsiz = ((p[2] & 0x03) << 12) | (p[3] << 4) | (p[4] >> 4);
+    /* E-AC-3: syncword 后直接是 strmtyp(2)+substreamid(3)+frmsiz(11)，
+     * 无 crc1。frmsiz = (p[2]&0x07)<<8 | p[3]，帧长 = (frmsiz+1)*2。
+     * 实测 DD+ 5.1@48kHz 帧 1792 字节（与 TS 侧 EAC3Parser 一致）。 */
+    int frmsiz = ((p[2] & 0x07) << 8) | p[3];
     return (frmsiz + 1) * 2;
 }
 

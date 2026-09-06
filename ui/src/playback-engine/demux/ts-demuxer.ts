@@ -111,6 +111,35 @@ type AudioData =
 const VIDEO_PID_KEYS: readonly CommonPidKey[] = ["h264", "h265"];
 const AUDIO_PID_KEYS: readonly CommonPidKey[] = ["adts_aac", "loas_aac", "ac3", "eac3", "mp3"];
 
+/** DTS 位流同步字（16-bit BE/LE 与 14-bit BE/LE 四种排列）。 */
+const DTS_SYNCWORDS: readonly number[] = [0x7ffe8001, 0xfe7f0180, 0xff1f00e8, 0xe8001fff];
+
+type DolbyPayloadVerdict = "ac3" | "eac3" | "dts" | "unknown";
+
+/**
+ * 依据首包字节判定 0x7A 描述符音频 PID 的真实编码：
+ *  - AC-3 同步字 0x0B77 + bsid<=10 → AC-3；bsid>=11 → E-AC-3(DD+)
+ *  - DTS 同步字（0x7FFE8001 等）→ DTS（暂不支持）
+ * PES 载荷可能起始于帧中间，向前扫 2KB 找最近的合法帧头再判定。
+ */
+function sniffDolbyPayload(data: Uint8Array): DolbyPayloadVerdict {
+  const window = Math.min(data.byteLength, 2048) - 4;
+  for (let i = 0; i < window; i++) {
+    const w = (data[i] << 24) | (data[i + 1] << 16) | (data[i + 2] << 8) | data[i + 3];
+    if (DTS_SYNCWORDS.includes(w >>> 0)) {
+      return "dts";
+    }
+    if (data[i] === 0x0b && data[i + 1] === 0x77 && i + 6 <= data.byteLength) {
+      const bsid = data[i + 5] >> 3;
+      if (bsid <= 10) {
+        return "ac3";
+      }
+      return "eac3";
+    }
+  }
+  return "unknown";
+}
+
 export type OnErrorCallback = (type: DemuxErrorDetail, info: string) => void;
 export type OnTrackMetadataCallback = (type: string, metadata: unknown) => void;
 export type OnDataAvailableCallback = (audioTrack: unknown, videoTrack: unknown, force?: boolean) => void;
@@ -180,6 +209,10 @@ class TSDemuxer {
   private audio_last_sample_pts_: number | undefined = undefined;
   private aac_last_incomplete_data_: Uint8Array | null = null;
   private ac3_last_incomplete_data_: Uint8Array | null = null;
+  // 0x7A(Enhanced AC-3) 描述符映射的 PID：PMT 标注偶有误标（实为 DTS），
+  // 首个音频 PES 嗅探同步字后再最终定 codec（见 parsePES / sniffDolbyPayload）。
+  private ddplus_pending_pids_: Set<number> | null = null;
+  private ddplus_verified_pids_: Set<number> | null = null;
   private eac3_last_incomplete_data_: Uint8Array | null = null;
 
   private has_video_ = false;
@@ -802,6 +835,28 @@ class TSDemuxer {
         if (this.pmt_.common_pids.ac3 === pes_data.pid) {
           this.parseAC3Payload(payload, pts);
         } else if (this.pmt_.common_pids.eac3 === pes_data.pid) {
+          if (this.ddplus_pending_pids_?.has(pes_data.pid)) {
+            const verdict = sniffDolbyPayload(payload);
+            if (verdict === "unknown") {
+              break; // 未嗅探到帧头，等下一个 PES 再验
+            }
+            this.ddplus_pending_pids_.delete(pes_data.pid);
+            (this.ddplus_verified_pids_ ??= new Set()).add(pes_data.pid);
+            if (verdict === "dts") {
+              // PMT 误标（实为 DTS，暂不支持）：放弃该音频 PID，仅播放视频
+              Log.w(this.TAG, `PID ${pes_data.pid} labeled EAC3(0x7A) but carries DTS; audio disabled`);
+              this.pmt_.common_pids.eac3 = undefined;
+              break;
+            }
+            if (verdict === "ac3") {
+              Log.w(this.TAG, `PID ${pes_data.pid} labeled EAC3(0x7A) but carries AC-3; routing to AC-3 parser`);
+              this.pmt_.common_pids.eac3 = undefined;
+              this.pmt_.common_pids.ac3 = pes_data.pid;
+              this.parseAC3Payload(payload, pts);
+              break;
+            }
+            Log.v(this.TAG, `PID ${pes_data.pid} 0x7A payload sniffed as E-AC-3`);
+          }
           this.parseEAC3Payload(payload, pts);
         }
         break;
@@ -959,11 +1014,11 @@ class TSDemuxer {
       } else if (stream_type === StreamType.kPESPrivateData && ES_info_length > 0) {
         // DVB 私有 PES 音频：靠描述符识别 Dolby。实测两种声明方式：
         //  - Registration Descriptor(0x05) "AC-3"/"EC-3"（CCTV4K 等）
-        //  - ETSI AC-3 Descriptor 0x6A / Enhanced AC-3 Descriptor 0x7D
+        //  - ETSI AC-3 Descriptor 0x6A / Enhanced AC-3 Descriptor 0x7D、0x7A
         //    （江苏卫视4K/东方卫视4K 等上海联通组频道用 0x6A，缺了它整个
-        //    音频 PID 都不被识别 → 有画面没声音）
-        // 注：0x7A 是 DTS 描述符，不是 EAC3 —— 早期误映射会把 DTS 字节喂给
-        // ac3 解码器产生杂音，已移除（DTS 暂不支持）。
+        //    音频 PID 都不被识别 → 有画面没声音；北京卫视4K 等用 0x7A=DD+）
+        // 0x7A 在 DVB 注册表就是 Enhanced AC-3，但国内 IPTV 有把真实 DTS
+        // 误标成 0x7A 的流（直接喂 EAC3 解码器会出杂音），故加嗅探验证。
         for (let offset = i + 5; offset < i + 5 + ES_info_length;) {
           const tag = data[offset + 0];
           const length = data[offset + 1];
@@ -980,10 +1035,16 @@ class TSDemuxer {
             if (!already_has_audio) {
               pmt.common_pids.ac3 = elementary_PID;
             }
-          } else if (tag === 0x7d) {
-            // ETSI Enhanced AC-3 descriptor (DVB E-AC-3 / DD+)
+          } else if (tag === 0x7d || tag === 0x7a) {
+            // ETSI Enhanced AC-3 descriptor（DVB 注册表 0x7A 即 EAC3/DD+）。
+            // 早期直接映射曾在某些频道出杂音（载荷实为 DTS 的误标流），
+            // 因此映射后先挂起，首个 PES 嗅探同步字再最终定 codec：
+            // EAC3(bsid>=11) / AC3(bsid<=10) / DTS(0x7FFE8001 系同步字)。
             if (!already_has_audio) {
               pmt.common_pids.eac3 = elementary_PID;
+              if (!this.ddplus_verified_pids_?.has(elementary_PID)) {
+                (this.ddplus_pending_pids_ ??= new Set()).add(elementary_PID);
+              }
             }
           }
           offset += 2 + length;
