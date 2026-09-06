@@ -143,8 +143,13 @@ export function YAMLEditorPage() {
     setBusy(true);
     try {
       const data = await api.save(content);
-      const r = api.parseStatus(data, "配置保存成功，点击重新加载生效");
+      const r = api.parseStatus(data, "配置保存成功");
       notify(r.ok ? "ok" : "err", r.msg);
+      if (r.ok) {
+        // 保存后立即重新从后端读取：展示服务器实际落盘内容，
+        // 避免用户以为没保存成功而重复编辑
+        await load();
+      }
     } catch (e) {
       if (isElevateRequired(e)) {
         pendingRef.current = save;
