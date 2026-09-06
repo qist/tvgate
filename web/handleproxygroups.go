@@ -3,12 +3,13 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/qist/tvgate/config/load"
 	"io"
 	"net/http"
 	"os"
 
 	"github.com/qist/tvgate/config"
-	// "github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/logger"
 	"gopkg.in/yaml.v3"
 )
 
@@ -541,6 +542,12 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 		os.WriteFile(configPath, data, 0644)
 		http.Error(w, "写入配置文件失败，已恢复备份: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// 立即重载内存配置：各 GET API 读 config.Cfg，磁盘变更要等 fsnotify
+	// 防抖（reload: 5 秒）后才重新加载——保存后不等防抖，前端立即读到新值
+	if err := load.LoadConfig(configPath); err != nil {
+		logger.LogPrintf("保存后重载配置失败: %v", err)
 	}
 
 	// logger.LogPrintf("配置文件写入成功")

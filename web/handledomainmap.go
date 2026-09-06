@@ -3,6 +3,8 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/qist/tvgate/config/load"
+	"github.com/qist/tvgate/logger"
 	"io"
 
 	"net/http"
@@ -346,6 +348,12 @@ func (h *ConfigHandler) handleDomainMapConfigSave(w http.ResponseWriter, r *http
 		os.WriteFile(configPath, data, 0644)
 		http.Error(w, "写入配置文件失败，已恢复备份: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// 立即重载内存配置：各 GET API 读 config.Cfg，磁盘变更要等 fsnotify
+	// 防抖（reload: 5 秒）后才重新加载——保存后不等防抖，前端立即读到新值
+	if err := load.LoadConfig(configPath); err != nil {
+		logger.LogPrintf("保存后重载配置失败: %v", err)
 	}
 
 	// 返回成功响应
