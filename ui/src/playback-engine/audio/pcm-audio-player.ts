@@ -62,47 +62,16 @@ const RATIO_DRIFT_GAIN = 0.5;
 /** Max stretch ratio deviation used for drift correction. WSOLA preserves
  *  pitch, so a transient 10% tempo offset is inaudible while it converges. */
 const RATIO_DRIFT_MAX = 0.1;
-/**
- * A/V 显示延迟自适应补偿（无写死值）。video.currentTime 是解码时钟，画面真正
- * 上屏（解码队列 + 合成 + VSYNC）比 currentTime 滞后若干帧；而 WebAudio 这条
- * 路延迟小得多——即使两时钟数值相等，声音仍比眼睛看到的画面超前这固定几帧。
- * 该 DC 偏移漂移控制器（按 currentTime 测量）看不到也修不掉，且不同设备/频道
- * （4K HEVC 管线深浅、硬解能力）差异巨大，静态全局值无法兼容。
- * 方案：requestVideoFrameCallback 回调元数据带每帧 mediaTime，回调触发时该帧
- * 正在上屏——读 video.currentTime 与 mediaTime 之差即"解码时钟领先显示内容"
- * 的真实滞后。逐帧采样、滑窗取最小值（回调抖动只会高估），每频道/设备自动
- * 得到自己的补偿值。不支持 rVFC 的浏览器保持 0（行为同无补偿）。
- */
-/** 显示滞后滑窗样本数（25fps 下约 1.3s，频道切换后快速重新收敛）。 */
-const DISPLAY_LAG_WINDOW = 32;
-/** 合成器提交到像素出光的固有修正项（约半个 vsync 周期）。 */
-const DISPLAY_LAG_PRESENTATION_FLOOR = 0.012;
-/** 测量值钳制上限，防御异常样本（如 seek 瞬间）。 */
-const DISPLAY_LAG_HARD_MAX = 0.4;
-/** 单样本合理下界（容忍 currentTime 量化噪声），低于此按 0 处理。 */
-const DISPLAY_LAG_SAMPLE_MIN = -0.05;
-/** Integral gain for drift correction (per 250ms control tick). Scope is a
- *  slow trim for residual clock-skew only — the large systematic "audio ahead"
- *  cause (periodic PES-PTS bridging, see pipeline AUDIO_PTS_REANCHOR_THRESHOLD) is
- *  fixed upstream, so a fast/high I here only wind-up limit-cycles the loop
- *  (±100ms swings). Keep it small and let P + deadband hold steady state. */
-const DRIFT_INTEGRAL_GAIN = 0.03;
-/** Clip the drift fed to the integrator so short transients (seek/buffer) can't spike it. */
-const DRIFT_INTEGRAL_INPUT_CLAMP = 0.2;
-/** Max contribution of the integral term to the stretch ratio. */
-const DRIFT_INTEGRAL_MAX = 0.03;
-/** Below this the I term is negligible, so the ratio=1 memcpy bypass is safe. */
-const DRIFT_INTEGRAL_SETTLED = 0.01;
 /** At normal playback speed, let an already-synchronized chain free-run
  *  inside this deadband so WSOLA can use its ratio=1 memcpy bypass. Enter at
  *  half the limit and exit at the full limit to avoid toggling at the edge. */
 const WSOLA_BYPASS_ENTER_DRIFT = 0.01;
 const WSOLA_BYPASS_EXIT_DRIFT = 0.02;
-/** Initial/large-drift mode: allow modest WSOLA correction before falling back to hard resync. */
+/** Initial/large-drift mode: allow stronger WSOLA correction before falling back to hard resync. */
 const SOFT_SYNC_WINDOW_SEC = 3.0;
 const SOFT_SYNC_EXIT_DRIFT = 0.08;
-const SOFT_SYNC_DRIFT_GAIN = 0.6;
-const SOFT_SYNC_RATIO_DRIFT_MAX = 0.25;
+const SOFT_SYNC_DRIFT_GAIN = 1.0;
+const SOFT_SYNC_RATIO_DRIFT_MAX = 0.35;
 /** EMA smoothing factor for drift measurements. */
 const DRIFT_EMA_ALPHA = 0.4;
 /** Control loop period (ms). */
@@ -198,19 +167,9 @@ export class PCMAudioPlayer {
   // Drift control
   private driftEma = 0;
   private hasDriftEma = false;
-  /** Integrated drift correction (I term), in stretch-ratio units. */
-  private driftIntegral = 0;
   private softSyncUntil = 0;
   private wsolaBypassActive = false;
   private driftLogCounter = 0;
-  // rVFC 显示延迟自适应测量（见 DISPLAY_LAG_* 常量注释）
-  private rvfcHandle = 0;
-  private displayLagSamples: number[] = [];
-  private displayLagSec = 0;
-  // Drift-control diagnostic counters (which path controlTick took)
-  private diagRuns = 0;
-  private diagSkipGated = 0;
-  private diagSkipChainIdle = 0;
   private controlTimer: ReturnType<typeof setInterval> | null = null;
 
   private isBuffering: boolean = false;
@@ -412,54 +371,6 @@ export class PCMAudioPlayer {
     this.controlTimer = setInterval(() => {
       this.controlAndPump();
     }, CONTROL_INTERVAL_MS);
-
-    this.startDisplayLagMeasurement(video);
-  }
-
-  // ==================== 视频显示延迟自适应测量 ====================
-
-  /** rVFC 逐帧采样：回调触发时该帧正在上屏，currentTime - mediaTime 即解码
-   *  时钟领先显示内容的真实滞后。滑窗取最小值（抖动只会高估不会低估），
-   *  加合成→出光固有项后作为该频道/设备的音频偏移目标。 */
-  private startDisplayLagMeasurement(video: HTMLVideoElement): void {
-    if (typeof video.requestVideoFrameCallback !== "function") {
-      Log.v(TAG, "requestVideoFrameCallback unavailable; display-lag compensation disabled");
-      return;
-    }
-    const sample = (_now: number, metadata: { mediaTime: number }) => {
-      const v = this.videoElement;
-      if (v && !v.seeking && !this.isSeeking && v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        const s = v.currentTime - metadata.mediaTime;
-        if (Number.isFinite(s) && s >= DISPLAY_LAG_SAMPLE_MIN && s <= DISPLAY_LAG_HARD_MAX) {
-          this.displayLagSamples.push(s);
-          if (this.displayLagSamples.length > DISPLAY_LAG_WINDOW) {
-            this.displayLagSamples.shift();
-          }
-          let min = this.displayLagSamples[0];
-          for (const x of this.displayLagSamples) {
-            if (x < min) min = x;
-          }
-          this.displayLagSec = Math.min(DISPLAY_LAG_HARD_MAX, Math.max(0, min) + DISPLAY_LAG_PRESENTATION_FLOOR);
-        }
-      }
-      if (this.videoElement === video) {
-        this.rvfcHandle = video.requestVideoFrameCallback(sample);
-      }
-    };
-    this.rvfcHandle = video.requestVideoFrameCallback(sample);
-  }
-
-  private stopDisplayLagMeasurement(video: HTMLVideoElement | null): void {
-    if (this.rvfcHandle && video && typeof video.cancelVideoFrameCallback === "function") {
-      try {
-        video.cancelVideoFrameCallback(this.rvfcHandle);
-      } catch (_e) {
-        // 回调已完成/已取消时忽略
-      }
-    }
-    this.rvfcHandle = 0;
-    this.displayLagSamples = [];
-    this.displayLagSec = 0;
   }
 
   detachVideo(): void {
@@ -471,7 +382,6 @@ export class PCMAudioPlayer {
       clearTimeout(this.recoveryTimer);
       this.recoveryTimer = null;
     }
-    this.stopDisplayLagMeasurement(this.videoElement);
     this.clearStallGrace();
     if (this.boundOnVisibilityChange) {
       document.removeEventListener("visibilitychange", this.boundOnVisibilityChange);
@@ -766,7 +676,7 @@ export class PCMAudioPlayer {
     // Re-enter soft-sync so residual drift converges fast (±35%) instead of
     // lingering at the steady-state ±10% cap for many seconds.
     this.softSyncUntil = (this.context?.currentTime ?? 0) + SOFT_SYNC_WINDOW_SEC;
-    const anchored = this.resyncFromBuffer(video.currentTime - this.displayLagSec);
+    const anchored = this.resyncFromBuffer(video.currentTime);
     if (!anchored && this.audioBuffer.length > 0) {
       // Buffer exists but no longer covers the video position: the two sides
       // diverged past repair (e.g. long background stay). Rebuild the stream.
@@ -992,7 +902,7 @@ export class PCMAudioPlayer {
       return;
     }
     Log.v(TAG, "Video playback resumed; resyncing PCM audio");
-    this.resyncFromBuffer(video.currentTime - this.displayLagSec);
+    this.resyncFromBuffer(video.currentTime);
   }
 
   private anchor(time: number): void {
@@ -1035,9 +945,7 @@ export class PCMAudioPlayer {
       // Outside ACTIVE the video clock is not a reference — start immediately
       // and let the recovery anchor fix alignment.
       const lead =
-        this.syncState === "active" && this.videoElement
-          ? this.outputStreamCursor - (this.videoElement.currentTime - this.displayLagSec)
-          : 0;
+        this.syncState === "active" && this.videoElement ? this.outputStreamCursor - this.videoElement.currentTime : 0;
       this.nextStartTime = ctxNow + Math.max(CHAIN_RESTART_DELAY, Math.min(lead, 2));
       chainRestart = true;
     }
@@ -1173,7 +1081,6 @@ export class PCMAudioPlayer {
     // — skip drift so the chain simply drains and keeps pace instead of
     // fighting (or hard-resyncing against) a stopped clock.
     if (this.syncState !== "active" || this.stallGraceActive || this.isBuffering || !this.hasPlayableVideoData()) {
-      this.diagSkipGated++;
       return "skipped";
     }
 
@@ -1188,15 +1095,10 @@ export class PCMAudioPlayer {
           return this.resyncFromBuffer(target) ? "pumped" : "skipped";
         }
       }
-      this.diagSkipChainIdle++;
       return "skipped";
     }
 
-    // 漂移相对"补偿后的目标"测量：把可听音频稳定拉到视频之后 displayLagSec
-    // （rVFC 实测的本频道/设备画面显示滞后，见 startDisplayLagMeasurement）。
-    // 稳态时 drift≈0，audio 比 video.currentTime 小 displayLagSec——声音与
-    // 眼睛真正看到的画面对齐，而不是与解码时钟对齐。
-    const drift = audioTime - (video.currentTime - this.displayLagSec);
+    const drift = audioTime - video.currentTime;
     if (this.hasDriftEma) {
       this.driftEma = this.driftEma + DRIFT_EMA_ALPHA * (drift - this.driftEma);
     } else {
@@ -1206,52 +1108,31 @@ export class PCMAudioPlayer {
 
     if (Math.abs(drift) > HARD_RESYNC_THRESHOLD) {
       Log.v(TAG, `Emergency hard resync: drift=${drift.toFixed(3)}s`);
-      return this.resyncFromBuffer(video.currentTime - this.displayLagSec) ? "pumped" : "skipped";
+      return this.resyncFromBuffer(video.currentTime) ? "pumped" : "skipped";
     }
 
     // Rate matching: follow video.playbackRate, correct residual drift.
-    // Positive drift = audio ahead → slow down (smaller ratio). A P-only term
-    // leaves a persistent offset = bias/gain, which reads as "audio keeps
-    // getting ahead over long playback"; add an anti-windup integral (I) term
-    // so any constant clock-skew / duration bias is fully cancelled and the
-    // steady-state drift converges to ~0 instead of hovering ahead.
+    // Positive drift = audio ahead → slow down (smaller ratio).
     const rate = Math.min(2, Math.max(0.5, video.playbackRate || 1));
     const softSyncActive = ctx.currentTime < this.softSyncUntil || Math.abs(this.driftEma) > SOFT_SYNC_EXIT_DRIFT;
     const correctionDrift = softSyncActive ? drift : this.driftEma;
     const correctionMax = softSyncActive ? SOFT_SYNC_RATIO_DRIFT_MAX : RATIO_DRIFT_MAX;
     const correctionGain = softSyncActive ? SOFT_SYNC_DRIFT_GAIN : RATIO_DRIFT_GAIN;
-    const correctionP = correctionDrift * correctionGain;
-    const correctionI = this.driftIntegral;
-    const correction = Math.min(correctionMax, Math.max(-correctionMax, correctionP + correctionI));
-    // Anti-windup: integrate only while the total correction is unsaturated.
-    // The system is self-regulating — if the bias disappears, drift flips sign
-    // and winds the integral back down — so no explicit leak is needed.
-    if (!softSyncActive && Math.abs(correction) < correctionMax) {
-      const integralInput = Math.max(-DRIFT_INTEGRAL_INPUT_CLAMP, Math.min(DRIFT_INTEGRAL_INPUT_CLAMP, correctionDrift));
-      this.driftIntegral = Math.max(
-        -DRIFT_INTEGRAL_MAX,
-        Math.min(DRIFT_INTEGRAL_MAX, this.driftIntegral + integralInput * DRIFT_INTEGRAL_GAIN),
-      );
-    }
-    // The ratio=1 memcpy bypass is only safe once drift *and* the bias the I
-    // term is compensating are both negligible; otherwise it would drop the
-    // correction and let a rate mismatch creep ahead again.
+    const correction = Math.min(correctionMax, Math.max(-correctionMax, correctionDrift * correctionGain));
     const bypassDriftLimit = this.wsolaBypassActive ? WSOLA_BYPASS_EXIT_DRIFT : WSOLA_BYPASS_ENTER_DRIFT;
     this.wsolaBypassActive =
       video.playbackRate === 1 &&
       !softSyncActive &&
       Math.abs(drift) <= bypassDriftLimit &&
-      Math.abs(this.driftEma) <= bypassDriftLimit &&
-      Math.abs(this.driftIntegral) < DRIFT_INTEGRAL_SETTLED;
+      Math.abs(this.driftEma) <= bypassDriftLimit;
     const ratio = this.wsolaBypassActive ? 1 : Math.min(2, Math.max(0.5, rate * (1 - correction)));
     this.stretcher.setRatio(ratio);
 
     if (++this.driftLogCounter >= DRIFT_LOG_TICKS) {
       this.driftLogCounter = 0;
-      this.diagRuns++;
       Log.v(
         TAG,
-        `[drift] ema=${(this.driftEma * 1000).toFixed(1)}ms raw=${(drift * 1000).toFixed(1)}ms I=${(this.driftIntegral * 1000).toFixed(1)} rate=${rate.toFixed(4)} ratio=${ratio.toFixed(4)} mode=${this.wsolaBypassActive ? "bypass" : softSyncActive ? "soft" : "steady"} runs=${this.diagRuns} gated=${this.diagSkipGated} idle=${this.diagSkipChainIdle} audio=${audioTime.toFixed(3)} video=${video.currentTime.toFixed(3)} lag=${(this.displayLagSec * 1000).toFixed(0)}ms sr=${this.stretcher?.sampleRate ?? 0} pending=${this.pendingChunks.length} spans=${this.scheduledSpans.length}`,
+        `A/V drift=${(this.driftEma * 1000).toFixed(1)}ms, rate=${rate}, stretch ratio=${ratio.toFixed(4)}, mode=${this.wsolaBypassActive ? "bypass" : softSyncActive ? "soft" : "steady"}`,
       );
     }
     return "updated";
