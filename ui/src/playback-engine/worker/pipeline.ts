@@ -79,6 +79,15 @@ const SEGMENT_BITRATE_SAMPLE_COUNT = 5;
 // 连续失败达到该上限才判定流不可用（每次成功加载后清零）。
 const MAX_LIVE_SEGMENT_SKIPS = 8;
 
+/**
+ * 音频 PTS 重新锚定阈值（ms）。部分源（如 E-AC-3 4K）的复用器每到 ~10s 边界会
+ * 把音频 PTS 相位整体提前固定量（实测 256ms、亦见过 1024ms 等，常为 AC-3 帧长
+ * 32ms 的整数倍），但音频内容本身连续。该恒定阈值必须大于这些周期跳变，否则会
+ * 每 N 秒触发一次 re-锚 + bridging、周期性压缩音频时间轴，长时间累积成
+ * "声音慢慢跑前面"。只对真正的切台/节目级不连续（通常 > 数秒）才重锚。
+ */
+const AUDIO_PTS_REANCHOR_THRESHOLD_MS = 10000;
+
 type MediaInfoVideo = NonNullable<PlayerMediaInfo["video"]>;
 type MediaInfoAudio = NonNullable<PlayerMediaInfo["audio"]>;
 
@@ -1243,7 +1252,11 @@ class Pipeline {
       // PTS extrapolation: anchor on the PES PTS, advance by decoded sample count.
       // This gives every decoded chunk a jitter-free timestamp even when frames
       // straddle PES boundaries or a PES contains multiple frames. Re-anchor only
-      // on genuine discontinuities (> 100ms deviation).
+      // on genuine discontinuities. 注意：部分源（如广东 4K E-AC-3）的复用器每到
+      // ~10s 边界会把音频 PTS 相位整体提前固定量（实测 256ms = 8 个 E-AC-3 帧），
+      // 但音频内容本身连续。若把这种周期跳变当"不连续"触发 re-锚+bridging，会每
+      // 10s 把音频时间轴硬拧 256ms，长时间累积成"声音慢慢跑前面"。故阈值需大于
+      // 这类周期跳变（256ms/1024ms 等级），只对真正的切台/节目级不连续才 re-锚。
       const sr = result.sampleRate;
       const carriedSamples = Math.min(Math.max(0, result.samplesBeforeInput), result.samplesPerChannel);
       const decodedStartPts = frame.pts - (carriedSamples / sr) * 1000;
@@ -1253,7 +1266,7 @@ class Pipeline {
         this._audioSampleRate = sr;
       } else {
         const extrapolatedMs = this._audioAnchorPtsMs + (this._audioSamplesSinceAnchor / sr) * 1000;
-        if (Math.abs(decodedStartPts - extrapolatedMs) > 100) {
+        if (Math.abs(decodedStartPts - extrapolatedMs) > AUDIO_PTS_REANCHOR_THRESHOLD_MS) {
           Log.v(
             this.TAG,
             `Audio PTS discontinuity: decoded=${decodedStartPts.toFixed(1)}ms extrap=${extrapolatedMs.toFixed(1)}ms`,
