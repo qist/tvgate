@@ -63,14 +63,24 @@ const RATIO_DRIFT_GAIN = 0.5;
  *  pitch, so a transient 10% tempo offset is inaudible while it converges. */
 const RATIO_DRIFT_MAX = 0.1;
 /**
- * A/V 显示延迟补偿（ms）。video.currentTime 是解码时钟，画面真正上屏（MSE
- * 缓冲 + VSYNC/渲染）比 currentTime 滞后约 2~3 帧；而 WebAudio 这条路延迟小得多，
- * 于是即使两个时钟数值相等，耳朵听到的也比眼睛看到的画面超前这固定几帧。
- * 这是固定 DC 偏移，漂移控制器（按 currentTime 测量）看不到也修不掉。
- * 方案：给漂移参考点一个负偏置，控制器把可听音频稳定拉到视频之后该毫秒数，
- * 使声音预后的画面补齐这 2~3 帧显示延迟。各平台/上屏管线延迟不同，可按需调整。
+ * A/V 显示延迟自适应补偿（无写死值）。video.currentTime 是解码时钟，画面真正
+ * 上屏（解码队列 + 合成 + VSYNC）比 currentTime 滞后若干帧；而 WebAudio 这条
+ * 路延迟小得多——即使两时钟数值相等，声音仍比眼睛看到的画面超前这固定几帧。
+ * 该 DC 偏移漂移控制器（按 currentTime 测量）看不到也修不掉，且不同设备/频道
+ * （4K HEVC 管线深浅、硬解能力）差异巨大，静态全局值无法兼容。
+ * 方案：requestVideoFrameCallback 回调元数据带每帧 mediaTime，回调触发时该帧
+ * 正在上屏——读 video.currentTime 与 mediaTime 之差即"解码时钟领先显示内容"
+ * 的真实滞后。逐帧采样、滑窗取最小值（回调抖动只会高估），每频道/设备自动
+ * 得到自己的补偿值。不支持 rVFC 的浏览器保持 0（行为同无补偿）。
  */
-const AV_SYNC_AUDIO_DELAY_MS = 0;
+/** 显示滞后滑窗样本数（25fps 下约 1.3s，频道切换后快速重新收敛）。 */
+const DISPLAY_LAG_WINDOW = 32;
+/** 合成器提交到像素出光的固有修正项（约半个 vsync 周期）。 */
+const DISPLAY_LAG_PRESENTATION_FLOOR = 0.012;
+/** 测量值钳制上限，防御异常样本（如 seek 瞬间）。 */
+const DISPLAY_LAG_HARD_MAX = 0.4;
+/** 单样本合理下界（容忍 currentTime 量化噪声），低于此按 0 处理。 */
+const DISPLAY_LAG_SAMPLE_MIN = -0.05;
 /** Integral gain for drift correction (per 250ms control tick). Scope is a
  *  slow trim for residual clock-skew only — the large systematic "audio ahead"
  *  cause (periodic PES-PTS bridging, see pipeline AUDIO_PTS_REANCHOR_THRESHOLD) is
@@ -193,6 +203,10 @@ export class PCMAudioPlayer {
   private softSyncUntil = 0;
   private wsolaBypassActive = false;
   private driftLogCounter = 0;
+  // rVFC 显示延迟自适应测量（见 DISPLAY_LAG_* 常量注释）
+  private rvfcHandle = 0;
+  private displayLagSamples: number[] = [];
+  private displayLagSec = 0;
   // Drift-control diagnostic counters (which path controlTick took)
   private diagRuns = 0;
   private diagSkipGated = 0;
@@ -398,6 +412,54 @@ export class PCMAudioPlayer {
     this.controlTimer = setInterval(() => {
       this.controlAndPump();
     }, CONTROL_INTERVAL_MS);
+
+    this.startDisplayLagMeasurement(video);
+  }
+
+  // ==================== 视频显示延迟自适应测量 ====================
+
+  /** rVFC 逐帧采样：回调触发时该帧正在上屏，currentTime - mediaTime 即解码
+   *  时钟领先显示内容的真实滞后。滑窗取最小值（抖动只会高估不会低估），
+   *  加合成→出光固有项后作为该频道/设备的音频偏移目标。 */
+  private startDisplayLagMeasurement(video: HTMLVideoElement): void {
+    if (typeof video.requestVideoFrameCallback !== "function") {
+      Log.v(TAG, "requestVideoFrameCallback unavailable; display-lag compensation disabled");
+      return;
+    }
+    const sample = (_now: number, metadata: { mediaTime: number }) => {
+      const v = this.videoElement;
+      if (v && !v.seeking && !this.isSeeking && v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        const s = v.currentTime - metadata.mediaTime;
+        if (Number.isFinite(s) && s >= DISPLAY_LAG_SAMPLE_MIN && s <= DISPLAY_LAG_HARD_MAX) {
+          this.displayLagSamples.push(s);
+          if (this.displayLagSamples.length > DISPLAY_LAG_WINDOW) {
+            this.displayLagSamples.shift();
+          }
+          let min = this.displayLagSamples[0];
+          for (const x of this.displayLagSamples) {
+            if (x < min) min = x;
+          }
+          this.displayLagSec = Math.min(DISPLAY_LAG_HARD_MAX, Math.max(0, min) + DISPLAY_LAG_PRESENTATION_FLOOR);
+        }
+      }
+      if (this.videoElement === video) {
+        this.rvfcHandle = video.requestVideoFrameCallback(sample);
+      }
+    };
+    this.rvfcHandle = video.requestVideoFrameCallback(sample);
+  }
+
+  private stopDisplayLagMeasurement(video: HTMLVideoElement | null): void {
+    if (this.rvfcHandle && video && typeof video.cancelVideoFrameCallback === "function") {
+      try {
+        video.cancelVideoFrameCallback(this.rvfcHandle);
+      } catch (_e) {
+        // 回调已完成/已取消时忽略
+      }
+    }
+    this.rvfcHandle = 0;
+    this.displayLagSamples = [];
+    this.displayLagSec = 0;
   }
 
   detachVideo(): void {
@@ -409,6 +471,7 @@ export class PCMAudioPlayer {
       clearTimeout(this.recoveryTimer);
       this.recoveryTimer = null;
     }
+    this.stopDisplayLagMeasurement(this.videoElement);
     this.clearStallGrace();
     if (this.boundOnVisibilityChange) {
       document.removeEventListener("visibilitychange", this.boundOnVisibilityChange);
@@ -703,7 +766,7 @@ export class PCMAudioPlayer {
     // Re-enter soft-sync so residual drift converges fast (±35%) instead of
     // lingering at the steady-state ±10% cap for many seconds.
     this.softSyncUntil = (this.context?.currentTime ?? 0) + SOFT_SYNC_WINDOW_SEC;
-    const anchored = this.resyncFromBuffer(video.currentTime);
+    const anchored = this.resyncFromBuffer(video.currentTime - this.displayLagSec);
     if (!anchored && this.audioBuffer.length > 0) {
       // Buffer exists but no longer covers the video position: the two sides
       // diverged past repair (e.g. long background stay). Rebuild the stream.
@@ -929,7 +992,7 @@ export class PCMAudioPlayer {
       return;
     }
     Log.v(TAG, "Video playback resumed; resyncing PCM audio");
-    this.resyncFromBuffer(video.currentTime);
+    this.resyncFromBuffer(video.currentTime - this.displayLagSec);
   }
 
   private anchor(time: number): void {
@@ -972,7 +1035,9 @@ export class PCMAudioPlayer {
       // Outside ACTIVE the video clock is not a reference — start immediately
       // and let the recovery anchor fix alignment.
       const lead =
-        this.syncState === "active" && this.videoElement ? this.outputStreamCursor - this.videoElement.currentTime : 0;
+        this.syncState === "active" && this.videoElement
+          ? this.outputStreamCursor - (this.videoElement.currentTime - this.displayLagSec)
+          : 0;
       this.nextStartTime = ctxNow + Math.max(CHAIN_RESTART_DELAY, Math.min(lead, 2));
       chainRestart = true;
     }
@@ -1127,10 +1192,11 @@ export class PCMAudioPlayer {
       return "skipped";
     }
 
-    // 测得的漂移相对"补偿后的目标"：把可持续音频稳定拉到视频之后 AV_SYNC_AUDIO_DELAY_MS，
-    // 补齐 2~3 帧画面显示延迟（见常量注释）。稳态时此值为 0，但 audio 会比 video 小该毫秒数。
-    const delay = AV_SYNC_AUDIO_DELAY_MS / 1000;
-    const drift = audioTime - (video.currentTime - delay);
+    // 漂移相对"补偿后的目标"测量：把可听音频稳定拉到视频之后 displayLagSec
+    // （rVFC 实测的本频道/设备画面显示滞后，见 startDisplayLagMeasurement）。
+    // 稳态时 drift≈0，audio 比 video.currentTime 小 displayLagSec——声音与
+    // 眼睛真正看到的画面对齐，而不是与解码时钟对齐。
+    const drift = audioTime - (video.currentTime - this.displayLagSec);
     if (this.hasDriftEma) {
       this.driftEma = this.driftEma + DRIFT_EMA_ALPHA * (drift - this.driftEma);
     } else {
@@ -1140,7 +1206,7 @@ export class PCMAudioPlayer {
 
     if (Math.abs(drift) > HARD_RESYNC_THRESHOLD) {
       Log.v(TAG, `Emergency hard resync: drift=${drift.toFixed(3)}s`);
-      return this.resyncFromBuffer(video.currentTime) ? "pumped" : "skipped";
+      return this.resyncFromBuffer(video.currentTime - this.displayLagSec) ? "pumped" : "skipped";
     }
 
     // Rate matching: follow video.playbackRate, correct residual drift.
@@ -1185,7 +1251,7 @@ export class PCMAudioPlayer {
       this.diagRuns++;
       Log.v(
         TAG,
-        `[drift] ema=${(this.driftEma * 1000).toFixed(1)}ms raw=${(drift * 1000).toFixed(1)}ms I=${(this.driftIntegral * 1000).toFixed(1)} rate=${rate.toFixed(4)} ratio=${ratio.toFixed(4)} mode=${this.wsolaBypassActive ? "bypass" : softSyncActive ? "soft" : "steady"} runs=${this.diagRuns} gated=${this.diagSkipGated} idle=${this.diagSkipChainIdle} audio=${audioTime.toFixed(3)} video=${video.currentTime.toFixed(3)} sr=${this.stretcher?.sampleRate ?? 0} pending=${this.pendingChunks.length} spans=${this.scheduledSpans.length}`,
+        `[drift] ema=${(this.driftEma * 1000).toFixed(1)}ms raw=${(drift * 1000).toFixed(1)}ms I=${(this.driftIntegral * 1000).toFixed(1)} rate=${rate.toFixed(4)} ratio=${ratio.toFixed(4)} mode=${this.wsolaBypassActive ? "bypass" : softSyncActive ? "soft" : "steady"} runs=${this.diagRuns} gated=${this.diagSkipGated} idle=${this.diagSkipChainIdle} audio=${audioTime.toFixed(3)} video=${video.currentTime.toFixed(3)} lag=${(this.displayLagSec * 1000).toFixed(0)}ms sr=${this.stretcher?.sampleRate ?? 0} pending=${this.pendingChunks.length} spans=${this.scheduledSpans.length}`,
       );
     }
     return "updated";
