@@ -172,6 +172,14 @@ export class PCMAudioPlayer {
   private driftLogCounter = 0;
   private controlTimer: ReturnType<typeof setInterval> | null = null;
 
+  // ===== 感知对齐终局探针（只读诊断）=====
+  // 真实听感 = 音频调度内容 − outLatency(WebAudio 输出管线延迟)；
+  // 真实画面 = rVFC 正在上屏帧的 mediaTime（与 currentTime 的差即渲染积压）。
+  // audioAheadMs = 声音超前画面的净感知量 = 渲染积压 − outLatency。
+  private rvfcProbeHandle = 0;
+  private rvfcProbeVideo: HTMLVideoElement | null = null;
+  private lastFrameMediaTime: number | null = null;
+
   private isBuffering: boolean = false;
   private isSeeking: boolean = false;
 
@@ -371,6 +379,39 @@ export class PCMAudioPlayer {
     this.controlTimer = setInterval(() => {
       this.controlAndPump();
     }, CONTROL_INTERVAL_MS);
+
+    this.startRenderProbe(video);
+  }
+
+  /** rVFC 探针：记录正在上屏帧的 mediaTime，供 drift 日志计算渲染积压与净感知差。 */
+  private startRenderProbe(video: HTMLVideoElement): void {
+    const host = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number;
+      cancelVideoFrameCallback?: (h: number) => void;
+    };
+    if (typeof host.requestVideoFrameCallback !== "function") {
+      return;
+    }
+    this.rvfcProbeVideo = video;
+    const sample = (_now: number, meta: { mediaTime: number }) => {
+      if (this.videoElement === video) {
+        this.lastFrameMediaTime = meta.mediaTime;
+        this.rvfcProbeHandle = host.requestVideoFrameCallback!(sample);
+      }
+    };
+    this.rvfcProbeHandle = host.requestVideoFrameCallback(sample);
+  }
+
+  private stopRenderProbe(): void {
+    const host = this.rvfcProbeVideo as (HTMLVideoElement & { cancelVideoFrameCallback?: (h: number) => void }) | null;
+    if (this.rvfcProbeHandle && host && typeof host.cancelVideoFrameCallback === "function") {
+      try {
+        host.cancelVideoFrameCallback(this.rvfcProbeHandle);
+      } catch (_e) { /* 已结束则忽略 */ }
+    }
+    this.rvfcProbeHandle = 0;
+    this.rvfcProbeVideo = null;
+    this.lastFrameMediaTime = null;
   }
 
   detachVideo(): void {
@@ -378,6 +419,7 @@ export class PCMAudioPlayer {
       clearInterval(this.controlTimer);
       this.controlTimer = null;
     }
+    this.stopRenderProbe();
     if (this.recoveryTimer) {
       clearTimeout(this.recoveryTimer);
       this.recoveryTimer = null;
@@ -693,6 +735,15 @@ export class PCMAudioPlayer {
     // or seeking video legitimately produces no timeupdate — keep waiting for
     // its play/seeked to anchor instead.
     if (!video || video.paused || video.seeking || this.isSeeking || document.visibilityState === "hidden") {
+      return;
+    }
+    // 视频还没有可播数据（重负载频道起播慢 / bwdif 软反交错 / 缓冲重建中）：
+    // 这是"数据没来"而不是"时钟死了"。重排定时器继续等 completeRecovery 的
+    // 证明事件（timeupdate/seeked），否则会把慢起播误报成 AudioResyncFailed。
+    if (!this.hasPlayableVideoData()) {
+      if (this.syncState === "recovering") {
+        this.recoveryTimer = setTimeout(() => this.onRecoveryTimeout(), RECOVERY_TIMEOUT_MS);
+      }
       return;
     }
     Log.w(TAG, `No video progress within ${RECOVERY_TIMEOUT_MS}ms of recovery; escalating`);
@@ -1130,9 +1181,23 @@ export class PCMAudioPlayer {
 
     if (++this.driftLogCounter >= DRIFT_LOG_TICKS) {
       this.driftLogCounter = 0;
+      // 感知对齐终局探针：
+      //   renderLag = currentTime − 正在上屏帧的 mediaTime → 视频渲染积压（画面落后解码时钟多少）
+      //   outLatency = WebAudio 输出管线延迟 → 声音从"调度"到"出耳"再晚这么多
+      //   audioAhead = renderLag − outLatency → 声音超前画面的净感知量（正=声音快）
+      let diag = "";
+      const outLatencyMs = ctx.outputLatency !== undefined ? ctx.outputLatency * 1000 : 0;
+      if (this.lastFrameMediaTime !== null) {
+        const renderLagMs = (video.currentTime - this.lastFrameMediaTime) * 1000;
+        const audioAheadMs = renderLagMs - outLatencyMs;
+        diag =
+          `, renderLag=${renderLagMs.toFixed(0)}ms, outLatency=${outLatencyMs.toFixed(0)}ms, audioAhead=${audioAheadMs.toFixed(0)}ms`;
+      } else {
+        diag = `, outLatency=${outLatencyMs.toFixed(0)}ms (rVFC 无采样)`;
+      }
       Log.v(
         TAG,
-        `A/V drift=${(this.driftEma * 1000).toFixed(1)}ms, rate=${rate}, stretch ratio=${ratio.toFixed(4)}, mode=${this.wsolaBypassActive ? "bypass" : softSyncActive ? "soft" : "steady"}`,
+        `A/V drift=${(this.driftEma * 1000).toFixed(1)}ms, rate=${rate}, stretch ratio=${ratio.toFixed(4)}, mode=${this.wsolaBypassActive ? "bypass" : softSyncActive ? "soft" : "steady"}${diag}`,
       );
     }
     return "updated";

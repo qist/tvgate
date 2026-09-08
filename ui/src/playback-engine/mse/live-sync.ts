@@ -54,10 +54,6 @@ function healBufferedGap(video: HTMLMediaElement): boolean {
     const gap = buffered.start(i + 1) - buffered.end(i);
     if (gap > 0.001 && gap <= GAP_HEAL_MAX) {
       const target = buffered.start(i + 1) + 0.001;
-      Log.w(
-        TAG,
-        `Healing buffered gap: playhead ${t.toFixed(3)} -> ${target.toFixed(3)} (gap ${gap.toFixed(3)}s)`,
-      );
       video.currentTime = target;
       return true;
     }
