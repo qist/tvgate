@@ -30,6 +30,15 @@ func ServePHP(env *Env, w http.ResponseWriter, src string) error {
 	env.exitLoc = false
 	env.statusCode = 0
 	env.statusCodeSet = false
+	// 重置按请求状态
+	env.callArgs = nil
+	env.shutdownFuncs = nil
+	env.errorHandler = NewNull()
+	env.errorHandlers = nil
+	env.errorMask = 0
+	env.lastErrLevel = 0
+	env.lastErrMsg = ""
+	env.headerCallbacks = nil
 
 	prog, err := ParseProgram(src)
 	if err != nil {
@@ -51,7 +60,12 @@ func ServePHP(env *Env, w http.ResponseWriter, src string) error {
 	if w == nil {
 		return nil
 	}
-	// 写 header()
+	// 调用 header_register_callback 注册的回调（发送前），随后写出全部 header()
+	for _, cb := range env.headerCallbacks {
+		if cb.Kind != KindNull {
+			_, _ = callCallable(env, cb, nil)
+		}
+	}
 	for _, h := range env.headers {
 		if i := strings.IndexByte(h, ':'); i > 0 {
 			name := strings.TrimSpace(h[:i])

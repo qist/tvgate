@@ -184,6 +184,8 @@ func (e *Env) callMethodValues(fn *FuncDecl, thisVal, curClass Value, vs []Value
 			e.vars[p.Name] = NewNull()
 		}
 	}
+	e.pushCallFrame(fn.Params)
+	defer e.popCallFrame()
 	r, err := e.execBlock(fn.Body)
 	if err != nil {
 		return NewNull(), err

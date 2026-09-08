@@ -13,6 +13,15 @@ import (
 	"strings"
 )
 
+// phpStrListArray 构造以 0..n-1 为键的字符串列表数组（供 hash_algos 等返回）
+func phpStrListArray(ss ...string) Value {
+	arr := NewArray()
+	for i, s := range ss {
+		arr.ArraySet(NewInt(int64(i)), NewString(s))
+	}
+	return arr
+}
+
 func init() {
 	builtins["md5"] = func(e *Env, a []Value) (Value, error) {
 		s := a[0].ToString()
@@ -106,6 +115,13 @@ func init() {
 			}
 		}
 		return NewInt(int64(crc ^ 0xFFFFFFFF)), nil
+	}
+	// hash_algos / hash_hmac_algos：列出当前 hash()/hash_hmac() 支持的算法
+	builtins["hash_algos"] = func(e *Env, a []Value) (Value, error) {
+		return phpStrListArray("md5", "sha1", "sha256"), nil
+	}
+	builtins["hash_hmac_algos"] = func(e *Env, a []Value) (Value, error) {
+		return phpStrListArray("md5", "sha1", "sha256"), nil
 	}
 	builtins["base64_encode"] = func(e *Env, a []Value) (Value, error) {
 		if len(a) == 0 {

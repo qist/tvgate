@@ -334,3 +334,48 @@ registry.Register("curl_exec", CurlExec)
 ```
 
 > 核心原则：先实现"函数 + PHP 类型系统"，不要直接把 PHP 函数一对一翻译成 Go 标准库函数。很多 PHP 函数存在独特的类型转换、错误处理和数组语义，直接映射会产生兼容性问题。
+
+---
+
+# 常用函数补齐增补（2026-09）
+
+针对历史遗留 PHP 脚本（尤其古早 CMS/插件）常见调用，补齐了一批高频与中频函数。新增文件均在 `phpgo/` 包内 `init()` 注册到 `builtins`。
+
+## 新增文件与函数对照
+
+| 文件 | 新增函数 |
+| --- | --- |
+| `fn_func_args.go` | `func_get_args` / `func_num_args` / `func_get_arg`（含递归可用性；依赖 `eval.go` 的调用帧栈 `callArgs`） |
+| `fn_password.go` | `password_hash` / `password_verify` / `password_needs_rehash`（bcrypt；默认 cost 10，受 `PASSWORD_DEFAULT`/`PASSWORD_BCRYPT` 常量控制） |
+| `fn_error_handlers.go` | `set_error_handler` / `restore_error_handler` / `trigger_error` / `error_get_last` / `assert` |
+| `fn_oo_reflect.go` | `class_exists` / `interface_exists` / `trait_exists` / `method_exists` / `property_exists` / `get_class` / `get_called_class` / `is_a` / `is_subclass_of` / `get_declared_classes` / `get_class_methods` / `get_class_vars` / `get_object_vars` |
+| `fn_array2.go` | `array_multisort`（多数组联动排序，按变量引用回写） / `array_replace` / `array_replace_recursive` / `array_change_key_case` / `array_intersect_assoc` / `array_diff_assoc` / `array_uintersect` / `array_udiff` / `array_intersect_ukey` / `array_is_list` / `array_walk_recursive` |
+| `fn_csv.go` | `str_getcsv` / `fgetcsv` / `fputcsv` |
+| `fn_ini.go` | `parse_ini_string` / `parse_ini_file`（支持分段、typed 扫描，忽略注释与引号） |
+| `fn_file_more.go` | `getcwd` / `chdir` / `stat` / `lstat` / `filetype` / `is_link` / `clearstatcache` / `chmod` / `chown` / `symlink` / `readlink` / `fnmatch` / `tempnam` / `tmpfile` / `fscanf` / `fpassthru` / `is_uploaded_file` / `move_uploaded_file` |
+| `fn_disk_unix.go` / `fn_disk_other.go` | `disk_free_space` / `disk_total_space`（unix 用 `statfs`，其它平台返回 false） |
+| `fn_runtime.go` | `version_compare` / `phpversion` / `extension_loaded` / `memory_get_usage` / `json_validate`（PHP 8.3）/ `get_defined_functions` / `assert` 相关常量 |
+| `fn_mb.go` | `mb_internal_encoding` / `mb_detect_encoding` / `mb_convert_encoding`（依赖 `golang.org/x/text`：GBK/GB18030/Big5/Latin1/UTF-16/HTML-ENTITIES） |
+| `fn_date_more.go` | `idate` / `date_parse` / `date_parse_from_format` / `localtime` |
+| `fn_http_more.go` | `headers_sent` / `header_remove` / `header_register_callback`（在 `http.go` 输出头部前调用）/ `getallheaders` |
+| `fn_str_more.go` | `strspn` / `strcspn` / `substr_compare` / `strpbrk` / `levenshtein` / `similar_text` / `quoted_printable_encode` / `quoted_printable_decode` / `convert_uuencode` / `convert_uudecode` |
+| `fn_crypt.go` | `crypt`（仅支持 `$1$` MD5-crypt，已用 glibc 向量校验；其余返回 `*0`） |
+| `fn_crypto.go` | `hash_algos` / `hash_hmac_algos` |
+
+新增常量：`PASSWORD_DEFAULT`/`PASSWORD_BCRYPT`/`PASSWORD_ARGON2I`/`PASSWORD_ARGON2ID`、`CASE_LOWER`/`CASE_UPPER`、`SORT_LOCALE_STRING`/`SORT_NATURAL`/`SORT_FLAG_CASE`、`MB_CASE_*`、`INI_SCANNER_*`、`PATHINFO_*`、`FILE_*`、`SEEK_*`、`ARRAY_FILTER_USE_*`、`PHP_VERSION` 等。
+
+## 运行时改动（eval.go / http.go）
+
+- `Env` 新增：`callArgs`（参数栈）、`shutdownFuncs`、`errorHandler`/`errorHandlers`/`errorMask`、`lastErrLevel`/`lastErrMsg`、`headerCallbacks`、`mbInternalEnc`。
+- 4 处用户函数调用点（`execBlock` 普通函数 / 方法 / 闭包 / `call_user_func` 路径）在绑定参数后 `pushCallFrame`，`defer popCallFrame`，供 `func_get_args` 系列读取。
+- 脚本正常结束与 `exit` 触发的收尾处执行 `register_shutdown_function` 回调。
+- `ServePHP` 每个请求重置上述按请求状态；并在写出响应头前调用 `header_register_callback` 回调。
+
+## 已知限制 / 与 PHP 的偏差
+
+- `crypt` 仅实现 `$1$`（MD5-crypt，与 glibc/python3 `crypt` 完全一致，已用 4 组向量单测校验）。`$2a/$2y/$2b`（bcrypt，因 Go `bcrypt` 无法指定盐复现）与 `$5$/$6$`（SHA-crypt）返回 `*0`（PHP 禁用对应算法时的标记）。现代密码校验请优先用 `password_verify`/`password_hash`。
+- `mb_substr`/`mb_strlen`/`mb_strpos` 仍是 `substr` 等字节语义别名（见第 4 节），处理多字节中文会按字节截断；如需真正字符语义可后续整体替换为 `mb_*` 真多字节实现，但需注意与现有字节语义的兼容性。
+- `array_walk`/`array_walk_recursive` 只能遍历、无法像 PHP 那样通过引用修改元素（phpgo 按值传递数组，回调内的赋值写不回原数组）。
+- `version_compare` 版本号解析覆盖了 `-alpha/-beta/-RC/-pl/-patch` 等常见后缀及 `dev`/`#` 特殊标记，普通语义版本等价比较准确；极端自定义后缀可能不完全一致。
+- 未实现（低频/废弃）：`strftime`（废弃）、`mhash`、`get_resource_type`。`hash_algos`/`hash_hmac_algos` 仅列出当前 `hash()` 支持的 `md5/sha1/sha256`。
+- 文档原第 2/5/8 节偏旧：bcmath 全家桶、`DateTime` 类、`sys_get_temp_dir` 实际已存在，此处不再重复。

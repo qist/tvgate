@@ -100,6 +100,17 @@ type Env struct {
 	jsonErrMsg    string            // 最近一次 JSON 错误信息（json_last_error_msg）
 	sessionID     string            // 会话 ID（session_id/session_start）
 	implicitFlush bool              // ob_implicit_flush 标记
+
+	// 以下为"常用函数补齐"新增的运行时状态
+	callArgs        [][]Value // 用户函数实参栈（含默认值），供 func_get_args/func_num_args/func_get_arg
+	shutdownFuncs   []Value   // register_shutdown_function 回调（脚本结束 / exit 后按注册序执行）
+	errorHandler    Value     // set_error_handler 当前处理器（null 表示未设置）
+	errorHandlers   []Value   // 处理器恢复栈（restore_error_handler 弹出）
+	errorMask       int64     // 当前处理器接受的错误级别掩码
+	lastErrLevel    int64     // error_get_last：最近一次错误级别
+	lastErrMsg      string    // error_get_last：最近一次错误信息
+	headerCallbacks []Value   // header_register_callback 注册的回调
+	mbInternalEnc   string    // mb_internal_encoding 当前值（默认 UTF-8）
 }
 
 // NewEnv 创建执行环境
@@ -273,6 +284,43 @@ func defaultPHPConsts() map[string]Value {
 	c["E_USER_WARNING"] = NewInt(512)
 	c["E_USER_NOTICE"] = NewInt(1024)
 	c["E_USER_DEPRECATED"] = NewInt(16384)
+	// PASSWORD_*（password_hash/verify）
+	c["PASSWORD_DEFAULT"] = NewInt(1)
+	c["PASSWORD_BCRYPT"] = NewInt(1)
+	c["PASSWORD_ARGON2I"] = NewInt(2)
+	c["PASSWORD_ARGON2ID"] = NewInt(3)
+	c["PASSWORD_BCRYPT_DEFAULT_COST"] = NewInt(10)
+	// 数组大小写 / 排序
+	c["CASE_LOWER"] = NewInt(0)
+	c["CASE_UPPER"] = NewInt(1)
+	c["SORT_LOCALE_STRING"] = NewInt(5)
+	c["SORT_NATURAL"] = NewInt(6)
+	c["SORT_FLAG_CASE"] = NewInt(8)
+	// 字符串长度测量单位
+	c["STR_PAD_LEFT"] = NewInt(0)
+	c["ARRAY_FILTER_USE_KEY"] = NewInt(2)
+	c["ARRAY_FILTER_USE_BOTH"] = NewInt(1)
+	// mb_* 相关
+	c["MB_CASE_LOWER"] = NewInt(1)
+	c["MB_CASE_UPPER"] = NewInt(0)
+	c["MB_CASE_TITLE"] = NewInt(2)
+	c["MB_OVERLOAD_MAIL"] = NewInt(1)
+	// 文件
+	c["PATHINFO_DIRNAME"] = NewInt(1)
+	c["PATHINFO_BASENAME"] = NewInt(2)
+	c["PATHINFO_EXTENSION"] = NewInt(4)
+	c["PATHINFO_FILENAME"] = NewInt(8)
+	c["FILE_IGNORE_NEW_LINES"] = NewInt(2)
+	c["FILE_SKIP_EMPTY_LINES"] = NewInt(4)
+	c["FILE_USE_INCLUDE_PATH"] = NewInt(1)
+	c["FILE_NO_DEFAULT_CONTEXT"] = NewInt(16)
+	c["SEEK_SET"] = NewInt(0)
+	c["SEEK_CUR"] = NewInt(1)
+	c["SEEK_END"] = NewInt(2)
+	c["INI_SCANNER_NORMAL"] = NewInt(0)
+	c["INI_SCANNER_RAW"] = NewInt(1)
+	c["INI_SCANNER_TYPED"] = NewInt(2)
+	c["PHP_VERSION"] = NewString(phpgoVersion)
 	return c
 }
 
@@ -368,6 +416,10 @@ func (e *Env) Run(prog *Program) (Value, error) {
 	for len(e.obStack) > 0 {
 		e.echoOut.WriteString(e.obStack[len(e.obStack)-1].String())
 		e.obStack = e.obStack[:len(e.obStack)-1]
+	}
+	// register_shutdown_function 回调：无论正常结束还是 exit 触发都执行（PHP 语义）
+	for _, cb := range e.shutdownFuncs {
+		_, _ = callCallable(e, cb, nil)
 	}
 	return NewNull(), nil
 }
@@ -1956,6 +2008,20 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 					continue
 				}
 			}
+			// array_multisort：以变量形式传入的数组实参都按引用绑定，便于回写多个排序列
+			if name == "array_multisort" {
+				if v, ok := a.(*VarExpr); ok {
+					cur, exists := e.vars[v.Name]
+					if exists && cur.Kind == KindRef && cur.Ref != nil {
+						vs = append(vs, cur)
+						continue
+					}
+					rv := NewRef(&varRef{name: v.Name})
+					rv.RefVal = &cur
+					vs = append(vs, rv)
+					continue
+				}
+			}
 			// splat 展开：...$var
 			if sp, ok := a.(*SplatExpr); ok {
 				val, err := e.evalExpr(sp.Expr)
@@ -2012,6 +2078,8 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 			e.vars[p.Name] = NewNull()
 		}
 	}
+	e.pushCallFrame(fn.Params)
+	defer e.popCallFrame()
 	r, err := e.execBlock(fn.Body)
 	defer func() {
 		e.vars = saved
@@ -2098,6 +2166,8 @@ func (e *Env) callMethod(fn *FuncDecl, args []Expr) (Value, error) {
 			e.vars[p.Name] = NewNull()
 		}
 	}
+	e.pushCallFrame(fn.Params)
+	defer e.popCallFrame()
 	r, err := e.execBlock(fn.Body)
 	// 恢复作用域
 	e.vars = saved
@@ -2129,6 +2199,8 @@ func (e *Env) callUserFuncValues(fn *FuncDecl, vs []Value) (Value, error) {
 			e.vars[p.Name] = NewNull()
 		}
 	}
+	e.pushCallFrame(fn.Params)
+	defer e.popCallFrame()
 	r, err := e.execBlock(fn.Body)
 	defer func() {
 		e.vars = saved
