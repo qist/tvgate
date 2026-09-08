@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Archive,
   ArrowUp,
+  ArrowDown,
   Box,
   Download,
   FileCode,
@@ -98,7 +99,7 @@ export function CodePage() {
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState<{ type: "ok" | "err" | "warn"; msg: string } | null>(null);
   const [busy, setBusy] = useState("");
-  const [findOpen, setFindOpen] = useState<null | { focusReplace: boolean; initialFind: string }>(null);
+  const [findOpen, setFindOpen] = useState<null | { focusReplace: boolean; initialFind: string; findOnly: boolean }>(null);
   const [replOpen, setReplOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -366,10 +367,10 @@ export function CodePage() {
   };
 
   // 打开查找/替换：编辑器里有选中内容（单行）则自动带入查找框
-  const openFind = (focusReplace: boolean) => {
+  const openFind = (focusReplace: boolean, findOnly = false) => {
     const ta = taRef.current;
     const sel = ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : "";
-    setFindOpen({ focusReplace, initialFind: sel && !sel.includes("\n") ? sel : "" });
+    setFindOpen({ focusReplace, initialFind: sel && !sel.includes("\n") ? sel : "", findOnly });
   };
 
   // 快捷键
@@ -385,7 +386,7 @@ export function CodePage() {
       save();
     } else if (k === "f") {
       e.preventDefault();
-      openFind(false);
+      openFind(false, true);
     } else if (k === "h") {
       e.preventDefault();
       openFind(true);
@@ -516,7 +517,10 @@ export function CodePage() {
                 <Button size="sm" className="h-7 text-xs" onClick={save}>
                   <Save className="h-3.5 w-3.5" /> 保存
                 </Button>
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openFind(false)} title="查找/替换 (Ctrl+F / Ctrl+H)">
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openFind(false, true)} title="查找 (Ctrl+F)">
+                  <Search className="h-3.5 w-3.5" /> 查找
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openFind(true)} title="查找/替换 (Ctrl+H)">
                   <Search className="h-3.5 w-3.5" /> 查找替换
                 </Button>
                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={toggleComment} title="注释/取消注释 (Ctrl+Q 或 Ctrl+/)">
@@ -636,6 +640,7 @@ export function CodePage() {
           taRef={taRef}
           focusReplace={findOpen.focusReplace}
           initialFind={findOpen.initialFind}
+          findOnly={findOpen.findOnly}
           onContent={applyContent}
           onClose={() => setFindOpen(null)}
         />
@@ -666,6 +671,7 @@ function FindReplace({
   taRef,
   focusReplace,
   initialFind,
+  findOnly,
   onContent,
   onClose,
 }: {
@@ -673,6 +679,7 @@ function FindReplace({
   taRef: React.RefObject<HTMLTextAreaElement | null>;
   focusReplace: boolean;
   initialFind: string;
+  findOnly: boolean;
   onContent: (c: string) => void;
   onClose: () => void;
 }) {
@@ -760,7 +767,7 @@ function FindReplace({
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 p-4 pt-20">
       <div className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold">查找 / 替换</h3>
+          <h3 className="text-sm font-semibold">{findOnly ? "查找" : "查找 / 替换"}</h3>
           <button className="text-muted-foreground hover:text-foreground" onClick={onClose}>
             <X className="h-4 w-4" />
           </button>
@@ -776,26 +783,34 @@ function FindReplace({
               onChange={(e) => setFind(e.target.value)}
               onKeyDown={onKeyDown}
             />
-            <span className="flex w-20 shrink-0 items-center justify-center text-xs text-muted-foreground">
+            <span className="flex w-14 shrink-0 items-center justify-center text-xs text-muted-foreground">
               {find ? (matches.length ? `${cur % matches.length + 1}/${matches.length}` : "无结果") : ""}
             </span>
-          </div>
-          <div className="flex gap-2">
-            <input
-              ref={replaceRef}
-              className="h-8 flex-1 rounded border bg-background px-2 font-mono text-sm"
-              placeholder="替换为…（留空则删除匹配）"
-              value={rep}
-              onChange={(e) => setRep(e.target.value)}
-              onKeyDown={onKeyDown}
-            />
-            <Button size="sm" variant="outline" className="h-8 text-xs" disabled={!matches.length} onClick={replaceOne}>
-              替换
+            <Button size="icon" variant="outline" className="h-8 w-8 shrink-0" disabled={!matches.length} onClick={() => goto(-1)} title="上一个 (Shift+Enter)">
+              <ArrowUp className="h-4 w-4" />
             </Button>
-            <Button size="sm" variant="outline" className="h-8 text-xs" disabled={!matches.length} onClick={replaceAll}>
-              全部替换
+            <Button size="icon" variant="outline" className="h-8 w-8 shrink-0" disabled={!matches.length} onClick={() => goto(1)} title="下一个 (Enter)">
+              <ArrowDown className="h-4 w-4" />
             </Button>
           </div>
+          {!findOnly && (
+            <div className="flex gap-2">
+              <input
+                ref={replaceRef}
+                className="h-8 flex-1 rounded border bg-background px-2 font-mono text-sm"
+                placeholder="替换为…（留空则删除匹配）"
+                value={rep}
+                onChange={(e) => setRep(e.target.value)}
+                onKeyDown={onKeyDown}
+              />
+              <Button size="sm" variant="outline" className="h-8 text-xs" disabled={!matches.length} onClick={replaceOne}>
+                替换
+              </Button>
+              <Button size="sm" variant="outline" className="h-8 text-xs" disabled={!matches.length} onClick={replaceAll}>
+                全部替换
+              </Button>
+            </div>
+          )}
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <div className="flex gap-3">
               <label className="flex items-center gap-1">

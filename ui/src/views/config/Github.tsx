@@ -112,7 +112,7 @@ export function GithubPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">GitHub 加速配置</h1>
+        <h1 className="text-xl font-semibold">GitHub 加速 &amp; 版本升级</h1>
         <div className="flex items-center gap-2">
           <Badge variant={statusState === "running" ? "default" : statusState === "error" || statusState === "panic" ? "destructive" : "outline"}>
             {statusText}
