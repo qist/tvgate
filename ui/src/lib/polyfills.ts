@@ -166,3 +166,32 @@ if (typeof (ResizeObserver as unknown) === "undefined") {
   }
   (globalThis as unknown as Record<string, unknown>).ResizeObserver = RO;
 }
+
+/* --- flex gap 特性检测（Chromium 84- 不支持 flex 容器的 gap） ---
+ * 旧 WebView 用 margin 兜底（见 ui/postcss-gap-polyfill.mjs）。
+ * 通过给 <html> 加 .no-flexgap 区分：仅该类下才启用 margin 兜底，
+ * 现代浏览器仍用原生 gap，不会破坏后台 grid/flex 布局。
+ * 必须在业务代码前执行（本文件在 main.tsx / player.tsx 顶部首行引入）。 */
+(function applyFlexGapFallback() {
+  try {
+    if (typeof document === "undefined" || !document.documentElement) return;
+    const root = document.documentElement;
+    if (root.classList.contains("no-flexgap")) return;
+    const flex = document.createElement("div");
+    flex.style.display = "flex";
+    flex.style.flexDirection = "column";
+    flex.style.rowGap = "1px";
+    const a = document.createElement("div");
+    const b = document.createElement("div");
+    flex.appendChild(a);
+    flex.appendChild(b);
+    (document.body || root).appendChild(flex);
+    // 两个 0 高度子元素 + 1px row-gap：支持则容器高度=1，不支持则=0
+    const supported = flex.scrollHeight === 1;
+    flex.parentNode?.removeChild(flex);
+    if (!supported) root.classList.add("no-flexgap");
+  } catch {
+    // 检测异常时保守启用兜底，避免旧浏览器控件重叠
+    document.documentElement?.classList.add("no-flexgap");
+  }
+})();
