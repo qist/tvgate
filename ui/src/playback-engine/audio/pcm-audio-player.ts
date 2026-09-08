@@ -80,8 +80,8 @@ const CONTROL_INTERVAL_MS = 250;
 const MAX_PENDING_CHUNKS = 1200;
 /** Seconds of decoded PCM to keep in the pending scheduling window after a resync. */
 const PENDING_REFILL_WINDOW_SEC = 4.0;
-/** Control ticks between verbose drift diagnostics (~10s). */
-const DRIFT_LOG_TICKS = 40;
+/** Control ticks between verbose drift diagnostics (~60s). */
+const DRIFT_LOG_TICKS = 240;
 /** RECOVERING must anchor within this window or escalate via onResyncFailed. */
 const RECOVERY_TIMEOUT_MS = 4000;
 /** Minimum contiguous PCM retained after the startup anchor. */
