@@ -23,13 +23,16 @@
     "zustand": "^5.0.3"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.1.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-legacy": "^6.1.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "tailwindcss": "^4.1.0",
+    "autoprefixer": "^10.5.5",
+    "postcss": "^8.5.28",
+    "postcss-gap-properties": "^7.0.0",
+    "postcss-preset-env": "^11.5.2",
+    "tailwindcss": "^3.4.19",
     "terser": "^5.51.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.0"

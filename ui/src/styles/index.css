@@ -1,51 +1,6 @@
-@import "tailwindcss";
-
-@custom-variant dark (&:where(.dark, .dark *));
-
-@theme {
-  --font-sans:
-    "Inter Variable", "SF Pro Display", "SF Pro Text", "Segoe UI Variable", "Segoe UI",
-    "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", ui-monospace, monospace;
-
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --animate-zoom-fade-out: zoom-fade-out 0.5s ease-out forwards;
-
-  @keyframes zoom-fade-out {
-    0% {
-      transform: scale(1);
-      opacity: 1;
-    }
-
-    100% {
-      transform: scale(1.4);
-      opacity: 0;
-    }
-  }
-
-  --radius-sm: 0.5rem;
-  --radius: 0.625rem;
-  --radius-lg: 0.875rem;
-  --radius-xl: 1rem;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
   --background: 226 44% 97%;
@@ -248,17 +203,17 @@ html.player-theme-ocean {
   --pg-grad-a: #0ea5e9;
   --pg-grad-b: #38bdf8;
   --pg-grad-c: #2563eb;
-  --color-violet-50: oklch(0.977 0.013 236.62);
-  --color-violet-100: oklch(0.951 0.026 236.824);
-  --color-violet-200: oklch(0.901 0.058 230.902);
-  --color-violet-300: oklch(0.828 0.111 230.318);
-  --color-violet-400: oklch(0.746 0.16 232.661);
-  --color-violet-500: oklch(0.685 0.169 237.323);
-  --color-violet-600: oklch(0.588 0.158 241.966);
-  --color-violet-700: oklch(0.5 0.134 242.749);
-  --color-violet-800: oklch(0.443 0.11 240.79);
-  --color-violet-900: oklch(0.391 0.09 240.876);
-  --color-violet-950: oklch(0.293 0.066 243.157);
+  --color-violet-50: rgb(245 243 255);
+  --color-violet-100: rgb(237 233 254);
+  --color-violet-200: rgb(221 214 254);
+  --color-violet-300: rgb(196 181 253);
+  --color-violet-400: rgb(167 139 250);
+  --color-violet-500: rgb(139 92 246);
+  --color-violet-600: rgb(124 58 237);
+  --color-violet-700: rgb(109 40 217);
+  --color-violet-800: rgb(91 33 182);
+  --color-violet-900: rgb(76 29 149);
+  --color-violet-950: rgb(46 16 101);
 }
 
 /* —— 翡翠（emerald 绿） —— */
@@ -268,17 +223,17 @@ html.player-theme-emerald {
   --pg-grad-a: #10b981;
   --pg-grad-b: #2dd4bf;
   --pg-grad-c: #047857;
-  --color-violet-50: oklch(0.979 0.021 166.113);
-  --color-violet-100: oklch(0.95 0.052 163.051);
-  --color-violet-200: oklch(0.905 0.093 164.15);
-  --color-violet-300: oklch(0.845 0.143 164.978);
-  --color-violet-400: oklch(0.765 0.177 163.223);
-  --color-violet-500: oklch(0.696 0.17 162.48);
-  --color-violet-600: oklch(0.596 0.145 163.225);
-  --color-violet-700: oklch(0.508 0.118 165.612);
-  --color-violet-800: oklch(0.432 0.095 166.913);
-  --color-violet-900: oklch(0.378 0.077 168.94);
-  --color-violet-950: oklch(0.262 0.051 172.552);
+  --color-violet-50: rgb(236 253 245);
+  --color-violet-100: rgb(209 250 229);
+  --color-violet-200: rgb(167 243 208);
+  --color-violet-300: rgb(110 231 183);
+  --color-violet-400: rgb(52 211 153);
+  --color-violet-500: rgb(16 185 129);
+  --color-violet-600: rgb(5 150 105);
+  --color-violet-700: rgb(4 120 87);
+  --color-violet-800: rgb(6 95 70);
+  --color-violet-900: rgb(6 78 59);
+  --color-violet-950: rgb(2 44 34);
 }
 
 /* —— 落日（orange/rose 暖色） —— */
@@ -288,17 +243,17 @@ html.player-theme-sunset {
   --pg-grad-a: #f97316;
   --pg-grad-b: #f43f5e;
   --pg-grad-c: #f59e0b;
-  --color-violet-50: oklch(0.98 0.016 73.684);
-  --color-violet-100: oklch(0.954 0.038 75.164);
-  --color-violet-200: oklch(0.901 0.076 70.697);
-  --color-violet-300: oklch(0.837 0.128 66.29);
-  --color-violet-400: oklch(0.75 0.183 55.934);
-  --color-violet-500: oklch(0.705 0.213 47.604);
-  --color-violet-600: oklch(0.646 0.222 41.116);
-  --color-violet-700: oklch(0.553 0.195 38.402);
-  --color-violet-800: oklch(0.47 0.157 37.304);
-  --color-violet-900: oklch(0.408 0.123 38.172);
-  --color-violet-950: oklch(0.266 0.079 36.259);
+  --color-violet-50: rgb(255 247 237);
+  --color-violet-100: rgb(255 237 213);
+  --color-violet-200: rgb(254 215 170);
+  --color-violet-300: rgb(253 186 116);
+  --color-violet-400: rgb(251 146 60);
+  --color-violet-500: rgb(249 115 22);
+  --color-violet-600: rgb(234 88 12);
+  --color-violet-700: rgb(194 65 12);
+  --color-violet-800: rgb(154 52 18);
+  --color-violet-900: rgb(124 45 18);
+  --color-violet-950: rgb(67 20 7);
 }
 
 /* 页面底色与光晕（覆盖 TSX 内联的紫调渐变；加载页/错误页同钩子统一生效） */
@@ -648,4 +603,22 @@ html.dark[class*="panel-alpha-"] .player-performance-page-background {
     radial-gradient(circle at 88% 10%, rgba(var(--pg-rgb), 0.26), transparent 32%),
     radial-gradient(circle at 70% 88%, rgba(var(--pg-rgb-2), 0.22), transparent 36%),
     linear-gradient(145deg, var(--pg-bg-dark-a), var(--pg-bg-dark-b));
+}
+
+/* ===== Android 8 WebView（Chromium 62-68）兼容兜底 =====
+ * aspect-ratio 在 Chrome 88+ 才支持；旧 WebView 不解析 → 视频容器高度塌成 0。
+ * 用 padding-top 比例法兜底（16:9），并让子元素绝对填充。 */
+@supports not (aspect-ratio: 1 / 1) {
+  .aspect-video {
+    position: relative;
+    height: 0 !important;
+    padding-top: 56.25% !important;
+  }
+
+  .aspect-video > * {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
 }
