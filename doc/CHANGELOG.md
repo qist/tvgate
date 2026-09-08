@@ -4,6 +4,14 @@
 
 ## Android (tvgate-android)
 
+### v3.2.1
+
+```
+1、内嵌服务端同步至 v3.2.1 — E-AC-3/AC-3 软解长播音画不同步修复（源 PTS 周期
+   跳变不再触发 bridging）、中断恢复超时误报导致切台无声修复、phpgo date() 时区
+   按原生 PHP 语义解析、LiveSync 自愈日志静默与 drift 诊断降频
+```
+
 ### v3.2.0
 
 ```
@@ -117,7 +125,17 @@
    常为 AC-3 帧长 32ms 的整数倍），而音频内容本身连续。旧代码把这类周期跳变当
    "不连续"触发 re-锚 + bridging，每 10s 把音频时间轴硬拧一次、周期性压缩，长播
    累积成"声音慢慢跑画面前面"。现把音频 PTS 重新锚定阈值由 100ms 提高到 10s，
-   只对真正的切台/节目级不连续（>数秒）才重锚，旁路源的周期性 PTS 相位步进
+   只对真正的切台/节目级不连续（>数秒）才重锚
+2、修复中断恢复超时误报导致切台无声 — 重负载频道（1080i bwdif 软件反交错、
+   MP2/AC-3 wasm 起播慢）切台后视频 4s 内未起播即被误判"时钟死亡"上报
+   AudioResyncFailed，反复重试耗尽后无声；现区分"数据未到"（重新排队定时器
+   继续等）与"时钟真死"（readyState 良好却无 timeupdate 才上报）
+3、修复 phpgo date() 时区 — 原实现硬编码 UTC，未显式 date_default_timezone_set
+   的脚本 date()/strtotime()/checkdate() 等全部按 UTC 输出（差 8 小时）。现按
+   原生 PHP 优先级解析：显式 set（请求级隔离）> ini date.timezone > 系统本地
+   时区；gmdate 恒 UTC
+4、日志治理 — LiveSync 分片缺口自愈（静默常态操作）不再按警告级刷屏；AC-3
+   软解 A/V drift 诊断由 10s 一条降为 60s 一条
 ```
 
 ### v3.2.0
