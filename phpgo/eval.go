@@ -133,7 +133,8 @@ func NewEnv(proxy ProxyFunc) *Env {
 		echoOut: &strings.Builder{},
 		files:   map[int]io.ReadWriteCloser{},
 		nextFd:  1,
-		loc:     currentPHPLocation(), // 播种为配置默认时区（date_default_timezone_set 可改）
+		// loc 留空 = 未显式 date_default_timezone_set，由 effectiveLoc 按
+		// 原生 PHP 优先级（显式 set > ini date.timezone > 系统本地时区）解析
 	}
 	return ev
 }
@@ -1422,10 +1423,7 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 				arg = v.ToString()
 			}
 			obj := NewObject("DateTime")
-			loc := e.loc
-			if loc == nil {
-				loc = time.UTC
-			}
+			loc := effectiveLoc(e)
 			if arg == "" {
 				// new DateTime() → now
 				obj.Object.SetProp("__ts", NewInt(time.Now().Unix()))

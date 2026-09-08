@@ -6,10 +6,11 @@ import (
 	"time"
 )
 
-// 全局默认时区（Env 创建时的播种值，缺省 UTC；脚本可用 date_default_timezone_set 修改）。
-// 每次请求的 Env 各自持有 loc，互不影响，故此处仅静态读默认值，用互斥锁保护。
+// 全局默认时区（Env 未显式 date_default_timezone_set 时的兜底）。
+// 按原生 PHP 部署惯例播种为系统本地时区（php.ini date.timezone 未配置时
+// 发行版通常落到系统时区），每请求 Env 各自持有显式值互不影响。
 var (
-	phpTimeLoc   *time.Location = time.UTC
+	phpTimeLoc   *time.Location = time.Local
 	phpTimeLocMu sync.RWMutex
 )
 
@@ -20,6 +21,22 @@ func currentPHPLocation() *time.Location {
 	return phpTimeLoc
 }
 
+// effectiveLoc 返回当前生效时区（原生 PHP 优先级）：
+// date_default_timezone_set 显式设置 > ini 的 date.timezone > 全局默认。
+func effectiveLoc(e *Env) *time.Location {
+	if e != nil && e.loc != nil {
+		return e.loc
+	}
+	if e != nil {
+		if tz := e.ini["date.timezone"]; tz != "" {
+			if l, err := time.LoadLocation(tz); err == nil {
+				return l
+			}
+		}
+	}
+	return currentPHPLocation()
+}
+
 func init() {
 	builtins["date"] = func(e *Env, a []Value) (Value, error) {
 		format := a[0].ToString()
@@ -27,7 +44,7 @@ func init() {
 		if len(a) >= 2 {
 			ts = a[1].ToInt()
 		}
-		return NewString(phpDateIn(format, ts, e.loc)), nil
+		return NewString(phpDateIn(format, ts, effectiveLoc(e))), nil
 	}
 	builtins["gmdate"] = func(e *Env, a []Value) (Value, error) {
 		format := a[0].ToString()
@@ -49,12 +66,9 @@ func init() {
 		return NewString(strconv.FormatFloat(sec, 'f', 8, 64) + " " + strconv.FormatInt(now.Unix(), 10)), nil
 	}
 	builtins["strtotime"] = func(e *Env, a []Value) (Value, error) {
-		// 解析常见格式（无时区按当前请求默认时区解析）
+		// 解析常见格式（无时区按当前请求生效时区解析）
 		s := a[0].ToString()
-		loc := e.loc
-		if loc == nil {
-			loc = time.UTC
-		}
+		loc := effectiveLoc(e)
 		if t, ok := phpStrToTime(s, loc); ok {
 			return NewInt(t.Unix()), nil
 		}
@@ -69,10 +83,7 @@ func init() {
 		return NewBool(true), nil
 	}
 	builtins["date_default_timezone_get"] = func(e *Env, a []Value) (Value, error) {
-		if e.loc == nil {
-			return NewString("UTC"), nil
-		}
-		return NewString(e.loc.String()), nil
+		return NewString(effectiveLoc(e).String()), nil
 	}
 }
 

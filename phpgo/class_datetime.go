@@ -110,10 +110,7 @@ func (e *Env) dateTimeBuiltinMethod(recv Value, method string, args []Expr) (Val
 		return NewBool(false), true, nil
 	}
 	ts := tsv.ToInt()
-	loc := e.loc
-	if loc == nil {
-		loc = time.UTC
-	}
+	loc := effectiveLoc(e)
 	switch strings.ToLower(method) {
 	case "format":
 		if len(vals) == 0 {

@@ -31,10 +31,7 @@ func init() {
 		if len(a) >= 1 {
 			ts = a[0].ToInt()
 		}
-		loc := e.loc
-		if loc == nil {
-			loc = time.UTC
-		}
+		loc := effectiveLoc(e)
 		t := time.Unix(ts, 0).In(loc)
 		wday := int(t.Weekday())
 		weekdays := []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
@@ -98,10 +95,7 @@ func phpMktime(e *Env, a []Value, utc bool) Value {
 	if utc {
 		loc = time.UTC
 	} else {
-		loc = e.loc
-		if loc == nil {
-			loc = time.UTC
-		}
+		loc = effectiveLoc(e)
 	}
 	return NewInt(time.Date(year, time.Month(month), day, hour, minute, second, 0, loc).Unix())
 }

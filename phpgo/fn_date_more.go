@@ -154,10 +154,7 @@ func init() {
 		if len(a) >= 2 {
 			ts = a[1].ToInt()
 		}
-		loc := e.loc
-		if loc == nil {
-			loc = time.UTC
-		}
+		loc := effectiveLoc(e)
 		f := a[0].ToString()
 		if f == "" {
 			return NewBool(false), nil
@@ -169,10 +166,7 @@ func init() {
 		if len(a) < 1 {
 			return NewBool(false), nil
 		}
-		loc := e.loc
-		if loc == nil {
-			loc = time.UTC
-		}
+		loc := effectiveLoc(e)
 		t, ok := phpStrToTime(a[0].ToString(), loc)
 		if !ok {
 			return phpDateParseError(), nil
@@ -185,10 +179,7 @@ func init() {
 			return NewBool(false), nil
 		}
 		layout, present := phpDateFromFormatLayout(a[0].ToString())
-		loc := e.loc
-		if loc == nil {
-			loc = time.UTC
-		}
+		loc := effectiveLoc(e)
 		t, err := time.ParseInLocation(layout, a[1].ToString(), loc)
 		if err != nil {
 			return phpDateParseError(), nil
@@ -205,10 +196,7 @@ func init() {
 		if len(a) >= 2 {
 			assoc = a[1].ToBool()
 		}
-		loc := e.loc
-		if loc == nil {
-			loc = time.UTC
-		}
+		loc := effectiveLoc(e)
 		t := time.Unix(ts, 0).In(loc)
 		vals := []int64{
 			int64(t.Second()), int64(t.Minute()), int64(t.Hour()), int64(t.Day()),
