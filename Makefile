@@ -32,17 +32,31 @@ UI_SRCS     := $(shell find $(UI_DIR)/src -type f 2>/dev/null)
 # Go 源码变化时自动重编（所有平台二进制目标的公共依赖，避免改代码后 make 判定"无需重建"）
 GO_SRCS     := $(shell find . -name '*.go' -not -path './ui/*' 2>/dev/null) go.mod go.sum config/version
 
+# npm install 戳记：仅在 package.json/package-lock.json 变化后（或戳记缺失）才重装依赖，
+# 避免“node_modules 目录存在但依赖残缺”时误判为已装好而跳过。
+NPM_STAMP := $(UI_DIR)/node_modules/.install-stamp
+
+$(NPM_STAMP): $(UI_DIR)/package.json $(UI_DIR)/package-lock.json
+	@if ! command -v npm >/dev/null 2>&1; then \
+		echo "⚠️ 未检测到 npm，跳过前端依赖安装（沿用已提交的 web/dist 占位）"; \
+		touch $@; exit 0; \
+	fi
+	cd $(UI_DIR) && npm install
+	@touch $@
+
 .PHONY: web-ui ui-install go-only
 web-ui: $(DIST_STAMP)
 
-$(DIST_STAMP): $(UI_SRCS) $(UI_DIR)/package.json $(UI_DIR)/package-lock.json
-	@command -v npm >/dev/null 2>&1 || { echo "⚠️ 未检测到 npm，跳过前端构建"; exit 0; }
-	@test -d $(UI_DIR)/node_modules || (cd $(UI_DIR) && npm install)
+$(DIST_STAMP): $(UI_SRCS) $(NPM_STAMP)
+	@if ! command -v npm >/dev/null 2>&1; then \
+		echo "⚠️ 未检测到 npm，跳过前端构建（沿用已提交的 web/dist 占位）"; \
+		touch $@; exit 0; \
+	fi
 	cd $(UI_DIR) && npm run build
 	@touch $@
 
-ui-install:
-	@cd $(UI_DIR) && npm install
+ui-install: $(NPM_STAMP)
+	@cd $(UI_DIR) && npm install && touch $(NPM_STAMP)
 
 # 纯 Go 编译（前端为占位 dist，仅编译/升级场景使用）
 go-only:
