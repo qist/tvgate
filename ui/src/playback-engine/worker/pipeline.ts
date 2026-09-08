@@ -192,6 +192,7 @@ class Pipeline {
   private _audioAnchorPtsMs: number | null = null;
   private _audioSamplesSinceAnchor = 0;
   private _audioSampleRate = 0;
+  private _audioDiagCount = 0;
   /** PCM decoded before the remuxer dts base is known (flushed once available). */
   private _pendingPcm: Array<{
     pcm: Float32Array;
@@ -1277,6 +1278,22 @@ class Pipeline {
       }
       const ptsMs = this._audioAnchorPtsMs + (this._audioSamplesSinceAnchor / sr) * 1000;
       this._audioSamplesSinceAnchor += result.samplesPerChannel;
+
+      // [AC3-AV-DIAG] 仅打印：确认 AC-3 时间轴是"速率错"还是"基线/恒定偏移"。
+      // pesPTS=源 PES PTS；ptsMs=最终喂给播放器的时间(由真实样本数外推)；
+      // offset=ptsMs 相对 pesPTS 的累计偏移(非 0 表示外推已偏离源 PTS)；
+      // 若 ptsMs 随时间持续跑赢 video.currentTime(看 PCMAudioPlayer 的 A/V drift 日志)，
+      // 则 WASM 报的 sr/spc 与本源真实参数不符(速率错)。
+      if (++this._audioDiagCount % 50 === 1) {
+        const offset = ptsMs - frame.pts;
+        Log.w(
+          this.TAG,
+          `[AC3-AV-DIAG] #${this._audioDiagCount} codec=${frame.codec} ` +
+            `pesPTS=${frame.pts.toFixed(1)} ptsMs=${ptsMs.toFixed(1)} ` +
+            `offset=${(offset >= 0 ? "+" : "")}${offset.toFixed(1)}ms sr=${sr} ` +
+            `spc=${result.samplesPerChannel} ch=${result.channels}`,
+        );
+      }
 
       this._emitPcm(result.pcm, result.channels, sr, ptsMs);
     });
