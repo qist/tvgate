@@ -622,3 +622,14 @@ html.dark[class*="panel-alpha-"] .player-performance-page-background {
     height: 100%;
   }
 }
+
+/* ===== 后台兼容：抵消 Tailwind v3 工具类生成顺序与 v4 的差异 =====
+ * 本项目组件用 clsx 直接拼接 className（未用 tailwind-merge），靠层叠顺序消解冲突。
+ * v4 中 .flex-col 生成在 .flex-row 之前 → 覆盖的 flex-row 胜出（卡片头横排，正常）；
+ * 降到 v3 后顺序翻转（.flex-row 在前、.flex-col 在后）→ flex-col 胜出 → 卡片头变纵向错乱。
+ * 显式规定"基类 flex-col + 覆盖 flex-row"成对共存时 row/reverse 胜出，恢复后台卡片头横排。
+ * 仅作用于同时带两个类的元素，默认（仅 flex-col）卡片头不受影响；播放器 Card 覆盖同样期望 row，无害。 */
+.flex-col.flex-row,
+.flex-row.flex-col { flex-direction: row; }
+.flex-col-reverse.flex-row-reverse,
+.flex-row-reverse.flex-col-reverse { flex-direction: row-reverse; }
