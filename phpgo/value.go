@@ -7,6 +7,7 @@ package phpgo
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,9 +23,9 @@ const (
 	KindFloat
 	KindString
 	KindArray
-	KindRef // 变量引用（&$var 形参）
+	KindRef      // 变量引用（&$var 形参）
 	KindResource // 资源（文件句柄 / 秘钥 / 流等，存任意 Go 对象）
-	KindObject // 对象实例
+	KindObject   // 对象实例
 )
 
 // Value 是简化版 PHP zval：支持 null/bool/int/float/string/array。
@@ -77,12 +78,32 @@ func NewArray() Value {
 
 // Clone 深拷贝 Value（PHP 数组赋值语义：数组按值拷贝）
 func (v Value) Clone() Value {
+	return v.clone(nil)
+}
+
+// clone 深拷贝数组；stack 记录当前拷贝路径上已展开的数组 map 指针，
+// 用于检测循环/自引用结构（如 unserialize 的 R: 结果）——再次遇到时保留共享视图，
+// 避免无限递归爆栈（PHP 对循环数组的赋值同样不会展开它，只是 COW 共享）。
+func (v Value) clone(stack []uintptr) Value {
 	switch v.Kind {
 	case KindArray:
+		if v.Arr == nil {
+			return v
+		}
+		ptr := reflect.ValueOf(v.Arr).Pointer()
+		if ptr == 0 {
+			return v
+		}
+		for _, q := range stack {
+			if q == ptr {
+				return v
+			}
+		}
 		c := Value{Kind: KindArray, Arr: make(map[string]Value, len(v.Arr)), Keys: make([]string, len(v.Keys))}
 		copy(c.Keys, v.Keys)
+		stack = append(stack, ptr)
 		for k, val := range v.Arr {
-			c.Arr[k] = val.Clone()
+			c.Arr[k] = val.clone(stack)
 		}
 		return c
 	case KindObject:
@@ -107,14 +128,14 @@ func (v Value) ToBool() bool {
 		return v.Int != 0
 	case KindFloat:
 		return v.Float != 0
-case KindString:
-return v.Str != "" && v.Str != "0"
-case KindRef:
-if v.RefVal != nil {
-return v.RefVal.ToBool()
-}
-return false
-case KindArray:
+	case KindString:
+		return v.Str != "" && v.Str != "0"
+	case KindRef:
+		if v.RefVal != nil {
+			return v.RefVal.ToBool()
+		}
+		return false
+	case KindArray:
 		return len(v.Keys) > 0
 	case KindObject:
 		return true
@@ -136,15 +157,15 @@ func (v Value) ToFloat() float64 {
 		return float64(v.Int)
 	case KindFloat:
 		return v.Float
-case KindString:
-f, _ := strconv.ParseFloat(strings.TrimSpace(v.Str), 64)
-return f
-case KindRef:
-if v.RefVal != nil {
-return v.RefVal.ToFloat()
-}
-return 0
-}
+	case KindString:
+		f, _ := strconv.ParseFloat(strings.TrimSpace(v.Str), 64)
+		return f
+	case KindRef:
+		if v.RefVal != nil {
+			return v.RefVal.ToFloat()
+		}
+		return 0
+	}
 	return 0
 }
 
@@ -160,16 +181,16 @@ func (v Value) ToInt() int64 {
 		return v.Int
 	case KindFloat:
 		return int64(v.Float)
-case KindString:
-var n int64
-fmt.Sscanf(v.Str, "%d", &n)
-return n
-case KindRef:
-if v.RefVal != nil {
-return v.RefVal.ToInt()
-}
-return 0
-}
+	case KindString:
+		var n int64
+		fmt.Sscanf(v.Str, "%d", &n)
+		return n
+	case KindRef:
+		if v.RefVal != nil {
+			return v.RefVal.ToInt()
+		}
+		return 0
+	}
 	return 0
 }
 
@@ -226,7 +247,7 @@ func (v Value) ArrayGet(key Value) Value {
 	}
 	k := key.ToString()
 	if e, ok := v.Arr[k]; ok {
-		return e
+		return deref(e)
 	}
 	return NewNull()
 }
@@ -274,13 +295,48 @@ func (v *Value) ArrayUnset(key Value) {
 
 // ObjectInstance 类实例
 type ObjectInstance struct {
-	ClassName   string
-	Properties  map[string]Value
+	ClassName  string
+	Properties map[string]Value
+	// PropKeys 维护属性插入顺序：PHP 的属性有声明序（serialize/json_encode 都按该顺序输出），
+	// 而 Go map 无序，必须单独记录，否则与 PHP 输出不一致。
+	PropKeys []string
 }
 
 // NewObject 创建对象实例
 func NewObject(className string) Value {
 	return Value{Kind: KindObject, Object: &ObjectInstance{ClassName: className, Properties: map[string]Value{}}}
+}
+
+// SetProp 设置对象属性并维护插入顺序。
+// 所有对象属性写入都应走这里，直接写 Properties 会丢顺序。
+func (o *ObjectInstance) SetProp(name string, v Value) {
+	if o == nil {
+		return
+	}
+	if o.Properties == nil {
+		o.Properties = map[string]Value{}
+	}
+	if _, ok := o.Properties[name]; !ok {
+		o.PropKeys = append(o.PropKeys, name)
+	}
+	o.Properties[name] = v
+}
+
+// PropKeysInOrder 返回属性顺序。
+// PropKeys 与 Properties 数量不一致时（外部直接写 map 构造）回退为排序输出，保证确定性。
+func (o *ObjectInstance) PropKeysInOrder() []string {
+	if o == nil {
+		return nil
+	}
+	if len(o.PropKeys) == len(o.Properties) {
+		return o.PropKeys
+	}
+	keys := make([]string, 0, len(o.Properties))
+	for k := range o.Properties {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // ArrayKeysSorted 返回排序后的 key（用于调试/遍历）

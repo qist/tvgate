@@ -614,17 +614,24 @@ func (p *Parser) parseForeach() (Stmt, error) {
 	if _, err := p.expect(tAs); err != nil {
 		return Tok{}, fmt.Errorf("parse: foreach 期望 as at %d", p.cur().Pos)
 	}
+	keyVar := ""
+	valByRef := false
+	// foreach ($arr as &$v)
+	if p.at(tAmp) {
+		p.adv()
+		valByRef = true
+	}
 	v1, err := p.expect(tVar)
 	if err != nil {
 		return Tok{}, err
 	}
-	keyVar := ""
 	valVar := v1.Val[1:]
 	if p.at(tArrowFn) {
 		p.adv()
 		keyVar = valVar
 		if p.at(tAmp) {
 			p.adv()
+			valByRef = true
 		}
 		v2, err := p.expect(tVar)
 		if err != nil {
@@ -640,7 +647,7 @@ func (p *Parser) parseForeach() (Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ForeachStmt{Arr: arrExpr, KeyVar: keyVar, ValVar: valVar, Body: body}, nil
+	return &ForeachStmt{Arr: arrExpr, KeyVar: keyVar, ValVar: valVar, ValByRef: valByRef, Body: body}, nil
 }
 
 func (p *Parser) parseFor() (Stmt, error) {
@@ -1157,7 +1164,33 @@ func (p *Parser) parseUnary() (Expr, error) {
 		}
 		return &CastExpr{Kind: kind, Expr: e}, nil
 	}
+	// & 前缀：引用（&$var / &$arr[$k] / &$obj->prop）。
+	// 二元的按位与由 parseBitwiseAnd 处理，能走到这里说明 & 处于前缀位置。
+	if p.at(tAmp) {
+		p.adv()
+		target, err := p.parseRefTarget()
+		if err != nil {
+			return nil, err
+		}
+		return &RefExpr{Target: target}, nil
+	}
 	return p.parsePostfix()
+}
+
+// parseRefTarget 解析引用目标：一个变量 + 后续的下标/属性访问
+func (p *Parser) parseRefTarget() (Expr, error) {
+	t, err := p.expect(tVar)
+	if err != nil {
+		return nil, err
+	}
+	name := t.Val[1:]
+	var e Expr
+	if name == "this" {
+		e = &ThisExpr{}
+	} else {
+		e = &VarExpr{Name: name}
+	}
+	return p.parsePostfixFrom(e)
 }
 
 func (p *Parser) parsePostfix() (Expr, error) {

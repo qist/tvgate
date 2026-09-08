@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -125,8 +124,9 @@ func init() {
 		}
 		// JSON_PRETTY_PRINT
 		if flags&128 != 0 {
+			// JSON_PRETTY_PRINT：PHP 用 4 空格缩进，且首行无前缀
 			var buf bytes.Buffer
-			if err := json.Indent(&buf, []byte(s), "  ", "  "); err == nil {
+			if err := json.Indent(&buf, []byte(s), "", "    "); err == nil {
 				s = buf.String()
 			}
 		}
@@ -340,15 +340,11 @@ func jsonEncodeValue(v Value, flags int64) (string, error) {
 	case KindArray:
 		return jsonEncodeArray(v, flags)
 	case KindObject:
-		// 对象属性以 map 存储（无插入序），按键排序输出（与旧实现一致）
+		// 对象属性按声明/插入顺序输出（PHP 语义）；PropKeys 缺失时回退为排序，保证确定性
 		if v.Object == nil {
 			return "{}", nil
 		}
-		keys := make([]string, 0, len(v.Object.Properties))
-		for k := range v.Object.Properties {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
+		keys := v.Object.PropKeysInOrder()
 		var b strings.Builder
 		b.WriteByte('{')
 		for i, k := range keys {

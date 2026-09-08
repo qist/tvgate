@@ -70,10 +70,11 @@ type IfStmt struct {
 
 // ForeachStmt foreach ($arr as $k => $v) { ... }
 type ForeachStmt struct {
-	Arr   Expr
-	KeyVar string // 可为空（不含 $）
-	ValVar string // 不含 $
-	Body  []Stmt
+	Arr      Expr
+	KeyVar   string // 可为空（不含 $）
+	ValVar   string // 不含 $
+	ValByRef bool   // foreach ($arr as &$v)
+	Body     []Stmt
 }
 
 // ForStmt for (init; cond; post) { ... }
@@ -233,6 +234,12 @@ type PropertyAccess struct {
 type IndexExpr struct {
 	Arr Expr
 	Key Expr
+}
+
+// RefExpr 引用表达式：&$var / &$arr[$k] / &$obj->prop
+// 求值为 KindRef，写入目标时会写穿到被引用的变量/元素/属性
+type RefExpr struct {
+	Target Expr
 }
 
 // BinaryExpr 二元运算

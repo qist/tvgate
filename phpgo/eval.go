@@ -438,8 +438,7 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 				base.ArrayUnset(kv)
 				// 写回根变量（$arr[$key] unset 后需更新 $arr）
 				if v, ok := a.Arr.(*VarExpr); ok {
-					e.vars[v.Name] = base
-					e.globals[v.Name] = base
+					e.writeBackRootVar(v.Name, base)
 				}
 			}
 		}
@@ -487,6 +486,11 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 				val = NewInt(old.ToInt() ^ val.ToInt())
 			}
 		}
+		// 别名变量写穿：$b = &$a; $b = 5; → $a 同时变为 5
+		if old, ok := e.vars[s.Name]; ok && old.Kind == KindRef && old.Ref != nil {
+			old.Ref.assign(e, val)
+			return execResult{val: val}, nil
+		}
 		e.vars[s.Name] = val
 		e.globals[s.Name] = val
 		return execResult{val: val}, nil
@@ -502,8 +506,7 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 		arr.ArraySet(NewInt(int64(len(arr.Keys))), val)
 		// 回写
 		if v, ok := s.Arr.(*VarExpr); ok {
-			e.vars[v.Name] = arr
-			e.globals[v.Name] = arr
+			e.writeBackRootVar(v.Name, arr)
 		}
 		return execResult{val: val}, nil
 	case *ArrayAssignStmt:
@@ -522,8 +525,7 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 		arr.ArraySet(key, val)
 		// 回写根变量
 		if v, ok := s.Arr.(*VarExpr); ok {
-			e.vars[v.Name] = arr
-			e.globals[v.Name] = arr
+			e.writeBackRootVar(v.Name, arr)
 		}
 		return execResult{val: val}, nil
 	case *NestedArrayAssignStmt:
@@ -592,6 +594,11 @@ func (e *Env) execStmt(st Stmt) (execResult, error) {
 			nv = NewInt(old.ToInt() - 1)
 		} else {
 			nv = NewInt(old.ToInt() + 1)
+		}
+		// 别名变量（含 by-ref 形参）：$n++ / $n-- 写穿到引用目标
+		if ok && old.Kind == KindRef && old.Ref != nil {
+			old.Ref.assign(e, nv)
+			return execResult{val: deref(old)}, nil
 		}
 		e.vars[s.Name] = nv
 		e.globals[s.Name] = nv
@@ -698,6 +705,18 @@ func setNestedArray(arr *Value, keys []Value, val Value) {
 	arr.ArraySet(key, child)
 }
 
+// writeBackRootVar 把就地修改后的值写回基变量。
+// 若该变量是别名引用（$b = &$a），写穿到引用目标而不是覆盖别名槽位，
+// 否则目标数组的 Keys 不会更新，后续 serialize/json_encode 会丢键。
+func (e *Env) writeBackRootVar(name string, v Value) {
+	if old, ok := e.vars[name]; ok && old.Kind == KindRef && old.Ref != nil {
+		old.Ref.assign(e, v)
+		return
+	}
+	e.vars[name] = v
+	e.globals[name] = v
+}
+
 // evalAssignTarget 处理对属性或数组元素的赋值
 func (e *Env) evalAssignTarget(target Expr, val Value, concat bool, op string) (execResult, error) {
 	switch t := target.(type) {
@@ -733,7 +752,7 @@ func (e *Env) evalAssignTarget(target Expr, val Value, concat bool, op string) (
 					val = NewInt(old.ToInt() ^ val.ToInt())
 				}
 			}
-			recv.Object.Properties[t.Prop] = val
+			recv.Object.SetProp(t.Prop, val)
 			return execResult{val: val}, nil
 		}
 		// 非对象（数组模拟）回退
@@ -778,14 +797,13 @@ func (e *Env) evalAssignTarget(target Expr, val Value, concat bool, op string) (
 		arr.ArraySet(key, val)
 		// 回写根变量
 		if v, ok := t.Arr.(*VarExpr); ok {
-			e.vars[v.Name] = arr
-			e.globals[v.Name] = arr
+			e.writeBackRootVar(v.Name, arr)
 		}
 		// 回写对象属性：$obj->prop[$key] = val
 		if pa, ok := t.Arr.(*PropertyAccess); ok {
 			recv, err := e.evalExpr(pa.Receiver)
 			if err == nil && recv.Kind == KindObject {
-				recv.Object.Properties[pa.Prop] = arr
+				recv.Object.SetProp(pa.Prop, arr)
 			}
 		}
 		return execResult{val: val}, nil
@@ -807,8 +825,17 @@ func (e *Env) execForeach(s *ForeachStmt) (execResult, error) {
 			e.vars[s.KeyVar] = NewString(k)
 			e.globals[s.KeyVar] = NewString(k)
 		}
-		e.vars[s.ValVar] = v
-		e.globals[s.ValVar] = v
+		if s.ValByRef {
+			// foreach ($arr as &$v)：$v 绑定为元素引用，循环体内赋值写穿回数组
+			rv := NewRef(&indexRef{arrExpr: s.Arr, key: NewString(k)})
+			cur := arr.ArrayGet(NewString(k))
+			rv.RefVal = &cur
+			e.vars[s.ValVar] = rv
+			e.globals[s.ValVar] = v
+		} else {
+			e.vars[s.ValVar] = v
+			e.globals[s.ValVar] = v
+		}
 		r, err := e.execBlock(s.Body)
 		if err != nil {
 			return r, err
@@ -1264,7 +1291,7 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 			if v.Kind == KindArray {
 				obj := NewObject("stdClass")
 				for _, k := range v.Keys {
-					obj.Object.Properties[k] = v.ArrayGet(NewString(k))
+					obj.Object.SetProp(k, v.ArrayGet(NewString(k)))
 				}
 				return obj, nil
 			}
@@ -1349,9 +1376,9 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 			}
 			if arg == "" {
 				// new DateTime() → now
-				obj.Object.Properties["__ts"] = NewInt(time.Now().Unix())
+				obj.Object.SetProp("__ts", NewInt(time.Now().Unix()))
 			} else if t, ok := phpStrToTime(arg, loc); ok {
-				obj.Object.Properties["__ts"] = NewInt(t.Unix())
+				obj.Object.SetProp("__ts", NewInt(t.Unix()))
 			}
 			// 解析失败：不带 __ts，后续方法返回 false（安全降级，见 class_datetime.go）
 			return obj, nil
@@ -1366,9 +1393,9 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 					if err != nil {
 						return pv, err
 					}
-					obj.Object.Properties[prop.Name] = pv
+					obj.Object.SetProp(prop.Name, pv)
 				} else {
-					obj.Object.Properties[prop.Name] = NewNull()
+					obj.Object.SetProp(prop.Name, NewNull())
 				}
 			}
 			// 调用构造函数
@@ -1438,6 +1465,8 @@ func (e *Env) evalExpr(x Expr) (Value, error) {
 	case *varRef:
 		// &$var 作实参：返回当前值（内置函数若在 refParams 中则由调用侧构造引用写回）
 		return e.vars[n.name], nil
+	case *RefExpr:
+		return e.evalRef(n.Target)
 	}
 	return NewNull(), fmt.Errorf("runtime: 未知表达式节点 %T", x)
 }
@@ -1503,9 +1532,52 @@ func (e *Env) evalVar(name string) (Value, error) {
 		return v, nil
 	}
 	if v, ok := e.vars[name]; ok {
+		// 别名变量（$b = &$a）：读取时解引用到目标的当前值
+		if v.Kind == KindRef && v.Ref != nil {
+			return v.Ref.value(e), nil
+		}
 		return v, nil
 	}
 	return NewNull(), nil
+}
+
+// evalRef 构造引用值：&$var / &$arr[$k] / &$obj->prop
+// 返回 KindRef：Ref 用于写穿到目标，RefVal 缓存当前值供无 Env 的 deref 使用
+func (e *Env) evalRef(target Expr) (Value, error) {
+	switch t := target.(type) {
+	case *VarExpr:
+		cur := e.vars[t.Name]
+		rv := NewRef(&varRef{name: t.Name})
+		rv.RefVal = &cur
+		return rv, nil
+	case *IndexExpr:
+		arr, err := e.evalExpr(t.Arr)
+		if err != nil {
+			return NewNull(), err
+		}
+		key, err := e.evalExpr(t.Key)
+		if err != nil {
+			return NewNull(), err
+		}
+		cur := arr.ArrayGet(key)
+		rv := NewRef(&indexRef{arrExpr: t.Arr, key: key})
+		rv.RefVal = &cur
+		return rv, nil
+	case *PropertyAccess:
+		recv, err := e.evalExpr(t.Receiver)
+		if err != nil {
+			return NewNull(), err
+		}
+		var cur Value
+		if recv.Kind == KindObject && recv.Object != nil {
+			cur = recv.Object.Properties[t.Prop]
+		}
+		rv := NewRef(&propRef{recvExpr: t.Receiver, prop: t.Prop})
+		rv.RefVal = &cur
+		return rv, nil
+	}
+	// 非左值（如 &f()）：退化为普通求值
+	return e.evalExpr(target)
 }
 
 func (e *Env) evalBinary(n *BinaryExpr) (Value, error) {
@@ -1651,6 +1723,11 @@ func (e *Env) evalAssignExpr(n *AssignExpr) (Value, error) {
 	}
 	switch t := n.Target.(type) {
 	case *VarExpr:
+		// 别名写穿：$b = &$a; ($b = 5)
+		if old, ok := e.vars[t.Name]; ok && old.Kind == KindRef && old.Ref != nil {
+			old.Ref.assign(e, val)
+			return val, nil
+		}
 		e.vars[t.Name] = val
 		e.globals[t.Name] = val
 		return val, nil
@@ -1666,8 +1743,7 @@ func (e *Env) evalAssignExpr(n *AssignExpr) (Value, error) {
 				return val, err
 			}
 			arr.ArraySet(key, val)
-			e.vars[v.Name] = arr
-			e.globals[v.Name] = arr
+			e.writeBackRootVar(v.Name, arr)
 			return val, nil
 		}
 		// $obj->prop[$key] = val（对象属性的数组下标赋值）
@@ -1687,7 +1763,7 @@ func (e *Env) evalAssignExpr(n *AssignExpr) (Value, error) {
 					arr = NewArray()
 				}
 				arr.ArraySet(key, val)
-				recv.Object.Properties[pa.Prop] = arr
+				recv.Object.SetProp(pa.Prop, arr)
 				return val, nil
 			}
 		}
@@ -1698,7 +1774,7 @@ func (e *Env) evalAssignExpr(n *AssignExpr) (Value, error) {
 			return val, err
 		}
 		if recv.Kind == KindObject {
-			recv.Object.Properties[t.Prop] = val
+			recv.Object.SetProp(t.Prop, val)
 			return val, nil
 		}
 		// 非对象（数组模拟）回退
@@ -1748,6 +1824,93 @@ func (e *Env) destructureArray(targets *ArrayExpr, arr Value) {
 }
 
 // callFunc 处理函数调用（内置 + 用户函数）
+// bindByRefParam 在"调用方作用域"中把实参表达式转换为指向调用方持久作用域（outer）的引用，
+// 供用户函数 by-ref 形参使用。ok=false 表示实参不是可引用左值，调用方应退化为按值绑定。
+// 支持：变量 / 变量下标链 / 对象属性（可带下标链）；若实参本身已是通过 foreach(&) 等建立的引用则透传。
+func (e *Env) bindByRefParam(a Expr, outer *map[string]Value) (Value, bool) {
+	g := &e.globals
+	switch t := a.(type) {
+	case *VarExpr:
+		cur, exists := e.vars[t.Name]
+		if exists && cur.Kind == KindRef && cur.Ref != nil {
+			// 透传已有引用（如 foreach ($arr as &$v) 的 $v）
+			switch rr := cur.Ref.(type) {
+			case *outerVarRef, *outerIndexRef, *objPropRef:
+				// 已直达某个调用方持久层：保持原引用，避免嵌套调用被重新包装到内层临时作用域
+				return cur, true
+			case *varRef:
+				rv := NewRef(&outerVarRef{name: rr.name, outer: outer, globals: g})
+				return withRefVal(rv, (*outer)[rr.name]), true
+			case *indexRef:
+				if ve, ok := rr.arrExpr.(*VarExpr); ok {
+					rv := NewRef(&outerIndexRef{root: ve.Name, outer: outer, globals: g, keys: []Value{rr.key}})
+					return withRefVal(rv, leafAt((*outer)[ve.Name], []Value{rr.key})), true
+				}
+			case *propRef:
+				if recv, err := e.evalExpr(rr.recvExpr); err == nil && recv.Kind == KindObject && recv.Object != nil {
+					rv := NewRef(&objPropRef{obj: recv.Object, prop: rr.prop})
+					return withRefVal(rv, recv.Object.Properties[rr.prop]), true
+				}
+			}
+		}
+		rv := NewRef(&outerVarRef{name: t.Name, outer: outer, globals: g})
+		return withRefVal(rv, (*outer)[t.Name]), true
+	case *IndexExpr:
+		// 收集下标链（从根到叶的顺序），求值 key 时仍处于调用方作用域
+		var keys []Value
+		x := a
+		for {
+			ie, ok := x.(*IndexExpr)
+			if !ok {
+				break
+			}
+			kv, err := e.evalExpr(ie.Key)
+			if err != nil {
+				return NewNull(), false
+			}
+			keys = append([]Value{kv}, keys...)
+			x = ie.Arr
+		}
+		switch base := x.(type) {
+		case *VarExpr:
+			rv := NewRef(&outerIndexRef{root: base.Name, outer: outer, globals: g, keys: keys})
+			return withRefVal(rv, leafAt((*outer)[base.Name], keys)), true
+		case *PropertyAccess:
+			recv, err := e.evalExpr(base.Receiver)
+			if err == nil && recv.Kind == KindObject && recv.Object != nil {
+				rv := NewRef(&objPropRef{obj: recv.Object, prop: base.Prop, keys: keys})
+				return withRefVal(rv, leafAt(recv.Object.Properties[base.Prop], keys)), true
+			}
+		}
+	case *PropertyAccess:
+		recv, err := e.evalExpr(t.Receiver)
+		if err == nil && recv.Kind == KindObject && recv.Object != nil {
+			rv := NewRef(&objPropRef{obj: recv.Object, prop: t.Prop})
+			return withRefVal(rv, recv.Object.Properties[t.Prop]), true
+		}
+	}
+	return NewNull(), false
+}
+
+// withRefVal 设置 KindRef 的 RefVal 快照（供无 Env 的 deref 使用）
+func withRefVal(v Value, cur Value) Value {
+	cp := cur
+	v.RefVal = &cp
+	return v
+}
+
+// leafAt 沿 keys 读取数组中某位置的值（keys 为空时返回数组本身）
+func leafAt(arr Value, keys []Value) Value {
+	cur := arr
+	for _, k := range keys {
+		if cur.Kind != KindArray {
+			return NewNull()
+		}
+		cur = cur.ArrayGet(k)
+	}
+	return cur
+}
+
 func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 	// 先试内置
 	if bf, ok := builtins[name]; ok {
@@ -1781,7 +1944,12 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 			// 特定函数的特定参数按引用传递（供 writeRef 写回）
 			if refIdxs, ok := refParams[name]; ok && refIdxs[i] {
 				if v, ok := a.(*VarExpr); ok {
-					cur := e.vars[v.Name]
+					cur, exists := e.vars[v.Name]
+					if exists && cur.Kind == KindRef && cur.Ref != nil {
+						// 实参本身已是引用（by-ref 形参等）：复用，写穿到其引用目标
+						vs = append(vs, cur)
+						continue
+					}
 					rv := NewRef(&varRef{name: v.Name})
 					rv.RefVal = &cur
 					vs = append(vs, rv)
@@ -1823,6 +1991,12 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 	// 绑定参数
 	for i, p := range fn.Params {
 		if i < len(args) {
+			if p.ByRef {
+				if rv, ok := e.bindByRefParam(args[i], &saved); ok {
+					e.vars[p.Name] = rv
+					continue
+				}
+			}
 			v, err := e.evalExpr(args[i])
 			if err != nil {
 				return v, err
@@ -1865,9 +2039,11 @@ func (e *Env) callMethod(fn *FuncDecl, args []Expr) (Value, error) {
 	thisVal := e.vars["this"]
 	curClass := e.vars["__current_class__"]
 
-	// 预求值参数（在旧作用域中求值，含 splat 展开）
+	// 预求值参数（在旧作用域中求值，含 splat 展开与 by-ref 引用捕获；
+	// 必须在清空作用域前捕获，因为方法体会换成全新 vars）
 	var flatVals []Value
-	for _, a := range args {
+	var refOK []bool // 与 flatVals 对齐：该位置是否已绑定为引用
+	for i, a := range args {
 		if sp, ok := a.(*SplatExpr); ok {
 			val, err := e.evalExpr(sp.Expr)
 			if err != nil {
@@ -1876,15 +2052,24 @@ func (e *Env) callMethod(fn *FuncDecl, args []Expr) (Value, error) {
 			if val.Kind == KindArray {
 				for _, k := range val.Keys {
 					flatVals = append(flatVals, val.Arr[k])
+					refOK = append(refOK, false)
 				}
 			}
 			continue
+		}
+		if i < len(fn.Params) && fn.Params[i].ByRef {
+			if rv, ok := e.bindByRefParam(a, &saved); ok {
+				flatVals = append(flatVals, rv)
+				refOK = append(refOK, true)
+				continue
+			}
 		}
 		val, err := e.evalExpr(a)
 		if err != nil {
 			return val, err
 		}
 		flatVals = append(flatVals, val)
+		refOK = append(refOK, false)
 	}
 
 	// 清空非 this 变量，绑定参数
@@ -1895,7 +2080,11 @@ func (e *Env) callMethod(fn *FuncDecl, args []Expr) (Value, error) {
 	// 绑定参数
 	for i, p := range fn.Params {
 		if i < len(flatVals) {
-			e.vars[p.Name] = flatVals[i].Clone()
+			if i < len(refOK) && refOK[i] {
+				e.vars[p.Name] = flatVals[i] // 已是 KindRef，无需 clone
+			} else {
+				e.vars[p.Name] = flatVals[i].Clone()
+			}
 		} else if p.Default != nil {
 			v, err := e.evalExpr(p.Default)
 			if err != nil {

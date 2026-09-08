@@ -627,6 +627,147 @@ func (r *varRef) value(env *Env) Value {
 	return env.vars[r.name]
 }
 
+// indexRef 数组元素引用（&$arr[$k]）
+type indexRef struct {
+	arrExpr Expr
+	key     Value
+}
+
+func (r *indexRef) assign(env *Env, v Value) {
+	arr, err := env.evalExpr(r.arrExpr)
+	if err != nil || arr.Kind != KindArray {
+		return
+	}
+	arr.ArraySet(r.key, v)
+	// 写回根变量（$arr[$k] 修改后需更新 $arr；基变量为别名时写穿到引用目标）
+	if ve, ok := r.arrExpr.(*VarExpr); ok {
+		env.writeBackRootVar(ve.Name, arr)
+	}
+}
+
+func (r *indexRef) value(env *Env) Value {
+	arr, err := env.evalExpr(r.arrExpr)
+	if err != nil || arr.Kind != KindArray {
+		return NewNull()
+	}
+	return arr.ArrayGet(r.key)
+}
+
+// propRef 对象属性引用（&$obj->prop）
+type propRef struct {
+	recvExpr Expr
+	prop     string
+}
+
+func (r *propRef) assign(env *Env, v Value) {
+	recv, err := env.evalExpr(r.recvExpr)
+	if err != nil || recv.Kind != KindObject || recv.Object == nil {
+		return
+	}
+	recv.Object.SetProp(r.prop, v)
+}
+
+func (r *propRef) value(env *Env) Value {
+	recv, err := env.evalExpr(r.recvExpr)
+	if err != nil || recv.Kind != KindObject || recv.Object == nil {
+		return NewNull()
+	}
+	return recv.Object.Properties[r.prop]
+}
+
+// ---------------------------------------------------------------------------
+// 用户函数 by-ref 形参：引用目标是"调用方持久作用域"（saved 快照，函数返回后即生效），
+// 而不是函数体临时作用域（e.vars 会被整体还原，直接写它会被丢弃）。
+// ---------------------------------------------------------------------------
+
+// outerVarRef：指向调用方作用域中的某个变量（&$var 形参）
+type outerVarRef struct {
+	name    string
+	outer   *map[string]Value
+	globals *map[string]Value
+}
+
+func (r *outerVarRef) assign(env *Env, v Value) {
+	(*r.outer)[r.name] = v
+	if r.globals != nil {
+		(*r.globals)[r.name] = v
+	}
+}
+
+func (r *outerVarRef) value(env *Env) Value {
+	return (*r.outer)[r.name]
+}
+
+// outerIndexRef：指向调用方作用域中数组的下标链（&$arr[$k][...] 形参）
+type outerIndexRef struct {
+	root    string
+	outer   *map[string]Value
+	globals *map[string]Value
+	keys    []Value
+}
+
+func (r *outerIndexRef) assign(env *Env, v Value) {
+	base := (*r.outer)[r.root]
+	if base.Kind != KindArray {
+		base = NewArray()
+	}
+	setNestedArray(&base, r.keys, v)
+	(*r.outer)[r.root] = base
+	if r.globals != nil {
+		(*r.globals)[r.root] = base
+	}
+}
+
+func (r *outerIndexRef) value(env *Env) Value {
+	cur := (*r.outer)[r.root]
+	for _, k := range r.keys {
+		if cur.Kind == KindArray {
+			cur = cur.ArrayGet(k)
+		} else {
+			return NewNull()
+		}
+	}
+	return cur
+}
+
+// objPropRef：指向已捕获对象实例的属性（可带下标链）。对象按句柄共享，天然跨作用域持久。
+type objPropRef struct {
+	obj  *ObjectInstance
+	prop string
+	keys []Value
+}
+
+func (r *objPropRef) assign(env *Env, v Value) {
+	if r.obj == nil {
+		return
+	}
+	if len(r.keys) == 0 {
+		r.obj.SetProp(r.prop, v)
+		return
+	}
+	arr := r.obj.Properties[r.prop]
+	if arr.Kind != KindArray {
+		arr = NewArray()
+	}
+	setNestedArray(&arr, r.keys, v)
+	r.obj.SetProp(r.prop, arr)
+}
+
+func (r *objPropRef) value(env *Env) Value {
+	if r.obj == nil {
+		return NewNull()
+	}
+	cur := r.obj.Properties[r.prop]
+	for _, k := range r.keys {
+		if cur.Kind == KindArray {
+			cur = cur.ArrayGet(k)
+		} else {
+			return NewNull()
+		}
+	}
+	return cur
+}
+
 // ---------------------------------------------------------------------------
 // 入口与辅助
 // ---------------------------------------------------------------------------

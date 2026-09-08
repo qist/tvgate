@@ -128,7 +128,7 @@ func (e *Env) dateTimeBuiltinMethod(recv Value, method string, args []Expr) (Val
 		if !ok2 {
 			return NewBool(false), true, nil
 		}
-		recv.Object.Properties["__ts"] = NewInt(nt)
+		recv.Object.SetProp("__ts", NewInt(nt))
 		return recv, true, nil
 	case "gettimestamp":
 		return NewInt(ts), true, nil
@@ -136,7 +136,7 @@ func (e *Env) dateTimeBuiltinMethod(recv Value, method string, args []Expr) (Val
 		if len(vals) == 0 {
 			return NewBool(false), true, nil
 		}
-		recv.Object.Properties["__ts"] = NewInt(vals[0].ToInt())
+		recv.Object.SetProp("__ts", NewInt(vals[0].ToInt()))
 		return recv, true, nil
 	}
 	return NewNull(), true, nil

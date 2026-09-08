@@ -134,6 +134,36 @@
 | `json_encode` `json_decode` | JSON（关联数组按 PHP 插入顺序输出） |
 | `json_last_error` `json_last_error_msg` | 跟踪最近一次 `json_encode`/`json_decode` 的错误（成功为 0/"No error"） |
 | `var_export` | 变量导出 |
+| `serialize` `unserialize` | PHP 原生序列化格式（`phpgo/fn_serialize.go`） |
+
+### serialize / unserialize 说明
+
+支持 `null` `bool` `int` `float` `string` `array` `object`（含 `stdClass`），双向支持
+`R:<id>;` / `r:<id>;` 引用标记（数组用 `R:`、对象用 `r:`，id 按遇到顺序从 1 递增）。
+
+- 整数键按规范整数输出（`i:0;`），`"01"` / `"1.0"` / 溢出数字等仍按字符串键输出，与 PHP 一致。
+- 字符串长度按**字节**计（`serialize("中文")` → `s:6:"中文";`）。
+- 浮点数遵循 `serialize_precision=-1` 风格：`serialize(2.0)` → `d:2;`，`INF`/`-INF`/`NAN` 正常输出与解析。
+- `unserialize` 解析失败（或尾部有多余内容）时与 PHP 一致返回 `false`；注意 `unserialize("b:0;")` 的合法结果也是 `false`。
+- `unserialize($str, $options)` 支持第二参数：`allowed_classes`（`false` 禁止全部、`true` 允许全部、数组为类名白名单，
+  大小写不敏感；不允许的类降级为 `__PHP_Incomplete_Class`，原类名存于 `__PHP_Incomplete_Class_Name`）
+  与 `max_depth`（嵌套深度上限，只对数组/对象计数，超限返回 `false`）。
+
+与 PHP 的一致性要点：
+
+- 对象属性顺序：由 `ObjectInstance.PropKeys` 维护（`value.go`），写入**必须**走 `Object.SetProp()`；
+  `serialize` 与 `json_encode` 都按声明/插入顺序输出，与 PHP 一致。
+  （直接写 `Object.Properties[...]` 会丢顺序，回退为排序输出。）
+- 引用：重复出现的同一数组 / 对象按 PHP 语义输出 `R:<id>;` / `r:<id>;`，循环引用因此自然终止，
+  不会无限递归也不会丢数据。例：`$a = array(1); $a[] = &$a; serialize($a);`
+  → `a:2:{i:0;i:1;i:1;R:1;}`（需 `&` 引用语法支持，见[引用（&）](#引用)）。
+
+已知差异：
+
+- phpgo 数组赋值是深拷贝（无 COW），`$b = $a; serialize(array($a, $b))` 会输出两份完整数据；
+  原生 PHP 因 COW 共享 zval 会输出一份 + `R:`。反序列化后数据等价。
+- 反序列化 `R:` / `r:` 时返回的是引用目标的**快照**（phpgo 的 `Value` 为值类型），
+  极端递归结构下后续追加的元素不会同步到该快照。
 
 ## 10. cURL
 
@@ -161,6 +191,33 @@
 | `is_integer` `is_double` | **别名**（分别 → `is_int` / `is_float`） |
 | `is_object` `is_scalar` `is_iterable` `is_countable` `is_resource` `is_callable` `settype` `get_debug_type` | 其它类型 |
 | `call_user_func` `call_user_func_array` `function_exists` `defined` `constant` `extract` `define` | 函数 / 常量调用 |
+
+### 引用（&）
+
+| 写法 | 说明 |
+|---|---|
+| `$b = &$a` | 变量别名：读 `$b` 解引用到 `$a`，写 `$b` 写穿到 `$a`（双向） |
+| `$r = &$arr[$k]` | 数组元素引用，赋值写穿回数组 |
+| `$p = &$obj->prop` | 对象属性引用，赋值写穿回对象 |
+| `foreach ($arr as &$v)` | 循环变量为元素引用，循环体内赋值直接改原数组 |
+| `foreach ($arr as $k => &$v)` | 同上，带键 |
+| `function f(&$n) { $n = ...; }` | **by-ref 形参**：调用 `f($x)` / `f($arr[$k])` / `f($obj->p)` 后修改写穿回实参（含嵌套函数透传、`$n++`、`sort($n)` 等原地函数）。字面量实参退化为按值绑定 |
+
+实现要点：`&` 在前缀位置由 `parseUnary` 解析为 `RefExpr`（`ast.go`），求值为 `KindRef`
+（`Ref` 为 `assignable`：`varRef` / `indexRef` / `propRef`，见 `http.go`）。
+变量读取时 `evalVar` 解引用，赋值时 `AssignStmt` 检测已有别名并写穿。
+二元按位与（`6 & 3`）由 `parseBitwiseAnd` 处理，不受影响。
+
+by-ref 形参细节：用户函数调用会整体保存/还原作用域（`eval.go` `callFunc` / `callMethod`），
+因此绑定形参时引用被重定向到"调用方持久作用域"（`outerVarRef` / `outerIndexRef` / `objPropRef`，
+见 `http.go`），否则函数返回时对实参的写入会被作用域还原丢弃。
+实参本身已是引用（如 `foreach` 的 `&$v`）时直接透传原引用，保证嵌套调用直达最外层变量。
+限制：`call_user_func` / `array_map` 等按值分发回调的路径无法传引用（PHP 8 同样不支持）。
+
+实现要点：`&` 在前缀位置由 `parseUnary` 解析为 `RefExpr`（`ast.go`），求值为 `KindRef`
+（`Ref` 为 `assignable`：`varRef` / `indexRef` / `propRef`，见 `http.go`）。
+变量读取时 `evalVar` 解引用，赋值时 `AssignStmt` 检测已有别名并写穿。
+二元按位与（`6 & 3`）由 `parseBitwiseAnd` 处理，不受影响。
 
 ## 13. 输出控制 / 语言结构 / 杂项
 

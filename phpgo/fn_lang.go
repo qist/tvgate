@@ -19,6 +19,10 @@ func init() {
 			return NewString("string"), nil
 		case KindArray:
 			return NewString("array"), nil
+		case KindObject:
+			return NewString("object"), nil
+		case KindResource:
+			return NewString("resource"), nil
 		default:
 			return NewString("unknown"), nil
 		}

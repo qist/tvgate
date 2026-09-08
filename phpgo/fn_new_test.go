@@ -182,7 +182,8 @@ echo "pp=".json_encode(array("a"=>1,"b"=>2), 128)."\n";
 	expectContains(t, out, `shift={"2":"a","5":"b"}`)
 	expectContains(t, out, "empty=[]")
 	expectContains(t, out, `uni={"k":"中文"}`)
-	expectContains(t, out, "{\n    \"a\": 1,\n    \"b\": 2\n  }")
+	// JSON_PRETTY_PRINT：与 PHP 一致，4 空格缩进、首行无前缀
+	expectContains(t, out, "{\n    \"a\": 1,\n    \"b\": 2\n}")
 	t.Logf("json out:\n%s", out)
 }
 
