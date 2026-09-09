@@ -6,7 +6,7 @@ require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
 	github.com/asticode/go-astits v1.16.0
 	github.com/bluenviron/gortsplib/v5 v5.6.4
-	github.com/bluenviron/mediacommon/v2 v2.9.3
+	github.com/bluenviron/mediacommon/v2 v2.9.4
 	github.com/cloudflare/tableflip v1.2.3
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jedisct1/go-dnsstamps v0.0.0-20240423203910-07a0735c7774
@@ -15,6 +15,7 @@ require (
 	github.com/pion/rtp v1.10.5
 	github.com/quic-go/quic-go v0.62.0
 	github.com/shirou/gopsutil/v3 v3.24.5
+	golang.org/x/crypto v0.55.0
 	golang.org/x/net v0.58.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/text v0.41.0
@@ -43,7 +44,6 @@ require (
 	github.com/tklauser/go-sysconf v0.3.15 // indirect
 	github.com/tklauser/numcpus v0.10.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 )
