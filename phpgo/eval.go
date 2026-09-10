@@ -1749,13 +1749,24 @@ func (e *Env) evalBinary(n *BinaryExpr) (Value, error) {
 			return NewBool(l.ToString() >= r.ToString()), nil
 		}
 		return NewBool(l.ToInt() >= r.ToInt()), nil
+	// PHP 位运算语义：两操作数都是字符串时，按 ASCII 逐字节运算，
+	// 结果为长度较短的字符串；否则转为整数运算。
 	case "^", "^=":
+		if l.Kind == KindString && r.Kind == KindString {
+			return NewString(bitwiseString(l.ToString(), r.ToString(), '^')), nil
+		}
 		return NewInt(l.ToInt() ^ r.ToInt()), nil
 	case "xor":
 		return NewBool(l.ToBool() != r.ToBool()), nil
 	case "&":
+		if l.Kind == KindString && r.Kind == KindString {
+			return NewString(bitwiseString(l.ToString(), r.ToString(), '&')), nil
+		}
 		return NewInt(l.ToInt() & r.ToInt()), nil
 	case "|":
+		if l.Kind == KindString && r.Kind == KindString {
+			return NewString(bitwiseString(l.ToString(), r.ToString(), '|')), nil
+		}
 		return NewInt(l.ToInt() | r.ToInt()), nil
 	case "<<":
 		return NewInt(l.ToInt() << r.ToInt()), nil
@@ -1763,6 +1774,26 @@ func (e *Env) evalBinary(n *BinaryExpr) (Value, error) {
 		return NewInt(l.ToInt() >> r.ToInt()), nil
 	}
 	return NewNull(), fmt.Errorf("runtime: 未知运算符 %s", n.Op)
+}
+
+// bitwiseString 实现 PHP 的字符串位运算（& | ^）：逐字节运算，结果长度取两者较短者。
+func bitwiseString(a, b string, op byte) string {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	out := make([]byte, n)
+	for i := 0; i < n; i++ {
+		switch op {
+		case '^':
+			out[i] = a[i] ^ b[i]
+		case '&':
+			out[i] = a[i] & b[i]
+		case '|':
+			out[i] = a[i] | b[i]
+		}
+	}
+	return string(out)
 }
 
 // evalAssignExpr 处理赋值表达式

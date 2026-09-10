@@ -109,6 +109,31 @@ func init() {
 		}
 		return registerStream(e, conn), nil
 	}
+	// stream_set_timeout($fp, $seconds, $microseconds=0)：设置流的读写超时（读超时作用于 net.Conn deadline）
+	builtins["stream_set_timeout"] = func(e *Env, a []Value) (Value, error) {
+		if len(a) < 2 {
+			return NewBool(false), nil
+		}
+		sc, ok := e.files[int(a[0].ToInt())].(*streamConn)
+		if !ok {
+			return NewBool(false), nil
+		}
+		sec := a[1].ToFloat()
+		if len(a) >= 3 {
+			sec += a[2].ToFloat() / 1e6
+		}
+		if sec <= 0 {
+			// PHP：0 表示不限制（一直阻塞）
+			_ = sc.conn.SetReadDeadline(time.Time{})
+			return NewBool(true), nil
+		}
+		_ = sc.conn.SetReadDeadline(time.Now().Add(time.Duration(sec * float64(time.Second))))
+		return NewBool(true), nil
+	}
+	// stream_set_blocking($fp, $mode)：本 runtime 的读均为阻塞式，仅做兼容
+	builtins["stream_set_blocking"] = func(e *Env, a []Value) (Value, error) {
+		return NewBool(true), nil
+	}
 	// fgets：从流读取一行（含换行符）
 	builtins["fgets"] = func(e *Env, a []Value) (Value, error) {
 		if len(a) == 0 {

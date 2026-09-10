@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	pgdns "github.com/qist/tvgate/dns"
 )
 
@@ -283,22 +284,16 @@ func defaultProxy(client *http.Client) ProxyFunc {
 		if err != nil {
 			return nil, err
 		}
-		// CURLOPT_ENCODING 显式设置时 Go 不会自动解压，按 Content-Encoding 手动解压
-		if opts != nil && opts.Encoding != "" {
-			switch strings.ToLower(resp.Header.Get("Content-Encoding")) {
-			case "gzip":
-				if gz, gerr := gzip.NewReader(bytes.NewReader(data)); gerr == nil {
-					if d, derr := io.ReadAll(gz); derr == nil {
-						data = d
-					}
-					_ = gz.Close()
-				}
-			case "deflate":
-				if zr, zerr := zlib.NewReader(bytes.NewReader(data)); zerr == nil {
-					if d, derr := io.ReadAll(zr); derr == nil {
-						data = d
-					}
-					_ = zr.Close()
+		// 只要请求里带上了 Accept-Encoding（无论来自 CURLOPT_ENCODING 还是 CURLOPT_HTTPHEADER），
+		// Go 的 Transport 都不会自动解压（它仅在自己添加 Accept-Encoding: gzip 时才透明解压），
+		// 这里统一按 Content-Encoding 手动解压，对齐 PHP curl 的行为。
+		if req.Header.Get("Accept-Encoding") != "" {
+			if enc := resp.Header.Get("Content-Encoding"); enc != "" {
+				if d, ok := decodeCurlBody(data, enc); ok {
+					data = d
+					// 解压后移除 Content-Encoding / Content-Length，与 Go 自动解压时的表现一致
+					resp.Header.Del("Content-Encoding")
+					resp.Header.Del("Content-Length")
 				}
 			}
 		}
@@ -355,6 +350,45 @@ func buildCurlTLSConfig(opts *CurlOptions) (*tls.Config, error) {
 		tlsCfg.Certificates = []tls.Certificate{cert}
 	}
 	return tlsCfg, nil
+}
+
+// decodeCurlBody 按 Content-Encoding 手动解压响应体，支持 gzip / deflate / br 及组合编码。
+// 返回 (解压后的数据, 是否确实发生了解压)；编码不支持或解压失败时返回原始数据与 false。
+func decodeCurlBody(data []byte, encoding string) ([]byte, bool) {
+	decoded := false
+	for _, enc := range strings.Split(encoding, ",") {
+		switch strings.ToLower(strings.TrimSpace(enc)) {
+		case "gzip", "x-gzip":
+			gz, err := gzip.NewReader(bytes.NewReader(data))
+			if err != nil {
+				return data, decoded
+			}
+			d, derr := io.ReadAll(gz)
+			_ = gz.Close()
+			if derr != nil {
+				return data, decoded
+			}
+			data, decoded = d, true
+		case "deflate":
+			zr, err := zlib.NewReader(bytes.NewReader(data))
+			if err != nil {
+				return data, decoded
+			}
+			d, derr := io.ReadAll(zr)
+			_ = zr.Close()
+			if derr != nil {
+				return data, decoded
+			}
+			data, decoded = d, true
+		case "br":
+			d, err := io.ReadAll(brotli.NewReader(bytes.NewReader(data)))
+			if err != nil {
+				return data, decoded
+			}
+			data, decoded = d, true
+		}
+	}
+	return data, decoded
 }
 
 // headerLines 把 http.Header 转为 "Key: Value" 行（按键排序，保证确定性输出）
