@@ -15,7 +15,7 @@ require (
 	github.com/pion/rtp v1.10.5
 	github.com/quic-go/quic-go v0.62.0
 	github.com/shirou/gopsutil/v3 v3.24.5
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 	golang.org/x/net v0.58.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/text v0.41.0
