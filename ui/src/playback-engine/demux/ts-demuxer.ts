@@ -1678,6 +1678,40 @@ class TSDemuxer {
       data = buf;
     }
 
+    // AC-3 软解路径（与 MP2 完全一致的处理方案）：浏览器 MSE 无法解码 ac-3 时
+    // （ac3SoftDecode 由 pipeline 按 wasm 配置与浏览器能力预先决定），Dolby
+    // payload 整段交给 WASM 解码器——帧跨 PES 由解码器内部 carry，PTS 直接用
+    // PES pts（缺省 0），不做帧级推导/重叠校正；时间轴连续性由 pipeline 的
+    // samplesBeforeInput 外推与重锚保证。首个 payload 必须帧头对齐才能识别
+    // codec/init；激活后无论是否对齐都整段转发。
+    if (this.ac3SoftDecode && this.onRawAudioData) {
+      const aligned = data.length >= 2 && data[0] === 0x0b && data[1] === 0x77;
+      if (this.soft_decode_audio_codec_ == null) {
+        if (!aligned) {
+          return;
+        }
+        const head_parser = new AC3Parser(data);
+        const head_frame = head_parser.readNextAC3Frame();
+        if (head_frame == null) {
+          return;
+        }
+        this.soft_decode_audio_codec_ = "ac3";
+        Log.i(this.TAG, `AC-3 audio detected, enabling software decode`);
+        const sample = { codec: "ac-3", data: head_frame } as const;
+        if (this.audio_init_segment_dispatched_ === false) {
+          this.setAC3AudioMetadata(head_frame);
+          this.dispatchAudioInitSegment(sample);
+        } else if (this.detectAudioMetadataChange(sample)) {
+          this.dispatchAudioMediaSegment();
+          this.setAC3AudioMetadata(head_frame);
+          this.dispatchAudioInitSegment(sample);
+        }
+      }
+      this.onRawAudioData({ codec: "ac3", data, pts: (pts ?? 0) / this.timescale_ });
+      return;
+    }
+
+    // ---- 原生 MSE（非软解）路径：按帧切分 + 连续 PTS 推导 ----
     let ref_sample_duration: number;
     let base_pts_ms!: number;
 
@@ -1705,39 +1739,6 @@ class TSDemuxer {
       }
     } else if (pts === undefined) {
       Log.w(this.TAG, `AC3: Unknown pts`);
-      return;
-    }
-
-    // AC-3 软解路径：浏览器 MSE 无法解码 ac-3 时（ac3SoftDecode 由 pipeline
-    // 按 wasm 配置与浏览器能力预先决定），Dolby payload 整段交给 WASM 解码器
-    // ——帧跨 PES 由解码器内部 carry，时间轴沿用 silent AAC 机制（remuxer
-    // 按 video DTS 生成静音帧维持 MSE 时钟）。首个 payload 必须帧头对齐才能
-    // 识别 codec/init；激活后无论是否对齐都整段转发（与 MP2 路径一致），
-    // 中间入帧的尾部由解码器 carry 与下个 payload 拼接。
-    if (this.ac3SoftDecode && this.onRawAudioData) {
-      const aligned = data.length >= 2 && data[0] === 0x0b && data[1] === 0x77;
-      if (this.soft_decode_audio_codec_ == null) {
-        if (!aligned) {
-          return;
-        }
-        const head_parser = new AC3Parser(data);
-        const head_frame = head_parser.readNextAC3Frame();
-        if (head_frame == null) {
-          return;
-        }
-        this.soft_decode_audio_codec_ = "ac3";
-        Log.i(this.TAG, `AC-3 audio detected, enabling software decode`);
-        const sample = { codec: "ac-3", data: head_frame } as const;
-        if (this.audio_init_segment_dispatched_ === false) {
-          this.setAC3AudioMetadata(head_frame);
-          this.dispatchAudioInitSegment(sample);
-        } else if (this.detectAudioMetadataChange(sample)) {
-          this.dispatchAudioMediaSegment();
-          this.setAC3AudioMetadata(head_frame);
-          this.dispatchAudioInitSegment(sample);
-        }
-      }
-      this.onRawAudioData({ codec: "ac3", data, pts: base_pts_ms });
       return;
     }
 
@@ -1812,6 +1813,36 @@ class TSDemuxer {
       data = buf;
     }
 
+    // E-AC-3 软解路径：与 AC-3/MP2 完全一致的整段转发（PTS 直接用 PES pts，
+    // 缺省 0），帧跨 PES 由解码器 carry，时间轴由 pipeline 外推/重锚保证。
+    if (this.ac3SoftDecode && this.onRawAudioData) {
+      const aligned = data.length >= 2 && data[0] === 0x0b && data[1] === 0x77;
+      if (this.soft_decode_audio_codec_ == null) {
+        if (!aligned) {
+          return;
+        }
+        const head_parser = new EAC3Parser(data);
+        const head_frame = head_parser.readNextEAC3Frame();
+        if (head_frame == null) {
+          return;
+        }
+        this.soft_decode_audio_codec_ = "eac3";
+        Log.i(this.TAG, `E-AC-3 audio detected, enabling software decode`);
+        const sample = { codec: "ec-3", data: head_frame } as const;
+        if (this.audio_init_segment_dispatched_ === false) {
+          this.setEAC3AudioMetadata(head_frame);
+          this.dispatchAudioInitSegment(sample);
+        } else if (this.detectAudioMetadataChange(sample)) {
+          this.dispatchAudioMediaSegment();
+          this.setEAC3AudioMetadata(head_frame);
+          this.dispatchAudioInitSegment(sample);
+        }
+      }
+      this.onRawAudioData({ codec: "eac3", data, pts: (pts ?? 0) / this.timescale_ });
+      return;
+    }
+
+    // ---- 原生 MSE（非软解）路径：按帧切分 + 连续 PTS 推导 ----
     let ref_sample_duration: number;
     let base_pts_ms!: number;
 
@@ -1839,34 +1870,6 @@ class TSDemuxer {
       }
     } else if (pts === undefined) {
       Log.w(this.TAG, `EAC3: Unknown pts`);
-      return;
-    }
-
-    // E-AC-3 软解路径：同 parseAC3Payload 的 AC-3 软解分支
-    if (this.ac3SoftDecode && this.onRawAudioData) {
-      const aligned = data.length >= 2 && data[0] === 0x0b && data[1] === 0x77;
-      if (this.soft_decode_audio_codec_ == null) {
-        if (!aligned) {
-          return;
-        }
-        const head_parser = new EAC3Parser(data);
-        const head_frame = head_parser.readNextEAC3Frame();
-        if (head_frame == null) {
-          return;
-        }
-        this.soft_decode_audio_codec_ = "eac3";
-        Log.i(this.TAG, `E-AC-3 audio detected, enabling software decode`);
-        const sample = { codec: "ec-3", data: head_frame } as const;
-        if (this.audio_init_segment_dispatched_ === false) {
-          this.setEAC3AudioMetadata(head_frame);
-          this.dispatchAudioInitSegment(sample);
-        } else if (this.detectAudioMetadataChange(sample)) {
-          this.dispatchAudioMediaSegment();
-          this.setEAC3AudioMetadata(head_frame);
-          this.dispatchAudioInitSegment(sample);
-        }
-      }
-      this.onRawAudioData({ codec: "eac3", data, pts: base_pts_ms });
       return;
     }
 

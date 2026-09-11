@@ -92,9 +92,9 @@ const H265NaluParser = {
     gb.readByte();
 
     // VPS
-    const _video_parameter_set_id: number = gb.readBits(4);
+    gb.readBits(4);
     gb.readBits(2);
-    const _max_layers_minus1: number = gb.readBits(6);
+    gb.readBits(6);
     const max_sub_layers_minus1: number = gb.readBits(3);
     const temporal_id_nesting_flag: boolean = gb.readBool();
     // and more ...
@@ -119,9 +119,9 @@ const H265NaluParser = {
       bottom_offset: number = 0;
 
     // SPS
-    const _video_paramter_set_id: number = gb.readBits(4);
+    gb.readBits(4);
     const max_sub_layers_minus1: number = gb.readBits(3);
-    const _temporal_id_nesting_flag: boolean = gb.readBool();
+    gb.readBool();
 
     // profile_tier_level begin
     const general_profile_space: number = gb.readBits(2);
@@ -169,7 +169,7 @@ const H265NaluParser = {
     }
     // profile_tier_level end
 
-    const _seq_parameter_set_id: number = gb.readUEG();
+    gb.readUEG();
     const chroma_format_idc: number = gb.readUEG();
     if (chroma_format_idc === 3) {
       gb.readBits(1); // separate_colour_plane_flag
@@ -192,12 +192,12 @@ const H265NaluParser = {
       gb.readUEG(); // max_num_reorder_pics[i]
       gb.readUEG(); // max_latency_increase_plus1[i]
     }
-    const _log2_min_luma_coding_block_size_minus3: number = gb.readUEG();
-    const _log2_diff_max_min_luma_coding_block_size: number = gb.readUEG();
-    const _log2_min_transform_block_size_minus2: number = gb.readUEG();
-    const _log2_diff_max_min_transform_block_size: number = gb.readUEG();
-    const _max_transform_hierarchy_depth_inter: number = gb.readUEG();
-    const _max_transform_hierarchy_depth_intra: number = gb.readUEG();
+    gb.readUEG();
+    gb.readUEG();
+    gb.readUEG();
+    gb.readUEG();
+    gb.readUEG();
+    gb.readUEG();
     const scaling_list_enabled_flag: boolean = gb.readBool();
     if (scaling_list_enabled_flag) {
       const sps_scaling_list_data_present_flag: boolean = gb.readBool();
@@ -220,8 +220,8 @@ const H265NaluParser = {
         }
       }
     }
-    const _amp_enabled_flag: boolean = gb.readBool();
-    const _sample_adaptive_offset_enabled_flag: boolean = gb.readBool();
+    gb.readBool();
+    gb.readBool();
     const pcm_enabled_flag: boolean = gb.readBool();
     if (pcm_enabled_flag) {
       gb.readByte();
@@ -292,8 +292,8 @@ const H265NaluParser = {
     let matrix_coefficients: number | undefined;
     let video_full_range_flag: boolean | undefined;
     //*/
-    const _sps_temporal_mvp_enabled_flag: boolean = gb.readBool();
-    const _strong_intra_smoothing_enabled_flag: boolean = gb.readBool();
+    gb.readBool();
+    gb.readBool();
     const vui_parameters_present_flag: boolean = gb.readBool();
     if (vui_parameters_present_flag) {
       const aspect_ratio_info_present_flag: boolean = gb.readBool();
@@ -331,9 +331,9 @@ const H265NaluParser = {
         gb.readUEG();
         gb.readUEG();
       }
-      const _neutral_chroma_indication_flag: boolean = gb.readBool();
+      gb.readBool();
       field_seq_flag = gb.readBool();
-      const _frame_field_info_present_flag: boolean = gb.readBool();
+      gb.readBool();
       default_display_window_flag = gb.readBool();
       if (default_display_window_flag) {
         gb.readUEG();
@@ -366,8 +366,8 @@ const H265NaluParser = {
                 gb.readBool();
                 gb.readBits(5);
               }
-              const _bit_rate_scale: number = gb.readBits(4);
-              const _cpb_size_scale: number = gb.readBits(4);
+              gb.readBits(4);
+              gb.readBits(4);
               if (sub_pic_hrd_params_present_flag) {
                 gb.readBits(4);
               }
@@ -420,17 +420,17 @@ const H265NaluParser = {
       }
       const bitstream_restriction_flag: boolean = gb.readBool();
       if (bitstream_restriction_flag) {
-        const _tiles_fixed_structure_flag: boolean = gb.readBool();
-        const _motion_vectors_over_pic_boundaries_flag: boolean = gb.readBool();
-        const _restricted_ref_pic_lists_flag: boolean = gb.readBool();
+        gb.readBool();
+        gb.readBool();
+        gb.readBool();
         min_spatial_segmentation_idc = gb.readUEG();
-        const _max_bytes_per_pic_denom: number = gb.readUEG();
-        const _max_bits_per_min_cu_denom: number = gb.readUEG();
-        const _log2_max_mv_length_horizontal: number = gb.readUEG();
-        const _log2_max_mv_length_vertical: number = gb.readUEG();
+        gb.readUEG();
+        gb.readUEG();
+        gb.readUEG();
+        gb.readUEG();
       }
     }
-    const _sps_extension_flag: boolean = gb.readBool(); // ignore...
+    gb.readBool(); // ignore...
 
     // for meta data
     const codec_mimetype: string = `hvc1.${general_profile_idc}.1.L${general_level_idc}.B0`;
@@ -515,28 +515,28 @@ const H265NaluParser = {
     gb.readByte();
     gb.readByte();
 
-    const _pic_parameter_set_id: number = gb.readUEG();
-    const _seq_parameter_set_id: number = gb.readUEG();
-    const _dependent_slice_segments_enabled_flag: boolean = gb.readBool();
-    const _output_flag_present_flag: boolean = gb.readBool();
-    const _num_extra_slice_header_bits: number = gb.readBits(3);
-    const _sign_data_hiding_enabled_flag: boolean = gb.readBool();
-    const _cabac_init_present_flag: boolean = gb.readBool();
-    const _num_ref_idx_l0_default_active_minus1: number = gb.readUEG();
-    const _num_ref_idx_l1_default_active_minus1: number = gb.readUEG();
-    const _init_qp_minus26: number = gb.readSEG();
-    const _constrained_intra_pred_flag: boolean = gb.readBool();
-    const _transform_skip_enabled_flag: boolean = gb.readBool();
+    gb.readUEG();
+    gb.readUEG();
+    gb.readBool();
+    gb.readBool();
+    gb.readBits(3);
+    gb.readBool();
+    gb.readBool();
+    gb.readUEG();
+    gb.readUEG();
+    gb.readSEG();
+    gb.readBool();
+    gb.readBool();
     const cu_qp_delta_enabled_flag: boolean = gb.readBool();
     if (cu_qp_delta_enabled_flag) {
-      const _diff_cu_qp_delta_depth: number = gb.readUEG();
+      gb.readUEG();
     }
-    const _cb_qp_offset: number = gb.readSEG();
-    const _cr_qp_offset: number = gb.readSEG();
-    const _pps_slice_chroma_qp_offsets_present_flag: boolean = gb.readBool();
-    const _weighted_pred_flag: boolean = gb.readBool();
-    const _weighted_bipred_flag: boolean = gb.readBool();
-    const _transquant_bypass_enabled_flag: boolean = gb.readBool();
+    gb.readSEG();
+    gb.readSEG();
+    gb.readBool();
+    gb.readBool();
+    gb.readBool();
+    gb.readBool();
     const tiles_enabled_flag: boolean = gb.readBool();
     const entropy_coding_sync_enabled_flag: boolean = gb.readBool();
     // and more ...

@@ -1,9 +1,10 @@
 /*
  * WASM time stretcher (WSOLA)
  *
- * Thin main-thread wrapper around the wsola_* exports of mp2_decoder.wasm
- * (the same module used for MP2 decoding in the worker — instantiated again
- * here because the stretcher runs on the main thread next to the video clock).
+ * Thin main-thread wrapper around the wsola_* exports of the decoder wasm
+ * (the unified avcodec_audio.wasm carries the wsola module — instantiated
+ * again here because the stretcher runs on the main thread next to the
+ * video clock).
  *
  * Pitch-preserving tempo change lets software-decoded audio follow
  * video.playbackRate during live-sync catch-up and absorb small clock drift.
@@ -65,6 +66,14 @@ export class WasmStretcher implements Stretcher {
         env: {
           emscripten_notify_memory_growth: () => {},
         },
+        // 统一 wasm（FFmpeg libavcodec）链接了 wasi 打桩；解码/WSOLA 路径不会
+        // 触发这些调用，stub 返回 ENOSYS 即可。
+        wasi_snapshot_preview1: new Proxy(
+          {},
+          {
+            get: (_target, prop) => (prop === "clock_time_get" ? () => 0 : () => 52 /* ENOSYS */),
+          },
+        ),
       };
       const { instance } = await WebAssembly.instantiateStreaming(fetch(wasmUrl), imports);
       const ex = instance.exports as unknown as WsolaExports;

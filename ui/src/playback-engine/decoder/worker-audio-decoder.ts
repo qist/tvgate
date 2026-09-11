@@ -2,25 +2,24 @@
  * Worker Audio Decoder
  *
  * Manages software audio decoding (MP2 / AC-3 / E-AC-3) in Web Worker
- * environment via WASM. Accepts URLs to the .wasm files (provided by
- * consumer via config).
+ * environment via WASM. Accepts the URL to the unified wasm module
+ * (avcodec_audio.wasm, FFmpeg libavcodec based — one module covers all
+ * codecs), provided by consumer via config.
  */
 
 import Log from "../utils/logger";
-import { Ac3AudioDecoder } from "./ac3-audio-decoder";
-import { type DecodedAudio, MpegAudioDecoder } from "./mpeg-audio-decoder";
+import { type AvcodecCodec, AvcodecAudioDecoder, type DecodedAudio } from "./avcodec-audio-decoder";
 
 const TAG = "WorkerAudioDecoder";
 
 export type SoftAudioCodec = "mp2" | "ac3" | "eac3";
 
 /**
- * Audio decoder for use in Web Worker. The consumer provides the WASM URLs
+ * Audio decoder for use in Web Worker. The consumer provides the WASM URL
  * via config — the library does NOT bundle WASM.
  */
 export class WorkerAudioDecoder {
-  private mpegDecoder: MpegAudioDecoder | null = null;
-  private ac3Decoder: Ac3AudioDecoder | null = null;
+  private decoder: AvcodecAudioDecoder | null = null;
   private wasmUrl: string;
   private codec: SoftAudioCodec;
   private lastDecodedFormat: string | null = null;
@@ -32,24 +31,14 @@ export class WorkerAudioDecoder {
 
   async initDecoder(): Promise<boolean> {
     try {
-      if (this.codec === "mp2") {
-        if (this.mpegDecoder?.isReady) {
-          return true;
-        }
-        this.destroyDecoder();
-        Log.i(TAG, `Initializing MP2 decoder from ${this.wasmUrl}`);
-        this.mpegDecoder = new MpegAudioDecoder(this.wasmUrl);
-        await this.mpegDecoder.ready;
-      } else {
-        if (this.ac3Decoder?.isReady) {
-          return true;
-        }
-        this.destroyDecoder();
-        Log.i(TAG, `Initializing ${this.codec.toUpperCase()} decoder from ${this.wasmUrl}`);
-        // 同一个 wasm 内含 ac3/eac3 两个解码器实例，按 codec 创建
-        this.ac3Decoder = new Ac3AudioDecoder(this.wasmUrl, this.codec === "eac3");
-        await this.ac3Decoder.ready;
+      if (this.decoder?.isReady) {
+        return true;
       }
+      this.destroyDecoder();
+      Log.i(TAG, `Initializing ${this.codec.toUpperCase()} decoder from ${this.wasmUrl}`);
+      // 同一个 wasm 内含全部 codec 解码器，按 codec 创建
+      this.decoder = new AvcodecAudioDecoder(this.wasmUrl, this.codec as AvcodecCodec);
+      await this.decoder.ready;
       Log.i(TAG, `${this.codec.toUpperCase()} decoder initialized successfully`);
       return true;
     } catch (error) {
@@ -63,11 +52,7 @@ export class WorkerAudioDecoder {
   decode(data: Uint8Array): DecodedAudio | null {
     let decodedAudio: DecodedAudio | null = null;
     try {
-      if (this.codec === "mp2") {
-        decodedAudio = this.mpegDecoder?.decode(data) ?? null;
-      } else {
-        decodedAudio = this.ac3Decoder?.decode(data) ?? null;
-      }
+      decodedAudio = this.decoder?.decode(data) ?? null;
     } catch (error) {
       Log.e(TAG, `${this.codec.toUpperCase()} decode failed`, error);
       return null;
@@ -89,22 +74,14 @@ export class WorkerAudioDecoder {
   }
 
   reset(): void {
-    if (this.codec === "mp2") {
-      this.mpegDecoder?.reset();
-    } else {
-      this.ac3Decoder?.reset();
-    }
+    this.decoder?.reset();
     this.lastDecodedFormat = null;
   }
 
   private destroyDecoder(): void {
-    if (this.mpegDecoder) {
-      this.mpegDecoder.destroy();
-      this.mpegDecoder = null;
-    }
-    if (this.ac3Decoder) {
-      this.ac3Decoder.destroy();
-      this.ac3Decoder = null;
+    if (this.decoder) {
+      this.decoder.destroy();
+      this.decoder = null;
     }
     this.lastDecodedFormat = null;
   }

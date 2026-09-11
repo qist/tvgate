@@ -21,4 +21,4 @@ This playback engine is derived from the web player front-end of [stackia/rtp2ht
 
 Accordingly, this entire directory — including the ported code and all subsequent modifications and enhancements (live re-sync, AC-3/E-AC-3 WASM soft decoding, etc.) — is distributed under **GPL-2.0**, as contained in the [LICENSE](LICENSE) file in this directory. This GPL-2.0 grant applies to this directory only; the rest of TVGate remains under the [Mozilla Public License 2.0](../../LICENSE).
 
-The `wasm/ac3/` build additionally links against trimmed FFmpeg libraries (LGPL-2.1+, no GPL components enabled); see the notes in `wasm/ac3/Makefile` for how to obtain the corresponding source code.
+The `wasm/avcodec/` build links against trimmed FFmpeg libraries (LGPL-2.1+, no GPL components enabled); see the notes in `wasm/avcodec/Makefile` for how to obtain the corresponding source code.

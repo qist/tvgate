@@ -1,11 +1,11 @@
-# Top-level Makefile for WASM audio decoders
+# Top-level Makefile for WASM audio decoder (unified FFmpeg libavcodec module)
 
-.PHONY: all clean minimp3
+.PHONY: all clean avcodec
 
-all: minimp3
+all: avcodec
 
-minimp3:
-	$(MAKE) -C minimp3
+avcodec:
+	$(MAKE) -C avcodec
 
 clean:
-	$(MAKE) -C minimp3 clean
+	$(MAKE) -C avcodec clean

@@ -1,25 +1,26 @@
 /*
- * AC-3 / E-AC-3 Decoder (Dolby Digital / DD+)
+ * Unified FFmpeg libavcodec WASM decoder (avcodec_audio.wasm)
  *
- * WASM wrapper for the FFmpeg-based ac3_decoder — directly calls WASM exports
- * without the Emscripten JS glue (same pattern as MpegAudioDecoder).
+ * Direct WASM wrapper (no Emscripten JS glue) driving the me_decoder_* ABI
+ * exported by the unified module — one binary covers MP2 / MP3 / AC-3 /
+ * E-AC-3 / AAC (codec_id: 0=ac3 1=eac3 2=mp2 3=mp3 4=aac).
  *
- * Decodes whole PES payloads: the WASM side loops over all complete frames
- * (0x0B77 syncword + frame length) and keeps trailing partial frames in an
- * internal carry buffer, so frames split across PES packets are handled
- * transparently. Output is interleaved stereo float32 PCM — the 5.1→stereo
- * downmix (incl. dialnorm) happens inside the ffmpeg decoder via the
- * "downmix" AVOption.
+ * Decodes whole PES payloads: the WASM side uses the codec's av_parser to cut
+ * complete frames and keeps trailing partial frames in an internal carry
+ * buffer, so frames split across PES packets are handled transparently.
+ * Output is interleaved stereo float32 PCM (AC-3/E-AC-3 are downmixed to
+ * stereo inside the decoder).
  */
 
-// Maximum interleaved samples per frame (1536 samples × 2 channels)
-const MAX_INTERLEAVED_PER_FRAME = 1536 * 2;
+// Max interleaved samples per frame (AAC-HE 2048×2; me_max_samples_per_frame).
+const MAX_INTERLEAVED_PER_FRAME = 2048 * 2;
 
-// Smallest valid AC-3 frame (~32kbps @ 48kHz is 64*2=128 bytes)
-const MIN_FRAME_BYTES = 128;
+// Smallest complete frame across codecs, used to bound the frame count
+// when sizing the output buffer.
+const MIN_FRAME_BYTES = 96;
 
-// Carry buffer size on the WASM side (E-AC-3 frames can reach ~4KB)
-const CARRY_MAX = 4096;
+// Carry buffer size on the WASM side (see avcodec_audio.c CARRY_MAX).
+const CARRY_MAX = 8192;
 
 // Info array layout (8 × i32):
 // [samplesPerChannel, sampleRate, channels, frames, carryBytes, consumedBytes, samplesBeforeInput, errors]
@@ -28,6 +29,11 @@ const INFO_SAMPLE_RATE = 1;
 const INFO_CHANNELS = 2;
 const INFO_SAMPLES_BEFORE_INPUT = 6;
 const INFO_I32_COUNT = 8;
+
+/** Software-decode codecs provided by the unified module. */
+export type AvcodecCodec = "mp2" | "ac3" | "eac3";
+
+const CODEC_IDS: Record<AvcodecCodec, number> = { ac3: 0, eac3: 1, mp2: 2 };
 
 export interface DecodedAudio {
   /** Interleaved stereo float32 PCM. */
@@ -39,13 +45,16 @@ export interface DecodedAudio {
   samplesBeforeInput: number;
 }
 
+/**
+ * WASM imports: standalone mode requires a memory-growth notification callback
+ * and the wasi stubs libavutil links against are never exercised on the
+ * decode path, so stub them out.
+ */
 function createWasmImports() {
   return {
     env: {
       emscripten_notify_memory_growth: () => {},
     },
-    // ffmpeg libavutil links against wasi stubs (fd_*/clock_time_get);
-    // they are never exercised on the decode path, so stub them out.
     wasi_snapshot_preview1: new Proxy(
       {},
       {
@@ -58,7 +67,7 @@ function createWasmImports() {
 let cachedWasmUrl: string | null = null;
 let cachedWasmInstance: WebAssembly.Instance | null = null;
 
-export class Ac3AudioDecoder {
+export class AvcodecAudioDecoder {
   private exports: Record<string, CallableFunction> | null = null;
   private memoryRef: { memory: WebAssembly.Memory | null } = { memory: null };
   private decoderPtr = 0;
@@ -71,8 +80,8 @@ export class Ac3AudioDecoder {
   private _ready: Promise<void>;
   private _isReady = false;
 
-  constructor(wasmUrl: string, eac3 = false) {
-    this._ready = this.init(wasmUrl, eac3);
+  constructor(wasmUrl: string, private readonly codec: AvcodecCodec) {
+    this._ready = this.init(wasmUrl);
   }
 
   get ready(): Promise<void> {
@@ -83,7 +92,7 @@ export class Ac3AudioDecoder {
     return this._isReady;
   }
 
-  private async init(wasmUrl: string, eac3: boolean): Promise<void> {
+  private async init(wasmUrl: string): Promise<void> {
     if (!cachedWasmInstance || cachedWasmUrl !== wasmUrl) {
       const imports = createWasmImports();
       const { instance } = await WebAssembly.instantiateStreaming(fetch(wasmUrl), imports);
@@ -100,10 +109,10 @@ export class Ac3AudioDecoder {
     this.memoryRef.memory = ex.memory as WebAssembly.Memory;
     this.exports = ex as unknown as Record<string, CallableFunction>;
 
-    const create = ex.ac3_decoder_create as (eac3: number) => number;
-    this.decoderPtr = create(eac3 ? 1 : 0);
+    const create = ex.me_decoder_create as (codecId: number) => number;
+    this.decoderPtr = create(CODEC_IDS[this.codec]);
     if (!this.decoderPtr) {
-      throw new Error("Failed to create AC-3 decoder");
+      throw new Error(`Failed to create ${this.codec.toUpperCase()} decoder`);
     }
 
     const malloc = ex.malloc as (size: number) => number;
@@ -138,7 +147,7 @@ export class Ac3AudioDecoder {
     const heap = new Uint8Array(this.memoryRef.memory.buffer);
     heap.set(input, this.inputPtr);
 
-    const decodeFn = this.exports.ac3_decode_payload as (
+    const decodeFn = this.exports.me_decode_payload as (
       dec: number,
       inp: number,
       inpSz: number,
@@ -173,16 +182,16 @@ export class Ac3AudioDecoder {
     return { pcm, samplesPerChannel, sampleRate, channels, samplesBeforeInput };
   }
 
-  /** Reset decoder state (call on stream switch to avoid stale mdct/qmf state) */
+  /** Reset decoder state (call on stream switch to avoid stale codec state). */
   reset(): void {
     if (!this._isReady || !this.exports) return;
-    (this.exports.ac3_decoder_reset as (dec: number) => void)(this.decoderPtr);
+    (this.exports.me_decoder_reset as (dec: number) => void)(this.decoderPtr);
   }
 
   destroy(): void {
     if (!this.exports) return;
     const free = this.exports.free as (ptr: number) => void;
-    const destroyFn = this.exports.ac3_decoder_destroy as (dec: number) => void;
+    const destroyFn = this.exports.me_decoder_destroy as (dec: number) => void;
 
     if (this.decoderPtr) {
       destroyFn(this.decoderPtr);
