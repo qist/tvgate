@@ -1874,7 +1874,7 @@ function VideoPlayerComponent({
                       : "bg-violet-100/10 text-violet-50/65 ring-1 ring-violet-100/10",
                   )}
                 >
-                  {digitBuffer || channel.id}
+                  {digitBuffer || (channel.number ?? "")}
                 </span>
                 <h2 className="truncate font-bold text-white text-xs tracking-[0.01em] md:text-base md:[@container_video_(max-height:_320px)]:text-xs">
                   {channel.name}

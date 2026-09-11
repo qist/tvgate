@@ -61,8 +61,8 @@ function ChannelIndicator({
       <Chevron className={ICON_CLASS} />
       {target ? (
         <>
-          <span className="shrink-0 rounded-md bg-violet-100/10 px-1.5 py-0.5 font-semibold text-violet-50/65 text-xs ring-1 ring-violet-100/10 md:text-sm">
-            {target.id}
+          <span className="shrink-0 rounded-md bg-violet-100/10 px-1.5 py-0.5 font-semibold text-violet-50/65 text-xs tabular-nums ring-1 ring-violet-100/10 md:text-sm">
+            {target.number ?? ""}
           </span>
           <span className="max-w-[40vw] truncate font-bold text-sm text-white md:text-lg">{target.name}</span>
         </>

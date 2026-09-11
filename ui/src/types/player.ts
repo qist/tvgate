@@ -10,6 +10,8 @@ export interface Channel {
   name: string;
   logo?: string;
   groups: string[];
+  /** 频道号（订阅列表中的序位，1 起）。用于界面展示，替代裸 id 短哈希。 */
+  number?: number;
   tvgId?: string;
   tvgName?: string;
   sources: Source[];

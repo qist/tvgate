@@ -80,7 +80,7 @@ const ChannelListResults = memo(function ChannelListResults({
   locale,
 }: ChannelListResultsProps) {
   return (
-    <div className="space-y-2">
+    <div className="grid grid-cols-2 gap-1.5 md:grid-cols-1">
       {filteredChannels.map((channel, index) => (
         <ChannelListItem
           key={channel.id}

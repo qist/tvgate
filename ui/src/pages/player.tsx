@@ -174,7 +174,8 @@ function channelNameFromUrl(url: string): string {
 function mapChannels(payload: TvgateChannelPayload[]): { channels: Channel[]; groups: string[] } {
   const channels: Channel[] = [];
   const groupSet = new Set<string>();
-  for (const c of payload) {
+  for (let i = 0; i < payload.length; i++) {
+    const c = payload[i];
     if (!c?.key || !c.name) continue;
     const source: Source = { url: withToken(`/player/${c.key}`), label: c.scheme || undefined };
     // http(s)/php/rtsp 源由服务端提供 catchup（/api/player/catchup），打标记供 UI 与 EPG 缝隙填充识别。
@@ -189,6 +190,7 @@ function mapChannels(payload: TvgateChannelPayload[]): { channels: Channel[]; gr
       name: c.name,
       logo: c.tvg_logo || undefined,
       groups,
+      number: channels.length + 1,
       tvgId: c.tvg_id || undefined,
       tvgName: c.tvg_name || undefined,
       sources: [source],
@@ -609,6 +611,7 @@ function PlayerPage() {
           id: `direct-${name}`,
           name,
           groups: [],
+          number: 1,
           sources: [{ url: withToken(directLiveUrl) }],
         };
         mapped = { channels: [liveChannel], groups: [] };
@@ -840,7 +843,7 @@ function PlayerPage() {
           {/* Sidebar - Mobile: always visible (below video, hidden in fullscreen), Desktop/TV: toggle-able LEFT side panel (visible in fullscreen) */}
           <div
             className={clsx(
-              "player-performance-panel-background flex w-full flex-1 flex-col overflow-hidden border-violet-950/10 border-t bg-white/68 pl-[env(safe-area-inset-left)] shadow-[14px_0_40px_rgba(91,33,182,0.06)] backdrop-blur-2xl dark:border-violet-100/10 dark:bg-[linear-gradient(160deg,rgba(10,7,26,0.96),rgba(23,16,53,0.92))] dark:shadow-[18px_0_48px_rgba(9,4,26,0.28)] md:w-[21rem] lg:w-[22rem] md:flex-initial md:border-t-0 md:border-r md:pt-[env(safe-area-inset-top)] md:pr-0",
+              "player-performance-panel-background flex w-full flex-1 flex-col overflow-hidden border-violet-950/10 border-t bg-white/68 pl-[env(safe-area-inset-left)] shadow-[14px_0_40px_rgba(91,33,182,0.06)] backdrop-blur-2xl dark:border-violet-100/10 dark:bg-[linear-gradient(160deg,rgba(10,7,26,0.96),rgba(23,16,53,0.92))] dark:shadow-[18px_0_48px_rgba(9,4,26,0.28)] md:w-[18rem] lg:w-[19rem] md:flex-initial md:border-t-0 md:border-r md:pt-[env(safe-area-inset-top)] md:pr-0",
               insetSidebarRight && "pr-[env(safe-area-inset-right)]",
               (showSidebar || isMobile) && !(isFullscreen && isMobile) ? "" : "hidden",
             )}
