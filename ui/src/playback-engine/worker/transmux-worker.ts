@@ -115,6 +115,9 @@ function createPipeline(segments: PlayerSegment[], config: PlayerConfig): Pipeli
       const buffer = pcm.buffer as ArrayBuffer;
       post({ type: "pcm-audio-data", pcm: buffer, channels: channels, sampleRate: sampleRate, time: time, gen }, [buffer]);
     },
+    onPCMAudioDiscontinuity() {
+      post({ type: "pcm-audio-discontinuity", gen });
+    },
   };
 
   return new Pipeline(segments, config, callbacks);
@@ -143,6 +146,19 @@ self.addEventListener("message", (e: MessageEvent) => {
       break;
     case "resume":
       pipeline?.resume();
+      break;
+    case "audio-anchor":
+      if (cmd.gen !== gen) {
+        break;
+      }
+      pipeline?.setAudioVideoAnchor(cmd.videoTimeMs / 1000);
+      post({ type: "pcm-audio-anchor", videoTime: cmd.videoTimeMs / 1000, gen });
+      break;
+    case "clock":
+      if (cmd.gen !== gen) {
+        break;
+      }
+      pipeline?.setClock(cmd.currentTimeMs, cmd.bufferedEndMs);
       break;
     case "reset":
       if (pipeline) {

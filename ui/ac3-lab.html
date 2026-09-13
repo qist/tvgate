@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AC-3 Lab</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: #0b0d12;
+        color: #e6e8ee;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      h1 {
+        font-size: 15px;
+        margin: 0 0 12px;
+        font-weight: 600;
+      }
+      .wrap {
+        display: grid;
+        grid-template-columns: minmax(360px, 1fr) minmax(320px, 420px);
+        gap: 16px;
+        align-items: start;
+      }
+      @media (max-width: 900px) {
+        .wrap {
+          grid-template-columns: 1fr;
+        }
+      }
+      video {
+        width: 100%;
+        background: #000;
+        border-radius: 6px;
+      }
+      .panel {
+        border: 1px solid #262b36;
+        border-radius: 6px;
+        padding: 10px 12px;
+        background: #11141b;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+      button {
+        background: #1d2330;
+        color: #e6e8ee;
+        border: 1px solid #313a4b;
+        border-radius: 5px;
+        padding: 5px 10px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #263040;
+      }
+      input[type="range"] {
+        width: 180px;
+      }
+      input[type="text"] {
+        width: 130px;
+        background: #0e1116;
+        color: #e6e8ee;
+        border: 1px solid #313a4b;
+        border-radius: 5px;
+        padding: 5px 8px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 2px 6px;
+        border-bottom: 1px solid #1e2430;
+        font-weight: 400;
+      }
+      th {
+        color: #98a2b8;
+        white-space: nowrap;
+        width: 46%;
+      }
+      #status {
+        color: #8fd0ff;
+        margin-bottom: 8px;
+      }
+      pre {
+        margin: 10px 0 0;
+        max-height: 240px;
+        overflow: auto;
+        background: #0e1116;
+        border: 1px solid #1e2430;
+        border-radius: 5px;
+        padding: 8px;
+        font-size: 12px;
+        color: #9fb0c8;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>AC-3 Lab — 任意 AC-3 节目独立同步测试（不复用播放器内核）</h1>
+    <div class="wrap">
+      <div>
+        <video id="video" playsinline muted></video>
+        <div class="panel" style="margin-top: 12px">
+          <div id="status">初始化…</div>
+          <div class="row">
+            <label for="srcKey">节目 key</label>
+            <input id="srcKey" type="text" placeholder="选/填已订阅频道" list="channelKeys" />
+            <datalist id="channelKeys"></datalist>
+            <button id="switchSrc">切换</button>
+            <span id="srcHint" style="color: #98a2b8; margin-left: 4px"></span>
+          </div>
+          <div class="row">
+            <button id="play">播放</button>
+            <button id="reanchor">硬重锚</button>
+            <button id="csv">导出 CSV</button>
+          </div>
+          <div class="row">
+            <label for="calib">音画偏移（正=延后音频）</label>
+            <input id="calib" type="range" min="-400" max="400" step="5" value="0" />
+            <span id="calibVal">0 ms</span>
+          </div>
+          <div class="row">
+            <span>模拟 live-sync 追速</span>
+            <button data-rate="1">1.0x</button>
+            <button data-rate="1.1">1.1x</button>
+            <button data-rate="1.2">1.2x</button>
+            <span id="rateHint" style="color: #98a2b8"></span>
+          </div>
+          <div style="color: #98a2b8">
+            判据：把 calibration 调到「口型对上」；drift 应长期稳定在 ±40ms 内，underrun/reanchor 不增长。
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <table>
+          <tbody id="metrics"></tbody>
+        </table>
+        <pre id="log"></pre>
+      </div>
+    </div>
+    <script type="module" src="/src/ac3-lab/main.ts"></script>
+  </body>
+</html>

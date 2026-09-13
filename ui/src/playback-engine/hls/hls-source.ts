@@ -82,6 +82,8 @@ export class HlsSource implements SegmentSource {
   private nextIndex = 0;
   /** Media sequence number of the next segment to ingest from playlist refreshes. */
   private nextMediaSequence = -1;
+  /** Newest media-sequence we have ever observed in the live window (detects restarts). */
+  private lastMaxMediaSequence = -1;
   /** Accumulated timeline position for the next appended segment, in seconds. */
   private timelinePos = 0;
   private initialized = false;
@@ -91,6 +93,8 @@ export class HlsSource implements SegmentSource {
   private lastPlaylistHadNews = true;
   /** Deduplicates async video refresh kicks while audio segments keep flowing. */
   private videoRefreshInFlight = false;
+  /** Guards the single audio refresh loop instance (re-kicked after a spurious ENDLIST recovery). */
+  private audioLoopRunning = false;
   /** Playlist content already fetched during HLS detection, consumed on the first load. */
   private preloaded: { text: string; url: string } | null;
 
@@ -140,7 +144,14 @@ export class HlsSource implements SegmentSource {
 
       if (!videoMeta && !audioEntry) {
         if (this.ended) {
-          return null;
+          // 容忍上游偶发 ENDLIST：再刷新一次，若窗口已恢复推进（ingest 会把 ended 改回
+          // false 并补上分片）则继续，否则判定为真正结束。
+          await this.refresh();
+          const stillEmpty = this.nextIndex >= this.segments.length && this.nextResolvedAudioEntry() === null;
+          if (stillEmpty) {
+            return null;
+          }
+          continue;
         }
         await this.refresh();
         continue;
@@ -179,6 +190,31 @@ export class HlsSource implements SegmentSource {
   destroy(): void {
     this.destroyed = true;
     this.abort.abort();
+  }
+
+  /**
+   * 直播源重启后整体重置滑动窗：丢弃已摄入的旧分片列表，以"当前播放头"为基准续接时间轴，
+   * 并强制下一次输出分片触发 remuxer 重置（消化 TS 时间轴不连续 / PTS 归零）。
+   * 仅当 ingest 检测到 media-sequence 整体回退时调用。
+   */
+  private rebaseLiveWindowOnRestart(): void {
+    Log.w(
+      TAG,
+      `live source restarted (media-sequence regressed from ${this.nextMediaSequence}) — rebasing live window at playhead`,
+    );
+    const base = this.segments[this.nextIndex]?.start ?? this.timelinePos;
+    this.segments = [];
+    this.nextIndex = 0;
+    this.timelinePos = base;
+    this.videoSeqStart.clear();
+    this.nextMediaSequence = -1;
+    this.lastMaxMediaSequence = -1;
+    this.resetPending = true;
+    // 音频轨一并回退重锚（offset 置空，待下一段视频锚点重新对齐）。
+    this.audioSegments = [];
+    this.audioNextIndex = 0;
+    this.audioNextMediaSequence = -1;
+    this.audioOffset = null;
   }
 
   /** Called by the pipeline when audio rendition segments turn out to be undecodable (e.g. fMP4). */
@@ -270,6 +306,15 @@ export class HlsSource implements SegmentSource {
     // Top up the audio queue independently of the video-driven refresh cycle:
     // the video queue usually holds several segments, during which next() never
     // reaches the refresh path, so audio must not depend on it.
+    this.startAudioRefreshLoop();
+  }
+
+  /** 启动音频刷新循环（单例保护），用于初始化与上游偶发 ENDLIST 恢复后的重启。 */
+  private startAudioRefreshLoop(): void {
+    if (this.audioLoopRunning || this.destroyed || !this.audioEnabled) {
+      return;
+    }
+    this.audioLoopRunning = true;
     void this.audioRefreshLoop();
   }
 
@@ -307,13 +352,22 @@ export class HlsSource implements SegmentSource {
 
   /** Background loop keeping the audio segment queue topped up for live streams. */
   private async audioRefreshLoop(): Promise<void> {
-    while (!this.destroyed && this.audioEnabled && this.live) {
-      const queued = this.audioSegments.length - this.audioNextIndex;
-      if (queued < AUDIO_REFRESH_AHEAD_SEGMENTS) {
-        await this.refreshAudio();
-      } else {
-        await this.sleep(AUDIO_LOOP_IDLE_MS);
+    // 不再以 this.live 作为退出条件：上游偶发 ENDLIST 会让 ingest 短暂把 ended 置真，
+    // 但视频侧恢复直播（ended=false）后音频也应立即续上。仅当真正结束（ended）时退出。
+    try {
+      while (!this.destroyed && this.audioEnabled) {
+        if (this.ended) {
+          break;
+        }
+        const queued = this.audioSegments.length - this.audioNextIndex;
+        if (queued < AUDIO_REFRESH_AHEAD_SEGMENTS) {
+          await this.refreshAudio();
+        } else {
+          await this.sleep(AUDIO_LOOP_IDLE_MS);
+        }
       }
+    } finally {
+      this.audioLoopRunning = false;
     }
   }
 
@@ -418,8 +472,36 @@ export class HlsSource implements SegmentSource {
   }
 
   private ingest(playlist: HlsMediaPlaylist): void {
-    this.live = playlist.live;
-    this.ended = !playlist.live;
+    // 进入本函数前 this.nextMediaSequence 已是上一次的滑动位置；若已建立过滑动窗
+    // （≠ -1），说明此前是直播源，后续用于甄别"上游偶发 ENDLIST"的误报。
+    const hadLiveWindow = this.nextMediaSequence !== -1;
+
+    // 直播源重启（上游断流重连 / 节目切换）：播放列表的 media-sequence 整体回退到我们
+    // 已见过的最大序列之前。若仍按旧 nextMediaSequence 比对，新分片会被当成"已摄入"跳过
+    // （seg.mediaSequence < nextMediaSequence → continue），直播窗冻结、直播边缘不再
+    // 推进，LiveSync 报 Live-edge underrun 卡死。检测到回退时整体重启直播窗，以当前
+    // 播放头为基准续接时间轴（remuxer 靠 resetRemuxer 消化 TS 时间轴不连续）。
+    // 注意：稳态直播下 maxSeq 本就恒等于 nextMediaSequence-1（已摄入到直播边缘），
+    // 因此不能拿 maxSeq 与 nextMediaSequence 比，而要与"见过的最大序列"比。
+    let maxSeq = -1;
+    for (const s of playlist.segments) {
+      if (s.mediaSequence !== undefined && s.mediaSequence > maxSeq) maxSeq = s.mediaSequence;
+    }
+    // 仅当"整段新窗口都落在已摄入位置之后方（至少落后一个分片）"才判定为上游重启：
+    // 这样可避免对 CDN/多源抖动（media-sequence 在运行高值附近小幅回退）或"本刷次窗口尚未
+    // 推进"的误判。之前用 lastMaxMediaSequence 对比会被初始化瞬间捕获到的高序列钉死成陈旧
+    // 高值，导致之后每次刷新都满足 maxSeq<陈旧高值 而误判回退、每刷整体重置直播窗（连音频轨
+    // 一并清空）→ 音频永远没机会稳定输出。稳态滑动下 maxSeq 恒等于 nextMediaSequence-1
+    // （已到直播边缘），不会触发；仅当新窗口整体落后已摄入位置 ≥1 分片（真重启/整段跳过）才 rebase。
+    if (
+      hadLiveWindow &&
+      this.nextMediaSequence !== -1 &&
+      maxSeq >= 0 &&
+      maxSeq < this.nextMediaSequence - 1
+    ) {
+      this.rebaseLiveWindowOnRestart();
+    }
+
     if (playlist.targetDuration > 0) {
       this.targetDuration = playlist.targetDuration;
     }
@@ -459,6 +541,32 @@ export class HlsSource implements SegmentSource {
       }
     }
     this.trimSeqAnchors();
+
+    // 记录见过的最大序列：用于下一轮甄别 media-sequence 是否回退（源重启）。
+    if (maxSeq >= 0) {
+      this.lastMaxMediaSequence = Math.max(this.lastMaxMediaSequence, maxSeq);
+    }
+
+    // 直播源可能偶发在播放列表里带上 #EXT-X-ENDLIST（上游误标为已结束 / 源重启瞬间）。
+    // 只要此前已是滑动直播窗（hadLiveWindow），就一律当作误报、保持直播、继续刷新——
+    // 不再要求"本次刷新窗口必须推进 (newSegments>0)"，否则当 ENDLIST 恰巧在窗口尚未
+    // 推进的瞬间刷到（新分片还没发布）会被误判为结束，next() 返回 null、流水线停喂、
+    // 直播边缘冻结、LiveSync 报 Live-edge underrun 卡死。真正结束的 VOD/直播终了在
+    // 首次 ingest 时 hadLiveWindow 为 false，仍会正常 ended。
+    if (!playlist.live) {
+      if (hadLiveWindow) {
+        this.live = true;
+        this.ended = false;
+        Log.w(TAG, "playlist carries EXT-X-ENDLIST but was live before — keeping live (spurious ENDLIST)");
+        this.startAudioRefreshLoop();
+      } else {
+        this.live = false;
+        this.ended = true;
+      }
+    } else {
+      this.live = true;
+      this.ended = false;
+    }
 
     this.lastPlaylistHadNews = newSegments > 0;
     this.totalDuration = playlist.totalDuration;

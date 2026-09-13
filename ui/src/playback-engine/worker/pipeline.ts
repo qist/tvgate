@@ -54,6 +54,8 @@ export interface PipelineCallbacks {
   onAudioDisabled: () => void;
   /** `time` is normalized to the MSE timeline (seconds, same space as video.currentTime). */
   onPCMAudioData: (pcm: Float32Array, channels: number, sampleRate: number, time: number) => void;
+  /** Audio track discontinuity detected: main thread should re-anchor the PCM player. */
+  onPCMAudioDiscontinuity: () => void;
 }
 
 class LoadError extends Error {
@@ -81,15 +83,35 @@ const MAX_LIVE_SEGMENT_SKIPS = 8;
 
 /**
  * 音频 PTS 重新锚定阈值（ms）。部分源（如 E-AC-3 4K）的复用器每到 ~10s 边界会
- * 把音频 PTS 相位整体提前固定量（实测 256ms、亦见过 1024ms 等，常为 AC-3 帧长
- * 32ms 的整数倍），但音频内容本身连续。该恒定阈值必须大于这些周期跳变，否则会
- * 每 N 秒触发一次 re-锚 + bridging、周期性压缩音频时间轴，长时间累积成
- * "声音慢慢跑前面"。只对真正的切台/节目级不连续（通常 > 数秒）才重锚。
+ * 把音频 PTS 相位整体提前固定量（实测 256ms、1024ms、以及 ~10048ms 的大周期跳变），
+ * 但音频内容本身连续。该恒定阈值必须大于这些周期跳变，否则会每 N 秒触发一次
+ * re-锚 + bridging、周期性压缩音频时间轴，长时间累积成"声音慢慢跑前面"并造成
+ * 起播 PTS 周期 jumps 使 A/V 起始即错位。只对真正的切台/节目级不连续
+ * （通常 > 20s）才重锚。
  */
-const AUDIO_PTS_REANCHOR_THRESHOLD_MS = 10000;
+const AUDIO_PTS_REANCHOR_THRESHOLD_MS = 20000;
+/** 自由时钟(诊断用)与源 PTS 偏差达到该值就打印一次，用于定位"声音慢慢跑前面"。 */
+const AUDIO_PTS_DIVERGENCE_LOG_MS = 30;
+
+/**
+ * 缓冲领先上限（ms）：视频 MSE 缓冲末尾领先播放头超过该值就不继续解/解码下一段，
+ * 对齐 ac3-lab 的 `waitForBufferRoom`（10s），防止软解 PCM 时间轴跑到播放头前太远。
+ */
+const LEAD_BUFFER_AHEAD_MS = 10000;
+/** 超过该时长没收到主线程 clock 消息（如切后台心跳被节流）则视为时基过期，停止等待避免死锁。 */
+const CLOCK_STALE_MS = 1000;
+/** 缓冲领先门轮询间隔（ms）。 */
+const LEAD_GATE_POLL_MS = 100;
 
 type MediaInfoVideo = NonNullable<PlayerMediaInfo["video"]>;
 type MediaInfoAudio = NonNullable<PlayerMediaInfo["audio"]>;
+
+/** 简单的异步延迟（让出事件循环以接收 clock/pause/reset 等消息）。 */
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 function mergeDefinedProperties<T extends object>(current: T | undefined, update: T): T {
   const merged = { ...(current ?? {}) } as Record<string, unknown>;
@@ -192,6 +214,16 @@ class Pipeline {
   private _audioAnchorPtsMs: number | null = null;
   private _audioSamplesSinceAnchor = 0;
   private _audioSampleRate = 0;
+  /** Time-axis shift applied to software-decoded PCM (ms). Set by setAudioVideoAnchor
+   *  so decode timestamps land on the current video MSE clock after the video timeline
+   *  has shifted independently of the audio (the E-AC-3 4K source failure mode). */
+  private _audioTimeShiftMs = 0;
+  /** Raw (pre-shift) PTS of the most recently emitted software-decoded frame; used to
+   *  compute the re-base shift when the video axis is (re)established. */
+  private _lastAudioFramePtsMs: number | null = null;
+
+  /** 上次打印"自由时钟 vs 源 PTS"偏差的时间戳（performance.now()），避免刷屏。 */
+  private _lastPtsDivergenceLogAt = 0;
   /** PCM decoded before the remuxer dts base is known (flushed once available). */
   private _pendingPcm: Array<{
     pcm: Float32Array;
@@ -202,6 +234,14 @@ class Pipeline {
   }> = [];
   /** Incremented on audio timing resets to invalidate decode callbacks queued before the reset. */
   private _audioGen = 0;
+
+  // --- 缓冲领先限速（对齐 ac3-lab 的 waitForBufferRoom）---
+  /** 当前播放头时间（ms），由主线程经 clock 消息周期上报。 */
+  private _playheadCurrentMs = -1;
+  /** 视频 MSE 缓冲末尾（ms）；-1 表示未知。 */
+  private _playheadBufferedEndMs = -1;
+  /** 最近一次 clock 消息到达时刻（performance.now()），用于判定时基是否新鲜。 */
+  private _lastClockArrivalMs = -1;
 
   constructor(segments: PlayerSegment[], config: PlayerConfig, callbacks: PipelineCallbacks) {
     this._callbacks = callbacks;
@@ -587,6 +627,28 @@ class Pipeline {
     return this._runId === runId;
   }
 
+  /**
+   * 缓冲领先限速门（对齐 ac3-lab 的 `waitForBufferRoom`）：当 MSE 缓冲末尾领先播放头超过
+   * LEAD_BUFFER_AHEAD_MS 时暂停拉流/解码，直到播放头追上来。仅直播生效，且依赖主线程经
+   * `clock` 命令周期上报的播放头；时基过期或播放头未知时直接放行，绝不死锁、绝不卡播放。
+   */
+  private async _waitForBufferLead(runId: number): Promise<boolean> {
+    if (!this._isLivePlayback()) return true;
+    if (this._playheadCurrentMs < 0 || this._playheadBufferedEndMs < 0) return true;
+    if (performance.now() - this._lastClockArrivalMs > CLOCK_STALE_MS) return true;
+
+    while (this._runId === runId && this._isLivePlayback()) {
+      if (this._paused) {
+        if (!(await this._waitIfPaused(runId))) return false;
+      }
+      if (this._playheadCurrentMs < 0 || this._playheadBufferedEndMs < 0) return true;
+      if (performance.now() - this._lastClockArrivalMs > CLOCK_STALE_MS) return true;
+      if (this._playheadBufferedEndMs - this._playheadCurrentMs <= LEAD_BUFFER_AHEAD_MS) return true;
+      await sleep(LEAD_GATE_POLL_MS);
+    }
+    return this._runId === runId;
+  }
+
   // ---- Load loop ----
 
   private async _run(runId: number): Promise<void> {
@@ -595,6 +657,7 @@ class Pipeline {
 
     while (this._runId === runId) {
       if (!(await this._waitIfPaused(runId))) return;
+      if (!(await this._waitForBufferLead(runId))) return;
 
       let meta: SegmentMeta | null;
       try {
@@ -680,13 +743,14 @@ class Pipeline {
         }
       } catch (e) {
         if (this._runId !== runId || e === CANCELLED) return;
-        if (e instanceof LoadError && this._isLiveSource()) {
-          // 直播窗口的分片可能在上游 CDN 已被驱逐（典型为 404）：跳过该分片，
-          // 让 source.next() 刷新播放列表追到直播边缘，而不是把整个播放打死。
+        if (this._isLiveSource()) {
+          // 直播窗口：无论 CDN 404 还是解封装偶发异常，都不应永久打死播放循环。
+          // 计入同一跳过预算，达到上限再放弃，避免单帧错误造成"播几帧就停"。
           this._liveSegmentSkips++;
           Log.w(
             this.TAG,
-            `Live segment failed (${this._liveSegmentSkips}/${MAX_LIVE_SEGMENT_SKIPS}): code=${e.info.code} msg=${e.info.msg}`,
+            `Live segment failed (${this._liveSegmentSkips}/${MAX_LIVE_SEGMENT_SKIPS}): ` +
+              `${e instanceof LoadError ? `code=${e.info.code} msg=${e.info.msg}` : (e as Error).message}`,
           );
           if (this._liveSegmentSkips < MAX_LIVE_SEGMENT_SKIPS) {
             continue;
@@ -775,6 +839,11 @@ class Pipeline {
   /** 直播源判定：HLS 播放列表为 live 窗口时，分片可能在上游过期，可跳过等待刷新 */
   private _isLiveSource(): boolean {
     return this._sourceMode === "hls" && (this._hlsSource?.isLive ?? false);
+  }
+
+  /** 直播播放判定：缓冲领先限速门只对直播生效（VOD/回看的快进预取不受限）。 */
+  private _isLivePlayback(): boolean {
+    return this._sourceMode === "continuous-live-ts" || this._isLiveSource();
   }
 
   private _loadSegment(meta: SegmentMeta): Promise<void> {
@@ -916,17 +985,25 @@ class Pipeline {
         this._remuxer?.flushStashedSamples();
         this._remuxer?.insertDiscontinuity();
       }
-      this._workerAudioDecoder?.reset();
-      this._resetAudioTiming();
+      if (track === "audio") {
+        // audio discontinuity：源流时间轴断裂后，旧的 _pcmTiming 会把新帧
+        // 的 PTS 桥接到旧时间轴上 → 音画脱节。必须重置 PCM timing，让下一帧
+        // 重新按当前视频时间锚定。同时通知主线程做 reanchor。
+        this._remuxer?.resetPcmTiming();
+        this._workerAudioDecoder?.reset();
+        this._resetAudioTiming();
+        this._callbacks.onPCMAudioDiscontinuity();
+      } else {
+        this._workerAudioDecoder?.reset();
+        this._resetAudioTiming();
+      }
     };
     demuxer.onPcr = (pcrBase, bytePosition, discontinuity) => {
       this._recordTsPcr(pcrBase, bytePosition, discontinuity);
     };
 
-    // Set up software audio decode callbacks: MP2 always soft-decodes when a
-    // wasm URL is configured; AC-3/E-AC-3 additionally needs the demuxer's
-    // soft-decode switch (the wasm only provides it when MSE can't decode
-    // ac-3 natively — decided on the main thread).
+    // Set up software audio decode: MP2 只要有 wasm 就软解；AC-3/E-AC-3 还需要
+    // demuxer 的软解开关（由 mse-playback-backend 决定是否保留 wasmDecoders.ac3）。
     if (this._config.wasmDecoders.mp2 || this._config.wasmDecoders.ac3) {
       demuxer.onRawAudioData = (frame) => {
         this._handleRawAudioFrame(frame);
@@ -991,8 +1068,15 @@ class Pipeline {
         this._remuxer?.flushStashedSamples();
         this._remuxer?.insertDiscontinuity();
       }
-      this._workerAudioDecoder?.reset();
-      this._resetAudioTiming();
+      if (track === "audio") {
+        this._remuxer?.resetPcmTiming();
+        this._workerAudioDecoder?.reset();
+        this._resetAudioTiming();
+        this._callbacks.onPCMAudioDiscontinuity();
+      } else {
+        this._workerAudioDecoder?.reset();
+        this._resetAudioTiming();
+      }
     };
 
     this._remuxer.bindDataSource(
@@ -1225,6 +1309,40 @@ class Pipeline {
 
   private _workerDecoderCodec: SoftAudioCodec | null = null;
 
+  /**
+   * Re-base software-decoded PCM onto the current video position on the MSE
+   * timeline. Called from the main thread after a video-time-axis shift that
+   * left audio trailing (the E-AC-3 4K source failure mode): resets the PCM
+   * bridging state on the remuxer and pins the next framed PCM to the video
+   * clock, so audio follows the video anchor instead of the stale source PTS.
+   */
+  setAudioVideoAnchor(videoTimeSec: number): void {
+    this._remuxer?.setPcmVideoAnchor(videoTimeSec);
+    // Re-base software-decoded PCM onto the current video clock. The audio PTS coming
+    // from the demuxer rides the raw source axis, which — e.g. after an AC-3
+    // "pts overlapped" self-correction — slowly creeps *ahead* of the video axis.
+    // Without this shift the next framed PCM would still land on the drifted axis and
+    // the main-thread re-anchor would just drop/defer it, leaving A/V out of sync.
+    // Pin the next frame's raw PTS to the video time so the two axes re-converge.
+    this._audioTimeShiftMs = videoTimeSec * 1000 - (this._lastAudioFramePtsMs ?? videoTimeSec * 1000);
+    // Restart sample-clock extrapolation from the new benchmark: pending PCM
+    // queued before the anchor used the old axis and would bridge incorrectly.
+    // Reset the codec carry too: frames queued before this command must not
+    // produce PCM after the new timeline is acknowledged on the main thread.
+    this._audioGen++;
+    this._workerAudioDecoder?.reset();
+    this._pendingPcm = [];
+    this._audioAnchorPtsMs = null;
+    this._audioSamplesSinceAnchor = 0;
+  }
+
+  /** Feed the main-thread playhead + MSE buffered end consumed by the buffer-lead gate. */
+  setClock(currentTimeMs: number, bufferedEndMs: number): void {
+    this._playheadCurrentMs = currentTimeMs;
+    this._playheadBufferedEndMs = bufferedEndMs;
+    this._lastClockArrivalMs = performance.now();
+  }
+
   private _handleRawAudioFrame(frame: { codec: SoftAudioCodec; data: Uint8Array; pts: number }): void {
     // Lazily create (or re-create on codec change) the WorkerAudioDecoder
     if (this._workerAudioDecoder && this._workerDecoderCodec !== frame.codec) {
@@ -1233,8 +1351,7 @@ class Pipeline {
       this._workerAudioDecoderInitPromise = null;
     }
     if (!this._workerAudioDecoder) {
-      const url =
-        frame.codec === "mp2" ? this._config.wasmDecoders.mp2 : this._config.wasmDecoders.ac3;
+      const url = frame.codec === "mp2" ? this._config.wasmDecoders.mp2 : this._config.wasmDecoders.ac3;
       if (!url) return;
       this._workerAudioDecoder = new WorkerAudioDecoder(url, frame.codec);
       this._workerDecoderCodec = frame.codec;
@@ -1249,36 +1366,45 @@ class Pipeline {
       const result = this._workerAudioDecoder.decode(frame.data);
       if (!result) return;
 
-      // PTS extrapolation: anchor on the PES PTS, advance by decoded sample count.
-      // This gives every decoded chunk a jitter-free timestamp even when frames
-      // straddle PES boundaries or a PES contains multiple frames. Re-anchor only
-      // on genuine discontinuities. 注意：部分源（如广东 4K E-AC-3）的复用器每到
-      // ~10s 边界会把音频 PTS 相位整体提前固定量（实测 256ms = 8 个 E-AC-3 帧），
-      // 但音频内容本身连续。若把这种周期跳变当"不连续"触发 re-锚+bridging，会每
-      // 10s 把音频时间轴硬拧 256ms，长时间累积成"声音慢慢跑前面"。故阈值需大于
-      // 这类周期跳变（256ms/1024ms 等级），只对真正的切台/节目级不连续才 re-锚。
+      // 标签**直接采用源给出的逐帧 PTS**（demuxer 本来就是按帧送出 data+pts），
+      // 与 ac3-lab 完全一致：一帧进、一帧出，1:1，不需要任何外推。
+      //
+      // 旧实现把它换成"锚点 + 累计解码样本数"的自由时钟，且只在 |差|>20s 时才重锚，
+      // 于是任何"源 PTS 合法地跑得比解码样本数快"的流都会静默累积成一个恒定超前
+      // （旧注释所谓"长时间累积成'声音慢慢跑前面'"）；而下游 mapPcmTimestamp 又会
+      // 把输出时间轴按样本连续拼接，导致漂移环量到的标签永远自洽(≈0ms)、眼睛却看到
+      // 声音持续跑在前面的错位。ac3-lab 用源 PTS 原值，508s 实测 drift p50=-0.2ms。
       const sr = result.sampleRate;
       const carriedSamples = Math.min(Math.max(0, result.samplesBeforeInput), result.samplesPerChannel);
-      const decodedStartPts = frame.pts - (carriedSamples / sr) * 1000;
+      const labelPtsMs = frame.pts - (carriedSamples / sr) * 1000;
+
+      // 自由时钟仅保留作诊断：它与源 PTS 的偏差就是旧实现静默吃掉的音画超前量。
       if (this._audioAnchorPtsMs === null || this._audioSampleRate !== sr) {
-        this._audioAnchorPtsMs = decodedStartPts;
+        this._audioAnchorPtsMs = labelPtsMs;
         this._audioSamplesSinceAnchor = 0;
         this._audioSampleRate = sr;
       } else {
-        const extrapolatedMs = this._audioAnchorPtsMs + (this._audioSamplesSinceAnchor / sr) * 1000;
-        if (Math.abs(decodedStartPts - extrapolatedMs) > AUDIO_PTS_REANCHOR_THRESHOLD_MS) {
-          Log.v(
-            this.TAG,
-            `Audio PTS discontinuity: decoded=${decodedStartPts.toFixed(1)}ms extrap=${extrapolatedMs.toFixed(1)}ms`,
-          );
-          this._audioAnchorPtsMs = decodedStartPts;
+        const freeMs = this._audioAnchorPtsMs + (this._audioSamplesSinceAnchor / sr) * 1000;
+        const deltaMs = labelPtsMs - freeMs;
+        if (Math.abs(deltaMs) > AUDIO_PTS_REANCHOR_THRESHOLD_MS) {
+          // 真正的切台/节目级不连续：让诊断时钟也跟上，避免偏差无限增长。
+          this._audioAnchorPtsMs = labelPtsMs;
           this._audioSamplesSinceAnchor = 0;
+        } else if (
+          Math.abs(deltaMs) >= AUDIO_PTS_DIVERGENCE_LOG_MS &&
+          performance.now() - this._lastPtsDivergenceLogAt >= 10000
+        ) {
+          this._lastPtsDivergenceLogAt = performance.now();
+          Log.i(
+            this.TAG,
+            `PCM label vs free clock: signalled=${labelPtsMs.toFixed(1)}ms free=${freeMs.toFixed(1)}ms ` +
+            `delta=${deltaMs.toFixed(1)}ms → using signalled PTS`,
+          );
         }
       }
-      const ptsMs = this._audioAnchorPtsMs + (this._audioSamplesSinceAnchor / sr) * 1000;
       this._audioSamplesSinceAnchor += result.samplesPerChannel;
 
-      this._emitPcm(result.pcm, result.channels, sr, ptsMs);
+      this._emitPcm(result.pcm, result.channels, sr, labelPtsMs);
     });
   }
 
@@ -1289,7 +1415,9 @@ class Pipeline {
    */
   private _emitPcm(pcm: Float32Array, channels: number, sampleRate: number, ptsMs: number): void {
     const durationMs = (Math.floor(pcm.length / channels) / sampleRate) * 1000;
-    this._pendingPcm.push({ pcm, channels, sampleRate, ptsMs, durationMs });
+    // Apply any active re-anchor shift so the PCM lands on the current video clock.
+    this._pendingPcm.push({ pcm, channels, sampleRate, ptsMs: ptsMs + this._audioTimeShiftMs, durationMs });
+    this._lastAudioFramePtsMs = ptsMs;
 
     if (this._remuxer?.getTimestampBase() === undefined) {
       // Bound the queue: ~25s of audio at one payload per ~72ms is plenty

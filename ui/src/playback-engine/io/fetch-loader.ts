@@ -479,7 +479,15 @@ class FetchLoader {
 
   private _dispatchChunks(chunks: Uint8Array, byteStart: number): number {
     (this._currentRange as LoaderRange).to = byteStart + chunks.byteLength - 1;
-    return this.onDataArrival?.(chunks, byteStart) ?? 0;
+    try {
+      return this.onDataArrival?.(chunks, byteStart) ?? 0;
+    } catch (e) {
+      // 单块数据解析异常（畸形/跨边界音频帧、AC-3 PTS 重叠等）绝不应打挂拉流泵循环：
+      // 否则异常会冒泡到 _pump 的 Promise .catch → _handleLoaderError → 泵不再递归，
+      // 后续 chunk 不再读取 → 播放暂停。这里吞掉异常并把整块当作已消费，让泵继续推进。
+      Log.e(this.TAG, `onDataArrival threw, skipping chunk @${byteStart}: ${(e as Error)?.message ?? String(e)}`);
+      return chunks.byteLength;
+    }
   }
 
   private _flushStashBuffer(dropUnconsumed: boolean): number {

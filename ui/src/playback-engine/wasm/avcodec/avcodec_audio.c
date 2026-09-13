@@ -137,6 +137,7 @@ void me_decoder_reset(MeDecoder* d) {
     }
     d->work_len = 0;
     d->carry_size = 0;
+    d->sample_rate = 0; /* 允许切换到不同采样率的流时重新探测 */
 }
 
 EXPORT
@@ -187,12 +188,17 @@ static int me_output_frame(
     while (avcodec_receive_frame(d->ctx, d->frame) >= 0) {
         int nb = d->frame->nb_samples;
         int ch = d->frame->ch_layout.nb_channels;
-        int out_ch = ch > 1 ? 2 : 1;
+        /* 输出恒为立体声交织（info[2]=2，下方写入恒按 *2 双声道），
+         * 与单/多声道输入无关——downmix 已在解码器内部完成。 */
+        int out_ch = 2;
         if (nb <= 0 || ch < 1) {
             av_frame_unref(d->frame);
             continue;
         }
-        if (*total_samples + nb * out_ch > out_cap) {
+        /* out_cap 单位为 float；total_samples/out_ch 均为"每声道样本"，
+         * 故已写入浮点数为 (*total_samples + nb) * out_ch，必须按此比较，
+         * 否则单位混用会在大 payload 时漏判溢出（写入越界）。 */
+        if ((*total_samples + nb) * out_ch > out_cap) {
             av_frame_unref(d->frame);
             break; /* out of space: stop decoding this payload */
         }
@@ -355,8 +361,11 @@ int me_decode_payload(
     return total_samples;
 }
 
-/* emscripten 独立模式的 libc 裁剪未携带 musl 时区内部符号；
- * 解码路径不触发（FFmpeg 时间/日志路径用），打桩为 UTC 偏移即可。 */
+/* emscripten 独立模式的 libc 裁剪可能未携带 musl 时区内部符号
+ *（部分 /opt/emsdk 构建如此）；解码路径不触发（FFmpeg 时间/日志路径用），
+ * 打桩为 UTC 偏移即可。标为 weak：若工具链已提供该符号则由其强定义胜出，
+ * 避免 duplicate symbol 链接错误（系统自带 emscripten 3.1.69 已含此符号）。 */
+__attribute__((weak))
 void __secs_to_zone(long long t, int isdst, int* dst, long* off0, long* off1, const char** names) {
     if (dst) {
         *dst = isdst;

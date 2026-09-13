@@ -21,3 +21,7 @@ ui/pkg/
 .tmp_upgrade/
 tvgate.bak
 tvgate.new
+
+# 本地运行/工具产物
+ts.log
+.trae/

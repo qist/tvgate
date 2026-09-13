@@ -16,6 +16,20 @@ var distFS embed.FS
 
 const spaIndexPath = "dist/index.html"
 const playerIndexPath = "dist/player.html"
+const ac3LabIndexPath = "dist/ac3-lab.html"
+
+// serveEmbeddedHTMLPage 返回内嵌 dist 下的独立 HTML 入口。
+// 页面随二进制内嵌更新，必须禁缓存，避免浏览器用旧版页面。
+func serveEmbeddedHTMLPage(w http.ResponseWriter, r *http.Request, name string) {
+	data, err := distFS.ReadFile(name)
+	if err != nil {
+		http.Error(w, "页面缺失，请先构建 ui/（make web-ui）", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
+	_, _ = w.Write(data)
+}
 
 // serveSPA 返回前端 SPA 入口（hash 路由，无需服务端 history fallback）。
 // 认证交由前端：未认证时 SPA 自行跳 #/login；数据接口仍受 cookieAuth 保护。
@@ -33,14 +47,12 @@ func serveSPA(w http.ResponseWriter, r *http.Request) {
 // servePlayerPage 返回 H5 播放器独立入口（player.html，双入口构建产物）。
 // 页面随二进制内嵌更新，必须禁缓存，避免浏览器用旧版页面。
 func servePlayerPage(w http.ResponseWriter, r *http.Request) {
-	data, err := distFS.ReadFile(playerIndexPath)
-	if err != nil {
-		http.Error(w, "播放器页面缺失，请先构建 ui/（make web-ui）", http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store, must-revalidate")
-	_, _ = w.Write(data)
+	serveEmbeddedHTMLPage(w, r, playerIndexPath)
+}
+
+// serveAc3LabPage 返回 AC-3 独立实验页（ac3-lab.html，三入口构建产物）。
+func serveAc3LabPage(w http.ResponseWriter, r *http.Request) {
+	serveEmbeddedHTMLPage(w, r, ac3LabIndexPath)
 }
 
 // 独立播放页（/pp）的公开资源前缀：页面资源经此路径服务，
@@ -158,6 +170,8 @@ func registerSPARoutes(mux *http.ServeMux, webPath string) {
 	// H5 播放器入口（无尾斜杠：index.html 里的相对资源 ./assets/* 才能解析到 webPath/assets/）
 	mux.HandleFunc(webPath+"player", servePlayerPage)
 	mux.HandleFunc(webPath+"player.html", servePlayerPage)
+	// AC-3 独立实验页入口（/web/ac3-lab.html）
+	mux.HandleFunc(webPath+"ac3-lab.html", serveAc3LabPage)
 	// 无尾斜杠访问（如 /web）时重定向到 /web/，
 	// 否则 index.html 里的相对资源 ./assets/* 会解析到根路径而 404，
 	// 导致 SPA 无法挂载（页面空白/无法点开）。

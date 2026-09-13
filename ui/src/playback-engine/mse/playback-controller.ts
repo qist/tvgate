@@ -75,6 +75,13 @@ export function createMSEPlaybackController(
           info: "Software-decoded audio could not establish an initial shared timeline with video",
         });
       };
+      pcmPlayer.onVideoAnchorRequested = (videoTimeSec) => {
+        worker?.postMessage({
+          type: "audio-anchor",
+          videoTimeMs: videoTimeSec * 1000,
+          gen: mseGeneration,
+        } satisfies WorkerCommand);
+      };
       pcmPlayerInitPromise = pcmPlayer.init();
       pcmPlayer.attachVideo(video);
     }
@@ -97,6 +104,9 @@ export function createMSEPlaybackController(
   // Flushing both inits in one task creates all SourceBuffers before any init
   // segment parse can complete (the append algorithm runs as a queued task).
   let pendingInits: { track: "video" | "audio"; data: ArrayBuffer; codec: string; container: string }[] = [];
+
+  /** 周期向 worker 上报播放时钟（驱动 worker 内缓冲领先门），销毁时清除。 */
+  let clockTimer: ReturnType<typeof setInterval> | null = null;
 
   function flushPendingInits(): void {
     if (pendingInits.length === 0) return;
@@ -156,6 +166,14 @@ export function createMSEPlaybackController(
         // flushing any pending init batch immediately.
         flushPendingInits();
         break;
+      case "pcm-audio-anchor":
+        pcmPlayer?.confirmVideoAnchor(msg.videoTime);
+        break;
+      case "pcm-audio-discontinuity":
+        // Worker 检测到 audio track discontinuity（源流时间轴断裂）：
+        // 丢掉旧链旧队列，让后续 PCM 重新锚定到当前屏上帧时间。
+        pcmPlayer?.confirmVideoAnchor(video.currentTime);
+        break;
       case "pcm-audio-data": {
         const player = ensurePCMPlayer();
         const pcm = new Float32Array(msg.pcm);
@@ -174,6 +192,18 @@ export function createMSEPlaybackController(
       worker = new TransmuxWorker();
       worker.onmessage = handleWorkerMessage;
       workerInitialized = false;
+      if (!clockTimer) {
+        // Feed the worker's buffer-lead gate with the live playhead + MSE buffered end.
+        clockTimer = setInterval(() => {
+          const range = getLastBufferedRange();
+          worker?.postMessage({
+            type: "clock",
+            currentTimeMs: video.currentTime * 1000,
+            bufferedEndMs: range ? range.end * 1000 : -1,
+            gen: mseGeneration,
+          } satisfies WorkerCommand);
+        }, 250);
+      }
     }
     return worker;
   }
@@ -529,6 +559,10 @@ export function createMSEPlaybackController(
 
     destroy() {
       impl.suspend();
+      if (clockTimer) {
+        clearInterval(clockTimer);
+        clockTimer = null;
+      }
       video.removeEventListener("play", onVideoPlay);
       video.removeEventListener("timeupdate", onVideoTimeUpdate);
       if (worker) {

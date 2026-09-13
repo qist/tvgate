@@ -11,10 +11,23 @@ export interface PlayerConfig {
 
   /** URLs to WASM decoder files, keyed by codec. Omit to disable software decoding for that codec.
    *  e.g. `{ mp2: "/assets/avcodec_audio.wasm", ac3: "/assets/avcodec_audio.wasm" }` —
-   *  the unified module provides both codecs (plus E-AC-3).
-   *  `ac3` enables AC-3/E-AC-3 software decoding when MSE can't decode ac-3
-   *  natively (the same wasm provides both codecs). */
+   *  同一个模块同时提供 MP2 / AC-3 / E-AC-3 解码。
+   *  `ac3` 在浏览器 MSE 无法原生解码 ac-3/ec-3 时启用软解（逐帧解码后由 PCM 播放器输出）。 */
   wasmDecoders: { mp2?: string; ac3?: string };
+
+  /**
+   * 音画偏移的标定常量（毫秒，正 = 延后音频，负 = 提前音频）。
+   *
+   * 为什么必须存在：软解音频经 WebAudio 出声，视频经 MSE/合成器上屏，两条管线各自
+   * 的延迟里有一部分**在 DOM 里无法测量**（媒体元素音频输出延迟、合成器上屏延迟、
+   * 设备缓冲）。测量漂移用的基准若不含这一项，控制环会一路"收敛"到错的位置——
+   * 表现为日志里 drift≈0 但眼睛看到固定错位。所以它是一个**每台设备标定一次**的
+   * 常量，而不是可以被闭环算出来的量。
+   *
+   * 标定方法：播放一个人脸播报频道，调此值到口型对上。
+   * @default 0
+   */
+  audioSyncOffsetMs: number;
 
   /** Max backward buffer duration in seconds. Cleanup triggers when buffer exceeds this. @default 180 */
   bufferCleanupMaxBackward: number;
@@ -45,6 +58,8 @@ export const defaultConfig: PlayerConfig = {
   liveSyncPlaybackRate: 1.2,
 
   wasmDecoders: {},
+
+  audioSyncOffsetMs: 0,
 
   bufferCleanupMaxBackward: 180,
   bufferCleanupMinBackward: 120,

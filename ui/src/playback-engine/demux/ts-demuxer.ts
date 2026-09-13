@@ -19,7 +19,7 @@ import {
 } from "./h265";
 import H265Parser from "./h265-parser";
 import { MP3Data } from "./mp3";
-import { type MPEG4AudioObjectTypes, MPEG4SamplingFrequencies, type MPEG4SamplingFrequencyIndex } from "./mpeg4-audio";
+import { type MPEG4AudioObjectTypes, type MPEG4SamplingFrequencyIndex } from "./mpeg4-audio";
 import {
   PAT,
   PESData,
@@ -110,7 +110,6 @@ type AudioData =
 
 const VIDEO_PID_KEYS: readonly CommonPidKey[] = ["h264", "h265"];
 const AUDIO_PID_KEYS: readonly CommonPidKey[] = ["adts_aac", "loas_aac", "ac3", "eac3", "mp3"];
-
 /** DTS 位流同步字（16-bit BE/LE 与 14-bit BE/LE 四种排列）。 */
 const DTS_SYNCWORDS: readonly number[] = [0x7ffe8001, 0xfe7f0180, 0xff1f00e8, 0xe8001fff];
 
@@ -156,15 +155,14 @@ class TSDemuxer {
   public onTrackDiscontinuity: OnTrackDiscontinuityCallback | null = null;
   public onPcr: OnPcrCallback | null = null;
   /**
-   * Software audio decode support (MP2 / AC-3 / E-AC-3). For AC-3/E-AC-3 the
-   * branch only activates when `ac3SoftDecode` is enabled AND the wasm decoder
-   * is wired up (set together with onRawAudioData by the pipeline).
+   * Software audio decode (MP2 / AC-3 / E-AC-3): with a wasm URL configured the
+   * pipeline wires this up, and payloads bypass MSE remuxing to be forwarded
+   * **逐帧**（每个完整帧带自己的 PTS）给 WASM 解码。AC-3/E-AC-3 还需要
+   * `ac3SoftDecode`（由 pipeline 与 onRawAudioData 一并设置）。
    */
   public onRawAudioData: ((frame: { codec: "mp2" | "ac3" | "eac3"; data: Uint8Array; pts: number }) => void) | null =
     null;
-  /** AC-3/E-AC-3 software decode switch: when true (and onRawAudioData set),
-   *  Dolby payloads bypass MSE remuxing — MSE on most browsers can't decode
-   *  ac-3, so the audio would be silently dropped otherwise. */
+  /** AC-3/E-AC-3 软解开关：浏览器 MSE 无法原生解码 ac-3/ec-3 时由 pipeline 打开。 */
   public ac3SoftDecode = false;
 
   private ts_packet_size_: number;
@@ -826,6 +824,7 @@ class TSDemuxer {
 
     const payload = data.subarray(payload_start_index, payload_start_index + payload_length);
 
+    try {
     switch (pes_data.stream_type) {
       case StreamType.kMPEG1Audio:
       case StreamType.kMPEG2Audio:
@@ -880,6 +879,24 @@ class TSDemuxer {
         break;
       default:
         break;
+    }
+    } catch (e) {
+      // 单个 PES 解析异常（畸形/跨边界音频帧、AC-3 PTS 重叠等）绝不应冒泡到 onDataArrival，
+      // 否则整条音频链饿死、AudioContext 挂起 → 播放停止。视频流解析异常仍上抛以便定位。
+      const t = pes_data.stream_type;
+      const isAudio =
+        t === StreamType.kMPEG1Audio ||
+        t === StreamType.kMPEG2Audio ||
+        t === StreamType.kPESPrivateData ||
+        t === StreamType.kADTSAAC ||
+        t === StreamType.kLOASAAC ||
+        t === StreamType.kAC3 ||
+        t === StreamType.kEAC3;
+      if (isAudio) {
+        Log.w(this.TAG, `PES payload parse skipped (${StreamType[t] ?? t}): ${(e as Error)?.message ?? String(e)}`);
+      } else {
+        throw e;
+      }
     }
   }
 
@@ -1472,7 +1489,6 @@ class TSDemuxer {
         const new_pts_ms = this.audio_last_sample_pts_ + ref_sample_duration;
 
         if (Math.abs(new_pts_ms - base_pts_ms) > 1) {
-          Log.w(this.TAG, `AAC: Detected pts overlapped, expected: ${new_pts_ms}ms, PES pts: ${base_pts_ms}ms`);
           base_pts_ms = new_pts_ms;
         }
       }
@@ -1573,7 +1589,6 @@ class TSDemuxer {
         const new_pts_ms = this.audio_last_sample_pts_ + ref_sample_duration;
 
         if (Math.abs(new_pts_ms - base_pts_ms) > 1) {
-          Log.w(this.TAG, `AAC: Detected pts overlapped, expected: ${new_pts_ms}ms, PES pts: ${base_pts_ms}ms`);
           base_pts_ms = new_pts_ms;
         }
       }
@@ -1678,40 +1693,15 @@ class TSDemuxer {
       data = buf;
     }
 
-    // AC-3 软解路径（与 MP2 完全一致的处理方案）：浏览器 MSE 无法解码 ac-3 时
-    // （ac3SoftDecode 由 pipeline 按 wasm 配置与浏览器能力预先决定），Dolby
-    // payload 整段交给 WASM 解码器——帧跨 PES 由解码器内部 carry，PTS 直接用
-    // PES pts（缺省 0），不做帧级推导/重叠校正；时间轴连续性由 pipeline 的
-    // samplesBeforeInput 外推与重锚保证。首个 payload 必须帧头对齐才能识别
-    // codec/init；激活后无论是否对齐都整段转发。
-    if (this.ac3SoftDecode && this.onRawAudioData) {
-      const aligned = data.length >= 2 && data[0] === 0x0b && data[1] === 0x77;
-      if (this.soft_decode_audio_codec_ == null) {
-        if (!aligned) {
-          return;
-        }
-        const head_parser = new AC3Parser(data);
-        const head_frame = head_parser.readNextAC3Frame();
-        if (head_frame == null) {
-          return;
-        }
-        this.soft_decode_audio_codec_ = "ac3";
-        Log.i(this.TAG, `AC-3 audio detected, enabling software decode`);
-        const sample = { codec: "ac-3", data: head_frame } as const;
-        if (this.audio_init_segment_dispatched_ === false) {
-          this.setAC3AudioMetadata(head_frame);
-          this.dispatchAudioInitSegment(sample);
-        } else if (this.detectAudioMetadataChange(sample)) {
-          this.dispatchAudioMediaSegment();
-          this.setAC3AudioMetadata(head_frame);
-          this.dispatchAudioInitSegment(sample);
-        }
-      }
-      this.onRawAudioData({ codec: "ac3", data, pts: (pts ?? 0) / this.timescale_ });
-      return;
+    // 软解：不做 PES 级转发，按下面的循环**逐帧**送出（每帧带自己的 PTS）。
+    // 跨 PES 的半帧由 ac3_last_incomplete_data_ 兜底，与原生路径一致。
+    const softDecode = this.ac3SoftDecode && this.onRawAudioData !== null;
+    if (softDecode && this.soft_decode_audio_codec_ == null) {
+      this.soft_decode_audio_codec_ = "ac3";
+      Log.i(this.TAG, `AC-3 audio detected, enabling software decode`);
     }
 
-    // ---- 原生 MSE（非软解）路径：按帧切分 + 连续 PTS 推导 ----
+    // ---- 原生/软解共用：按帧切分 + 连续 PTS 推导 ----
     let ref_sample_duration: number;
     let base_pts_ms!: number;
 
@@ -1719,7 +1709,7 @@ class TSDemuxer {
       base_pts_ms = pts / this.timescale_;
     }
 
-    if (this.audio_metadata_.codec === "ac-3") {
+    if (this.audio_metadata_ && this.audio_metadata_.codec === "ac-3") {
       if (pts === undefined && this.audio_last_sample_pts_ !== undefined) {
         ref_sample_duration = (1536 / this.audio_metadata_.sampling_frequency) * 1000;
         base_pts_ms = this.audio_last_sample_pts_ + ref_sample_duration;
@@ -1733,7 +1723,6 @@ class TSDemuxer {
         const new_pts_ms = this.audio_last_sample_pts_ + ref_sample_duration;
 
         if (Math.abs(new_pts_ms - base_pts_ms) > 1) {
-          Log.w(this.TAG, `AC3: Detected pts overlapped, expected: ${new_pts_ms}ms, PES pts: ${base_pts_ms}ms`);
           base_pts_ms = new_pts_ms;
         }
       }
@@ -1747,43 +1736,70 @@ class TSDemuxer {
     let sample_pts_ms = base_pts_ms;
     let last_sample_pts_ms: number | undefined;
 
-    ac3_frame = adts_parser.readNextAC3Frame();
+    try {
+      ac3_frame = adts_parser.readNextAC3Frame();
+    } catch (e) {
+      Log.w(this.TAG, `AC3 parse aborted (readNextAC3Frame): ${(e as Error).message}`);
+      ac3_frame = null;
+    }
     if (ac3_frame != null) {
       this.audio_drop_until_sync_ = false;
     }
     while (ac3_frame != null) {
-      ref_sample_duration = (1536 / ac3_frame.sampling_frequency) * 1000;
-      const audio_sample = {
-        codec: "ac-3",
-        data: ac3_frame,
-      } as const;
+      let frameOk = false;
+      try {
+        ref_sample_duration = (1536 / ac3_frame.sampling_frequency) * 1000;
+        const audio_sample = {
+          codec: "ac-3",
+          data: ac3_frame,
+        } as const;
 
-      if (this.audio_init_segment_dispatched_ === false) {
-        this.setAC3AudioMetadata(ac3_frame);
-        this.dispatchAudioInitSegment(audio_sample);
-      } else if (this.detectAudioMetadataChange(audio_sample)) {
-        // flush stashed frames before notify new config
-        this.dispatchAudioMediaSegment();
-        this.setAC3AudioMetadata(ac3_frame);
-        this.dispatchAudioInitSegment(audio_sample);
+        if (this.audio_init_segment_dispatched_ === false) {
+          this.setAC3AudioMetadata(ac3_frame);
+          this.dispatchAudioInitSegment(audio_sample);
+        } else if (this.detectAudioMetadataChange(audio_sample)) {
+          // flush stashed frames before notify new config
+          this.dispatchAudioMediaSegment();
+          this.setAC3AudioMetadata(ac3_frame);
+          this.dispatchAudioInitSegment(audio_sample);
+        }
+
+        last_sample_pts_ms = sample_pts_ms;
+        const sample_pts_ms_int = Math.floor(sample_pts_ms);
+
+        const ac3_sample = {
+          unit: ac3_frame.data,
+          length: ac3_frame.data.byteLength,
+          pts: sample_pts_ms_int,
+          dts: sample_pts_ms_int,
+        };
+
+        if (softDecode) {
+          this.onRawAudioData?.({ codec: "ac3", data: ac3_frame.data, pts: sample_pts_ms_int });
+        } else {
+          this.audio_track_.samples.push(ac3_sample);
+          this.audio_track_.length += ac3_frame.data.byteLength;
+        }
+        frameOk = true;
+      } catch (e) {
+        // 单帧（跨 PES 半帧 / 源流 PTS 重叠导致的畸形帧）解析异常不应打断整个分片：
+        // 否则异常会沿 onDataArrival 冒泡成未处理拒绝，丢掉该 PES 全部音频帧，音频链饿死
+        // → AudioContext 被挂起 → 播放停顿。这里跳过坏帧并保持 PTS 连续。
+        Log.w(this.TAG, `AC3 frame dropped (parse error): ${(e as Error).message}`);
       }
 
-      last_sample_pts_ms = sample_pts_ms;
-      const sample_pts_ms_int = Math.floor(sample_pts_ms);
+      // 坏帧也要推进 PTS，保持时间轴连续，避免后续帧全部错位；同时更新基准防止回退。
+      sample_pts_ms += Number.isFinite(ref_sample_duration) ? ref_sample_duration : 32;
+      if (!frameOk) {
+        last_sample_pts_ms = sample_pts_ms;
+      }
 
-      const ac3_sample = {
-        unit: ac3_frame.data,
-        length: ac3_frame.data.byteLength,
-        pts: sample_pts_ms_int,
-        dts: sample_pts_ms_int,
-      };
-
-      this.audio_track_.samples.push(ac3_sample);
-      this.audio_track_.length += ac3_frame.data.byteLength;
-
-      sample_pts_ms += ref_sample_duration;
-
-      ac3_frame = adts_parser.readNextAC3Frame();
+      try {
+        ac3_frame = adts_parser.readNextAC3Frame();
+      } catch (e) {
+        Log.w(this.TAG, `AC3 parse aborted (readNextAC3Frame): ${(e as Error).message}`);
+        ac3_frame = null;
+      }
     }
 
     // getIncompleteData() returns null when fully consumed — always assign so a stale
@@ -1813,36 +1829,15 @@ class TSDemuxer {
       data = buf;
     }
 
-    // E-AC-3 软解路径：与 AC-3/MP2 完全一致的整段转发（PTS 直接用 PES pts，
-    // 缺省 0），帧跨 PES 由解码器 carry，时间轴由 pipeline 外推/重锚保证。
-    if (this.ac3SoftDecode && this.onRawAudioData) {
-      const aligned = data.length >= 2 && data[0] === 0x0b && data[1] === 0x77;
-      if (this.soft_decode_audio_codec_ == null) {
-        if (!aligned) {
-          return;
-        }
-        const head_parser = new EAC3Parser(data);
-        const head_frame = head_parser.readNextEAC3Frame();
-        if (head_frame == null) {
-          return;
-        }
-        this.soft_decode_audio_codec_ = "eac3";
-        Log.i(this.TAG, `E-AC-3 audio detected, enabling software decode`);
-        const sample = { codec: "ec-3", data: head_frame } as const;
-        if (this.audio_init_segment_dispatched_ === false) {
-          this.setEAC3AudioMetadata(head_frame);
-          this.dispatchAudioInitSegment(sample);
-        } else if (this.detectAudioMetadataChange(sample)) {
-          this.dispatchAudioMediaSegment();
-          this.setEAC3AudioMetadata(head_frame);
-          this.dispatchAudioInitSegment(sample);
-        }
-      }
-      this.onRawAudioData({ codec: "eac3", data, pts: (pts ?? 0) / this.timescale_ });
-      return;
+    // 软解：不做 PES 级转发，按下面的循环**逐帧**送出（每帧带自己的 PTS），
+    // 跨 PES 的半帧由 eac3_last_incomplete_data_ 兜底，与原生路径一致。
+    const softDecode = this.ac3SoftDecode && this.onRawAudioData !== null;
+    if (softDecode && this.soft_decode_audio_codec_ == null) {
+      this.soft_decode_audio_codec_ = "eac3";
+      Log.i(this.TAG, `E-AC-3 audio detected, enabling software decode`);
     }
 
-    // ---- 原生 MSE（非软解）路径：按帧切分 + 连续 PTS 推导 ----
+    // ---- 原生/软解共用：按帧切分 + 连续 PTS 推导 ----
     let ref_sample_duration: number;
     let base_pts_ms!: number;
 
@@ -1850,7 +1845,7 @@ class TSDemuxer {
       base_pts_ms = pts / this.timescale_;
     }
 
-    if (this.audio_metadata_.codec === "ec-3") {
+    if (this.audio_metadata_ && this.audio_metadata_.codec === "ec-3") {
       if (pts === undefined && this.audio_last_sample_pts_ !== undefined) {
         ref_sample_duration = ((256 * this.audio_metadata_.num_blks) / this.audio_metadata_.sampling_frequency) * 1000;
         base_pts_ms = this.audio_last_sample_pts_ + ref_sample_duration;
@@ -1864,7 +1859,6 @@ class TSDemuxer {
         const new_pts_ms = this.audio_last_sample_pts_ + ref_sample_duration;
 
         if (Math.abs(new_pts_ms - base_pts_ms) > 1) {
-          Log.w(this.TAG, `EAC3: Detected pts overlapped, expected: ${new_pts_ms}ms, PES pts: ${base_pts_ms}ms`);
           base_pts_ms = new_pts_ms;
         }
       }
@@ -1878,43 +1872,67 @@ class TSDemuxer {
     let sample_pts_ms = base_pts_ms;
     let last_sample_pts_ms: number | undefined;
 
-    eac3_frame = adts_parser.readNextEAC3Frame();
+    try {
+      eac3_frame = adts_parser.readNextEAC3Frame();
+    } catch (e) {
+      Log.w(this.TAG, `EAC3 parse aborted (readNextEAC3Frame): ${(e as Error).message}`);
+      eac3_frame = null;
+    }
     if (eac3_frame != null) {
       this.audio_drop_until_sync_ = false;
     }
     while (eac3_frame != null) {
-      ref_sample_duration = ((256 * eac3_frame.num_blks) / eac3_frame.sampling_frequency) * 1000;
-      const audio_sample = {
-        codec: "ec-3",
-        data: eac3_frame,
-      } as const;
+      let frameOk = false;
+      try {
+        ref_sample_duration = ((256 * eac3_frame.num_blks) / eac3_frame.sampling_frequency) * 1000;
+        const audio_sample = {
+          codec: "ec-3",
+          data: eac3_frame,
+        } as const;
 
-      if (this.audio_init_segment_dispatched_ === false) {
-        this.setEAC3AudioMetadata(eac3_frame);
-        this.dispatchAudioInitSegment(audio_sample);
-      } else if (this.detectAudioMetadataChange(audio_sample)) {
-        // flush stashed frames before notify new config
-        this.dispatchAudioMediaSegment();
-        this.setEAC3AudioMetadata(eac3_frame);
-        this.dispatchAudioInitSegment(audio_sample);
+        if (this.audio_init_segment_dispatched_ === false) {
+          this.setEAC3AudioMetadata(eac3_frame);
+          this.dispatchAudioInitSegment(audio_sample);
+        } else if (this.detectAudioMetadataChange(audio_sample)) {
+          // flush stashed frames before notify new config
+          this.dispatchAudioMediaSegment();
+          this.setEAC3AudioMetadata(eac3_frame);
+          this.dispatchAudioInitSegment(audio_sample);
+        }
+
+        last_sample_pts_ms = sample_pts_ms;
+        const sample_pts_ms_int = Math.floor(sample_pts_ms);
+
+        const ac3_sample = {
+          unit: eac3_frame.data,
+          length: eac3_frame.data.byteLength,
+          pts: sample_pts_ms_int,
+          dts: sample_pts_ms_int,
+        };
+
+        if (softDecode) {
+          this.onRawAudioData?.({ codec: "eac3", data: eac3_frame.data, pts: sample_pts_ms_int });
+        } else {
+          this.audio_track_.samples.push(ac3_sample);
+          this.audio_track_.length += eac3_frame.data.byteLength;
+        }
+        frameOk = true;
+      } catch (e) {
+        Log.w(this.TAG, `EAC3 frame dropped (parse error): ${(e as Error).message}`);
       }
 
-      last_sample_pts_ms = sample_pts_ms;
-      const sample_pts_ms_int = Math.floor(sample_pts_ms);
+      // 坏帧也要推进 PTS，保持时间轴连续，避免后续帧全部错位；同时更新基准防止回退。
+      sample_pts_ms += Number.isFinite(ref_sample_duration) ? ref_sample_duration : 32;
+      if (!frameOk) {
+        last_sample_pts_ms = sample_pts_ms;
+      }
 
-      const ac3_sample = {
-        unit: eac3_frame.data,
-        length: eac3_frame.data.byteLength,
-        pts: sample_pts_ms_int,
-        dts: sample_pts_ms_int,
-      };
-
-      this.audio_track_.samples.push(ac3_sample);
-      this.audio_track_.length += eac3_frame.data.byteLength;
-
-      sample_pts_ms += ref_sample_duration;
-
-      eac3_frame = adts_parser.readNextEAC3Frame();
+      try {
+        eac3_frame = adts_parser.readNextEAC3Frame();
+      } catch (e) {
+        Log.w(this.TAG, `EAC3 parse aborted (readNextEAC3Frame): ${(e as Error).message}`);
+        eac3_frame = null;
+      }
     }
 
     // getIncompleteData() returns null when fully consumed — always assign so a stale
@@ -2267,29 +2285,20 @@ class TSDemuxer {
       Log.v(this.TAG, `Generated first AudioSpecificConfig for mimeType: ${meta.codec}`);
     }
 
-    // When software decoding, send a fake AAC-LC metadata with silentAudioMode
-    // so the remuxer creates an AAC SourceBuffer and generates silent frames
+    // 软解音频（MP2 / AC-3 / E-AC-3）不进 MSE：音频由 PCMAudioPlayer 走 WebAudio 输出，
+    // 所以 MSE 侧**不再需要**那条静音 AAC 假音轨（ac3-lab 就是纯视频轨）。这里仍把真实
+    // 元数据发出去（pipeline 用它出编码/声道信息），但打上 softwareDecodeOnly 标记：
+    // remuxer 收到后不创建 audio SourceBuffer、也不生成静音帧。
     if (this.soft_decode_audio_codec_) {
-      const sampleRate = (meta.audioSampleRate as number) || 48000;
-      const channelCount = (meta.channelCount as number) || 2;
-      // Find sampling frequency index for AAC config
-      const si = MPEG4SamplingFrequencies.indexOf(sampleRate);
-      const freqIdx = si !== -1 ? si : 3; // default 48kHz
-      const silentMeta: Record<string, unknown> = {
+      const softMeta: Record<string, unknown> = {
+        ...meta,
         type: "audio",
         id: this.audio_track_.id,
-        timescale: 1000,
         duration: 0,
-        audioSampleRate: sampleRate,
-        channelCount: channelCount,
-        codec: "mp4a.40.2",
-        originalCodec: "mp4a.40.2",
         sourceCodec: this.soft_decode_audio_codec_,
-        config: [(2 << 3) | ((freqIdx & 0x0f) >>> 1), ((freqIdx & 0x01) << 7) | ((channelCount & 0x0f) << 3)],
-        refSampleDuration: (1024 / sampleRate) * 1000,
-        silentAudioMode: true,
+        softwareDecodeOnly: true,
       };
-      this.onTrackMetadata?.("audio", silentMeta);
+      this.onTrackMetadata?.("audio", softMeta);
     } else {
       this.onTrackMetadata?.("audio", meta);
     }

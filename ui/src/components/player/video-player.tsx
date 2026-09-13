@@ -847,8 +847,15 @@ function VideoPlayerComponent({
       }
     }
 
+    // 音画偏移标定（每台设备一次）：?avOffsetMs=120（正 = 延后音频）。
+    // 软解音频经 WebAudio、视频经 MSE，两者各有一段 DOM 测不到的延迟，闭环算不出来，
+    // 只能人眼标定；用 URL 参数便于免重编译地试出数值，再写进配置。
+    const avOffsetRaw = new URLSearchParams(window.location.search).get("avOffsetMs");
+    const avOffsetMs = avOffsetRaw === null ? Number.NaN : Number(avOffsetRaw);
+
     const p = createPlaybackBackend(video, {
       wasmDecoders: { mp2: avcodecWasmUrl, ac3: avcodecWasmUrl },
+      ...(Number.isFinite(avOffsetMs) ? { audioSyncOffsetMs: avOffsetMs } : {}),
       renderCanvas: slotCanvasRef(slotId).current ?? undefined,
       autoDeinterlace,
       pictureEnhancement,

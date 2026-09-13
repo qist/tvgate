@@ -31,7 +31,13 @@ export default defineConfig(() => ({
       "/web": "http://127.0.0.1:8888",
       // 播放器页面数据与拉流同源代理
       "/api/player": "http://127.0.0.1:8888",
-      "/player": "http://127.0.0.1:8888",
+      // 注意：`/player` 前缀会连带匹配 `/player.html`，把它一起代理到后端；而后端只服务
+      // `/web/player.html`，于是 dev 下打开播放器页面得到 502。bypass 让「页面本身」由
+      // vite 自己服务，只有 `/player/<key>` 的数据/拉流请求才走后端。
+      "/player": {
+        target: "http://127.0.0.1:8888",
+        bypass: (req) => (req.url?.startsWith("/player.html") ? "/player.html" : undefined),
+      },
     },
   },
   build: {
@@ -46,10 +52,11 @@ export default defineConfig(() => ({
     emptyOutDir: true,
     sourcemap: false,
     rollupOptions: {
-      // 双入口：管理后台 index.html + H5 播放器 player.html
+      // 三入口：管理后台 index.html + H5 播放器 player.html + AC-3 独立实验页 ac3-lab.html
       input: {
         index: resolve(__dirname, "index.html"),
         player: resolve(__dirname, "player.html"),
+        "ac3-lab": resolve(__dirname, "ac3-lab.html"),
       },
       output: {
         manualChunks: {

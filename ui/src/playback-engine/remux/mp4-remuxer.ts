@@ -1,7 +1,6 @@
 import { isFirefox } from "../utils/browser";
 import { IllegalStateException } from "../utils/exception";
 import Log from "../utils/logger";
-import AAC from "./aac-silent";
 import {
   DEFAULT_MEDIA_SEGMENT_BATCH_DURATION_MS,
   DEFAULT_MEDIA_SEGMENT_BATCH_MAX_BYTES,
@@ -138,6 +137,9 @@ class MP4Remuxer {
   private _videoPresentationOffset: number | undefined;
   private _videoInitialPresentationOffset: number | undefined;
   private _videoInitialOutputTime: number | undefined;
+  /** One-shot output timestamp (milliseconds) for the next software PCM chunk.
+   *  Used to make video, not a discontinuous source audio PTS, the master clock. */
+  private _forcedPcmStartMs: number | undefined;
 
   private _audioMeta: TrackMetadata | null;
   private _videoMeta: TrackMetadata | null;
@@ -147,9 +149,6 @@ class MP4Remuxer {
 
   private _mp3UseMpegAudio: boolean;
 
-  private _silentAudioMode: boolean;
-  private _silentAudioLastDts: number | undefined;
-  private _silentAudioDurationResidual: number;
   /** One-shot playlist-position target (ms) for the next audio remux batch; see setAudioSegmentStartTarget. */
   private _pendingAudioSegmentStartMs: number | null;
   private _tsSegmentContinuityNormalization: boolean;
@@ -173,6 +172,7 @@ class MP4Remuxer {
     this._audioTiming = this._createTrackTimingState();
     this._videoTiming = this._createTrackTimingState();
     this._pcmTiming = this._createTrackTimingState();
+    this._forcedPcmStartMs = undefined;
     this._videoPresentationOffset = undefined;
     this._videoInitialPresentationOffset = undefined;
     this._videoInitialOutputTime = undefined;
@@ -186,9 +186,6 @@ class MP4Remuxer {
     // While only FireFox supports 'audio/mp4, codecs="mp3"', use 'audio/mpeg' for chrome, safari, ...
     this._mp3UseMpegAudio = !isFirefox;
 
-    this._silentAudioMode = false;
-    this._silentAudioLastDts = undefined;
-    this._silentAudioDurationResidual = 0;
     this._pendingAudioSegmentStartMs = null;
     this._tsSegmentContinuityNormalization = false;
     this._mediaSegmentBatchDurationMs = normalizeMediaBatchLimit(
@@ -206,9 +203,6 @@ class MP4Remuxer {
   destroy(): void {
     this._dtsBase = -1;
     this._dtsBaseInited = false;
-    this._silentAudioMode = false;
-    this._silentAudioLastDts = undefined;
-    this._silentAudioDurationResidual = 0;
     this._pendingAudioSegmentStartMs = null;
     this._tsSegmentContinuityNormalization = false;
     this._audioMediaSegmentEmitted = false;
@@ -216,6 +210,7 @@ class MP4Remuxer {
     this._audioTiming = this._createTrackTimingState();
     this._videoTiming = this._createTrackTimingState();
     this._pcmTiming = this._createTrackTimingState();
+    this._forcedPcmStartMs = undefined;
     this._videoPresentationOffset = undefined;
     this._videoInitialPresentationOffset = undefined;
     this._videoInitialOutputTime = undefined;
@@ -258,8 +253,6 @@ class MP4Remuxer {
 
   insertDiscontinuity(): void {
     this._audioNextDts = this._videoNextDts = undefined;
-    this._silentAudioLastDts = undefined;
-    this._silentAudioDurationResidual = 0;
     this._videoPresentationOffset = undefined;
     // Resume quickly after a seek or stream discontinuity instead of waiting
     // for a complete steady-state batch.
@@ -408,113 +401,6 @@ class MP4Remuxer {
     }
   }
 
-  /**
-   * Generate silent AAC audio frames synced to video timestamps.
-   * Used in soft decode mode to keep MSE audio track active (prevents
-   * Safari/Chrome from pausing video when tab goes to background).
-   */
-  private _generateSilentAudio(videoSamples: MP4Sample[]): void {
-    if (!this._audioMeta || !this._onMediaSegment) {
-      return;
-    }
-
-    const sampleRate = (this._audioMeta.audioSampleRate as number) || 48000;
-    const channelCount = (this._audioMeta.channelCount as number) || 2;
-    const frameDuration = (1024 / sampleRate) * 1000; // AAC frame duration in ms
-
-    const silentUnit = AAC.getSilentFrame(this._audioMeta.originalCodec ?? "mp4a.40.2", channelCount);
-    if (!silentUnit) {
-      return;
-    }
-
-    if (videoSamples.length === 0) {
-      return;
-    }
-
-    const videoEndDts = videoSamples[videoSamples.length - 1].dts + videoSamples[videoSamples.length - 1].duration;
-
-    if (this._silentAudioLastDts === undefined) {
-      this._silentAudioLastDts = videoSamples[0].dts;
-    }
-
-    const samples: Array<{ unit: Uint8Array; dts: number; pts: number; duration: number }> = [];
-    let mdatBytes = 0;
-    let dts = this._silentAudioLastDts;
-
-    while (dts < videoEndDts) {
-      const durationWithResidual = frameDuration + this._silentAudioDurationResidual;
-      const duration = Math.max(1, Math.round(durationWithResidual));
-      this._silentAudioDurationResidual = durationWithResidual - duration;
-      samples.push({ unit: silentUnit, dts, pts: dts, duration });
-      mdatBytes += silentUnit.byteLength;
-      dts += duration;
-    }
-
-    this._silentAudioLastDts = dts;
-
-    if (samples.length === 0) {
-      return;
-    }
-
-    // Build mp4 samples
-    const mp4Samples: MP4Sample[] = [];
-    for (let i = 0; i < samples.length; i++) {
-      const sample = samples[i];
-
-      mp4Samples.push({
-        dts: sample.dts,
-        pts: sample.pts,
-        cts: 0,
-        unit: sample.unit,
-        size: sample.unit.byteLength,
-        duration: sample.duration,
-        originalDts: sample.dts,
-        flags: {
-          isLeading: 0,
-          dependsOn: 1,
-          isDependedOn: 0,
-          hasRedundancy: 0,
-        },
-      });
-    }
-
-    // Generate mdat
-    const mdatbox = new Uint8Array(mdatBytes + 8);
-    const mdatView = new DataView(mdatbox.buffer);
-    mdatView.setUint32(0, mdatBytes + 8);
-    mdatbox.set(new Uint8Array(MP4.types.mdat), 4);
-
-    let offset = 8;
-    for (const s of mp4Samples) {
-      mdatbox.set(s.unit as Uint8Array, offset);
-      offset += s.size;
-    }
-
-    // Generate moof
-    const firstDts = mp4Samples[0].dts;
-    const sequenceNumber = ((this._audioMeta as Record<string, unknown>).sequenceNumber as number) ?? 0;
-    (this._audioMeta as Record<string, unknown>).sequenceNumber = sequenceNumber + 1;
-
-    const silentTrack = {
-      type: "audio",
-      id: this._audioMeta.id ?? 2,
-      sequenceNumber,
-      samples: mp4Samples,
-    };
-    const moofbox = MP4.moof(silentTrack as unknown as import("./mp4-generator").MP4Track, firstDts);
-
-    // Emit media segment
-    const segment = new Uint8Array(moofbox.byteLength + mdatbox.byteLength);
-    segment.set(moofbox, 0);
-    segment.set(mdatbox, moofbox.byteLength);
-
-    this._onMediaSegment("audio", {
-      type: "audio",
-      data: segment.buffer,
-    });
-    this._audioMediaSegmentEmitted = true;
-  }
-
   private _onTrackMetadataReceived(type: string, metadata: TrackMetadata): void {
     let metabox: Uint8Array | null = null;
 
@@ -522,15 +408,15 @@ class MP4Remuxer {
     let codec = metadata.codec;
 
     if (type === "audio") {
-      const previousSampleRate = this._audioMeta?.audioSampleRate;
+      // 软解音频（MP2 / AC-3 / E-AC-3）：不进 MSE，由 PCMAudioPlayer 用 WebAudio 输出。
+      // MSE 保持**纯视频轨**（与 ac3-lab 一致）：不建 audio SourceBuffer、不生成静音帧。
+      if ((metadata as { softwareDecodeOnly?: boolean }).softwareDecodeOnly === true) {
+        this._audioMeta = null;
+        this._audioMediaSegmentEmitted = false;
+        return;
+      }
       this._audioMeta = metadata;
       this._audioMediaSegmentEmitted = false;
-      if (metadata.silentAudioMode === true) {
-        this._silentAudioMode = true;
-        if (metadata.audioSampleRate !== previousSampleRate) {
-          this._silentAudioDurationResidual = 0;
-        }
-      }
       if (metadata.codec === "mp3" && this._mp3UseMpegAudio) {
         // 'audio/mpeg' for MP3 audio track
         container = "mpeg";
@@ -614,28 +500,42 @@ class MP4Remuxer {
     let trimStartMs = 0;
 
     if (this._pcmTiming.lastOriginalEndDts === undefined || this._pcmTiming.lastOutputEndDts === undefined) {
-      if (
+      if (this._forcedPcmStartMs !== undefined) {
+        // A source PTS may be many seconds ahead of the MSE video timeline.
+        // This is a true rebase, not a minimum floor: emit the first available
+        // PCM exactly at the video time, then continue sample-contiguously.
+        outputTime = this._forcedPcmStartMs;
+        this._forcedPcmStartMs = undefined;
+      } else if (
         this._videoDtsBase !== Infinity &&
         (this._videoInitialPresentationOffset === undefined || this._videoInitialOutputTime === undefined)
       ) {
         return undefined;
+      } else {
+        const presentationFloor = this.getInitialOutputTime();
+        const presentationStart = originalTime - this.getInitialPresentationOffset();
+        const presentationEnd = presentationStart + duration;
+
+        if (presentationEnd <= presentationFloor) {
+          return { action: "drop" };
+        }
+
+        trimStartMs = Math.max(0, presentationFloor - presentationStart);
+        outputTime = Math.max(presentationFloor, presentationStart);
       }
-
-      const presentationFloor = this.getInitialOutputTime();
-      const presentationStart = originalTime - this.getInitialPresentationOffset();
-      const presentationEnd = presentationStart + duration;
-
-      if (presentationEnd <= presentationFloor) {
-        return { action: "drop" };
-      }
-
-      trimStartMs = Math.max(0, presentationFloor - presentationStart);
-      outputTime = Math.max(presentationFloor, presentationStart);
     } else {
       const distance = originalTime - this._pcmTiming.lastOriginalEndDts;
-      outputTime = this._pcmTiming.lastOutputEndDts + (distance > 0 ? 0 : distance);
+      // Bridge BOTH forward holes and backward overlaps back-to-back. A backward
+      // jump (source PTS phase glitch at HLS segment boundaries — e.g. the audio
+      // PTS rewinding tens of seconds while the media stays continuous) must not
+      // rewind outputTime into the past, which would make the PCM player drop the
+      // chunk and progressively lose audio (eventual muting). Keeping the emitted
+      // timeline continuous is correct because the underlying audio is continuous.
+      outputTime = this._pcmTiming.lastOutputEndDts;
       if (distance > 0) {
         Log.v(this.TAG, `PCM: bridging ${Math.round(distance)}ms timestamp hole`);
+      } else if (distance < 0) {
+        Log.v(this.TAG, `PCM: bridging ${Math.round(-distance)}ms backward overlap (source PTS phase glitch)`);
       }
     }
 
@@ -648,6 +548,30 @@ class MP4Remuxer {
     this._pcmTiming.lastOutputEndDts = outputTime + emittedDuration;
     this._pcmTiming.lastOutputDuration = emittedDuration;
     return { action: "emit", time: outputTime / 1000, trimStartMs };
+  }
+
+  /**
+   * Force the next software-decoded PCM chunk to be positioned at the given
+   * video position (MSE seconds). Used after the video timeline has shifted
+   * independently of the audio: resets PCM bridging and forces the next
+   * chunk to begin exactly at the current video clock.
+   */
+  setPcmVideoAnchor(videoTimeSec: number): void {
+    this._pcmTiming = this._createTrackTimingState();
+    this._forcedPcmStartMs = videoTimeSec * 1000;
+  }
+
+  /**
+   * Reset PCM timing state without forcing a specific anchor position.
+   * The next PCM chunk will be mapped using the current video timeline
+   * (presentation floor / output time) as its starting point.
+   * Called on audio track discontinuity: the source PTS has jumped, so
+   * the old `_pcmTiming.lastOriginalEndDts` / `lastOutputEndDts` bridging
+   * state is stale and would map new frames onto the wrong timeline.
+   */
+  resetPcmTiming(): void {
+    this._pcmTiming = this._createTrackTimingState();
+    this._forcedPcmStartMs = undefined;
   }
 
   flushStashedSamples(): void {
@@ -1031,9 +955,6 @@ class MP4Remuxer {
       data: segment.buffer,
     });
     this._videoMediaSegmentEmitted = true;
-    if (this._silentAudioMode) {
-      this._generateSilentAudio(mp4Samples);
-    }
   }
 
   private _mergeBoxes(moof: Uint8Array, mdat: Uint8Array): Uint8Array {
