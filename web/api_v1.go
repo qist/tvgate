@@ -126,8 +126,9 @@ func (h *ConfigHandler) handleV1Status(w http.ResponseWriter, r *http.Request) {
 		"load":              map[string]float64{"load1": ts.LoadAverage.Load1, "load5": ts.LoadAverage.Load5, "load15": ts.LoadAverage.Load15},
 		"clients":           len(sd.ActiveClients),
 		"active_clients":    clients,
-		"connections":       ts.ActiveConnections,
-		"total_connections": ts.TotalConnections,
+		// TrafficStats.ActiveConnections 从未被写入（恒 0），应用连接数直接读活跃连接同源计数
+		"connections":       len(sd.ActiveClients),
+		"total_connections": monitor.ActiveClients.TotalCount(),
 		"in_bytes":          ts.InboundBytes,
 		"out_bytes":         ts.OutboundBytes,
 		"in_bandwidth":      ts.InboundBandwidth,

@@ -22,6 +22,7 @@ type ClientConnection struct {
 type ActiveConnectionsManager struct {
 	conns map[string]*ClientConnection
 	mu    sync.RWMutex
+	total int64 // 历史累计连接数（仅新注册 +1，重复 Register 更新不计）
 }
 
 // 全局活跃客户端管理器
@@ -48,6 +49,7 @@ func (m *ActiveConnectionsManager) Register(connID string, conn *ClientConnectio
 		conn.ConnectedAt = time.Now()
 		conn.LastActive = conn.ConnectedAt
 		m.conns[connID] = conn
+		m.total++
 	}
 }
 
@@ -145,4 +147,11 @@ func (m *ActiveConnectionsManager) Count() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.conns)
+}
+
+// TotalCount 返回历史累计连接数（自进程启动以来）
+func (m *ActiveConnectionsManager) TotalCount() int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.total
 }
