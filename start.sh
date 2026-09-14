@@ -10,9 +10,9 @@
 #
 
 APP_NAME="tvgate"
-APP_DIR="/opt/tvgate"
+APP_DIR="/opt/tv-gate"
 APP_BIN="${APP_DIR}/build/TVGate-linux-64"
-CONFIG="${APP_DIR}/build/config.yaml"
+CONFIG="/opt/tvgate/build/config.yaml"
 PID_FILE="${APP_DIR}/${APP_NAME}.pid"
 LOG_FILE="/tmp/tvgate.log"
 

@@ -5,7 +5,7 @@ START=99
 STOP=15
 
 USE_PROCD=1
-PROG=/apps/TVGate/TVGate-linux-arm64
+PROG=/apps/TVGate/TVGate-linux-arm64-v8a
 
 start_service() {
     echo "启动代理程序..."
@@ -18,7 +18,7 @@ start_service() {
 shutdown() {
     stop
 
-    for pid in $(pidof TVGate-linux-arm64)
+    for pid in $(pidof TVGate-linux-arm64-v8a)
     do
         [ "$pid" = "$$" ] && continue
         [ -e "/proc/$pid/stat" ] && kill $pid
