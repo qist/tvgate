@@ -1218,6 +1218,20 @@ function VideoPlayerComponent({
 
   const handleVideoCanPlay = useEffectEvent((slotId: SlotId) => {
     if (slotId !== getActiveSlotId() && pendingTransitionRef.current?.slotId !== slotId) return;
+    // 首次使用的 pending 槽：backend 首次 loadSegments 要异步等音频探测（≤500ms）才建
+    // controller/MSE，而 handleLoadSegments 在 loadSegments 返回后立即发出的 play() 会被
+    // 随后的 src 重置以 AbortError 打断，并被 isInterruptedPlayError 静默吞掉 —— 结果
+    // pending video 永远 paused、'playing' 永不触发、无缝切换永不完成（表现为"第一次
+    // 切台无反应，再点一次才切"）。这里在数据就绪时补播兜底。
+    const pending = pendingTransitionRef.current;
+    if (pending && pending.slotId === slotId && pending.gen === transitionGenRef.current) {
+      const pendingPlayer = slotPlayerRef(slotId).current;
+      if (pendingPlayer && pendingPlayer === pending.player && pendingPlayer.getState().paused) {
+        pendingPlayer.play().catch(() => {
+          // 播放被新的切换打断（AbortError）：由下一次 canplay 或 hard fallback 接手
+        });
+      }
+    }
     setIsLoading(false);
   });
 
