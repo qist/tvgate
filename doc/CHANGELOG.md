@@ -117,6 +117,48 @@
 
 ## 服务端 (tvgate)
 
+### v3.2.2
+
+```
+1、音频软解统一 FFmpeg avcodec WASM — 删除 minimp3(MP2)+ac3 双模块，改用单一
+   avcodec_audio.wasm（libavcodec，me_* ABI），一套覆盖 MP2/MP3/AC-3/E-AC-3/AAC，
+   内置 WSOLA 供主线程变速、info 上报 samplesBeforeInput 供 PTS 外推；AC-3/E-AC-3
+   软解路径与 MP2 方案一致整段转发 PES pts（不做帧级 PTS 纠正）
+2、AC-3/E-AC-3 软解稳定性对齐 ac3-lab — 接通分离音轨（EXT-X-MEDIA）软解通路（此前
+   onRawAudioData 未接线，AC-3 帧绕过软解导致 MSE 无声）；PCM 时间轴基座固定
+   （setPcmSourceBase(0)），解除 WebKit 首帧 init gate 死锁；音频轴 blocked 自愈改为
+   主线程 rebase 时间轴平移，替代 worker 绝对钉扎协议（深管线在途时会钉出恒定落后
+   的轴导致永久静音）；one-shot 重锚确认丢失后立即可重发（不再 60s 冷却）；resync
+   失败判定要求视频时钟确实推进，视频缓冲停摆不再误触发整场重建
+3、桌面后台播放自愈 — 回前台 AudioContext suspended 自动恢复、resume 失败必上报一次、
+   hidden 时不置 needsUserInteraction（避免毒化回前台恢复）；AC-3 与 AAC 后台播放
+   行为一致；新增全链路 PCM 丢弃计数（pcm-audio-stats，3s 一报）便于定位丢帧环节
+4、修复首次打开播放页点台无反应 — pending 槽首次装载时 backend 需异步等音频探测
+   （≤500ms）才建 controller/MSE，首次 play() 被随后 MSE src 重置以 AbortError 打断
+   且被静默吞掉，表现为"第一次点台无反应、再点一次才切"；现 pending 槽 canplay 且
+   仍处于当前切换代际时补播兜底
+5、修复 PTS 重叠纠正空指针与拉流泵崩溃 — ts-demuxer 对 AC-3/E-AC-3/AAC 的 PTS 重叠
+   纠正补 audio_metadata 空值保护；fetch-loader 对 onDataArrival 异常兜底，不再打挂
+   拉流泵循环导致播放暂停
+6、Web 首页应用连接数读取真实活跃连接 — ActiveConnections/TotalConnections 此前从未
+   被写入恒为 0；现 connections 改读活跃客户端数（5s 刷新），累计总数在新连接注册
+   时累加（进程重启归零）
+7、修复文件上传成功/失败计数恒为 0 — FileList 为 live 对象，发起上传后清空 input 使
+   同一引用被原地清空；改为快照计数并采用服务端 uploaded/failed 名单（部分失败此前
+   被吞，现逐个列出）
+8、组播配置页拆分 — 「组播配置」（网卡、IGMP 刷新重连间隔）与「FCC 配置」（上游接口、
+   FCC 上游接口、FCC 类型、缓存大小、监听端口范围）分为两张独立卡片
+9、频道号展示 — 频道按订阅序位编号（number），频道列表/切台弹窗/信息条均展示频道号；
+   手机端频道列表改双列网格，PC 侧栏收窄至 18rem
+10、phpgo 修复 — 请求自带 Accept-Encoding（CURLOPT_ENCODING/HTTPHEADER）时按
+    Content-Encoding 手动解压并支持 br（此前 Go Transport 不自动解压）；& | ^ 补齐
+    PHP 字符串逐位运算语义；新增 stream_set_timeout/stream_set_blocking 防 socket
+    读不到数据时请求永久挂起
+11、部署脚本对齐 — start.sh / TVGate.service 二进制名与本地路径统一为
+    build/TVGate-linux-64，编译产物路径与启动路径一致（无需手动搬移）
+12、依赖更新 — golang.org/x/crypto 0.56.0、golang.org/x/sync 0.23.0、gortsplib 5.6.5
+```
+
 ### v3.2.1
 
 ```
