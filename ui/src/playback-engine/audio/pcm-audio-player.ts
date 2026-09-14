@@ -20,24 +20,12 @@
 
 import { isIOS } from "../../lib/platform";
 import type { PlayerConfig } from "../config";
+import type { PcmWorkerStats } from "../worker/messages";
 import Log from "../utils/logger";
 import { AudioSyncCore } from "./audio-sync-core";
 import { WasmStretcher } from "./wasm-stretcher";
 
 const TAG = "PCMAudioPlayer";
-
-/**
- * Page-level one-shot autoplay gate for Web Audio.
- * Set when playback has started (any codec), the click-to-resume prompt was
- * already shown, or AudioContext.resume() succeeded — suppresses re-prompting
- * on later channel switches that create a new AudioContext.
- */
-let playbackUnlocked = false;
-
-/** Call when video playback has been allowed by a user gesture or successful play(). */
-export function markPlaybackUnlocked(): void {
-  playbackUnlocked = true;
-}
 
 /** 已排程音频相对图时间的前瞻窗口（秒）。窗口越小，纠偏响应越快。 */
 const SCHEDULE_AHEAD_SEC = 0.6;
@@ -53,6 +41,14 @@ const REANCHOR_STALE_LEAD_SEC = 2.5;
 const CONTROL_INTERVAL_MS = 250;
 /** 每多少次控制 tick 打印一行漂移诊断（约 60s）。 */
 const DRIFT_LOG_TICKS = 240;
+/** "音频超前"持续多久才允许做一次轴平移自愈（毫秒）。 */
+const SUSTAINED_BLOCK_MS = 3000;
+/** 两次轴平移自愈的最小间隔（毫秒），杜绝测量噪声导致的来回平移。 */
+const REBASE_MIN_INTERVAL_MS = 10_000;
+/** 音频领先播放头超过该秒数才认为需要轴平移自愈。 */
+const MIN_AHEAD_SEC_FOR_REBASE = 2.0;
+/** blocked 期间视频时钟至少推进这么多秒才判定为"音频超前"（排除缓冲停摆误判）。 */
+const MIN_VIDEO_ADVANCE_SEC = 0.5;
 
 /**
  * 软解音频输出器。对外接口保持稳定（init / attachVideo / detachVideo / feed / play /
@@ -76,8 +72,14 @@ export class PCMAudioPlayer {
 
   // ---- 排不出去时的兜底 ----
   private blockedSince: number | null = null;
+  /** blocked 开始时的视频时钟，用于判定 blocked 期间视频是否确实在推进。 */
+  private blockedVideoClockSec = 0;
   private reportedUnrecoverable = false;
   private autoplaySuspendedNotified = false;
+
+  // ---- 轴平移自愈（音频轴持续超前时的主修复手段）----
+  private lastRebaseAt = -Infinity;
+  private rebaseCount = 0;
 
   /** re-anchor 后、新时间轴样本到达前：丢弃仍落在旧未来时间轴的残留 PCM（worker 异步回传竞态）。 */
   private awaitingNewTimeline = false;
@@ -85,6 +87,8 @@ export class PCMAudioPlayer {
 
   // ---- 诊断 ----
   private driftLogCounter = 0;
+  /** worker 侧软解 PCM 链路丢弃计数（经 pcm-audio-stats 消息更新）。 */
+  private pipelineStats: PcmWorkerStats | null = null;
 
   private controlTimer: ReturnType<typeof setInterval> | null = null;
   private boundOnVisibilityChange: (() => void) | null = null;
@@ -102,11 +106,8 @@ export class PCMAudioPlayer {
   onResyncFailed: (() => void) | null = null;
   /** Audio never established a usable timeline with the video. */
   onStartupSyncFailed: (() => void) | null = null;
-  /**
-   * 音频时间轴整体落在播放头之后（源 PTS 与 MSE 视频轴不同源），请 worker 把后续
-   * PCM 重钉到给定视频时间上。
-   */
-  onVideoAnchorRequested: ((videoTimeSec: number) => void) | null = null;
+  /** worker 汇报的软解 PCM 链路丢弃计数（最新快照）。 */
+  onAudioStats: ((stats: PcmWorkerStats) => void) | null = null;
 
   constructor(config: PlayerConfig) {
     this.config = config;
@@ -149,7 +150,6 @@ export class PCMAudioPlayer {
       const state = this.context?.state as string | undefined;
       Log.v(TAG, `AudioContext state changed to: ${state}`);
       if (state === "running") {
-        playbackUnlocked = true;
         this.autoplaySuspendedNotified = false;
         // 从我们自己的 suspend()（pause）恢复：队列里的样本会重新落点。
         this.core?.pump();
@@ -183,7 +183,7 @@ export class PCMAudioPlayer {
           // 恢复 lab 同款的"漂移硬重锚"作为兜底网（内核默认 REANCHOR_DRIFT_SEC）。
           // 之前为躲 AC-3 PTS 重叠接缝而关掉它，但关掉后音频轴在 overlap 自纠时
           // 会持续往前漂、又没有任何其它纠偏把它拉回视频轴 → 画音不同步。
-          // 真正的 per-异常重基由 worker 的 setAudioVideoAnchor 完成（见 pipeline.ts），
+          // 真正的"轴整体跳变"自愈由 onSchedulingBlocked → maybeRebaseAxis 完成，
           // 这里只兜底"缓慢残余漂移"，阈值远小于段内 overlap 累积量，不会频繁接缝。
           onSchedulingBlocked: () => this.noteSchedulingBlocked(),
           onSchedulingResumed: () => this.clearSchedulingBlocked(),
@@ -305,14 +305,26 @@ export class PCMAudioPlayer {
       const drift = core.driftSec();
       const stats = core.stats();
       const driftText = drift === null ? "n/a" : `${(drift * 1000).toFixed(1)}ms`;
+      const pipe = this.pipelineStats;
+      const pipeText = pipe
+        ? `, pipe[drop=${pipe.remuxDrop} trim=${pipe.trimDrop} ovf=${pipe.pendingOverflowDrops + pipe.queueOverflowDrops}` +
+          ` gen=${pipe.genDrops} carry=${pipe.carryFrames} rend=${pipe.renditionFrames}]`
+        : "";
       Log.v(
         TAG,
         `A/V drift=${driftText}, avOut=${(core.getOutputLatencySec() * 1000).toFixed(0)}ms, ` +
           `vidLead=${(core.getDisplayLeadSec() * 1000).toFixed(0)}ms, ` +
           `rate=${this.videoRate().toFixed(2)}, queue=${stats.queueSec.toFixed(2)}s, ` +
-          `reanchor/drop/underrun=${stats.reanchors}/${stats.droppedStale}/${stats.underruns}`,
+          `reanchor/drop/underrun=${stats.reanchors}/${stats.droppedStale}/${stats.underruns}` +
+          `, rebase=${this.rebaseCount}${pipeText}`,
       );
     }
+  }
+
+  /** worker 推送的软解 PCM 丢弃计数快照；同时转发给上层（audio-stats 事件）。 */
+  setPipelineStats(stats: PcmWorkerStats): void {
+    this.pipelineStats = stats;
+    this.onAudioStats?.(stats);
   }
 
   /**
@@ -320,39 +332,87 @@ export class PCMAudioPlayer {
    * Lab 没有 this 问题——它在 MSE 层用 waitForBufferRoom 限速，音频不会跑太前面。
    * Player 的 worker 没有 MSE 限速，PCM 一路灌进来 → 被 MAX_SCHEDULE_LEAD_SEC 挡住。
    *
-   * 策略：不 reanchor，也不 trim 队列。队列里的 chunk 是合法的未来音频，
+   * 策略：默认不 reanchor，也不 trim 队列。队列里的 chunk 是合法的未来音频，
    * 视频时钟在走就会自然追上来，pump 届时会锚定并消费。
    * 旧实现在这里调 requestReanchor → 清队 → worker 重锚 → confirmVideoAnchor →
    * 又 reanchor……形成"始终重新对齐"的循环。更早的实现在这里调 trimAudioLead，
    * 结果"进来一个丢一个"→ 永远静音。
+   *
+   * 唯一例外：音频**持续大幅**超前且视频时钟确实在推进（源 PTS 轴整体跳变/漂移，
+   * MP2 overlap 自纠与 E-AC-3 4K 都是这个失败模式）时，做**一次轴平移自愈**：
+   * 把整条音频轴（队列 + 后续入队标签）前移实测超前量。内容不丢、无接缝、
+   * 同步生效 —— 绝不做 worker 绝对钉扎（在途管线深度会让钉扎点落后视频轴数秒，
+   * 之后所有 PCM 被当过期丢弃 → 永久静音）。
    */
   private noteSchedulingBlocked(): void {
     const now = performance.now();
     if (this.blockedSince === null) {
       this.blockedSince = now;
+      this.blockedVideoClockSec = this.videoElement?.currentTime ?? 0;
       return;
     }
     const blockedMs = now - this.blockedSince;
 
-    // 不 requestReanchor，也不 trim 队列：视频时钟在走就会追上来。
-    // 只在长时间（15s）排不出去且从未成功排过的情况下上报不可恢复。
+    this.maybeRebaseAxis(blockedMs, now);
 
     const hasScheduled = (this.core?.stats().scheduledChunks ?? 0) > 0;
     if (hasScheduled && blockedMs > RESYNC_FAILED_AFTER_MS && !this.reportedUnrecoverable) {
+      // 视频时钟停住 = 播放器在缓冲，不是音频"不可达"；等视频恢复推进后 pump 会自然
+      // 锚定。只有视频确实在推进而音频仍持续排不出去，才判定会话不可重建。
+      const video = this.videoElement;
+      const videoAdvanced = (video?.currentTime ?? 0) - this.blockedVideoClockSec >= MIN_VIDEO_ADVANCE_SEC;
+      if (!videoAdvanced) {
+        return;
+      }
       this.reportedUnrecoverable = true;
       Log.e(TAG, `Audio stalled for ${Math.round(blockedMs)}ms behind an unreachable playhead`);
       this.onResyncFailed?.();
     }
   }
 
+  /**
+   * 轴平移自愈：音频轴持续超前视频轴 ≥2s（blocked ≥3s）时，把音频轴前移实测超前量。
+   * 10s 冷却防噪声；轴平移不依赖 worker 往返，立即生效。若超前持续再生（源持续漂移），
+   * 下一轮 blocked 会再次触发，15s 兜底仍在最后把关。
+   */
+  private maybeRebaseAxis(blockedMs: number, now: number): void {
+    const core = this.core;
+    if (!core || this.awaitingNewTimeline) return;
+    if (now - this.lastRebaseAt < REBASE_MIN_INTERVAL_MS) return;
+    if (blockedMs < SUSTAINED_BLOCK_MS) return;
+    const video = this.videoElement;
+    if (!video || video.currentTime - this.blockedVideoClockSec < MIN_VIDEO_ADVANCE_SEC) return;
+    const headSec = core.queueHeadSec();
+    if (headSec === null) return;
+    const leadSec = headSec - core.visibleVideoTime();
+    if (leadSec < MIN_AHEAD_SEC_FOR_REBASE) return;
+
+    this.lastRebaseAt = now;
+    this.rebaseCount++;
+    Log.w(
+      TAG,
+      `Audio lead ${leadSec.toFixed(1)}s sustained ${Math.round(blockedMs)}ms with video advancing → ` +
+        `rebase axis by ${(-leadSec).toFixed(2)}s (rebase ${this.rebaseCount})`,
+    );
+    core.rebaseAxis(-leadSec);
+  }
+
   private clearSchedulingBlocked(): void {
     this.blockedSince = null;
+    this.blockedVideoClockSec = 0;
     this.reportedUnrecoverable = false;
   }
 
   private onVisibilityChange(): void {
     this.pageHidden = document.visibilityState === "hidden";
     if (!this.pageHidden) {
+      // 回前台自愈：后台切台会新建 AudioContext，而 hidden 下 UA 直接给 suspended；
+      // 若当时的 resume() 失败被吞（见 notifyAutoplayBlocked），视频仍在播而音频永远
+      // 静音 —— 且没人会再调 play()。回前台时补一次恢复。
+      if (this.context && this.context.state !== "running") {
+        void this.play();
+        return;
+      }
       this.core?.pump();
     }
   }
@@ -394,7 +454,6 @@ export class PCMAudioPlayer {
     if (this.context && this.context.state !== "running") {
       try {
         await this.context.resume();
-        playbackUnlocked = true;
         // onstatechange 会接着 pump
       } catch (_e) {
         Log.w(TAG, "Failed to resume AudioContext on play()");
@@ -438,10 +497,16 @@ export class PCMAudioPlayer {
     this.awaitingNewTimeline = true;
     this.reanchorAtSec = videoTimeSec;
     this.core?.reanchor("video-anchor", true);
+    // 旧轴已排队 chunk 的标签整体超前 Δ 秒：不裁剪的话调度领先门会继续 blocked。
+    // 代价为一次性 ≤Δ 秒静音。
+    this.core?.trimFutureBeyond(videoTimeSec + REANCHOR_STALE_LEAD_SEC);
   }
 
   private notifyAutoplayBlocked(): void {
-    if (playbackUnlocked || this.autoplaySuspendedNotified) {
+    // 不能用 playbackUnlocked 挡：后台切台新建的 AudioContext 在 hidden 下 resume
+    // 可能失败，而 playbackUnlocked 是页面级"曾经解锁过"的标志 —— 挡掉后这次失败
+    // 永远不会上报，表现为"视频在播、声音没了"。这里只做去重（恢复 running 时复位）。
+    if (this.autoplaySuspendedNotified) {
       return;
     }
     this.autoplaySuspendedNotified = true;

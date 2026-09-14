@@ -937,7 +937,13 @@ function VideoPlayerComponent({
             if (slotId) {
               fallbackPendingSwitchToHardSwitch(slotId, undefined, expected);
             } else if (err.name === "NotAllowedError" || err.message.includes("user didn't interact")) {
-              setNeedsUserInteraction(true);
+              // 后台切台时 UA 拒播是预期行为（OS 暂停/自动播放策略），不能置
+              // needsUserInteraction —— handleVisibilityChange 会因它短路，回前台
+              // 就再也没人重试 play()，表现为"后台切完台回来一直黑屏/停止"。
+              // 留给回前台的 visibility 恢复去重试（重建或直接 play()）。
+              if (document.visibilityState !== "hidden") {
+                setNeedsUserInteraction(true);
+              }
             }
           })
           .finally(() => {

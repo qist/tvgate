@@ -210,6 +210,11 @@ export class AudioSyncCore {
   private queue: AudioSyncChunk[] = [];
   private spans: ScheduledSpan[] = [];
   private nextStartTime = 0;
+  /**
+   * 持久轴平移（秒）：源 PTS 轴整体跳变/漂移超前时，把入队标签整体平移回去。
+   * 只影响 enqueue 的新样本；resetChain()（seek/换台）清零。
+   */
+  private axisShiftSec = 0;
   /** 上一次 pump 看到的 video.currentTime，用于判断视频时钟是否在推进。 */
   private lastVideoClockSec = 0;
   /** 视频时钟最后一次发生变化的时间（performance.now）。 */
@@ -386,6 +391,8 @@ export class AudioSyncCore {
     if (this.destroyed || chunk.durationSec <= 0 || chunk.pcm.length === 0) {
       return;
     }
+    // 持久轴平移：源轴整体跳变后的所有新样本都带着同一个偏差进来。
+    chunk.timeSec += this.axisShiftSec;
     this.queue.push(chunk);
     // 只丢"已经落后于画面、放出来只会是回放"的样本。
     // 绝不能因为队列长就丢前端：队列前端是**下一个该播的**，丢它=丢声音
@@ -418,6 +425,47 @@ export class AudioSyncCore {
     this.queue = [];
   }
 
+  /**
+   * 丢弃落在给定媒体时间之后的未排程 chunk（one-shot 重锚配套）。
+   * worker 重钉时间轴后，旧轴已排队 chunk 的标签仍整体超前 Δ 秒；不裁剪的话
+   * 调度领先门（MAX_SCHEDULE_LEAD_SEC）会继续 blocked。代价为一次性 ≤Δ 秒静音。
+   */
+  trimFutureBeyond(sec: number): void {
+    const before = this.queue.length;
+    if (before === 0) return;
+    this.queue = this.queue.filter((chunk) => chunk.timeSec <= sec);
+    const dropped = before - this.queue.length;
+    if (dropped > 0) {
+      this.droppedStale += dropped;
+      this.log(`trimFutureBeyond(${sec.toFixed(2)}s): dropped ${dropped} future chunk(s)`);
+    }
+  }
+
+  /** 队列中第一段的媒体时间；队列为空时返回 null。 */
+  queueHeadSec(): number | null {
+    return this.queue[0]?.timeSec ?? null;
+  }
+
+  /**
+   * 把音频轴整体平移 `deltaSec`（负值 = 前移，用于消除"源轴超前"）：
+   * 队列内 chunk、伸缩器已产出未排程的输出、伸缩器喂入游标与后续入队标签一并平移。
+   * 内容一个字节都不丢、不重启链、无可闻接缝 —— 与 worker 重钉（会清队列+重置解码器、
+   * 且绝对钉扎会被在途管线深度带偏）相比，这是同步生效且自校准的自愈手段。
+   */
+  rebaseAxis(deltaSec: number): void {
+    if (this.destroyed || deltaSec === 0) return;
+    this.axisShiftSec += deltaSec;
+    for (const chunk of this.queue) chunk.timeSec += deltaSec;
+    for (const seg of this.outSegs) {
+      seg.streamStart += deltaSec;
+    }
+    if (this.fedBaseMediaSec !== null) this.fedBaseMediaSec += deltaSec;
+    this.fedMediaEndSec += deltaSec;
+    this.log(
+      `rebaseAxis(${(deltaSec * 1000).toFixed(0)}ms): queue=${this.queue.length}, axisShift=${(this.axisShiftSec * 1000).toFixed(0)}ms`,
+    );
+  }
+
   /** 只丢已排程的链，保留队列（暂停/恢复、时间轴微调时用）。 */
   stopChain(): void {
     this.stopSpans();
@@ -428,6 +476,8 @@ export class AudioSyncCore {
     this.stopSpans();
     this.queue = [];
     this.blocked = false;
+    // 时间轴已切走：持久平移属于旧轴，必须清零。
+    this.axisShiftSec = 0;
     // 伸缩器内部状态与"已产出未排程"的输出也属于旧时间轴，一并作废。
     this.resetStretcher();
     // 时间轴已切走：时钟推进闸的"上次锚点"必须跟着重置。否则向后 seek 后
@@ -760,7 +810,14 @@ export class AudioSyncCore {
     return null;
   }
 
-  /** 把输入喂到 `targetMediaSec`：缺口补静音、小重叠裁掉、大倒退则重置。 */
+  /**
+   * 把输入喂到 `targetMediaSec`：缺口补静音、小重叠裁掉、大倒退则重置。
+   *
+   * 注意：这里的正向跳变**必须补静音、不能桥接**。AC-3 走分段重锚（worker 每个分片
+   * 把音频首块钉回视频段起点），段边界的标签前跳是刻意的 A/V 同步修正 —— 桥接会把
+   * 修正丢掉，音频相对视频持续漂移（音画不同步）。MP2 muxed 路径的校准伪影跳变
+   * 会经由此产生排程 blocked，由 pcm-audio-player 的轴平移自愈兜底。
+   */
   private feedUpTo(targetMediaSec: number, sampleRate: number, channels: number): void {
     const stretcher = this.stretcher;
     if (!stretcher) return;
@@ -781,6 +838,11 @@ export class AudioSyncCore {
       }
 
       const overlapSec = cursor - chunk.timeSec;
+      if (overlapSec >= chunk.durationSec) {
+        // 整块内容已播过：整块丢弃（不能喂空 buffer，会把游标虚推一段时长）。
+        this.queue.shift();
+        continue;
+      }
       if (overlapSec > MAX_INPUT_OVERLAP_SEC) {
         // 时间轴大倒退：伸缩器"输入流连续"的前提被破坏，重置并按这一块重新种基准。
         this.log(`input timeline jumped backwards ${(overlapSec * 1000).toFixed(0)}ms; resetting the stretcher`);

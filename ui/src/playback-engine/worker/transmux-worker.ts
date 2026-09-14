@@ -101,6 +101,13 @@ function createPipeline(segments: PlayerSegment[], config: PlayerConfig): Pipeli
       releaseHeldMedia();
       post({ type: "audio-disabled", gen });
     },
+    onAudioRenditionSoftDecode() {
+      // Soft-decoded rendition never posts an MSE audio init: open the gate's
+      // audio slot and release anything held back while waiting for it.
+      separateAudio = false;
+      releaseHeldMedia();
+      post({ type: "audio-rendition-soft-decode", gen });
+    },
     onMediaInfo(info) {
       const msg: WorkerEvent = { type: "media-info", info, gen };
       if (!mediaGateOpen()) {
@@ -122,6 +129,21 @@ function createPipeline(segments: PlayerSegment[], config: PlayerConfig): Pipeli
 
   return new Pipeline(segments, config, callbacks);
 }
+
+// --- Soft-decoded PCM chain stats forwarding ---
+// Every gate that can silently discard audio reports into the pipeline's counters;
+// forward change-only snapshots so the UI can surface "why is audio dropping".
+const PCM_STATS_INTERVAL_MS = 3000;
+let lastStatsSnapshot = "";
+
+setInterval(() => {
+  if (!pipeline) return;
+  const stats = pipeline.getPcmStats();
+  const snapshot = JSON.stringify(stats);
+  if (snapshot === lastStatsSnapshot) return;
+  lastStatsSnapshot = snapshot;
+  post({ type: "pcm-audio-stats", stats, gen });
+}, PCM_STATS_INTERVAL_MS);
 
 self.addEventListener("message", (e: MessageEvent) => {
   const cmd = e.data as WorkerCommand;
@@ -146,13 +168,6 @@ self.addEventListener("message", (e: MessageEvent) => {
       break;
     case "resume":
       pipeline?.resume();
-      break;
-    case "audio-anchor":
-      if (cmd.gen !== gen) {
-        break;
-      }
-      pipeline?.setAudioVideoAnchor(cmd.videoTimeMs / 1000);
-      post({ type: "pcm-audio-anchor", videoTime: cmd.videoTimeMs / 1000, gen });
       break;
     case "clock":
       if (cmd.gen !== gen) {

@@ -5,6 +5,7 @@ export interface PlayerSegment {
 
 import type { PlayerErrorDetail } from "./errors";
 import type { LiveSessionAnchor } from "./timeline/wall-clock";
+import type { PcmWorkerStats } from "./worker/messages";
 
 export type { LiveSessionAnchor };
 
@@ -53,6 +54,8 @@ export interface PlayerEventMap {
   "live-state-change": (isLive: boolean) => void;
   /** Fired when audio playback is blocked by autoplay policy and requires user interaction. */
   "audio-suspended": () => void;
+  /** Periodic snapshot of the soft-decoded PCM chain drop counters (worker side). */
+  "audio-stats": (stats: PcmWorkerStats) => void;
   /** Fired when parsed or measured media metadata changes. */
   "media-info": (info: PlayerMediaInfo) => void;
   /** Fired when WebGL activity or its confirmed deinterlacing state changes. */
@@ -108,6 +111,8 @@ export interface MSEPlaybackController {
   onLiveStateChange?: ((isLive: boolean) => void) | null;
   onAudioSuspended?: (() => void) | null;
   onMediaInfo?: ((info: PlayerMediaInfo) => void) | null;
+  /** Periodic soft-decoded PCM chain drop counters (from the transmux worker). */
+  onAudioStats?: ((stats: PcmWorkerStats) => void) | null;
   loadSegments(segments: PlayerSegment[]): void;
   seek(seconds: number): void;
   goLive(targetMseSeconds: number): void;

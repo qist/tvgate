@@ -9,6 +9,9 @@ import {
 } from "./media-batch";
 import MP4 from "./mp4-generator";
 
+/** Per-segment PCM anchor tolerance (ms): closer targets must not reset PCM bridging. */
+const PCM_SEGMENT_START_TOLERANCE_MS = 50;
+
 interface AudioSample {
   unit: Uint8Array;
   dts: number;
@@ -96,7 +99,7 @@ interface TrackTimingState {
   durationResidual: number;
 }
 
-type PcmTimestampMapping = { action: "drop" } | { action: "emit"; time: number; trimStartMs: number };
+export type PcmTimestampMapping = { action: "drop" } | { action: "emit"; time: number; trimStartMs: number };
 
 type InitSegmentCallback = (type: string, segment: InitSegment) => void;
 type MediaSegmentCallback = (type: string, segment: MediaSegment) => void;
@@ -151,6 +154,9 @@ class MP4Remuxer {
 
   /** One-shot playlist-position target (ms) for the next audio remux batch; see setAudioSegmentStartTarget. */
   private _pendingAudioSegmentStartMs: number | null;
+  /** One-shot playlist-position target (ms) arming the next mapPcmTimestamp call to pin
+   *  the software-decoded PCM of a rendition segment at the segment's playlist position. */
+  private _pendingPcmSegmentStartMs: number | null;
   private _tsSegmentContinuityNormalization: boolean;
   private _mediaSegmentBatchDurationMs: number;
   private _mediaSegmentBatchMaxBytes: number;
@@ -187,6 +193,7 @@ class MP4Remuxer {
     this._mp3UseMpegAudio = !isFirefox;
 
     this._pendingAudioSegmentStartMs = null;
+    this._pendingPcmSegmentStartMs = null;
     this._tsSegmentContinuityNormalization = false;
     this._mediaSegmentBatchDurationMs = normalizeMediaBatchLimit(
       options.mediaSegmentBatchDurationMs,
@@ -204,6 +211,7 @@ class MP4Remuxer {
     this._dtsBase = -1;
     this._dtsBaseInited = false;
     this._pendingAudioSegmentStartMs = null;
+    this._pendingPcmSegmentStartMs = null;
     this._tsSegmentContinuityNormalization = false;
     this._audioMediaSegmentEmitted = false;
     this._videoMediaSegmentEmitted = false;
@@ -367,6 +375,22 @@ class MP4Remuxer {
    */
   setAudioSegmentStartTarget(startMs: number | null): void {
     this._pendingAudioSegmentStartMs = startMs;
+    // Arm the PCM one-shot too: with software decode the rendition demuxer emits no
+    // audio samples into the track, so only mapPcmTimestamp can honor this target.
+    this._pendingPcmSegmentStartMs = startMs;
+  }
+
+  /**
+   * Pin the source-epoch base used by mapPcmTimestamp for software-decoded PCM.
+   * Used by the audio-rendition soft-decode path: no samples ever enter the audio
+   * track, so _calculateDtsBase never runs and _dtsBase stays Infinity — mapPcmTimestamp
+   * would then output -Infinity and permanently drop every chunk. The caller passes
+   * relative PTS (first frame = 0), so base 0 makes originalTime == relative PTS.
+   */
+  setPcmSourceBase(baseMs: number): void {
+    this._dtsBase = baseMs;
+    this._dtsBaseInited = true;
+    this._videoDtsBase = Infinity;
   }
 
   remux(audioTrack: DemuxTrack | null | undefined, videoTrack: DemuxTrack | null | undefined, force = false): void {
@@ -494,6 +518,21 @@ class MP4Remuxer {
       return undefined;
     }
 
+    // Consume the per-segment PCM anchor armed by setAudioSegmentStartTarget
+    // (software-decoded audio renditions): pin the segment's first PCM chunk at the
+    // segment's playlist position. The 50ms tolerance avoids resetting bridging for
+    // sub-frame jitter while still re-pinning after a real discontinuity.
+    if (this._pendingPcmSegmentStartMs !== null) {
+      const target = this._pendingPcmSegmentStartMs;
+      this._pendingPcmSegmentStartMs = null;
+      const unanchored =
+        this._pcmTiming.lastOriginalEndDts === undefined || this._pcmTiming.lastOutputEndDts === undefined;
+      if (unanchored || Math.abs(target - (this._pcmTiming.lastOutputEndDts ?? target)) > PCM_SEGMENT_START_TOLERANCE_MS) {
+        this._pcmTiming = this._createTrackTimingState();
+        this._forcedPcmStartMs = target;
+      }
+    }
+
     const originalTime = ptsMs - this._dtsBase;
     const duration = Math.max(0, durationMs);
     let outputTime: number;
@@ -548,17 +587,6 @@ class MP4Remuxer {
     this._pcmTiming.lastOutputEndDts = outputTime + emittedDuration;
     this._pcmTiming.lastOutputDuration = emittedDuration;
     return { action: "emit", time: outputTime / 1000, trimStartMs };
-  }
-
-  /**
-   * Force the next software-decoded PCM chunk to be positioned at the given
-   * video position (MSE seconds). Used after the video timeline has shifted
-   * independently of the audio: resets PCM bridging and forces the next
-   * chunk to begin exactly at the current video clock.
-   */
-  setPcmVideoAnchor(videoTimeSec: number): void {
-    this._pcmTiming = this._createTrackTimingState();
-    this._forcedPcmStartMs = videoTimeSec * 1000;
   }
 
   /**

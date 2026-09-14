@@ -1,9 +1,9 @@
-import { markPlaybackUnlocked, PCMAudioPlayer } from "../audio/pcm-audio-player";
+import { PCMAudioPlayer } from "../audio/pcm-audio-player";
 import type { PlayerConfig } from "../config";
 import { PlayerErrors } from "../errors";
 import { type LiveSessionAnchor, lagBehindLiveEdge } from "../timeline/wall-clock";
 import type { MSEPlaybackController, PlayerSegment } from "../types";
-import type { WorkerCommand, WorkerEvent } from "../worker/messages";
+import type { PcmWorkerStats, WorkerCommand, WorkerEvent } from "../worker/messages";
 import TransmuxWorker from "../worker/transmux-worker.ts?worker&inline";
 import { setupLiveSync } from "./live-sync";
 import { createMediaSourceController, type MediaSourceController } from "./media-source";
@@ -52,11 +52,17 @@ export function createMSEPlaybackController(
   // PCM audio player for software-decoded audio (MP2 / AC-3)
   let pcmPlayer: PCMAudioPlayer | null = null;
   let pcmPlayerInitPromise: Promise<void> | null = null;
+  /** Latest worker PCM-chain stats, stashed until the PCM player exists to consume them. */
+  let lastPipelineStats: PcmWorkerStats | null = null;
 
   function ensurePCMPlayer(): PCMAudioPlayer {
     if (!pcmPlayer) {
       pcmPlayer = new PCMAudioPlayer(config);
+      if (lastPipelineStats) {
+        pcmPlayer.setPipelineStats(lastPipelineStats);
+      }
       pcmPlayer.onSuspended = () => impl.onAudioSuspended?.();
+      pcmPlayer.onAudioStats = (stats) => impl.onAudioStats?.(stats);
       pcmPlayer.onResyncFailed = () => {
         // Post-background audio recovery failed (video clock never came back,
         // or drifted past the audio buffer) — the session must be rebuilt.
@@ -75,13 +81,6 @@ export function createMSEPlaybackController(
           info: "Software-decoded audio could not establish an initial shared timeline with video",
         });
       };
-      pcmPlayer.onVideoAnchorRequested = (videoTimeSec) => {
-        worker?.postMessage({
-          type: "audio-anchor",
-          videoTimeMs: videoTimeSec * 1000,
-          gen: mseGeneration,
-        } satisfies WorkerCommand);
-      };
       pcmPlayerInitPromise = pcmPlayer.init();
       pcmPlayer.attachVideo(video);
     }
@@ -94,6 +93,8 @@ export function createMSEPlaybackController(
       pcmPlayer = null;
       pcmPlayerInitPromise = null;
     }
+    // Counters belong to a pipeline generation; never carry them across loads.
+    lastPipelineStats = null;
   }
 
   // Init segments are batched and flushed together when the first non-init message
@@ -166,13 +167,21 @@ export function createMSEPlaybackController(
         // flushing any pending init batch immediately.
         flushPendingInits();
         break;
-      case "pcm-audio-anchor":
-        pcmPlayer?.confirmVideoAnchor(msg.videoTime);
+      case "audio-rendition-soft-decode":
+        // Separate audio rendition is soft-decoded: no MSE audio init will ever
+        // arrive (WebKit init gating would hold video forever waiting for it).
+        // The worker already opened its gate; flush the pending video init now.
+        flushPendingInits();
         break;
       case "pcm-audio-discontinuity":
         // Worker 检测到 audio track discontinuity（源流时间轴断裂）：
         // 丢掉旧链旧队列，让后续 PCM 重新锚定到当前屏上帧时间。
         pcmPlayer?.confirmVideoAnchor(video.currentTime);
+        break;
+      case "pcm-audio-stats":
+        // Worker 周期推送软解 PCM 丢弃计数；player 未建时先暂存，创建时补投。
+        lastPipelineStats = msg.stats;
+        pcmPlayer?.setPipelineStats(msg.stats);
         break;
       case "pcm-audio-data": {
         const player = ensurePCMPlayer();
@@ -481,7 +490,6 @@ export function createMSEPlaybackController(
   }
 
   const onVideoPlay = () => {
-    markPlaybackUnlocked();
     updateLiveState();
   };
   const onVideoTimeUpdate = () => {
@@ -493,6 +501,7 @@ export function createMSEPlaybackController(
 
   const impl: MSEPlaybackController = {
     onError: null,
+    onAudioStats: null,
 
     loadSegments(segments: PlayerSegment[]) {
       mseGeneration++;

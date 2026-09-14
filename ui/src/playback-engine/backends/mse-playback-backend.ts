@@ -130,6 +130,7 @@ export function createMSEPlaybackBackend(video: HTMLVideoElement, config?: Parti
       controller.onError = (error) => events.emit("error", error);
       controller.onLiveStateChange = (isLive) => events.emit("live-state-change", isLive);
       controller.onAudioSuspended = () => events.emit("audio-suspended");
+      controller.onAudioStats = (stats) => events.emit("audio-stats", stats);
       controller.onMediaInfo = (info) => {
         renderPipeline?.setScanType(info.video?.scanType);
         events.emit("media-info", info);

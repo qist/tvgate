@@ -1702,7 +1702,10 @@ class TSDemuxer {
     }
 
     // ---- 原生/软解共用：按帧切分 + 连续 PTS 推导 ----
-    let ref_sample_duration: number;
+    // `!`: the per-frame assignment sits inside the try block below; TS cannot
+    // prove assignment across the swallowed catch, but every read is guarded by
+    // Number.isFinite() with a constant fallback.
+    let ref_sample_duration!: number;
     let base_pts_ms!: number;
 
     if (pts !== undefined) {
@@ -1838,7 +1841,10 @@ class TSDemuxer {
     }
 
     // ---- 原生/软解共用：按帧切分 + 连续 PTS 推导 ----
-    let ref_sample_duration: number;
+    // `!`: the per-frame assignment sits inside the try block below; TS cannot
+    // prove assignment across the swallowed catch, but every read is guarded by
+    // Number.isFinite() with a constant fallback.
+    let ref_sample_duration!: number;
     let base_pts_ms!: number;
 
     if (pts !== undefined) {

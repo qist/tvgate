@@ -15,9 +15,10 @@ import {
 import { type HlsInfo, HlsRequestError, HlsSource } from "../hls/hls-source";
 import FetchLoader, { type LoaderErrorInfo } from "../io/fetch-loader";
 import { identifyAudioCodec, identifyVideoCodec } from "../media-codecs";
-import MP4Remuxer from "../remux/mp4-remuxer";
+import MP4Remuxer, { type PcmTimestampMapping } from "../remux/mp4-remuxer";
 import type { PlayerDynamicRange, PlayerMediaInfo, PlayerSegment } from "../types";
 import Log from "../utils/logger";
+import type { PcmWorkerStats } from "./messages";
 import {
   ContinuousLiveSegmentSource,
   type SegmentMeta,
@@ -56,6 +57,8 @@ export interface PipelineCallbacks {
   onPCMAudioData: (pcm: Float32Array, channels: number, sampleRate: number, time: number) => void;
   /** Audio track discontinuity detected: main thread should re-anchor the PCM player. */
   onPCMAudioDiscontinuity: () => void;
+  /** Separate-audio rendition runs soft decode: no MSE audio init will ever be sent. */
+  onAudioRenditionSoftDecode: () => void;
 }
 
 class LoadError extends Error {
@@ -214,13 +217,6 @@ class Pipeline {
   private _audioAnchorPtsMs: number | null = null;
   private _audioSamplesSinceAnchor = 0;
   private _audioSampleRate = 0;
-  /** Time-axis shift applied to software-decoded PCM (ms). Set by setAudioVideoAnchor
-   *  so decode timestamps land on the current video MSE clock after the video timeline
-   *  has shifted independently of the audio (the E-AC-3 4K source failure mode). */
-  private _audioTimeShiftMs = 0;
-  /** Raw (pre-shift) PTS of the most recently emitted software-decoded frame; used to
-   *  compute the re-base shift when the video axis is (re)established. */
-  private _lastAudioFramePtsMs: number | null = null;
 
   /** 上次打印"自由时钟 vs 源 PTS"偏差的时间戳（performance.now()），避免刷屏。 */
   private _lastPtsDivergenceLogAt = 0;
@@ -235,6 +231,30 @@ class Pipeline {
   /** Incremented on audio timing resets to invalidate decode callbacks queued before the reset. */
   private _audioGen = 0;
 
+  // --- 分离音轨（EXT-X-MEDIA）软解 ---
+  private _audioRenditionDecoder: WorkerAudioDecoder | null = null;
+  private _audioRenditionDecoderCodec: SoftAudioCodec | null = null;
+  private _audioRenditionDecoderInitPromise: Promise<boolean> | null = null;
+  /** 首个软解 rendition 帧的源 PTS（ms）；rendition 源轴与视频轴不同纪元，后续帧全部相对它重基。 */
+  private _renditionBasePtsMs: number | null = null;
+  /** 首个 rendition 原始帧已证实该音轨走软解（无 MSE audio init）；只向主线程通告一次。 */
+  private _renditionSoftDecodeAnnounced = false;
+  /** 软解 PCM 来源（muxed / rendition，拓扑上互斥；同时出现即计数告警）。 */
+  private _pcmSource: "muxed" | "rendition" | null = null;
+
+  // --- 软解 PCM 链路丢弃计数（pcm-audio-stats 周期上报）---
+  private _pcmStats: PcmWorkerStats = {
+    pendingOverflowDrops: 0,
+    queueOverflowDrops: 0,
+    remuxDrop: 0,
+    trimDrop: 0,
+    genDrops: 0,
+    decodeInitFailed: 0,
+    carryFrames: 0,
+    renditionFrames: 0,
+    dualSourceFrames: 0,
+  };
+ 
   // --- 缓冲领先限速（对齐 ac3-lab 的 waitForBufferRoom）---
   /** 当前播放头时间（ms），由主线程经 clock 消息周期上报。 */
   private _playheadCurrentMs = -1;
@@ -283,6 +303,12 @@ class Pipeline {
     }
     this._workerAudioDecoderInitPromise = null;
     this._workerDecoderCodec = null;
+    if (this._audioRenditionDecoder) {
+      this._audioRenditionDecoder.destroy();
+      this._audioRenditionDecoder = null;
+    }
+    this._audioRenditionDecoderInitPromise = null;
+    this._audioRenditionDecoderCodec = null;
   }
 
   // ---- Private methods ----
@@ -595,6 +621,9 @@ class Pipeline {
       this._audioRemuxer.destroy();
       this._audioRemuxer = null;
     }
+    this._renditionBasePtsMs = null;
+    this._renditionSoftDecodeAnnounced = false;
+    this._pcmSource = null;
     this._pendingDtsOffsetMs = 0;
     this._fmp4Mode = false;
     this._fmp4InitSent = false;
@@ -802,6 +831,9 @@ class Pipeline {
       this._audioRemuxer.destroy();
       this._audioRemuxer = null;
     }
+    // Fresh remuxer epoch: relative-PTS rebase restarts from the next rendition
+    // frame (the recreated remuxer re-anchors via setAudioSegmentStartTarget).
+    this._renditionBasePtsMs = null;
   }
 
   private _shouldAnchorSegment(meta: SegmentMeta): boolean {
@@ -1149,11 +1181,27 @@ class Pipeline {
       // segment; this aligns it with the video timeline even when the renditions
       // use different PTS epochs.
       this._audioRemuxer.setDtsBaseOffset(meta.start * 1000);
+      // mapPcmTimestamp consumes relative PTS (first frame = 0). Without a pinned
+      // base the rendition remuxer never runs _calculateDtsBase (no samples ever
+      // enter its audio track) and _dtsBase stays Infinity → every chunk dropped.
+      this._audioRemuxer.setPcmSourceBase(0);
     }
     this._audioRemuxer.setTsSegmentContinuityNormalization(false);
 
     demuxer.onError = this._onDemuxException.bind(this);
     demuxer.timestampBase = 0;
+    // Separate-audio rendition: same soft-decode gate as the muxed path. When the
+    // rendition is MP2/AC-3/E-AC-3 the demuxer emits raw frames here instead of
+    // feeding the audio track, so the _audioRemuxer never produces MSE audio
+    // (metadata arrives with softwareDecodeOnly → no audio init either).
+    if (this._config.wasmDecoders.mp2 || this._config.wasmDecoders.ac3) {
+      demuxer.onRawAudioData = (frame) => {
+        this._handleAudioRenditionRawFrame(frame);
+      };
+    }
+    if (this._config.wasmDecoders.ac3) {
+      demuxer.ac3SoftDecode = true;
+    }
     demuxer.onTrackDiscontinuity = (track) => {
       if (track === "audio") {
         this._audioRemuxer?.flushStashedSamples();
@@ -1309,33 +1357,6 @@ class Pipeline {
 
   private _workerDecoderCodec: SoftAudioCodec | null = null;
 
-  /**
-   * Re-base software-decoded PCM onto the current video position on the MSE
-   * timeline. Called from the main thread after a video-time-axis shift that
-   * left audio trailing (the E-AC-3 4K source failure mode): resets the PCM
-   * bridging state on the remuxer and pins the next framed PCM to the video
-   * clock, so audio follows the video anchor instead of the stale source PTS.
-   */
-  setAudioVideoAnchor(videoTimeSec: number): void {
-    this._remuxer?.setPcmVideoAnchor(videoTimeSec);
-    // Re-base software-decoded PCM onto the current video clock. The audio PTS coming
-    // from the demuxer rides the raw source axis, which — e.g. after an AC-3
-    // "pts overlapped" self-correction — slowly creeps *ahead* of the video axis.
-    // Without this shift the next framed PCM would still land on the drifted axis and
-    // the main-thread re-anchor would just drop/defer it, leaving A/V out of sync.
-    // Pin the next frame's raw PTS to the video time so the two axes re-converge.
-    this._audioTimeShiftMs = videoTimeSec * 1000 - (this._lastAudioFramePtsMs ?? videoTimeSec * 1000);
-    // Restart sample-clock extrapolation from the new benchmark: pending PCM
-    // queued before the anchor used the old axis and would bridge incorrectly.
-    // Reset the codec carry too: frames queued before this command must not
-    // produce PCM after the new timeline is acknowledged on the main thread.
-    this._audioGen++;
-    this._workerAudioDecoder?.reset();
-    this._pendingPcm = [];
-    this._audioAnchorPtsMs = null;
-    this._audioSamplesSinceAnchor = 0;
-  }
-
   /** Feed the main-thread playhead + MSE buffered end consumed by the buffer-lead gate. */
   setClock(currentTimeMs: number, bufferedEndMs: number): void {
     this._playheadCurrentMs = currentTimeMs;
@@ -1361,10 +1382,18 @@ class Pipeline {
     // Queue decode after init completes; gen guard drops frames queued before a reset
     const gen = this._audioGen;
     this._workerAudioDecoderInitPromise?.then((ready) => {
-      if (!ready || !this._workerAudioDecoder || gen !== this._audioGen) return;
+      if (!ready) {
+        this._pcmStats.decodeInitFailed++;
+        return;
+      }
+      if (!this._workerAudioDecoder || gen !== this._audioGen) {
+        this._pcmStats.genDrops++;
+        return;
+      }
 
       const result = this._workerAudioDecoder.decode(frame.data);
       if (!result) return;
+      this._notePcmSource("muxed");
 
       // 标签**直接采用源给出的逐帧 PTS**（demuxer 本来就是按帧送出 data+pts），
       // 与 ac3-lab 完全一致：一帧进、一帧出，1:1，不需要任何外推。
@@ -1376,6 +1405,9 @@ class Pipeline {
       // 声音持续跑在前面的错位。ac3-lab 用源 PTS 原值，508s 实测 drift p50=-0.2ms。
       const sr = result.sampleRate;
       const carriedSamples = Math.min(Math.max(0, result.samplesBeforeInput), result.samplesPerChannel);
+      if (result.samplesBeforeInput > 0) {
+        this._pcmStats.carryFrames++;
+      }
       const labelPtsMs = frame.pts - (carriedSamples / sr) * 1000;
 
       // 自由时钟仅保留作诊断：它与源 PTS 的偏差就是旧实现静默吃掉的音画超前量。
@@ -1415,14 +1447,13 @@ class Pipeline {
    */
   private _emitPcm(pcm: Float32Array, channels: number, sampleRate: number, ptsMs: number): void {
     const durationMs = (Math.floor(pcm.length / channels) / sampleRate) * 1000;
-    // Apply any active re-anchor shift so the PCM lands on the current video clock.
-    this._pendingPcm.push({ pcm, channels, sampleRate, ptsMs: ptsMs + this._audioTimeShiftMs, durationMs });
-    this._lastAudioFramePtsMs = ptsMs;
+    this._pendingPcm.push({ pcm, channels, sampleRate, ptsMs, durationMs });
 
     if (this._remuxer?.getTimestampBase() === undefined) {
       // Bound the queue: ~25s of audio at one payload per ~72ms is plenty
       if (this._pendingPcm.length > 512) {
         this._pendingPcm.shift();
+        this._pcmStats.pendingOverflowDrops++;
       }
       return;
     }
@@ -1437,26 +1468,130 @@ class Pipeline {
         this._pendingPcm.push(...pending.slice(i));
         if (this._pendingPcm.length > 512) {
           this._pendingPcm.splice(0, this._pendingPcm.length - 512);
+          this._pcmStats.queueOverflowDrops++;
         }
         break;
       }
       if (mapping.action === "drop") {
+        this._pcmStats.remuxDrop++;
         continue;
       }
-
-      let pcm = item.pcm;
       if (mapping.trimStartMs > 0) {
-        const cutFrames = Math.round((mapping.trimStartMs / 1000) * item.sampleRate);
-        const totalFrames = Math.floor(pcm.length / item.channels);
-        if (cutFrames >= totalFrames) {
-          continue;
-        }
-        if (cutFrames > 0) {
-          pcm = pcm.slice(cutFrames * item.channels);
-        }
+        this._pcmStats.trimDrop++;
       }
-      this._callbacks.onPCMAudioData(pcm, item.channels, item.sampleRate, mapping.time);
+      this._deliverMappedPcm(item, mapping);
     }
+  }
+
+  /** Deliver a mapped PCM chunk to the main thread, honoring trimStartMs. */
+  private _deliverMappedPcm(
+    item: { pcm: Float32Array; channels: number; sampleRate: number },
+    mapping: Extract<PcmTimestampMapping, { action: "emit" }>,
+  ): void {
+    let pcm = item.pcm;
+    if (mapping.trimStartMs > 0) {
+      const cutFrames = Math.round((mapping.trimStartMs / 1000) * item.sampleRate);
+      const totalFrames = Math.floor(pcm.length / item.channels);
+      if (cutFrames >= totalFrames) {
+        return;
+      }
+      if (cutFrames > 0) {
+        pcm = pcm.slice(cutFrames * item.channels);
+      }
+    }
+    this._callbacks.onPCMAudioData(pcm, item.channels, item.sampleRate, mapping.time);
+  }
+
+  /** Count PCM frames by source; muxed/rendition are topologically mutually exclusive. */
+  private _notePcmSource(source: "muxed" | "rendition"): void {
+    if (this._pcmSource === null) {
+      this._pcmSource = source;
+      return;
+    }
+    if (this._pcmSource !== source) {
+      this._pcmStats.dualSourceFrames++;
+      if (this._pcmStats.dualSourceFrames === 1) {
+        Log.w(this.TAG, `PCM source conflict: ${this._pcmSource} and ${source} both producing audio`);
+      }
+    }
+  }
+
+  /** Latest soft-decoded PCM chain drop counters (posted to the main thread periodically). */
+  getPcmStats(): PcmWorkerStats {
+    return { ...this._pcmStats };
+  }
+
+  /**
+   * Separate-audio-rendition soft-decode path (mirror of _handleRawAudioFrame).
+   * Renditions ride their own source PTS epoch, so decoded labels are re-based
+   * relative to the first frame and mapped through the dedicated _audioRemuxer
+   * (base pinned to 0 via setPcmSourceBase; per-segment playlist-position anchors
+   * are armed by setAudioSegmentStartTarget, see _setupAudioDemuxerRemuxer).
+   */
+  private _handleAudioRenditionRawFrame(frame: { codec: SoftAudioCodec; data: Uint8Array; pts: number }): void {
+    // The first raw rendition frame proves this rendition is soft-decoded
+    // (MP2/AC-3/E-AC-3): no MSE audio init/media will ever be produced. Tell the
+    // main thread (and the worker's init gate) immediately so held video flows.
+    if (!this._renditionSoftDecodeAnnounced) {
+      this._renditionSoftDecodeAnnounced = true;
+      this._callbacks.onAudioRenditionSoftDecode();
+    }
+    if (this._audioRenditionDecoder && this._audioRenditionDecoderCodec !== frame.codec) {
+      this._audioRenditionDecoder.destroy();
+      this._audioRenditionDecoder = null;
+      this._audioRenditionDecoderInitPromise = null;
+    }
+    if (!this._audioRenditionDecoder) {
+      const url = frame.codec === "mp2" ? this._config.wasmDecoders.mp2 : this._config.wasmDecoders.ac3;
+      if (!url) return;
+      this._audioRenditionDecoder = new WorkerAudioDecoder(url, frame.codec);
+      this._audioRenditionDecoderCodec = frame.codec;
+      this._audioRenditionDecoderInitPromise = this._audioRenditionDecoder.initDecoder();
+    }
+
+    const gen = this._audioGen;
+    this._audioRenditionDecoderInitPromise?.then((ready) => {
+      if (!ready) {
+        this._pcmStats.decodeInitFailed++;
+        return;
+      }
+      if (!this._audioRenditionDecoder || gen !== this._audioGen) {
+        this._pcmStats.genDrops++;
+        return;
+      }
+
+      const result = this._audioRenditionDecoder.decode(frame.data);
+      if (!result) return;
+      this._notePcmSource("rendition");
+      this._pcmStats.renditionFrames++;
+
+      const sr = result.sampleRate;
+      const carriedSamples = Math.min(Math.max(0, result.samplesBeforeInput), result.samplesPerChannel);
+      if (result.samplesBeforeInput > 0) {
+        this._pcmStats.carryFrames++;
+      }
+      const labelPtsMs = frame.pts - (carriedSamples / sr) * 1000;
+      if (this._renditionBasePtsMs === null) {
+        this._renditionBasePtsMs = labelPtsMs;
+      }
+      const relPtsMs = labelPtsMs - this._renditionBasePtsMs;
+      const durationMs = (Math.floor(result.pcm.length / result.channels) / sr) * 1000;
+
+      // setPcmSourceBase(0) makes the mapping always available (dts base pinned at
+      // setup), so no pending queue is needed on this path.
+      const mapping = this._audioRemuxer?.mapPcmTimestamp(relPtsMs, durationMs);
+      if (mapping === undefined) {
+        return;
+      }
+      if (mapping.action === "drop") {
+        this._pcmStats.remuxDrop++;
+        return;
+      }
+      if (mapping.trimStartMs > 0) {
+        this._pcmStats.trimDrop++;
+      }
+      this._deliverMappedPcm({ pcm: result.pcm, channels: result.channels, sampleRate: sr }, mapping);
+    });
   }
 }
 
