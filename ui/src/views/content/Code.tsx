@@ -274,10 +274,17 @@ export function CodePage() {
 
   const onUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
+    // FileList 是 live 对象：onChange 里 e.target.value = "" 会把它原地清空，
+    // await 回来再读 files.length 就变成 0（上传本身不受影响）。必须先快照。
+    const list = Array.from(files);
     setBusy("上传中…");
     try {
-      await code.uploadFiles(dir, files);
-      notify("ok", `已上传 ${files.length} 个文件`);
+      const r = await code.uploadFiles(dir, list);
+      if (r.failed.length > 0) {
+        notify("err", `上传完成：成功 ${r.uploaded.length} 个，失败 ${r.failed.length} 个：${r.failed.join("、")}`);
+      } else {
+        notify("ok", `已上传 ${r.uploaded.length} 个文件`);
+      }
       refresh();
     } catch (e) {
       notify("err", "上传失败: " + (e as Error).message);

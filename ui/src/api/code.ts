@@ -74,10 +74,18 @@ export async function check(content: string): Promise<{ ok: boolean; issues: Php
   return { ok: !!d.ok, issues: d.issues || [] };
 }
 
-export async function uploadFiles(dir: string, files: FileList): Promise<void> {
+export interface UploadResult {
+  /** 成功落盘的文件名列表（后端逐文件统计，部分失败时 HTTP 仍为 200）。 */
+  uploaded: string[];
+  failed: string[];
+}
+
+export async function uploadFiles(dir: string, files: File[]): Promise<UploadResult> {
   const fd = new FormData();
   fd.append("dir", dir);
-  Array.from(files).forEach((f) => fd.append("file", f));
+  files.forEach((f) => fd.append("file", f));
   const r = await fetch(`${base()}api/code/upload`, { method: "POST", credentials: "same-origin", body: fd });
   if (!r.ok) throw new Error(await r.text());
+  const d = await r.json().catch(() => ({}));
+  return { uploaded: Array.isArray(d.uploaded) ? d.uploaded : [], failed: Array.isArray(d.failed) ? d.failed : [] };
 }

@@ -52,7 +52,7 @@ export function MulticastPage() {
       )}
 
       <Card>
-        <CardHeader><CardTitle className="text-base">FCC 与网卡</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">组播配置</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -72,8 +72,22 @@ export function MulticastPage() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="重连间隔">
+            <Field label="重连间隔（IGMP 刷新）">
               <Input value={cfg.mcast_rejoin_interval} onChange={(e) => patch({ mcast_rejoin_interval: e.target.value })} placeholder="例如: 30s" />
+            </Field>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">FCC 配置</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="上游接口">
+              <Input className="font-mono" value={cfg.upstream_interface} onChange={(e) => patch({ upstream_interface: e.target.value })} placeholder="默认上游接口" />
+            </Field>
+            <Field label="FCC 上游接口">
+              <Input className="font-mono" value={cfg.upstream_interface_fcc} onChange={(e) => patch({ upstream_interface_fcc: e.target.value })} placeholder="FCC 专用上游接口（留空用上游接口）" />
             </Field>
             <Field label="FCC 类型">
               <select className="h-9 w-full rounded-[var(--radius)] border bg-background px-2 text-sm" value={cfg.fcc_type} onChange={(e) => patch({ fcc_type: e.target.value })}>
@@ -87,12 +101,6 @@ export function MulticastPage() {
               <Field label="监听端口 (min)"><Input type="number" value={cfg.fcc_listen_port_min} onChange={(e) => patch({ fcc_listen_port_min: +e.target.value || 0 })} /></Field>
               <Field label="监听端口 (max)"><Input type="number" value={cfg.fcc_listen_port_max} onChange={(e) => patch({ fcc_listen_port_max: +e.target.value || 0 })} /></Field>
             </div>
-            <Field label="上游接口">
-              <Input className="font-mono" value={cfg.upstream_interface} onChange={(e) => patch({ upstream_interface: e.target.value })} placeholder="默认上游接口" />
-            </Field>
-            <Field label="FCC 上游接口">
-              <Input className="font-mono" value={cfg.upstream_interface_fcc} onChange={(e) => patch({ upstream_interface_fcc: e.target.value })} placeholder="FCC 专用上游接口" />
-            </Field>
           </div>
         </CardContent>
       </Card>
