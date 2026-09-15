@@ -3,6 +3,7 @@ package player
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/md5"
 	"crypto/sha1"
@@ -153,7 +154,11 @@ func (h *Handler) ServeChannels(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeEPG GET /api/player/epg?ch=<tvg-id>&name=<频道名>&date=YYYYMMDD → 节目单。
-// M3U（x-tvg-url XMLTV）：由服务端解析的 EPGBank 查；txt（模板）：服务端填 {name}/{date} 后拉取，规避前端跨域 CORS。
+// M3U/固定（x-tvg-url XMLTV）：由服务端解析的 EPGBank 查；txt（模板）：服务端填 {name}/{date} 后拉取，规避前端跨域 CORS。
+// 主来源失效时回退：
+//   - template 主来源查询失败（返回空）→ 用配置的备用来源（固定 XMLTV 查 EPGBank，或另一模板拉取）；
+//   - xml 主来源整份从未加载成功（HaveData()==false）→ 用配置的模板来源逐频道拉取。
+//     （xml 型配置固定 XMLTV 已并入 EPGBank 源链，由 EPGBank 内部自动切换，不走这里。）
 func (h *Handler) ServeEPG(w http.ResponseWriter, r *http.Request) {
 	if !h.requireToken(w, r) {
 		return
@@ -161,24 +166,53 @@ func (h *Handler) ServeEPG(w http.ResponseWriter, r *http.Request) {
 	ch := r.URL.Query().Get("ch")
 	name := r.URL.Query().Get("name")
 	date := r.URL.Query().Get("date")
-	var progs []Program
-	es := h.mgr.EPGSource()
-	if es.Type == "template" && es.URL != "" && name != "" {
-		u := fillEpgURL(es.URL, name, date)
-		progs = h.fetchTemplateEPG(r.Context(), u)
-	} else {
-		// M3U 或固定 XMLTV：按 ch(tvg-id)，缺时按 name（txt 无 tvg-id 用频道名匹配）
-		q := ch
-		if q == "" {
-			q = name
-		}
-		progs = h.mgr.EPG().Programs(q, date)
-	}
+	progs := h.serveEPGQuery(r.Context(), ch, name, date)
 	if progs == nil {
 		progs = []Program{}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writeJSON(w, map[string]interface{}{"programs": progs})
+}
+
+func (h *Handler) serveEPGQuery(ctx context.Context, ch, name, date string) []Program {
+	es := h.mgr.EPGSource()
+	if es.Type == "template" && es.URL != "" && name != "" {
+		progs := h.fetchTemplateEPG(ctx, fillEpgURL(es.URL, name, date))
+		if len(progs) > 0 {
+			return progs
+		}
+		return h.fetchEPGFallback(ctx, ch, name, date)
+	}
+	q := ch
+	if q == "" {
+		q = name
+	}
+	progs := h.mgr.EPG().Programs(q, date)
+	if len(progs) == 0 && !h.mgr.EPG().HaveData() {
+		if fb := h.fetchEPGFallback(ctx, ch, name, date); len(fb) > 0 {
+			return fb
+		}
+	}
+	return progs
+}
+
+// fetchEPGFallback 用配置的备用来源（epgBak）兜底查询，无可用备用或查询失败返回 nil。
+func (h *Handler) fetchEPGFallback(ctx context.Context, ch, name, date string) []Program {
+	fb := h.mgr.EPGFallback()
+	switch fb.Type {
+	case "template":
+		if name == "" {
+			return nil
+		}
+		return h.fetchTemplateEPG(ctx, fillEpgURL(fb.URL, name, date))
+	case "xml":
+		q := ch
+		if q == "" {
+			q = name
+		}
+		return h.mgr.EPG().Programs(q, date)
+	}
+	return nil
 }
 
 // fillEpgURL 把 EPG 模板里的 {name}/{date} 占位符填充为实际值（name 用 URL 转义，date 原样）。
@@ -208,6 +242,18 @@ func (h *Handler) fetchTemplateEPG(ctx context.Context, u string) []Program {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return nil
+	}
+	// gzip 魔数识别：模板源常以 .xml.gz 提供整份/单频道 XMLTV，解压后复用同一解析链
+	if len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b {
+		zr, err := gzip.NewReader(bytes.NewReader(body))
+		if err != nil {
+			return nil
+		}
+		body, err = io.ReadAll(zr)
+		zr.Close()
+		if err != nil {
+			return nil
+		}
 	}
 	return parseEPGContent(body)
 }

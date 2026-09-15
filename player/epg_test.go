@@ -17,13 +17,13 @@ import (
 func TestEPGStartRefreshIdempotent(t *testing.T) {
 	b := NewEPGBank()
 	// 假地址 + 1h 间隔：测试期间 ticker 不会真的触发拉取
-	b.startRefresh("http://127.0.0.1:1/x.xml", time.Hour)
-	b.startRefresh("http://127.0.0.1:1/x.xml", time.Hour)
-	b.startRefresh("http://127.0.0.1:1/x.xml", time.Hour)
+	b.startRefresh(time.Hour, "http://127.0.0.1:1/x.xml")
+	b.startRefresh(time.Hour, "http://127.0.0.1:1/x.xml")
+	b.startRefresh(time.Hour, "http://127.0.0.1:1/x.xml")
 
 	// 换 URL：旧循环必须退出（不残留 goroutine）
 	before := runtime.NumGoroutine()
-	b.startRefresh("http://127.0.0.1:1/y.xml", time.Hour)
+	b.startRefresh(time.Hour, "http://127.0.0.1:1/y.xml")
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

@@ -148,7 +148,7 @@ export function PlayerPage() {
               </p>
             </div>
           </Field>
-          <Field label="txt 订阅的 EPG 模板（可选）" hint="含 {name}=频道名、{date}=日期；M3U 订阅用 x-tvg-url 的 XMLTV，无需填此项">
+          <Field label="txt 订阅的 EPG 模板（可选）" hint="含 {name}=频道名、{date}=日期；也可填固定 XMLTV URL（如 xxx.xml.gz，整份节目单按频道名匹配，gzip 自动识别）；M3U 订阅用 x-tvg-url 的 XMLTV，无需填此项">
             <Input
               className="font-mono"
               value={cfg.epg}
@@ -173,7 +173,7 @@ export function PlayerPage() {
             />
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="订阅刷新间隔" hint="如 2h / 30m，留空用默认 2h">
+            <Field label="订阅刷新间隔" hint="如 2h / 30m，留空用默认 2h；整份 XMLTV EPG（epg 填固定 xml/xml.gz URL）与此共用同一时钟，同步刷新">
               <Input value={cfg.update_interval} onChange={(e) => setCfg({ ...cfg, update_interval: e.target.value })} placeholder="2h" />
             </Field>
             <Field label="默认 User-Agent（可选）" hint="请求上游（m3u8/分片）用；频道在 txt 里带 ua=xxx 则优先生效，否则用此默认。留空用内置浏览器 UA">

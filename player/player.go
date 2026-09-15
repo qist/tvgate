@@ -59,8 +59,15 @@ type Manager struct {
 	order    []*Channel          // 频道，按订阅行序
 	groups   []string
 
+	// EPG 来源（随 /api/player/epg 查询 + /api/player/channels 下发）：
+	// epgSource 为当前主来源；epgURLs 为 xml 型源链（主 + 配置固定 XMLTV 回退），
+	// 整份 XMLTV 失效时 EPGBank 自动切换到链内下一个可用源。
 	epgSource EPGSource
-	epg       *EPGBank
+	epgURLs   []string
+	// epgBak 跨类型回退来源（主为 template 时配固定 XMLTV，或主为 xml 时配模板）：
+	// 主来源失效（template 查询失败 / xml 从未加载成功）时 ServeEPG 用它兜底。
+	epgBak EPGSource
+	epg    *EPGBank
 
 	cfg          *config.PlayerConfig
 	httpClient   *http.Client
@@ -211,6 +218,39 @@ func (m *Manager) Reload() {
 			epgSrc = EPGSource{Type: "xml", URL: p.Epg, Logo: epgSrc.Logo}
 		}
 	}
+	// EPG 回退链：
+	//   ① xml 型源链（epgURLs）——内嵌 x-tvg-url / 固定 XMLTV 失效时，自动改用配置
+	//      player.epg 的固定 XMLTV（xml/xml.gz）。同 URL 去重，内嵌先行。
+	//   ② 跨类型回退（epgBak）——主来源与配置来源类型不同时（如内嵌 template、
+	//      配置固定 XMLTV，或反之），ServeEPG 在主来源失效后用它兜底查询。
+	var xmlURLs []string
+	bak := EPGSource{Type: "none"}
+	if epgSrc.Type == "xml" && epgSrc.URL != "" {
+		xmlURLs = append(xmlURLs, epgSrc.URL)
+	}
+	if p.Epg != "" && !strings.Contains(p.Epg, "{") && strings.HasPrefix(p.Epg, "http") {
+		// 配置为固定 XMLTV：并入 xml 源链（内嵌已有则跳过重复）
+		dup := false
+		for _, u := range xmlURLs {
+			if u == p.Epg {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			if epgSrc.Type == "xml" {
+				xmlURLs = append(xmlURLs, p.Epg)
+			} else {
+				// 主来源非 xml（内嵌 template）：配置固定 XMLTV 作为模板失效时的兜底
+				bak = EPGSource{Type: "xml", URL: p.Epg}
+			}
+		}
+	} else if p.Epg != "" && strings.Contains(p.Epg, "{") {
+		// 配置为模板：主来源为 xml 时作为失效兜底；主来源同为 template 且 URL 不同时同样兜底
+		if epgSrc.Type != "template" || epgSrc.URL != p.Epg {
+			bak = EPGSource{Type: "template", URL: p.Epg}
+		}
+	}
 	// 台标模板：内容内嵌 `logo=...`（txt）优先，否则用配置 `player.logo`；M3U/txt 的频道 logo 为空时兜底填充
 	logoTpl := epgSrc.Logo
 	if logoTpl == "" {
@@ -257,6 +297,8 @@ func (m *Manager) Reload() {
 	m.order = newOrder
 	m.groups = newGroups
 	m.epgSource = epgSrc
+	m.epgURLs = xmlURLs
+	m.epgBak = bak
 	m.mu.Unlock()
 
 	if len(files) > 1 {
@@ -265,10 +307,10 @@ func (m *Manager) Reload() {
 		logger.LogPrintf("✅ [player] 订阅加载完成: %d 频道 / %d 分组", len(newOrder), len(newGroups))
 	}
 
-	// EPG：M3U XMLTV 由服务端拉取解析
-	if epgSrc.Type == "xml" && epgSrc.URL != "" {
-		go m.epg.Load(epgSrc.URL)
-		m.epg.startRefresh(epgSrc.URL, m.cfg.UpdateInterval)
+	// EPG：xml 型源链由服务端拉取解析（整份 XMLTV，gzip 自动识别）；主源失效自动切链内回退源
+	if len(xmlURLs) > 0 {
+		go m.epg.Load(xmlURLs...)
+		m.epg.startRefresh(m.cfg.UpdateInterval, xmlURLs...)
 	}
 }
 
@@ -480,6 +522,13 @@ func (m *Manager) EPGSource() EPGSource {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.epgSource
+}
+
+// EPGFallback 返回跨类型回退来源（主来源失效时 ServeEPG 用它兜底；无则为 Type "none"）。
+func (m *Manager) EPGFallback() EPGSource {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.epgBak
 }
 
 func (m *Manager) EPG() *EPGBank {
