@@ -520,12 +520,12 @@ export class PCMAudioPlayer {
    * 回前台恢复音视频同步（在视频时钟恢复推进后由 controlTick 调用）。
    *
    * 后台 free-run 期间音频按 ctx 时钟**实时**推进（紧跟直播边缘），而 video 被 UA
-   * 节流/冻结（4K HEVC 后台解码受限），回前台时音频轴领先视频轴（实测 2.9s）。
-   * 恢复方向是**视频追音频**且**不打断正在播的音频链**：
-   *  - 把 video seek 到"正在听到的位置"（heard）——音频继续无缝播放（链保留，
-   *    不清不重锚），画面跳到后台听到的内容处，live-sync 的 latency 随即恢复正常
-   *    （不再 1.2x 加速追）；
-   *  - 反向 rebase 音频轴会让声音倒退重播已听内容（实测 rebase −2.9s 后内容错位）。
+   * 节流/冻结（4K HEVC 后台解码受限），回前台时音频轴领先视频轴（实测 1.1~3.7s）。
+   * 恢复方向是**视频追音频**：
+   *  - 把 video seek 到"正在听到的位置"（heard）——画面跳到后台听到的内容处，
+   *    音频立即在 heard 重建排程（不重播、不静音），live-sync 的 latency 随即
+   *    恢复正常（不再 1.2x 加速追）；
+   *  - 反向 rebase 音频轴只会让声音倒退重播已听内容（实测 rebase −2.9s 后内容错位）。
    */
   private alignToVideoOnReturn(): void {
     const core = this.core;
@@ -544,15 +544,20 @@ export class PCMAudioPlayer {
     if (leadSec < FOREGROUND_ALIGN_MIN_LEAD_SEC) return;
 
     if (this.isSeekableTarget(video, heard)) {
-      // 目标在 MSE 缓冲内：画面跳到正在听到的位置。seek 的 seeking/seeked 事件
-      // 在 aligningSeek 下保留音频链（见 onVideoSeeking/onVideoSeeked），音频
-      // 无缝继续，视频从 heard 显示 → 立即同步、无静音、无加速。
-      this.aligningSeek = true;
+      // 目标在 MSE 缓冲内：画面跳到正在听到的位置。音频链**立即重建到 heard**
+      // （丢弃 free-run 预排的超前残留 + 重锚），而不是保留旧链——seek 处理
+      // 延迟期间音频还会继续超前，保留旧链会残留大 drift → 下一 controlTick
+      // 又 drift 重锚反复清链（实测 seek 后 513ms → reanchor 静音）。
       Log.w(
         TAG,
         `Foreground return: video at ${visible.toFixed(2)}s, audio heard at ${heard.toFixed(2)}s → seek video forward ${leadSec.toFixed(2)}s`,
       );
+      this.aligningSeek = true;
+      this.awaitingNewTimeline = true;
+      this.reanchorAtSec = heard;
       video.currentTime = heard;
+      this.core?.trimFutureBeyond(heard + REANCHOR_STALE_LEAD_SEC);
+      this.core?.reanchor("video-anchor", true);
       return;
     }
 
@@ -578,9 +583,9 @@ export class PCMAudioPlayer {
   // ==================== Video events ====================
 
   private onVideoSeeking(): void {
-    // 回前台对齐 seek：音频链正在播 heard 内容，视频跳到 heard 后音频无需重建。
+    // 回前台对齐 seek：**保留 aligningSeek 标志**（onVideoSeeked 还要靠它判断），
+    // 不清链不重锚 —— 音频链正在播 heard 内容，视频跳到 heard 后音频无需重建。
     if (this.aligningSeek) {
-      this.aligningSeek = false;
       return;
     }
     // 新位置的时间轴与旧 PCM 无关，直接丢链丢队列，等 seek 后的样本重新落点。
