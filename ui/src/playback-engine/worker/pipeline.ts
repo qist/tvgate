@@ -877,6 +877,25 @@ class Pipeline {
     this._pendingPcm = [];
   }
 
+  /**
+   * audio 轨不连续：重置 PCM 时间轴，并把软解主路径的下一帧 PCM 钉到当前视频时间。
+   *
+   * 分片 404/502 恢复后（上游整点切目录等），视频 remuxer 会把源 PTS 跳变 bridge 到
+   * 输出时间轴（实测 29.5s）；而 PCM 标签直接用源 PTS（mapPcmTimestamp 直映射），
+   * 若不钉回视频时间轴，PCM 会领先视频 29.5s → 排程门压死 → 永久静音。
+   * setAudioSegmentStartTarget 只在 PCM 时间轴 unanchored（刚 reset）时生效，
+   * 首帧强制输出到当前视频时间，之后按源 PTS 连续 bridging —— 与视频同轴。
+   */
+  private _resetPcmOnAudioDiscontinuity(): void {
+    this._remuxer?.resetPcmTiming();
+    this._workerAudioDecoder?.reset();
+    this._resetAudioTiming();
+    if (this._config.wasmDecoders.mp2 || this._config.wasmDecoders.ac3) {
+      this._remuxer?.setAudioSegmentStartTarget(Math.max(0, this._playheadCurrentMs));
+    }
+    this._callbacks.onPCMAudioDiscontinuity();
+  }
+
   /** 直播源判定：HLS 播放列表为 live 窗口时，分片可能在上游过期，可跳过等待刷新 */
   private _isLiveSource(): boolean {
     return this._sourceMode === "hls" && (this._hlsSource?.isLive ?? false);
@@ -1031,13 +1050,7 @@ class Pipeline {
         this._remuxer?.insertDiscontinuity();
       }
       if (track === "audio") {
-        // audio discontinuity：源流时间轴断裂后，旧的 _pcmTiming 会把新帧
-        // 的 PTS 桥接到旧时间轴上 → 音画脱节。必须重置 PCM timing，让下一帧
-        // 重新按当前视频时间锚定。同时通知主线程做 reanchor。
-        this._remuxer?.resetPcmTiming();
-        this._workerAudioDecoder?.reset();
-        this._resetAudioTiming();
-        this._callbacks.onPCMAudioDiscontinuity();
+        this._resetPcmOnAudioDiscontinuity();
       } else {
         this._workerAudioDecoder?.reset();
         this._resetAudioTiming();
@@ -1117,10 +1130,7 @@ class Pipeline {
         this._remuxer?.insertDiscontinuity();
       }
       if (track === "audio") {
-        this._remuxer?.resetPcmTiming();
-        this._workerAudioDecoder?.reset();
-        this._resetAudioTiming();
-        this._callbacks.onPCMAudioDiscontinuity();
+        this._resetPcmOnAudioDiscontinuity();
       } else {
         this._workerAudioDecoder?.reset();
         this._resetAudioTiming();
