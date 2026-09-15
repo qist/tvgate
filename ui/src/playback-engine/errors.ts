@@ -7,7 +7,6 @@ export const PlayerErrors = {
   FORMAT_UNSUPPORTED: "FormatUnsupported",
   CODEC_UNSUPPORTED: "CodecUnsupported",
   AUDIO_RESYNC_FAILED: "AudioResyncFailed",
-  AUDIO_STARTUP_SYNC_FAILED: "AudioStartupSyncFailed",
   MEDIA_SOURCE_CLOSED: "MediaSourceClosed",
   MEDIA_MSE_ERROR: "MediaMSEError",
   MEDIA_ELEMENT_ERROR: "MediaElementError",

@@ -152,7 +152,7 @@ bufferContains(sb: TimeRanges, t: number): boolean;  // 唯一实现，替换 4 
 ### 3.3 P1 同步内核（提炼自 `ac3-lab/audio-sync.ts`）
 
 ✅ **已实现**：`audio/audio-sync-core.ts`（580 行），`ac3-lab` 与 `PCMAudioPlayer` 共用同一实例化入口。
-对外接口：`enqueue / pump / controlTick / reanchor / resetChain / stopChain / flushQueue / driftSec /
+对外接口：`enqueue / pump / controlTick / reanchor / resetChain / driftSec /
 heardStreamTime / visibleVideoTime / getOutputLatencySec / setCalibrationMs / stats / start / destroy`，
 以及注入钩子 `getRate / getScheduleAheadSec / maxAudioLeadSec / maxQueueChunks / reanchorDriftSec /
 onSchedulingBlocked / onSchedulingResumed`。

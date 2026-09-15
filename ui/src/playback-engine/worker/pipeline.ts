@@ -1053,6 +1053,9 @@ class Pipeline {
       demuxer.onRawAudioData = (frame) => {
         this._handleRawAudioFrame(frame);
       };
+      // 主 muxed TS 软解：让 remuxer 附带一条静音 AAC 假音轨（video 有音轨 → 后台
+      // 标签页不被 UA 暂停，解决后台音画不同步）。独立音频 rendition 路径不设。
+      demuxer.silentAudioTrack = true;
     }
     if (this._config.wasmDecoders.ac3) {
       demuxer.ac3SoftDecode = true;

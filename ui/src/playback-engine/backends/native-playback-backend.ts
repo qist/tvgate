@@ -265,6 +265,8 @@ export function createNativePlaybackBackend(video: HTMLVideoElement, config?: Pa
     setLiveSync(_enabled: boolean) {},
     setAutoDeinterlace(_enabled: boolean) {},
     setPictureEnhancement(_enabled: boolean) {},
+    // 原生后端无软解 PCM 链路（浏览器直接解码），单声道合成不适用。
+    setAudioChannelMode(_mode: "stereo" | "mono") {},
 
     stop() {
       shouldPlay = false;

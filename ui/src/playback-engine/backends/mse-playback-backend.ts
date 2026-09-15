@@ -190,6 +190,7 @@ export function createMSEPlaybackBackend(video: HTMLVideoElement, config?: Parti
     setLiveSync: (enabled) => controller?.setLiveSync(enabled),
     setAutoDeinterlace: (enabled) => renderPipeline?.setAutoDeinterlaceEnabled(enabled),
     setPictureEnhancement: (enabled) => renderPipeline?.setPictureEnhancementEnabled(enabled),
+    setAudioChannelMode: (mode) => controller?.setAudioChannelMode(mode),
 
     stop() {
       if (destroyed) return;

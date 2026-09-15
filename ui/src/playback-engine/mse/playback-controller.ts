@@ -74,13 +74,6 @@ export function createMSEPlaybackController(
           info: "Audio could not re-anchor to the video clock after an interruption",
         });
       };
-      pcmPlayer.onStartupSyncFailed = () => {
-        impl.onError?.({
-          category: "media",
-          detail: PlayerErrors.AUDIO_STARTUP_SYNC_FAILED,
-          info: "Software-decoded audio could not establish an initial shared timeline with video",
-        });
-      };
       pcmPlayerInitPromise = pcmPlayer.init();
       pcmPlayer.attachVideo(video);
     }
@@ -549,6 +542,10 @@ export function createMSEPlaybackController(
         destroyLiveSync();
         destroyLiveSync = null;
       }
+    },
+
+    setAudioChannelMode(mode: "stereo" | "mono") {
+      pcmPlayer?.setAudioChannelMode(mode);
     },
 
     seek(seconds: number) {

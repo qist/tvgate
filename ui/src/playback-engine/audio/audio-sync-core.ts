@@ -30,8 +30,6 @@
  *  5. **校准常量只标定、不参与收敛**。恒定偏差在 DOM 里测不到，只能标定。
  */
 
-const TAG = "AudioSyncCore";
-
 /** 已排程音频相对图时间的前瞻窗口（秒）默认值。窗口越小，纠偏响应越快。 */
 const DEFAULT_SCHEDULE_AHEAD_SEC = 0.6;
 /**
@@ -179,6 +177,8 @@ export interface AudioSyncCoreOptions {
   getRate?: () => number;
   /** 排程前瞻窗口（秒）；页面隐藏时可返回更大的值。 */
   getScheduleAheadSec?: () => number;
+  /** 页面是否隐藏：后台视频时钟不可信、video 可能被 UA 被动暂停，须按音频自由运行排程。 */
+  getPageHidden?: () => boolean;
   /** 未排程队列长度保险丝；<=0 表示不限制。 */
   maxQueueChunks?: number;
   /** 漂移触发硬重锚的阈值（秒）；<=0 关闭该策略。默认 `REANCHOR_DRIFT_SEC`。 */
@@ -201,6 +201,7 @@ export class AudioSyncCore {
   private readonly gain: GainNode;
   private readonly getRate: () => number;
   private readonly getScheduleAheadSec: () => number;
+  private readonly getPageHidden: () => boolean;
   private readonly maxQueueChunks: number;
   private readonly reanchorDriftSec: number;
   private readonly stretcherFactory: StretcherFactory | null;
@@ -264,6 +265,7 @@ export class AudioSyncCore {
     this.onLog = options.onLog ?? null;
     this.getRate = options.getRate ?? (() => 1);
     this.getScheduleAheadSec = options.getScheduleAheadSec ?? (() => DEFAULT_SCHEDULE_AHEAD_SEC);
+    this.getPageHidden = options.getPageHidden ?? (() => false);
     this.maxQueueChunks = options.maxQueueChunks ?? 0;
     this.reanchorDriftSec = options.reanchorDriftSec ?? REANCHOR_DRIFT_SEC;
     this.stretcherFactory = options.stretcherFactory ?? null;
@@ -367,11 +369,6 @@ export class AudioSyncCore {
     return this.stretcher !== null;
   }
 
-  /** 已排程的链是否还活着（用于判断是否需要重新锚定）。 */
-  hasChain(): boolean {
-    return this.spans.length > 0;
-  }
-
   stats(): AudioSyncStats {
     let queueSec = 0;
     for (const chunk of this.queue) queueSec += chunk.durationSec;
@@ -420,11 +417,6 @@ export class AudioSyncCore {
     this.pump();
   }
 
-  /** 丢弃尚未排程的全部样本（换台/seek 时用）。 */
-  flushQueue(): void {
-    this.queue = [];
-  }
-
   /**
    * 丢弃落在给定媒体时间之后的未排程 chunk（one-shot 重锚配套）。
    * worker 重钉时间轴后，旧轴已排队 chunk 的标签仍整体超前 Δ 秒；不裁剪的话
@@ -447,6 +439,26 @@ export class AudioSyncCore {
   }
 
   /**
+   * 下一个将被排程（被听到）的内容时间：伸缩级已产出未排程的输出头 → 已排程链的
+   * 内容游标（伸缩输出耗尽时，下一段输出从链尾内容位置继续）→ 未排程队列头（直通）。
+   * 链重启（重锚）后首先被排程的就是它，因此是"轴平移对齐"的正确测量点。
+   * **不能用 `queueHeadSec()`**：那是伸缩级的输入头，领先实际可听输出一个
+   * 预填/待排程量，用它测量会过量平移（实测回前台多移 1.5s，之后 49 个 chunk
+   * 被当陈旧丢弃）。
+   */
+  nextAudibleStreamSec(): number | null {
+    if (this.outSegs.length > 0) return this.outSegs[0].streamStart;
+    const lastSpan = this.spans[this.spans.length - 1];
+    if (lastSpan) return lastSpan.streamEnd;
+    return this.queueHeadSec();
+  }
+
+  /** 视频时钟是否最近仍在推进（前台对齐/漂移重锚的前置条件：绝不把音频对到冻结的时钟上）。 */
+  isVideoClockAdvancing(): boolean {
+    return performance.now() - this.lastClockChangeAtMs < CLOCK_STALE_MS;
+  }
+
+  /**
    * 把音频轴整体平移 `deltaSec`（负值 = 前移，用于消除"源轴超前"）：
    * 队列内 chunk、伸缩器已产出未排程的输出、伸缩器喂入游标与后续入队标签一并平移。
    * 内容一个字节都不丢、不重启链、无可闻接缝 —— 与 worker 重钉（会清队列+重置解码器、
@@ -466,11 +478,6 @@ export class AudioSyncCore {
     );
   }
 
-  /** 只丢已排程的链，保留队列（暂停/恢复、时间轴微调时用）。 */
-  stopChain(): void {
-    this.stopSpans();
-  }
-
   /** 丢链 + 丢队列（seek/换台/时间轴重钉时用）。 */
   resetChain(): void {
     this.stopSpans();
@@ -484,16 +491,6 @@ export class AudioSyncCore {
     // `videoClock − lastAnchorClockSec` 为负，锚定会被一直挡住直到播放头重新
     // 越过旧锚点（实测隐患：向后跳 60s 就等于静音 60s）。
     this.lastAnchorClockSec = this.video.currentTime;
-  }
-
-  /**
-   * 队列中最后一段的结束时间；队列为空时返回 null。
-   * 供上层做"源时间轴跳变"判定：只有队列非空时才比对，队列空了就自动放过，
-   * 这样一次异常跳变不会把后续所有样本都误判成跳变（自愈）。
-   */
-  lastQueuedEndSec(): number | null {
-    const last = this.queue[this.queue.length - 1];
-    return last ? last.timeSec + last.durationSec : null;
   }
 
   /**
@@ -538,9 +535,12 @@ export class AudioSyncCore {
   pump(): void {
     const ctx = this.ctx;
     if (this.destroyed || ctx.state !== "running") return;
+    const isHidden = this.getPageHidden();
     // 视频还没开始播（尚未点播放/暂停中）：此刻 video.currentTime 不能作为时间基准，
     // 排出去的音频会在视频一动时变成固定错位。等视频真的在走再排。
-    if (this.video.paused) return;
+    // 后台例外：UA 会暂停 video（软解源无音轨被判无音频），此时音频必须 free-run，
+    // 否则 pump 永久不排程 → 切后台立即静音（v3.2.1 后台语义）。
+    if (this.video.paused && !isHidden) return;
 
     // 不变量 2：视频时钟是否真的在推进。刚起播 / MSE 还在缓冲时 paused 已为 false，
     // 但 currentTime 停在原地（甚至只在起点附近微跳）；据此锚定会把"音频跑在静止画面
@@ -574,10 +574,14 @@ export class AudioSyncCore {
       if (!seg) break;
 
       const visible = this.visibleVideoTime();
-      // 内容要以"视频速率"追上屏上帧：所需 ctx 时间 = 内容差 / 视频速率。
-      // videoRate == 1 时与旧式 (T − visible) 完全等价。
-      const desired =
-        ctx.currentTime + (seg.streamStart - visible) / videoRate - this.getOutputLatencySec() + this.calibrationSec;
+      // 后台 free-run：没有"屏幕帧时刻"可对齐（video 停住/被 UA 暂停），音频必须
+      // 立即续播（内容时间轴自由推进），不能按 (head−visible) 锚定——那会让 desired
+      // 随 head 一路前移、触发排程门 → blocked → 周期 rebase 平移大轴，回前台
+      // 残留错位（实测 rebase −10s 后回前台 drift=128ms）。回前台由 visibility 恢复
+      // 做一次硬 reanchor 对齐视频。
+      const desired = isHidden
+        ? ctx.currentTime + SCHEDULE_EPSILON_SEC
+        : ctx.currentTime + (seg.streamStart - visible) / videoRate - this.getOutputLatencySec() + this.calibrationSec;
 
       // 视频时钟停住（缓冲/不连续）时，desired 会随源时间轴一路前移：此时宁可不排程、
       // 等播放头追上来，也不要让排程链跑到未来几秒去。
@@ -594,7 +598,10 @@ export class AudioSyncCore {
       let chainRestart = false;
       if (this.nextStartTime <= ctx.currentTime + SCHEDULE_EPSILON_SEC) {
         // 链已断（首次排程 / 重锚 / underrun）：按视频时钟硬锚定。
-        if (!clockReady) break;
+        // 后台例外：视频时钟被 UA 节流/停住（软解源无音轨），clockReady 永不满足，
+        // 不重排 → 永久静音。free-run 语义：允许按队列头时间续排，超前部分由
+        // 排程门（放大到 6s）→ onSchedulingBlocked → maybeRebaseAxis 周期回收。
+        if (!clockReady && !isHidden) break;
         const hadChain = this.nextStartTime > 0;
         if (hadChain) this.underruns++;
         start = Math.max(desired, ctx.currentTime + SCHEDULE_EPSILON_SEC);
@@ -1001,6 +1008,3 @@ export class AudioSyncCore {
     this.onLog?.(message);
   }
 }
-
-/** 供上层日志使用。 */
-export const AUDIO_SYNC_TAG = TAG;

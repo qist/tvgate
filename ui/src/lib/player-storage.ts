@@ -56,6 +56,11 @@ export const [getPictureEnhancement, savePictureEnhancement] = createStore("tvga
 );
 export const [getVolume, saveVolume] = createStore("tvgate-player-volume", 1);
 export const [getMuted, saveMuted] = createStore("tvgate-player-muted", false);
+/** 软解音频声道模式：mono = 左右合成单声道（分离声道源手机端可听到两边内容）。 */
+export const [getAudioChannelMode, saveAudioChannelMode] = createStore<"stereo" | "mono">(
+  "tvgate-player-audio-channel-mode",
+  "stereo",
+);
 
 // Per-channel source index uses a JSON object map, so it needs custom logic
 const [getSourceIndexMap, saveSourceIndexMap] = createStore<Record<string, number>>(

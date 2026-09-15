@@ -19,7 +19,7 @@ import {
 } from "./h265";
 import H265Parser from "./h265-parser";
 import { MP3Data } from "./mp3";
-import { type MPEG4AudioObjectTypes, type MPEG4SamplingFrequencyIndex } from "./mpeg4-audio";
+import { type MPEG4AudioObjectTypes, type MPEG4SamplingFrequencyIndex, MPEG4SamplingFrequencies } from "./mpeg4-audio";
 import {
   PAT,
   PESData,
@@ -229,6 +229,9 @@ class TSDemuxer {
   private loas_previous_frame: LOASAACFrame | null = null;
 
   private soft_decode_audio_codec_: "mp2" | "ac3" | "eac3" | null = null;
+  /** 软解 muxed 音频时，是否让 remuxer 附带一条静音 AAC 假音轨（video 有音轨 → 后台不冻结）。
+   *  主 muxed TS 路径由 pipeline 置 true；独立音频 rendition 路径保持 false（走 softwareDecodeOnly）。 */
+  public silentAudioTrack = false;
   private audio_drop_until_sync_ = false;
   private drop_video_until_keyframe_ = true;
 
@@ -281,6 +284,7 @@ class TSDemuxer {
     this.onRawAudioData = null;
     this.ac3SoftDecode = false;
     this.soft_decode_audio_codec_ = null;
+    this.silentAudioTrack = false;
   }
 
   public resetSegmentBoundary(probe_data?: TSProbeResult, options: TSSegmentBoundaryOptions = {}): void {
@@ -2299,20 +2303,45 @@ class TSDemuxer {
       Log.v(this.TAG, `Generated first AudioSpecificConfig for mimeType: ${meta.codec}`);
     }
 
-    // 软解音频（MP2 / AC-3 / E-AC-3）不进 MSE：音频由 PCMAudioPlayer 走 WebAudio 输出，
-    // 所以 MSE 侧**不再需要**那条静音 AAC 假音轨（ac3-lab 就是纯视频轨）。这里仍把真实
-    // 元数据发出去（pipeline 用它出编码/声道信息），但打上 softwareDecodeOnly 标记：
-    // remuxer 收到后不创建 audio SourceBuffer、也不生成静音帧。
+    // 软解音频（MP2 / AC-3 / E-AC-3）：真实声音走 WebAudio（PCMAudioPlayer）。MSE 侧
+    // 按路径分两种处理：
+    //  - 主 muxed TS（silentAudioTrack）：下发 fake AAC-LC metadata（silentAudioMode），
+    //    remuxer 建一条静音 AAC 假音轨 —— video 有音轨，后台标签页不被 UA 暂停
+    //    （无音轨视频后台冻结，是后台音画不同步的根因）。真实编码经 sourceCodec 透传。
+    //  - 独立音频 rendition：softwareDecodeOnly，不进 MSE（纯 PCM 时间轴）。
+    // 这里仍把真实元数据发出去（pipeline 用它出编码/声道信息）。
     if (this.soft_decode_audio_codec_) {
-      const softMeta: Record<string, unknown> = {
-        ...meta,
-        type: "audio",
-        id: this.audio_track_.id,
-        duration: 0,
-        sourceCodec: this.soft_decode_audio_codec_,
-        softwareDecodeOnly: true,
-      };
-      this.onTrackMetadata?.("audio", softMeta);
+      if (this.silentAudioTrack) {
+        const sampleRate = (meta.audioSampleRate as number) || 48000;
+        const channelCount = (meta.channelCount as number) || 2;
+        const si = MPEG4SamplingFrequencies.indexOf(sampleRate);
+        const freqIdx = si !== -1 ? si : 3; // default 48kHz
+        const silentMeta: Record<string, unknown> = {
+          type: "audio",
+          id: this.audio_track_.id,
+          timescale: 1000,
+          duration: 0,
+          audioSampleRate: sampleRate,
+          channelCount: channelCount,
+          codec: "mp4a.40.2",
+          originalCodec: "mp4a.40.2",
+          sourceCodec: this.soft_decode_audio_codec_,
+          config: [(2 << 3) | ((freqIdx & 0x0f) >>> 1), ((freqIdx & 0x01) << 7) | ((channelCount & 0x0f) << 3)],
+          refSampleDuration: (1024 / sampleRate) * 1000,
+          silentAudioMode: true,
+        };
+        this.onTrackMetadata?.("audio", silentMeta);
+      } else {
+        const softMeta: Record<string, unknown> = {
+          ...meta,
+          type: "audio",
+          id: this.audio_track_.id,
+          duration: 0,
+          sourceCodec: this.soft_decode_audio_codec_,
+          softwareDecodeOnly: true,
+        };
+        this.onTrackMetadata?.("audio", softMeta);
+      }
     } else {
       this.onTrackMetadata?.("audio", meta);
     }

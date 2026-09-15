@@ -35,12 +35,14 @@ import type { Channel, EPGProgram, M3UMetadata, Source } from "../types/player";
 import { isLGWebOS } from "../lib/platform";
 import { findDeepLinkChannel, syncChannelDeepLink } from "../lib/player-deep-link";
 import {
+  getAudioChannelMode,
   getAutoDeinterlace,
   getLastChannelId,
   getLastSourceIndex,
   getPictureEnhancement,
   getSeamlessSwitch,
   getSidebarVisible,
+  saveAudioChannelMode,
   saveAutoDeinterlace,
   saveLastChannelId,
   saveLastSourceIndex,
@@ -119,13 +121,16 @@ function parseEpgTime(value: string): Date | null {
     return d;
   }
 
-  if (/^\d{8}(?:\d{2}){0,3}$/.test(s)) {
-    const y = Number(s.slice(0, 4));
-    const mo = Number(s.slice(4, 6)) - 1;
-    const da = Number(s.slice(6, 8));
-    const h = Number(s.slice(8, 10) || 0);
-    const mi = Number(s.slice(10, 12) || 0);
-    const se = Number(s.slice(12, 14) || 0);
+  if (/^\d{8}(?:\d{2}){0,3}(?:\s*[+-]\d{2}:?\d{2})?$/.test(s)) {
+    // 容忍 XMLTV 标准时间戳的时区后缀（如 "20260915000000 +0800"）：
+    // 数字部分取前 8~14 位，后缀忽略（按本地时区解释，与服务端语义一致）。
+    const num = s.slice(0, 14);
+    const y = Number(num.slice(0, 4));
+    const mo = Number(num.slice(4, 6)) - 1;
+    const da = Number(num.slice(6, 8));
+    const h = Number(num.slice(8, 10) || 0);
+    const mi = Number(num.slice(10, 12) || 0);
+    const se = Number(num.slice(12, 14) || 0);
     return new Date(y, mo, da, h, mi, se);
   }
 
@@ -288,6 +293,7 @@ function PlayerPage() {
   const [pictureEnhancement, setPictureEnhancement] = useState(() =>
     supportsMSEVideoProcessing ? getPictureEnhancement() : false,
   );
+  const [audioChannelMode, setAudioChannelModeState] = useState<"stereo" | "mono">(() => getAudioChannelMode());
   const pageContainerRef = useRef<HTMLDivElement>(null);
   const isSimulatedFullscreenRef = useRef(false);
 
@@ -744,6 +750,11 @@ function PlayerPage() {
     savePictureEnhancement(enabled);
   }, []);
 
+  const handleAudioChannelModeChange = useCallback((mode: "stereo" | "mono") => {
+    setAudioChannelModeState(mode);
+    saveAudioChannelMode(mode);
+  }, []);
+
   const handleToggleSidebar = useCallback(() => {
     setShowSidebar((prev) => {
       const newState = !prev;
@@ -773,6 +784,8 @@ function PlayerPage() {
           onAutoDeinterlaceChange={handleAutoDeinterlaceChange}
           pictureEnhancement={pictureEnhancement}
           onPictureEnhancementChange={handlePictureEnhancementChange}
+          audioChannelMode={audioChannelMode}
+          onAudioChannelModeChange={handleAudioChannelModeChange}
           showVideoProcessing={supportsMSEVideoProcessing}
         />
       </div>
@@ -786,12 +799,14 @@ function PlayerPage() {
     seamlessSwitch,
     autoDeinterlace,
     pictureEnhancement,
+    audioChannelMode,
     handleThemeChange,
     handleAppearanceChange,
     setPictureInPictureMode,
     handleSeamlessSwitchChange,
     handleAutoDeinterlaceChange,
     handlePictureEnhancementChange,
+    handleAudioChannelModeChange,
     supportsSeamlessSwitch,
     supportsDocumentPictureInPicture,
     supportsMSEVideoProcessing,
@@ -832,6 +847,7 @@ function PlayerPage() {
                 seamlessSwitch={supportsSeamlessSwitch && seamlessSwitch}
                 autoDeinterlace={autoDeinterlace}
                 pictureEnhancement={pictureEnhancement}
+                audioChannelMode={audioChannelMode}
                 pictureInPictureMode={pictureInPictureMode}
                 activeSourceIndex={activeSourceIndex}
                 onSourceChange={handleSourceChange}

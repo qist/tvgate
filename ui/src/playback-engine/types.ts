@@ -87,6 +87,8 @@ export interface PlaybackBackend {
   pause(): void;
   setVolume(volume: number): void;
   setMuted(muted: boolean): void;
+  /** Switch soft-decoded audio channel mode at runtime (mono = L/R mixed). */
+  setAudioChannelMode(mode: "stereo" | "mono"): void;
   getState(): PlaybackBackendState;
   seek(seconds: number): void;
   /** Seek to session live edge (continuous since tune-in) minus target latency, as MSE seconds. */
@@ -118,6 +120,8 @@ export interface MSEPlaybackController {
   goLive(targetMseSeconds: number): void;
   setLiveSessionAnchor(anchor: LiveSessionAnchor): void;
   setLiveSync(enabled: boolean): void;
+  /** Switch soft-decoded audio channel mode at runtime (mono = L/R mixed). */
+  setAudioChannelMode(mode: "stereo" | "mono"): void;
   /** Release the video element (stop feeding, detach source) but keep reusable resources (worker) alive. */
   suspend(): void;
   destroy(): void;

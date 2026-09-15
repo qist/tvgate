@@ -35,6 +35,8 @@ interface SettingsDropdownProps {
   onAutoDeinterlaceChange: (enabled: boolean) => void;
   pictureEnhancement: boolean;
   onPictureEnhancementChange: (enabled: boolean) => void;
+  audioChannelMode: "stereo" | "mono";
+  onAudioChannelModeChange: (mode: "stereo" | "mono") => void;
   showSeamlessSwitch?: boolean;
   showPictureInPictureMode?: boolean;
   showVideoProcessing?: boolean;
@@ -95,6 +97,8 @@ function SettingsDropdownComponent({
   onAutoDeinterlaceChange,
   pictureEnhancement,
   onPictureEnhancementChange,
+  audioChannelMode,
+  onAudioChannelModeChange,
   showSeamlessSwitch = true,
   showPictureInPictureMode = false,
   showVideoProcessing = true,
@@ -202,6 +206,22 @@ function SettingsDropdownComponent({
                 switchClassName={SETTING_SWITCH_CONTROL_CLASS}
               />
             )}
+
+            {/* Soft-decoded audio channel mode (MP2/AC-3): mono mixes L/R so
+                separated-channel sources are audible on devices that only
+                output one side (e.g. phones). */}
+            <div className="space-y-2.5 border-violet-900/10 border-t pt-2.5 dark:border-violet-100/10">
+              <SettingSelect
+                id="player-settings-audio-channel-mode"
+                label={t("audioChannelMode")}
+                value={audioChannelMode}
+                options={[
+                  { value: "stereo", label: t("audioChannelModeStereo") },
+                  { value: "mono", label: t("audioChannelModeMono") },
+                ]}
+                onChange={onAudioChannelModeChange}
+              />
+            </div>
 
             {/* Video processing group: deinterlace + picture enhancement.
                 Both only take effect for 1080p-and-below content, so the

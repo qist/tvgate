@@ -138,6 +138,9 @@ const base: TranslationDict = {
   resolutionLimitHint: "Options below apply to ≤1080p only",
   deinterlace: "Auto Deinterlacing",
   pictureEnhancement: "Video Enhancement",
+  audioChannelMode: "Audio channels",
+  audioChannelModeStereo: "Stereo",
+  audioChannelModeMono: "Mono mix",
 };
 
 const zhHans: TranslationDict = {
@@ -275,6 +278,9 @@ const zhHans: TranslationDict = {
   resolutionLimitHint: "以下选项仅 1080p 及以下生效",
   deinterlace: "自动反交错",
   pictureEnhancement: "画质增强",
+  audioChannelMode: "声道",
+  audioChannelModeStereo: "立体声",
+  audioChannelModeMono: "单声道合成",
 };
 
 // 繁體中文（偏好香港用語）
@@ -413,6 +419,9 @@ const zhHant: TranslationDict = {
   resolutionLimitHint: "以下選項僅 1080p 及以下生效",
   deinterlace: "自動反交錯",
   pictureEnhancement: "畫質增強",
+  audioChannelMode: "聲道",
+  audioChannelModeStereo: "立體聲",
+  audioChannelModeMono: "單聲道合成",
 };
 
 export const translations: Record<Locale, TranslationDict> = {

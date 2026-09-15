@@ -157,6 +157,27 @@
 11、部署脚本对齐 — start.sh / TVGate.service 二进制名与本地路径统一为
     build/TVGate-linux-64，编译产物路径与启动路径一致（无需手动搬移）
 12、依赖更新 — golang.org/x/crypto 0.56.0、golang.org/x/sync 0.23.0、gortsplib 5.6.5
+13、EPG 频道名归一化模糊匹配 — 订阅频道名与 XMLTV 频道名存在质量后缀变体
+   （"北京卫视4K" vs "北京卫视"）时自动匹配节目单：小写、去常见分隔符
+   （-/_/./空格/·）并剥掉质量后缀（4k/uhd/fhd/hd/高清/超清/标清，可叠加）；
+   多个 display-name 归一化冲突的键不建（宁缺毋滥，避免误匹配无关频道）
+14、软解音频声道模式 — 播放器设置新增"声道"下拉（立体声 / 单声道合成）：
+   分离声道源（如 L=对白 R=音乐）在手机端只能听到单边时，单声道合成 (L+R)/2
+   让两边内容都能听到；对 MP2/AC-3/E-AC-3 软解生效，AAC 浏览器原生解码不受
+   影响；选择 localStorage 持久化，运行时可随时切换
+15、恢复软解源静音 AAC 假音轨 — 主 muxed TS 软解（MP2/AC-3/E-AC-3）时 MSE 附带
+   一条按视频时间戳同步生成的静音 AAC 音轨，让 video 元素"有音轨"——后台标签页
+   不再被判"无音频播放"而冻结，根治后台音画不同步（真实声音仍走 WebAudio 软解，
+   静音轨仅用于维持 video 播放）
+16、回前台音视频对齐重构 — 后台 free-run 期间音频实时推进、video 被 UA 节流时，
+   回前台改为"视频追音频"：等待视频时钟确认恢复推进后把 video seek 到"正在听到
+   的位置"，且保留音频链不清不重锚（消除切前台静音窗口、音频内容不重播、
+   live-sync 不再 1.2x 加速追赶）；轴平移改用"即将播出的内容"（伸缩输出头→链尾
+   内容游标→队头）精确测量，消除队头测量导致的过冲丢块
+17、音频同步内核清理 — 删除无调用方的死代码（PCMAudioPlayer.stop、
+   onStartupSyncFailed、AudioSyncCore.flushQueue/stopChain/lastQueuedEndSec/
+   hasChain/AUDIO_SYNC_TAG、PlayerErrors.AUDIO_STARTUP_SYNC_FAILED），
+   PLAYER-SYNC-REDESIGN 接口清单同步更新
 ```
 
 ### v3.2.1

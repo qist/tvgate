@@ -76,6 +76,7 @@ interface VideoPlayerProps {
   seamlessSwitch?: boolean;
   autoDeinterlace?: boolean;
   pictureEnhancement?: boolean;
+  audioChannelMode?: "stereo" | "mono";
   pictureInPictureMode?: PictureInPictureMode;
   activeSourceIndex?: number;
   onSourceChange?: (index: number) => void;
@@ -276,6 +277,7 @@ function VideoPlayerComponent({
   seamlessSwitch = true,
   autoDeinterlace = true,
   pictureEnhancement = true,
+  audioChannelMode = "stereo",
   pictureInPictureMode = "document",
   activeSourceIndex = 0,
   onSourceChange,
@@ -856,6 +858,7 @@ function VideoPlayerComponent({
     const p = createPlaybackBackend(video, {
       wasmDecoders: { mp2: avcodecWasmUrl, ac3: avcodecWasmUrl },
       ...(Number.isFinite(avOffsetMs) ? { audioSyncOffsetMs: avOffsetMs } : {}),
+      audioChannelMode,
       renderCanvas: slotCanvasRef(slotId).current ?? undefined,
       autoDeinterlace,
       pictureEnhancement,
@@ -1176,6 +1179,11 @@ function VideoPlayerComponent({
     slotAPlayerRef.current?.setPictureEnhancement(pictureEnhancement);
     slotBPlayerRef.current?.setPictureEnhancement(pictureEnhancement);
   }, [pictureEnhancement]);
+
+  useEffect(() => {
+    slotAPlayerRef.current?.setAudioChannelMode(audioChannelMode);
+    slotBPlayerRef.current?.setAudioChannelMode(audioChannelMode);
+  }, [audioChannelMode]);
 
   useEffect(() => {
     if (!seamlessSwitch) {

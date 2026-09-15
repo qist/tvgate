@@ -34,6 +34,15 @@ export interface PlayerConfig {
   /** Min backward buffer to retain after cleanup in seconds. @default 120 */
   bufferCleanupMinBackward: number;
 
+  /**
+   * 软解音频（MP2 / AC-3 / E-AC-3）声道输出模式：
+   *   - "stereo"（默认）：解码结果原样透传（左右声道各自独立）。
+   *   - "mono"：左右声道合成单声道 (L+R)/2。部分源左右声道内容分离
+   *     （如 L=对白 R=音乐），手机端只能听到单边 → 合成后两边内容都能听到。
+   * @default "stereo"
+   */
+  audioChannelMode: "stereo" | "mono";
+
   /** Referrer policy for HTTP requests. Applied to each segment's `referrerPolicy` field. */
   referrerPolicy: string | undefined;
   /** Additional headers to add to HTTP requests. */
@@ -63,6 +72,8 @@ export const defaultConfig: PlayerConfig = {
 
   bufferCleanupMaxBackward: 180,
   bufferCleanupMinBackward: 120,
+
+  audioChannelMode: "stereo",
 
   referrerPolicy: undefined,
   headers: undefined,

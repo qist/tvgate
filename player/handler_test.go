@@ -123,7 +123,7 @@ func TestM3UEmbeddedEpgConfigFallback(t *testing.T) {
 	setTestPlayer(config.PlayerConfig{
 		Enabled:      true,
 		Subscription: up.URL,
-		Epg:          "https://e.erw.cc/e.xml.gz",
+		Epg:          "https://example.com/e.xml.gz",
 	}, t)
 	mgr := NewManager(&config.Cfg.Player)
 	mgr.httpClient = up.Client()
@@ -137,7 +137,7 @@ func TestM3UEmbeddedEpgConfigFallback(t *testing.T) {
 	urls := append([]string(nil), mgr.epgURLs...)
 	bak := mgr.epgBak
 	mgr.mu.RUnlock()
-	if len(urls) != 2 || urls[0] != inner || urls[1] != "https://e.erw.cc/e.xml.gz" {
+	if len(urls) != 2 || urls[0] != inner || urls[1] != "https://example.com/e.xml.gz" {
 		t.Fatalf("xml 源链组装不对: %v", urls)
 	}
 	if bak.Type != "none" {
@@ -152,7 +152,7 @@ func TestM3UEmbeddedEpgConfigFallback(t *testing.T) {
 	tpl := config.PlayerConfig{
 		Enabled:      true,
 		Subscription: up2.URL,
-		Epg:          "https://e.erw.cc/e.xml.gz",
+		Epg:          "https://example.com/e.xml.gz",
 	}
 	setTestPlayer(tpl, t)
 	mgr2 := NewManager(&config.Cfg.Player)
@@ -162,7 +162,7 @@ func TestM3UEmbeddedEpgConfigFallback(t *testing.T) {
 	bak2 := mgr2.epgBak
 	urls2 := append([]string(nil), mgr2.epgURLs...)
 	mgr2.mu.RUnlock()
-	if bak2.Type != "xml" || bak2.URL != "https://e.erw.cc/e.xml.gz" {
+	if bak2.Type != "xml" || bak2.URL != "https://example.com/e.xml.gz" {
 		t.Fatalf("template 主源 + 配置固定 XMLTV 应设 epgBak: %+v", bak2)
 	}
 	if len(urls2) != 0 {
@@ -408,6 +408,37 @@ func TestEPGBankNameLookup(t *testing.T) {
 	// 非匹配日期 → 空
 	if ps2 := b.Programs("CCTV10", "20260101"); len(ps2) != 0 {
 		t.Fatalf("日期过滤不对: %+v", ps2)
+	}
+}
+
+// TestEPGNormalizedNameLookup 归一化匹配：订阅频道名带质量后缀（4K/HD/高清）
+// 而 EPG display-name 不带时，应能按归一化别名查中；归一化冲突时宁缺毋滥。
+func TestEPGNormalizedNameLookup(t *testing.T) {
+	b := NewEPGBank()
+	xm := `<tv>` +
+		`<channel id="bjws"><display-name lang="zh">北京卫视</display-name></channel>` +
+		`<channel id="cctv4k"><display-name lang="zh">CCTV4K</display-name></channel>` +
+		`<channel id="cctv4"><display-name lang="zh">CCTV4</display-name></channel>` +
+		`<channel id="cctv"><display-name lang="zh">CCTV</display-name></channel>` +
+		`<programme channel="bjws" start="20260901120000 +0800" stop="20260901130000 +0800"><title>北京新闻</title></programme>` +
+		`<programme channel="cctv4k" start="20260901120000 +0800" stop="20260901130000 +0800"><title>4K 频道节目</title></programme>` +
+		`</tv>`
+	b.parse([]byte(xm))
+
+	// 北京卫视4K（订阅带后缀）→ 匹配 EPG "北京卫视"
+	ps := b.Programs("北京卫视4K", "20260901")
+	if len(ps) != 1 || ps[0].Title != "北京新闻" {
+		t.Fatalf("4K 后缀变体未匹配: %+v", ps)
+	}
+	// CCTV4K 精确匹配（EPG 里是独立频道），不被 4K 剥离逻辑破坏
+	ps2 := b.Programs("CCTV4K", "20260901")
+	if len(ps2) != 1 || ps2[0].Title != "4K 频道节目" {
+		t.Fatalf("CCTV4K 精确匹配不对: %+v", ps2)
+	}
+	// CCTV4K 与 CCTV 归一化冲突（均剥 4k → cctv）：宁缺毋滥，归一化键被删。
+	// "CCTV4KHD" 归一到 "cctv"，应查空而非误匹配到 CCTV4K 或 CCTV。
+	if ps3 := b.Programs("CCTV4KHD", "20260901"); len(ps3) != 0 {
+		t.Fatalf("归一化冲突应宁缺毋滥: %+v", ps3)
 	}
 }
 

@@ -49,10 +49,12 @@ const REBASE_MIN_INTERVAL_MS = 10_000;
 const MIN_AHEAD_SEC_FOR_REBASE = 2.0;
 /** blocked 期间视频时钟至少推进这么多秒才判定为"音频超前"（排除缓冲停摆误判）。 */
 const MIN_VIDEO_ADVANCE_SEC = 0.5;
+/** 回前台对齐的最小领先量（秒）：低于它音频链继续播即可，无需干预。 */
+const FOREGROUND_ALIGN_MIN_LEAD_SEC = 0.5;
 
 /**
  * 软解音频输出器。对外接口保持稳定（init / attachVideo / detachVideo / feed / play /
- * pause / stop / setVolume / setMuted / destroy / confirmVideoAnchor + 4 个回调）。
+ * pause / setVolume / setMuted / destroy / confirmVideoAnchor + 3 个回调）。
  */
 export class PCMAudioPlayer {
   private readonly config: PlayerConfig;
@@ -69,6 +71,11 @@ export class PCMAudioPlayer {
   private core: AudioSyncCore | null = null;
 
   private pageHidden = false;
+  /** 进入后台后是否已尝试恢复被 UA 暂停的 video（只对抗一次，避免 play-pause 循环）。 */
+  private backgroundResumeAttempted = false;
+
+  /** 声道输出模式：mono = 左右合成 (L+R)/2（解决分离声道源手机端只能听到单边）。 */
+  private channelMode: "stereo" | "mono" = "stereo";
 
   // ---- 排不出去时的兜底 ----
   private blockedSince: number | null = null;
@@ -84,6 +91,15 @@ export class PCMAudioPlayer {
   /** re-anchor 后、新时间轴样本到达前：丢弃仍落在旧未来时间轴的残留 PCM（worker 异步回传竞态）。 */
   private awaitingNewTimeline = false;
   private reanchorAtSec = 0;
+
+  /**
+   * 回前台对齐挂起标志：visibilitychange 时刻视频时钟往往仍冻结（后台被 UA 节流、
+   * 回前台后 MSE 还在缓冲），立即对齐会把音频钉在过时位置。推迟到 controlTick
+   * 确认时钟恢复推进后执行（alignToVideoOnReturn）。
+   */
+  private pendingForegroundAlign = false;
+  /** 回前台对齐 seek：seek 后 seeking/seeked 事件不清链不重锚（音频正在播 heard 内容）。 */
+  private aligningSeek = false;
 
   // ---- 诊断 ----
   private driftLogCounter = 0;
@@ -104,13 +120,12 @@ export class PCMAudioPlayer {
   onSuspended: (() => void) | null = null;
   /** Audio could not re-anchor to a live video clock (session should be rebuilt). */
   onResyncFailed: (() => void) | null = null;
-  /** Audio never established a usable timeline with the video. */
-  onStartupSyncFailed: (() => void) | null = null;
   /** worker 汇报的软解 PCM 链路丢弃计数（最新快照）。 */
   onAudioStats: ((stats: PcmWorkerStats) => void) | null = null;
 
   constructor(config: PlayerConfig) {
     this.config = config;
+    this.channelMode = config.audioChannelMode ?? "stereo";
   }
 
   // ==================== Lifecycle ====================
@@ -155,7 +170,10 @@ export class PCMAudioPlayer {
         this.core?.pump();
         return;
       }
-      // suspended / interrupted：丢掉已排好的链与队列，避免恢复时把陈旧音频一次性喷出来。
+      // suspended / interrupted：前台丢链避免恢复时喷陈旧音频。后台的系统级
+      // suspend（页面隐藏时 UA 直接挂起 WebAudio）必须保留链与队列——否则
+      // 切后台立即静音，回前台也无队列可恢复（free-run 语义，见上）。
+      if (document.visibilityState === "hidden") return;
       this.core?.resetChain();
     };
 
@@ -178,7 +196,13 @@ export class PCMAudioPlayer {
           destination: this.gainNode ?? undefined,
           onLog: (message) => Log.v(TAG, message),
           getRate: () => this.videoRate(),
-          getScheduleAheadSec: () => (this.pageHidden ? BACKGROUND_SCHEDULE_AHEAD_SEC : SCHEDULE_AHEAD_SEC),
+          // 页面隐藏**或回前台恢复待执行**时保持 free-run：回前台瞬间视频时钟仍冻结
+          // （后台被 UA 节流/解码未恢复），若立即切回"按视频时钟排程"，排程门会把
+          // 音频压死（等待期静音）。pendingForegroundAlign 期间沿用后台窗口，直到
+          // alignToVideoOnReturn 在时钟恢复推进后对齐一次到位。
+          getScheduleAheadSec: () =>
+            this.pageHidden || this.pendingForegroundAlign ? BACKGROUND_SCHEDULE_AHEAD_SEC : SCHEDULE_AHEAD_SEC,
+          getPageHidden: () => this.pageHidden || this.pendingForegroundAlign,
           maxQueueChunks: MAX_QUEUE_CHUNKS,
           // 恢复 lab 同款的"漂移硬重锚"作为兜底网（内核默认 REANCHOR_DRIFT_SEC）。
           // 之前为躲 AC-3 PTS 重叠接缝而关掉它，但关掉后音频轴在 overlap 自纠时
@@ -199,7 +223,23 @@ export class PCMAudioPlayer {
     this.boundOnVideoSeeking = () => this.onVideoSeeking();
     this.boundOnVideoSeeked = () => this.onVideoSeeked();
     this.boundOnVideoPlay = () => void this.play();
-    this.boundOnVideoPause = () => this.pause();
+    this.boundOnVideoPause = () => {
+      // 后台浏览器会暂停 video（软解源 video 无音轨，被判"无音频播放"），该暂停是
+      // 被动节流而非用户意图——若照常 pause() 会 resetChain + suspend AudioContext，
+      // 软解音频立即静音（AAC 走 video 内嵌音频不受影响）。后台必须忽略，让音频
+      // free-run，回前台由 visibilitychange 恢复。
+      if (document.visibilityState === "hidden") {
+        // 顺带把被 UA 暂停的 video 恢复播放：让 currentTime 继续推进，音视频时间轴
+        // 保持同步，否则音频 free-run 分离（drift 持续增大），回前台大幅错位/倒退。
+        // 只对抗一次，避免与 UA 策略形成 play-pause 循环。
+        if (!this.backgroundResumeAttempted && this.videoElement) {
+          this.backgroundResumeAttempted = true;
+          this.videoElement.play().catch(() => {});
+        }
+        return;
+      }
+      this.pause();
+    };
     this.boundOnVolumeChange = () => {
       this.setVolume(video.volume);
       this.setMuted(video.muted);
@@ -256,6 +296,15 @@ export class PCMAudioPlayer {
 
   // ==================== Input ====================
 
+  /** 运行时切换声道输出模式（stereo/mono），立即作用于后续 feed 的 PCM。 */
+  setAudioChannelMode(mode: "stereo" | "mono"): void {
+    if (this.channelMode === mode) {
+      return;
+    }
+    this.channelMode = mode;
+    Log.i(TAG, `audio channel mode -> ${mode}`);
+  }
+
   /** `time` is normalized to the MSE timeline (same space as video.currentTime). */
   feed(samples: Float32Array, channels: number, sampleRate: number, time: number): void {
     const core = this.core;
@@ -279,6 +328,17 @@ export class PCMAudioPlayer {
       return;
     }
 
+    // 单声道合成：左右声道相加取均值。分离声道源（L=对白 R=音乐）手机端只
+    // 输出单边时，合成后两边内容都能听到。合成输出 1ch，下游内核/WSOLA 均支持。
+    if (this.channelMode === "mono" && channels === 2) {
+      const mono = new Float32Array(samplesPerChannel);
+      for (let i = 0; i < samplesPerChannel; i++) {
+        mono[i] = (samples[i * 2] + samples[i * 2 + 1]) * 0.5;
+      }
+      samples = mono;
+      channels = 1;
+    }
+
     const duration = samplesPerChannel / sampleRate;
 
     // 跳变检测 / 丢陈旧头 / 队列保险丝都由 AudioSyncCore.enqueue() 内部统一处理。
@@ -296,9 +356,17 @@ export class PCMAudioPlayer {
       return;
     }
 
-    // 排程 + "漂移过大就硬重锚"的纠偏策略都在内核里（与 ac3-lab 共用同一份）。
-    // 页面隐藏时定时器被节流、排程窗口放大，此时不重锚。
-    core.controlTick(!this.pageHidden);
+    // 漂移硬重锚要求视频时钟确实在推进：视频冻结期间（后台 free-run、回前台恢复
+    // 待执行、解冻前）drift 会随音频链推进自然拉大，此时重锚只会砍掉后台预排的
+    // 音频链（最多 6s 前瞻），等视频恢复推进后由下面的回前台对齐统一处理。
+    core.controlTick(!this.pageHidden && !this.pendingForegroundAlign && core.isVideoClockAdvancing());
+
+    // 回前台对齐：推迟到确认视频时钟恢复推进。等待期音频保持 free-run 继续播，
+    // 覆盖视频解冻的间隙；时钟一走就执行对齐（seek video 到 heard，音频不中断）。
+    if (this.pendingForegroundAlign && !this.pageHidden && core.isVideoClockAdvancing()) {
+      this.pendingForegroundAlign = false;
+      this.alignToVideoOnReturn();
+    }
 
     if (++this.driftLogCounter >= DRIFT_LOG_TICKS) {
       this.driftLogCounter = 0;
@@ -383,22 +451,36 @@ export class PCMAudioPlayer {
   private maybeRebaseAxis(blockedMs: number, now: number): void {
     const core = this.core;
     if (!core || this.awaitingNewTimeline) return;
+    // 回前台对齐挂起期间不 rebase：此时偏差大是后台节流导致，正确动作是
+    // alignToVideoOnReturn 把 video seek 到 heard（画面追音频）；rebase 抢跑会
+    // 让声音倒退重播已听内容，与 seek 对齐打架。
+    if (this.pageHidden || this.pendingForegroundAlign) return;
     if (now - this.lastRebaseAt < REBASE_MIN_INTERVAL_MS) return;
     if (blockedMs < SUSTAINED_BLOCK_MS) return;
     const video = this.videoElement;
     if (!video) return;
-    if (!this.pageHidden && video.currentTime - this.blockedVideoClockSec < MIN_VIDEO_ADVANCE_SEC) return;
-    const headSec = core.queueHeadSec();
-    if (headSec === null) return;
-    const leadSec = headSec - core.visibleVideoTime();
+    if (video.currentTime - this.blockedVideoClockSec < MIN_VIDEO_ADVANCE_SEC) return;
+    const nextSec = core.nextAudibleStreamSec();
+    if (nextSec === null) return;
+    const leadSec = nextSec - core.visibleVideoTime();
     if (leadSec < MIN_AHEAD_SEC_FOR_REBASE) return;
 
-    this.lastRebaseAt = now;
+    this.applyRebase(leadSec, `blocked ${Math.round(blockedMs)}ms with video advancing`);
+  }
+
+  /**
+   * 应用一次轴平移自愈（排程 blocked 级联触发，可能的后台 free-run 兜底）。
+   * 记录 10s 冷却（防连续平移）并递增诊断计数。
+   */
+  private applyRebase(leadSec: number, reason: string): void {
+    const core = this.core;
+    if (!core) return;
+    this.lastRebaseAt = performance.now();
     this.rebaseCount++;
     Log.w(
       TAG,
-      `Audio lead ${leadSec.toFixed(1)}s sustained ${Math.round(blockedMs)}ms with video advancing → ` +
-        `rebase axis by ${(-leadSec).toFixed(2)}s (rebase ${this.rebaseCount})`,
+      `rebase axis (${reason}): audio lead ${leadSec.toFixed(2)}s → shift ${(-leadSec).toFixed(2)}s ` +
+        `(rebase ${this.rebaseCount})`,
     );
     core.rebaseAxis(-leadSec);
   }
@@ -411,21 +493,96 @@ export class PCMAudioPlayer {
 
   private onVisibilityChange(): void {
     this.pageHidden = document.visibilityState === "hidden";
-    if (!this.pageHidden) {
-      // 回前台自愈：后台切台会新建 AudioContext，而 hidden 下 UA 直接给 suspended；
-      // 若当时的 resume() 失败被吞（见 notifyAutoplayBlocked），视频仍在播而音频永远
-      // 静音 —— 且没人会再调 play()。回前台时补一次恢复。
-      if (this.context && this.context.state !== "running") {
-        void this.play();
-        return;
+    if (this.pageHidden) {
+      // 进入后台：恢复被 UA 暂停的无音轨 video，保持 currentTime 推进（音视频同步）。
+      this.backgroundResumeAttempted = false;
+      this.pendingForegroundAlign = false;
+      if (this.videoElement?.paused) {
+        this.videoElement.play().catch(() => {});
       }
-      this.core?.pump();
+      return;
     }
+    // 回前台自愈：后台切台会新建 AudioContext，而 hidden 下 UA 直接给 suspended；
+    // 若当时的 resume() 失败被吞（见 notifyAutoplayBlocked），视频仍在播而音频永远
+    // 静音 —— 且没人会再调 play()。回前台时补一次恢复。
+    if (this.context && this.context.state !== "running") {
+      void this.play();
+      return;
+    }
+    // 后台 free-run 期间音频轴与视频轴已解耦。此处**不对齐也不 reanchor**：
+    // visibilitychange 时刻视频时钟通常仍冻结，立即 reanchor 会清掉正在播的音频链
+    // （切前台静音），立即 rebase 会让声音倒退重播已听内容。挂起对齐，由
+    // controlTick 在时钟恢复推进后执行（alignToVideoOnReturn：视频追音频）。
+    this.pendingForegroundAlign = true;
+  }
+
+  /**
+   * 回前台恢复音视频同步（在视频时钟恢复推进后由 controlTick 调用）。
+   *
+   * 后台 free-run 期间音频按 ctx 时钟**实时**推进（紧跟直播边缘），而 video 被 UA
+   * 节流/冻结（4K HEVC 后台解码受限），回前台时音频轴领先视频轴（实测 2.9s）。
+   * 恢复方向是**视频追音频**且**不打断正在播的音频链**：
+   *  - 把 video seek 到"正在听到的位置"（heard）——音频继续无缝播放（链保留，
+   *    不清不重锚），画面跳到后台听到的内容处，live-sync 的 latency 随即恢复正常
+   *    （不再 1.2x 加速追）；
+   *  - 反向 rebase 音频轴会让声音倒退重播已听内容（实测 rebase −2.9s 后内容错位）。
+   */
+  private alignToVideoOnReturn(): void {
+    const core = this.core;
+    if (!core || this.awaitingNewTimeline) return;
+    const video = this.videoElement;
+    if (!video) return;
+    const heard = core.heardStreamTime();
+    if (heard === null) {
+      // 无正在播的音频链（异常：后台链已断）：按当前视频位置重建即可。
+      core.reanchor("visibility-visible", true);
+      return;
+    }
+    const visible = core.visibleVideoTime();
+    const leadSec = heard - visible;
+    // 小偏差：音频链继续播，pump 链式延续即可自然同步，无需干预。
+    if (leadSec < FOREGROUND_ALIGN_MIN_LEAD_SEC) return;
+
+    if (this.isSeekableTarget(video, heard)) {
+      // 目标在 MSE 缓冲内：画面跳到正在听到的位置。seek 的 seeking/seeked 事件
+      // 在 aligningSeek 下保留音频链（见 onVideoSeeking/onVideoSeeked），音频
+      // 无缝继续，视频从 heard 显示 → 立即同步、无静音、无加速。
+      this.aligningSeek = true;
+      Log.w(
+        TAG,
+        `Foreground return: video at ${visible.toFixed(2)}s, audio heard at ${heard.toFixed(2)}s → seek video forward ${leadSec.toFixed(2)}s`,
+      );
+      video.currentTime = heard;
+      return;
+    }
+
+    // 缓冲未覆盖 heard（极端：缓冲被清理/重建）：退回"音频轴对齐视频轴"兜底，
+    // 至少不静音；内容重播是缓冲不足时的次优解。平移量以"即将播出的内容"为准。
+    const nextSec = core.nextAudibleStreamSec();
+    const rebaseLead = nextSec === null ? leadSec : nextSec - visible;
+    this.applyRebase(rebaseLead, "foreground return (no buffer)");
+    core.reanchor("visibility-visible", true);
+  }
+
+  /** 目标媒体时间是否落在当前 MSE 缓冲内（留 100ms 余量，避免 seek 到边界卡 waiting）。 */
+  private isSeekableTarget(video: HTMLVideoElement, targetSec: number): boolean {
+    const buffered = video.buffered;
+    for (let i = 0; i < buffered.length; i++) {
+      if (targetSec >= buffered.start(i) && targetSec <= buffered.end(i) - 0.1) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // ==================== Video events ====================
 
   private onVideoSeeking(): void {
+    // 回前台对齐 seek：音频链正在播 heard 内容，视频跳到 heard 后音频无需重建。
+    if (this.aligningSeek) {
+      this.aligningSeek = false;
+      return;
+    }
     // 新位置的时间轴与旧 PCM 无关，直接丢链丢队列，等 seek 后的样本重新落点。
     this.awaitingNewTimeline = true;
     this.reanchorAtSec = this.core?.visibleVideoTime() ?? 0;
@@ -434,6 +591,13 @@ export class PCMAudioPlayer {
   }
 
   private onVideoSeeked(): void {
+    // 回前台对齐 seek：链保留，仅把"旧时间轴残留"丢弃闸复位到新位置。
+    if (this.aligningSeek) {
+      this.aligningSeek = false;
+      this.awaitingNewTimeline = true;
+      this.reanchorAtSec = this.core?.visibleVideoTime() ?? 0;
+      return;
+    }
     // seek 后新 PCM 到达前的时间轴是空的；强制 reanchor 确保新样本按当前位置落点。
     this.awaitingNewTimeline = true;
     this.reanchorAtSec = this.core?.visibleVideoTime() ?? 0;
@@ -488,12 +652,6 @@ export class PCMAudioPlayer {
     if (this.audioElement) {
       this.audioElement.pause();
     }
-  }
-
-  stop(): void {
-    this.core?.resetChain();
-    this.driftLogCounter = 0;
-    this.clearSchedulingBlocked();
   }
 
   /** worker 后续 PCM 已重钉到新时间轴：此时队列已在请求处清空，只需在新锚点排程。 */

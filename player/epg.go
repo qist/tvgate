@@ -51,9 +51,12 @@ type xmltv struct {
 // 的源生效；主源（如 M3U 内嵌 x-tvg-url）失效时自动用回退源（如配置 player.epg
 // 的固定 XMLTV/gz），全部失败则保留上一次成功的数据。
 type EPGBank struct {
-	mu       sync.RWMutex
-	byChan   map[string][]Program
-	byName   map[string]string // display-name -> channel id
+	mu     sync.RWMutex
+	byChan map[string][]Program
+	byName map[string]string // display-name -> channel id
+	// normName display-name 归一化别名（去分隔符/质量后缀 4k/hd/高清 等），
+	// 供订阅频道名与 EPG 频道名存在后缀变体时模糊匹配；冲突的归一化键不建。
+	normName map[string]string
 	loaded   bool
 	interval time.Duration
 	stop     chan struct{}
@@ -73,9 +76,10 @@ type EPGBank struct {
 
 func NewEPGBank() *EPGBank {
 	return &EPGBank{
-		byChan: make(map[string][]Program),
-		byName: make(map[string]string),
-		stop:   make(chan struct{}),
+		byChan:   make(map[string][]Program),
+		byName:   make(map[string]string),
+		normName: make(map[string]string),
+		stop:     make(chan struct{}),
 	}
 }
 
@@ -225,11 +229,23 @@ func (b *EPGBank) parse(body []byte) bool {
 	}
 	// 频道 display-name -> id 别名，便于按频道名查询（txt 订阅无 tvg-id）
 	byName := make(map[string]string, len(tv.Channels))
+	normName := make(map[string]string)
 	for _, c := range tv.Channels {
 		name := strings.TrimSpace(c.Name)
 		if name != "" {
 			byName[name] = c.ID
 			byName[c.ID] = c.ID
+		}
+		// 归一化别名（去分隔符/质量后缀 4k/hd/高清 等）。订阅频道名与 EPG
+		// 频道名存在后缀变体（如 "北京卫视4K" vs "北京卫视"）时按此匹配。
+		// 多个 display-name 归一化相同（如 "CCTV4K" 与 "CCTV4"）→ 不建别名，
+		// 宁缺毋滥，避免错误匹配到无关频道。
+		if n := normalizeChannelName(name); n != "" {
+			if prev, dup := normName[n]; dup && prev != c.ID {
+				delete(normName, n)
+			} else {
+				normName[n] = c.ID
+			}
 		}
 	}
 	if len(byChan) == 0 {
@@ -245,6 +261,7 @@ func (b *EPGBank) parse(body []byte) bool {
 	b.mu.Lock()
 	b.byChan = byChan
 	b.byName = byName
+	b.normName = normName
 	b.loaded = true
 	b.mu.Unlock()
 	return true
@@ -265,6 +282,12 @@ func (b *EPGBank) Programs(chKey, date string) []Program {
 	list := b.byChan[chKey]
 	if len(list) == 0 {
 		if id := b.byName[chKey]; id != "" {
+			list = b.byChan[id]
+		}
+	}
+	if len(list) == 0 {
+		// 归一化模糊匹配：订阅频道名与 EPG 频道名的后缀变体（4K/HD/高清 等）
+		if id := b.normName[normalizeChannelName(chKey)]; id != "" {
 			list = b.byChan[id]
 		}
 	}
@@ -296,4 +319,24 @@ func datePrefix(date string) string {
 		return date[:8]
 	}
 	return ""
+}
+
+// normalizeChannelName 归一化频道名用于模糊匹配：小写、去常见分隔符
+// （空格/-/_/./·），并剥掉质量后缀变体（4k/hd/高清/超清/fhd/uhd/标清，
+// 可叠加）。"北京卫视4K" → "北京卫视"、"CCTV-1 高清" → "cctv1"。
+func normalizeChannelName(name string) string {
+	n := strings.ToLower(strings.TrimSpace(name))
+	n = strings.NewReplacer("-", "", "_", "", " ", "", ".", "", "·", "").Replace(n)
+	for {
+		orig := n
+		for _, suf := range []string{"4k", "uhd", "fhd", "hd", "高清", "超清", "标清"} {
+			if strings.HasSuffix(n, suf) {
+				n = strings.TrimSuffix(n, suf)
+				break
+			}
+		}
+		if n == orig {
+			return n
+		}
+	}
 }

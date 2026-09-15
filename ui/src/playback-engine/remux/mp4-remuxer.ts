@@ -8,6 +8,7 @@ import {
   normalizeMediaBatchLimit,
 } from "./media-batch";
 import MP4 from "./mp4-generator";
+import AAC from "./aac-silent";
 
 interface AudioSample {
   unit: Uint8Array;
@@ -144,6 +145,12 @@ class MP4Remuxer {
   private _audioMeta: TrackMetadata | null;
   private _videoMeta: TrackMetadata | null;
 
+  /** 软解（MP2/AC-3/E-AC-3）时给 MSE 附带一条静音 AAC 音轨：让 video 有音轨，
+   *  后台标签页不被 UA 暂停（无音轨视频在后台被判"无音频播放"而冻结）。 */
+  private _silentAudioMode: boolean;
+  private _silentAudioLastDts: number | undefined;
+  private _silentAudioDurationResidual: number;
+
   private _onInitSegment: InitSegmentCallback | null;
   private _onMediaSegment: MediaSegmentCallback | null;
 
@@ -183,6 +190,10 @@ class MP4Remuxer {
     this._audioMeta = null;
     this._videoMeta = null;
 
+    this._silentAudioMode = false;
+    this._silentAudioLastDts = undefined;
+    this._silentAudioDurationResidual = 0;
+
     this._onInitSegment = null;
     this._onMediaSegment = null;
 
@@ -221,6 +232,9 @@ class MP4Remuxer {
     this._videoInitialOutputTime = undefined;
     this._audioMeta = null;
     this._videoMeta = null;
+    this._silentAudioMode = false;
+    this._silentAudioLastDts = undefined;
+    this._silentAudioDurationResidual = 0;
     this._onInitSegment = null;
     this._onMediaSegment = null;
   }
@@ -258,6 +272,8 @@ class MP4Remuxer {
 
   insertDiscontinuity(): void {
     this._audioNextDts = this._videoNextDts = undefined;
+    this._silentAudioLastDts = undefined;
+    this._silentAudioDurationResidual = 0;
     this._videoPresentationOffset = undefined;
     // Resume quickly after a seek or stream discontinuity instead of waiting
     // for a complete steady-state batch.
@@ -432,23 +448,40 @@ class MP4Remuxer {
     let codec = metadata.codec;
 
     if (type === "audio") {
-      // 软解音频（MP2 / AC-3 / E-AC-3）：不进 MSE，由 PCMAudioPlayer 用 WebAudio 输出。
-      // MSE 保持**纯视频轨**（与 ac3-lab 一致）：不建 audio SourceBuffer、不生成静音帧。
-      if ((metadata as { softwareDecodeOnly?: boolean }).softwareDecodeOnly === true) {
+      const audioMetadata = metadata as TrackMetadata & { silentAudioMode?: boolean; softwareDecodeOnly?: boolean };
+      if (audioMetadata.silentAudioMode === true) {
+        // 软解（MP2/AC-3/E-AC-3）路径：真实声音走 WebAudio（PCMAudioPlayer），MSE 里
+        // 只建一条**静音 AAC 假音轨**——让 video 有音轨，后台标签页不被 UA 暂停
+        // （无音轨视频在后台被判"无音频播放"而冻结，这是后台音画不同步的根因）。
+        // 静音帧按视频时间戳生成（见 _generateSilentAudio），时间轴与视频一致。
+        const previousSampleRate = this._audioMeta?.audioSampleRate;
+        this._audioMeta = metadata;
+        this._audioMediaSegmentEmitted = false;
+        this._silentAudioMode = true;
+        if (metadata.audioSampleRate !== previousSampleRate) {
+          this._silentAudioDurationResidual = 0;
+        }
+        // 静音轨一律按 mp4a.40.2 容器出 init（metadata.codec 已是 fake AAC-LC）。
+        metabox = MP4.generateInitSegment(metadata as unknown as import("./mp4-generator").MP4Meta);
+      } else if (audioMetadata.softwareDecodeOnly === true) {
+        // 独立音频 rendition 软解：不进 MSE（走独立 audio remuxer 的 PCM 时间轴）。
         this._audioMeta = null;
         this._audioMediaSegmentEmitted = false;
+        this._silentAudioMode = false;
         return;
-      }
-      this._audioMeta = metadata;
-      this._audioMediaSegmentEmitted = false;
-      if (metadata.codec === "mp3" && this._mp3UseMpegAudio) {
-        // 'audio/mpeg' for MP3 audio track
-        container = "mpeg";
-        codec = "";
-        metabox = new Uint8Array();
       } else {
-        // 'audio/mp4, codecs="codec"'
-        metabox = MP4.generateInitSegment(metadata as unknown as import("./mp4-generator").MP4Meta);
+        this._audioMeta = metadata;
+        this._audioMediaSegmentEmitted = false;
+        this._silentAudioMode = false;
+        if (metadata.codec === "mp3" && this._mp3UseMpegAudio) {
+          // 'audio/mpeg' for MP3 audio track
+          container = "mpeg";
+          codec = "";
+          metabox = new Uint8Array();
+        } else {
+          // 'audio/mp4, codecs="codec"'
+          metabox = MP4.generateInitSegment(metadata as unknown as import("./mp4-generator").MP4Meta);
+        }
       }
     } else if (type === "video") {
       this._videoMeta = metadata;
@@ -987,6 +1020,118 @@ class MP4Remuxer {
       data: segment.buffer,
     });
     this._videoMediaSegmentEmitted = true;
+    // 软解静音轨：每个视频段同步补一段按视频时间戳的静音 AAC，保证 MSE 音轨
+    // 与视频时间轴一致地持续推进（video 有音轨 → 后台不冻结）。
+    if (this._silentAudioMode) {
+      this._generateSilentAudio(mp4Samples);
+    }
+  }
+
+  /**
+   * Generate silent AAC audio frames synced to video timestamps.
+   * Used in soft decode mode to keep MSE audio track active (prevents
+   * Safari/Chrome from pausing video when tab goes to background).
+   */
+  private _generateSilentAudio(videoSamples: MP4Sample[]): void {
+    if (!this._audioMeta || !this._onMediaSegment) {
+      return;
+    }
+
+    const sampleRate = (this._audioMeta.audioSampleRate as number) || 48000;
+    const channelCount = (this._audioMeta.channelCount as number) || 2;
+    const frameDuration = (1024 / sampleRate) * 1000; // AAC frame duration in ms
+
+    const silentUnit = AAC.getSilentFrame(this._audioMeta.originalCodec ?? "mp4a.40.2", channelCount);
+    if (!silentUnit) {
+      return;
+    }
+
+    if (videoSamples.length === 0) {
+      return;
+    }
+
+    const videoEndDts = videoSamples[videoSamples.length - 1].dts + videoSamples[videoSamples.length - 1].duration;
+
+    if (this._silentAudioLastDts === undefined) {
+      this._silentAudioLastDts = videoSamples[0].dts;
+    }
+
+    const samples: Array<{ unit: Uint8Array; dts: number; pts: number; duration: number }> = [];
+    let mdatBytes = 0;
+    let dts = this._silentAudioLastDts;
+
+    while (dts < videoEndDts) {
+      const durationWithResidual = frameDuration + this._silentAudioDurationResidual;
+      const duration = Math.max(1, Math.round(durationWithResidual));
+      this._silentAudioDurationResidual = durationWithResidual - duration;
+      samples.push({ unit: silentUnit, dts, pts: dts, duration });
+      mdatBytes += silentUnit.byteLength;
+      dts += duration;
+    }
+
+    this._silentAudioLastDts = dts;
+
+    if (samples.length === 0) {
+      return;
+    }
+
+    // Build mp4 samples
+    const mp4Samples: MP4Sample[] = [];
+    for (let i = 0; i < samples.length; i++) {
+      const sample = samples[i];
+
+      mp4Samples.push({
+        dts: sample.dts,
+        pts: sample.pts,
+        cts: 0,
+        unit: sample.unit,
+        size: sample.unit.byteLength,
+        duration: sample.duration,
+        originalDts: sample.dts,
+        flags: {
+          isLeading: 0,
+          dependsOn: 1,
+          isDependedOn: 0,
+          hasRedundancy: 0,
+        },
+      });
+    }
+
+    // Generate mdat
+    const mdatbox = new Uint8Array(mdatBytes + 8);
+    const mdatView = new DataView(mdatbox.buffer);
+    mdatView.setUint32(0, mdatBytes + 8);
+    mdatbox.set(new Uint8Array(MP4.types.mdat), 4);
+
+    let offset = 8;
+    for (const s of mp4Samples) {
+      mdatbox.set(s.unit as Uint8Array, offset);
+      offset += s.size;
+    }
+
+    // Generate moof
+    const firstDts = mp4Samples[0].dts;
+    const sequenceNumber = ((this._audioMeta as Record<string, unknown>).sequenceNumber as number) ?? 0;
+    (this._audioMeta as Record<string, unknown>).sequenceNumber = sequenceNumber + 1;
+
+    const silentTrack = {
+      type: "audio",
+      id: this._audioMeta.id ?? 2,
+      sequenceNumber,
+      samples: mp4Samples,
+    };
+    const moofbox = MP4.moof(silentTrack as unknown as import("./mp4-generator").MP4Track, firstDts);
+
+    // Emit media segment
+    const segment = new Uint8Array(moofbox.byteLength + mdatbox.byteLength);
+    segment.set(moofbox, 0);
+    segment.set(mdatbox, moofbox.byteLength);
+
+    this._onMediaSegment("audio", {
+      type: "audio",
+      data: segment.buffer,
+    });
+    this._audioMediaSegmentEmitted = true;
   }
 
   private _mergeBoxes(moof: Uint8Array, mdat: Uint8Array): Uint8Array {
