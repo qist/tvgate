@@ -583,30 +583,28 @@ export class PCMAudioPlayer {
   // ==================== Video events ====================
 
   private onVideoSeeking(): void {
-    // 回前台对齐 seek：**保留 aligningSeek 标志**（onVideoSeeked 还要靠它判断），
-    // 不清链不重锚 —— 音频链正在播 heard 内容，视频跳到 heard 后音频无需重建。
+    // 回前台对齐 seek：**保留 aligningSeek 标志**（onVideoSeeked 还要靠它判断）。
     if (this.aligningSeek) {
       return;
     }
-    // 新位置的时间轴与旧 PCM 无关，直接丢链丢队列，等 seek 后的样本重新落点。
-    this.awaitingNewTimeline = true;
-    this.reanchorAtSec = this.core?.visibleVideoTime() ?? 0;
-    this.core?.resetChain();
+    // seek 期间只停掉已排的链、**不清队列** —— 音频数据保留，等 seeked 后从缓冲里按
+    // 新位置续排（v3.2.1 的 resyncFromBuffer 语义）。旧实现在这里 resetChain() 清空
+    // 整个队列，是"seek 后 queue=0、静音"的一半原因（另一半是 awaitNewTimeline 丢弃窗）。
+    this.core?.stopChain();
     this.driftLogCounter = 0;
   }
 
   private onVideoSeeked(): void {
-    // 回前台对齐 seek：链保留，仅把"旧时间轴残留"丢弃闸复位到新位置。
     if (this.aligningSeek) {
+      // 回前台对齐 seek：音频链正在播 heard 内容，视频跳到 heard，无需重建。
       this.aligningSeek = false;
-      this.awaitingNewTimeline = true;
-      this.reanchorAtSec = this.core?.visibleVideoTime() ?? 0;
       return;
     }
-    // seek 后新 PCM 到达前的时间轴是空的；强制 reanchor 确保新样本按当前位置落点。
-    this.awaitingNewTimeline = true;
-    this.reanchorAtSec = this.core?.visibleVideoTime() ?? 0;
-    this.core?.reanchor("video-seeked", true);
+    // 按新位置从缓冲重建链：只丢"已被 seek 越过"的前缀，其余全部保留；缓冲未覆盖时
+    // 等新喂入的数据即可（自身不会静音）。不再开启 awaitNewTimeline 丢弃窗 ——
+    // 旧实现会把 seek 后到达的 PCM 全丢成 queue=0，直到视频时钟重新越过锚点。
+    const target = this.core?.visibleVideoTime() ?? 0;
+    this.core?.resyncFromBuffer(target);
   }
 
   /**

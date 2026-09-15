@@ -489,6 +489,53 @@ export class AudioSyncCore {
     this.lastAnchorClockSec = this.video.currentTime;
   }
 
+  /** 仅停掉已排程的链，保留队列数据（seek 期间用；与 `resetChain()` 的区别是**不丢队列**）。 */
+  stopChain(): void {
+    this.stopSpans();
+  }
+
+  /**
+   * seek 专用：按目标媒体时间从**现有队列**重建调度链（v3.2.1 resyncFromBuffer 语义）。
+   *
+   * 与 `resetChain()` 的关键区别：**不清队列** —— seek 只改变播放位置，已解码的音频数据
+   * 依然有效，队列里覆盖目标时间的内容从目标位置重新起锚即可。当前架构此前的 seek 路径是
+   * `resetChain()`（清队列）+ `awaitingNewTimeline`（丢弃到达的 PCM），两边一夹就把 seek
+   * 后的音频全部丢掉 → `queue=0`、静音。
+   *
+   * 同步策略（逐帧源 PTS 直标 + 锚定/漂移环）不受本方法影响：它只决定"从队列的哪一块起排"，
+   * 锚定仍按 `ctx + (head − visible)` 落点，不存在回退到 v3.2.1 缓冲时间轴的问题。
+   *
+   * @returns false = 队列里没有覆盖目标时间的内容（等新喂入的数据即可，自身不会静音）。
+   */
+  resyncFromBuffer(targetSec: number): boolean {
+    if (this.destroyed) return false;
+    this.stopSpans();
+    // 丢掉"整块都已越过目标时间"的前缀（seek 后不会再播的内容），其余全部保留。
+    let drop = 0;
+    while (drop < this.queue.length && this.queue[drop].timeSec + this.queue[drop].durationSec < targetSec) {
+      drop++;
+    }
+    if (drop > 0) {
+      this.queue.splice(0, drop);
+      this.droppedStale += drop;
+    }
+    const head = this.queue[0];
+    if (!head) {
+      this.log(`resyncFromBuffer(${targetSec.toFixed(2)}s): nothing buffered at/after target; waiting for new data`);
+      return false;
+    }
+    // 缓冲头领先目标过多：不能拿它硬排（desired 会超排程门 → blocked）。保留数据等对齐内容。
+    if (head.timeSec > targetSec + MAX_SCHEDULE_LEAD_SEC) {
+      this.log(
+        `resyncFromBuffer(${targetSec.toFixed(2)}s): buffered head (${head.timeSec.toFixed(2)}s) leads target too far; waiting for aligned data`,
+      );
+      return false;
+    }
+    this.log(`resyncFromBuffer(${targetSec.toFixed(2)}s): chain rebuilt (dropped ${drop}, queue=${this.queue.length})`);
+    this.pump();
+    return true;
+  }
+
   /**
    * 控制环（上层每 ~250ms 调一次）：排程 + 漂移过大时硬重锚。
    *
