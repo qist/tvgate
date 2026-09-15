@@ -98,9 +98,15 @@ const AUDIO_PTS_DIVERGENCE_LOG_MS = 30;
 
 /**
  * 缓冲领先上限（ms）：视频 MSE 缓冲末尾领先播放头超过该值就不继续解/解码下一段，
- * 对齐 ac3-lab 的 `waitForBufferRoom`（10s），防止软解 PCM 时间轴跑到播放头前太远。
+ * 防止软解 PCM 时间轴跑到播放头前太远（对齐 ac3-lab 的 `waitForBufferRoom`）。
+ *
+ * 10s → 30s：对付分片稀疏/抖动的卡源。源分片到达慢时（实测整点 404 后每 10s 一片），
+ * 10s 缓冲只够 1 片，播放头追到缓冲末尾即卡；30s 缓冲可撑 3 片，断流/慢源时卡顿频率
+ * 降约 3 倍。音画同步不受影响（音频始终锚定 video.currentTime；live-sync 变速由 WSOLA
+ * 保音高跟随），观看延迟仍由 live-sync 控制在 target/max 之间，此处只是"已拉未播"的
+ * 缓冲深度；代价为内存（4K ~20Mbps 下 30s ≈ 75MB）与断流恢复后的追延迟时间。
  */
-const LEAD_BUFFER_AHEAD_MS = 10000;
+const LEAD_BUFFER_AHEAD_MS = 30000;
 /** 超过该时长没收到主线程 clock 消息（如切后台心跳被节流）则视为时基过期，停止等待避免死锁。 */
 const CLOCK_STALE_MS = 1000;
 /** 缓冲领先门轮询间隔（ms）。 */
