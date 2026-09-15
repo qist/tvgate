@@ -31,7 +31,8 @@
       ├─[分叉A] pipeline.ts:516  hls / continuous-live-ts / static-ts-list
       ├─[分叉B] pipeline.ts:835  TSDemuxer / FLVDemuxer / fMP4 直通
       └─ audio ─┬─[分叉C] AAC/MP3         → MP4Remuxer → MSE audio SourceBuffer
-                └─        MP2/AC-3/E-AC-3 → onRawAudioData
+                └─        MP2/AC-3/E-AC-3 → demuxer 按帧头切帧 + 逐帧 PTS 外推
+                          → onRawAudioData（每帧带自己的 PTS）
                           → worker-audio-decoder → avcodec-audio-decoder(WASM)
                           → pcm-audio-data → playback-controller.ts:169
                           → audio/pcm-audio-player.ts (WebAudio)
@@ -423,6 +424,8 @@ nextStartTime = X + s
 4. **拆分 `wasmDecoders.ac3` 为按 codec 的独立开关** —— 现在两个 codec 共用一个开关，导致"只支持 ac-3、不支持 ec-3"的设备拿不到硬解收益。拆开后可放宽 §3.2 的第 3 条硬规则。
 5. ~~**WSOLA 接线方式（阶段 2 待做）**~~ —— ✅ 内核接线、lab 验收、**播放器启用**均已完成（见 §3.4 与 §4 阶段 2）。剩余：**真机听感验证**（无变调/无金属声，无头环境测不了）+ 真机长跑。`source.playbackRate` 路径保留为伸缩器不可用时的回退。
 6. **环路增益/死区是否要在真机上重标** —— `RATIO_DRIFT_GAIN=0.6` 是按"死时间 ≈ 0.9s"推的；真机上排程前瞻与设备输出延迟不同，若观察到 drift 小幅周期振荡，先降增益（0.6 → 0.4）再看。
+7. **"音频落后画面"方向没有自愈（待定方案）** —— 内核只有 `maybeRebaseAxis`（音频**超前** → 轴平移）；音频**落后**时 `enqueue()`/`reanchor()` 的 stale floor 与 `pump()` 的 `skipFrames >= seg.frames` 会持续把块丢成 `droppedStale`（现场日志 `anchor: dropped N fully-stale PCM chunk(s)`）。而 PCM 轴（`MP4Remuxer._pcmTiming`）是"内容连续 bridging"语义：**上流任何丢音频都只让轴变短、不留缺口**，重钉只发生在音频轨不连续或重建 remuxer 时 —— 于是"视频轴跑到 PCM 轴前面"（视频侧 TS 不连续、seek、分片跳过）可能永久静音。待定方案：① 主线程→worker 新增"重钉 PCM 轴"指令（等价 `_resetPcmOnAudioDiscontinuity`；**不能**用 `rebaseAxis` 反向平移——那会把过期内容按新标签播出去）；② 上流丢音频的闸门（等视频关键帧、`Unknown pts`、坏帧跳过）显式记账并在恢复时请求重钉。
+8. **`PCMAudioPlayer.awaitingNewTimeline` 是无超时的粘滞闸（待加兜底）** —— 只有收到 `time <= reanchorAtSec + 2.5s` 的块才解除；视频 seek/时间轴重锚后若新 PCM 标签整体落在窗口之外，`feed()` 会**永久静默丢弃**（连 `anchor:` 日志都不会出现，现场特征就是"日志停在 `reanchor(video-seeked): queue=0` 之后"）。建议加超时 + 丢弃计数告警，并让 `onVideoSeeked` 不再无条件 `force` 重锚（落点相近时保留在播的链）。
 
 ---
 
@@ -458,3 +461,4 @@ WSOLA_RATIO_SLEW_PER_SEC        = 0.02   // ratio 变化率上限
 | 2026-09-13 | v2 +阶段2测 | 完成阶段 2 第一步实测：`wsola_position()` 语义成立（`position = out×ratio`），**无 `L_w` 需标定**，改用它做权威内容游标；实测固有代价 = 52ms 预填 / ~48ms 尾部丢弃（无 flush 接口）/ ratio==1 逐位直通。§3.4 记账公式与约束表据此改写，§7 遗留项 1 关闭 |
 | 2026-09-13 | v2 +阶段2线 | 内核加入可注入伸缩级（`stretcherFactory`，默认关闭）；排程改为统一"段"模型；缺口补静音保证 position↔媒体时间线性。lab 挂上伸缩器并通过验收（1.2x 追速 drift 收敛到 8~16ms、ratio→1.200、0 丢帧 0 重锚）。实测发现并修正环路极限环：`K×θ<1` + 20ms 死区（K 1.5→0.6）。§3.4 增环路整定表 |
 | 2026-09-13 | v2 +阶段2启 | 播放器启用 WSOLA：注入 `stretcherFactory`，`source.playbackRate` 跟随退居回退路径。修正"创建失败即永久静音"的实现缺陷（`stretchEnabled` 同时判断"已注入"与"未失败"）；伸缩级可用时变速不再硬重锚。lab 回归复验通过（ratio→1.200、0 丢帧 0 重锚）。待真机听感 + 长跑 |
+| 2026-09-15 | v2 +软解统一 | MP2 由"整段转发 PES payload"（WASM parser 切帧 + PES PTS 打标签）改为与 AC-3/E-AC-3 **同模型**：demuxer 按 MPEG 帧头切帧（`demux/mp3.ts` 新增 `MP3Parser`，覆盖 MPEG-1/2/2.5 × Layer I/II/III）+ 逐帧 PTS 外推 + 跨 PES carry + 坏帧跳过并推进 PTS。逐帧标签精度由 `samplesBeforeInput` 回退保证（WASM parser 的一帧延迟不改变帧起点）。三条软解路径在 demuxer → WASM → PCM 时间轴上行为一致 |

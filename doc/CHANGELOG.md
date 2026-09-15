@@ -117,13 +117,36 @@
 
 ## 服务端 (tvgate)
 
+### 未发布（player，待并入下个版本）
+
+```
+1、音频软解统一为「demuxer 逐帧切分 + 逐帧 PTS 外推」— MP2 原先整段转发 PES payload
+   （交给 WASM 侧 parser 切帧、用 PES PTS 打标签），现改为与 AC-3/E-AC-3 完全同模型：
+   帧长取自 MPEG 帧头（覆盖 MPEG-1/2/2.5 × Layer I/II/III），跨 PES 的半帧由 demuxer
+   carry 兜底，每帧带自己的 PTS 送 WASM；坏帧只跳该帧并照常推进 PTS，无 PTS 且无历史
+   时报错丢弃（不再用 0 污染音频时间轴）；元数据/audio init 段改由首个完整帧派发。
+   逐帧标签仍精确：WASM parser 的一帧延迟由 samplesBeforeInput 回退到帧起点。至此
+   MP2/AC-3/E-AC-3 三条软解路径在 demuxer → WASM → PCM 时间轴上行为一致
+2、修复源中断恢复后音频永久静音 — 上游分片 404/502 后视频 remuxer 会把源 PTS 跳变
+   bridge 到连续输出时间轴，而软解 PCM 标签直映射源 PTS，两边不同源导致 PCM 领先视频
+   数十秒 → 排程门压死 → queue=0 永久静音；音频轨不连续时把下一帧 PCM 钉到当前播放头，
+   之后按源 PTS 连续 bridging，与视频同轴
+3、回前台对齐 seek 后立即重建音频链 — 对齐 seek 处理延迟期间音频仍会继续超前，残留大
+   drift 会被下一 controlTick 的漂移重锚清链（queue=0 静音）；改为 seek 到"正在听到的
+   位置"后立即 trimFutureBeyond + reanchor，一次到位
+4、直播缓冲领先上限 10s → 30s — 分片到达慢（整点 404/502 后每 10s 一片）时 10s 只够
+   1 片，播放头追到缓冲末尾即卡；30s 可撑约 3 片，卡顿频率降约 3 倍（代价是内存与
+   断流恢复后的追延迟时间）
+```
+
 ### v3.2.2
 
 ```
 1、音频软解统一 FFmpeg avcodec WASM — 删除 minimp3(MP2)+ac3 双模块，改用单一
    avcodec_audio.wasm（libavcodec，me_* ABI），一套覆盖 MP2/MP3/AC-3/E-AC-3/AAC，
    内置 WSOLA 供主线程变速、info 上报 samplesBeforeInput 供 PTS 外推；AC-3/E-AC-3
-   软解路径与 MP2 方案一致整段转发 PES pts（不做帧级 PTS 纠正）
+   软解路径与 MP2 方案一致整段转发 PES pts（不做帧级 PTS 纠正；该"整段转发"模型已在
+   后续版本统一为「demuxer 逐帧切分 + 逐帧 PTS 外推」，见"未发布"条目 1）
 2、AC-3/E-AC-3 软解稳定性对齐 ac3-lab — 接通分离音轨（EXT-X-MEDIA）软解通路（此前
    onRawAudioData 未接线，AC-3 帧绕过软解导致 MSE 无声）；PCM 时间轴基座固定
    （setPcmSourceBase(0)），解除 WebKit 首帧 init gate 死锁；音频轴 blocked 自愈改为

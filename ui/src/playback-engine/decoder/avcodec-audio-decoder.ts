@@ -5,9 +5,12 @@
  * exported by the unified module — one binary covers MP2 / MP3 / AC-3 /
  * E-AC-3 / AAC (codec_id: 0=ac3 1=eac3 2=mp2 3=mp3 4=aac).
  *
- * Decodes whole PES payloads: the WASM side uses the codec's av_parser to cut
+ * Accepts arbitrary payloads: the WASM side uses the codec's av_parser to cut
  * complete frames and keeps trailing partial frames in an internal carry
- * buffer, so frames split across PES packets are handled transparently.
+ * buffer. Soft-decode callers (MP2 / AC-3 / E-AC-3) all pre-split frames in the
+ * demuxer and feed them **一帧一调**; a parser may hold the previous frame for
+ * one call (reported via `samplesBeforeInput`), which the pipeline subtracts
+ * from the payload PTS to keep per-frame labels exact.
  * Output is interleaved stereo float32 PCM (AC-3/E-AC-3 are downmixed to
  * stereo inside the decoder).
  */

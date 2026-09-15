@@ -48,7 +48,7 @@ export class WorkerAudioDecoder {
     }
   }
 
-  /** Decode all complete frames in a PES payload (partial frames are carried over). */
+  /** Decode a payload (soft-decode callers pre-split frames in the demuxer and feed one frame per call). */
   decode(data: Uint8Array): DecodedAudio | null {
     let decodedAudio: DecodedAudio | null = null;
     try {
