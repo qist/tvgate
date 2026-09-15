@@ -60,6 +60,12 @@ type TSDemuxerOptions = {
 };
 type TSSegmentBoundaryOptions = {
   resetAudioParserState?: boolean;
+  /**
+   * 保留跨段解封装状态（PES/section 队列与 PID 连续性计数器）。与 ac3-lab 的连续
+   * 喂流一致：跨段拆开的 PES/帧得以补完而非丢弃，源在段边界的不连续（CC 跳变/
+   * 不连续指示）照常被检测。默认 false（清空，旧行为）。
+   */
+  preserveStreamState?: boolean;
 };
 type AACAudioMetadata = {
   codec: "aac";
@@ -283,9 +289,11 @@ class TSDemuxer {
       this.sync_offset_ = probe_data.sync_offset as number;
     }
     this.first_parse_ = true;
-    this.pes_slice_queues_ = {};
-    this.section_slice_queues_ = {};
-    this.continuity_counters_ = {};
+    if (options.preserveStreamState !== true) {
+      this.pes_slice_queues_ = {};
+      this.section_slice_queues_ = {};
+      this.continuity_counters_ = {};
+    }
     if (options.resetAudioParserState === true) {
       this.resetAudioParserState();
     }

@@ -173,7 +173,7 @@ self.addEventListener("message", (e: MessageEvent) => {
       if (cmd.gen !== gen) {
         break;
       }
-      pipeline?.setClock(cmd.currentTimeMs, cmd.bufferedEndMs);
+      pipeline?.setClock(cmd.currentTimeMs, cmd.bufferedEndMs, cmd.hidden);
       break;
     case "reset":
       if (pipeline) {

@@ -41,6 +41,8 @@ export type WorkerCommand =
       currentTimeMs: number;
       /** MSE buffered end (ms); -1 when unknown. The worker must not run far ahead of it. */
       bufferedEndMs: number;
+      /** Page visibility at send time; hidden => the buffer-lead gate must stay open (background audio free-run). */
+      hidden: boolean;
       gen: number;
     }
   | { type: "destroy" };

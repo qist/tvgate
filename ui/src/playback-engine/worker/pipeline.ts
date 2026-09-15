@@ -262,6 +262,8 @@ class Pipeline {
   private _playheadBufferedEndMs = -1;
   /** 最近一次 clock 消息到达时刻（performance.now()），用于判定时基是否新鲜。 */
   private _lastClockArrivalMs = -1;
+  /** 页面隐藏标志（随 clock 消息更新）。后台时缓冲领先门必须放行 —— 后台播放以音频为主导。 */
+  private _pageHidden = false;
 
   constructor(segments: PlayerSegment[], config: PlayerConfig, callbacks: PipelineCallbacks) {
     this._callbacks = callbacks;
@@ -660,13 +662,20 @@ class Pipeline {
    * 缓冲领先限速门（对齐 ac3-lab 的 `waitForBufferRoom`）：当 MSE 缓冲末尾领先播放头超过
    * LEAD_BUFFER_AHEAD_MS 时暂停拉流/解码，直到播放头追上来。仅直播生效，且依赖主线程经
    * `clock` 命令周期上报的播放头；时基过期或播放头未知时直接放行，绝不死锁、绝不卡播放。
+   *
+   * 页面隐藏时**无条件放行**：后台 timer 节流让播放头几乎不走，缓冲永远"满"，门会永久
+   * 闭合 → 拉流/解封装/软解全停 → 音频零产出（后台静音；CLOCK_STALE_MS=1000 的过期放行
+   * 与 Chrome 后台 1s timer 节流同量级，靠它兜底不可靠）。后台播放语义是音频 free-run
+   * （v3.2.1 同款），视频供流多拉的部分由 MSE 侧 backpressure 吸收。
    */
   private async _waitForBufferLead(runId: number): Promise<boolean> {
     if (!this._isLivePlayback()) return true;
+    if (this._pageHidden) return true;
     if (this._playheadCurrentMs < 0 || this._playheadBufferedEndMs < 0) return true;
     if (performance.now() - this._lastClockArrivalMs > CLOCK_STALE_MS) return true;
 
     while (this._runId === runId && this._isLivePlayback()) {
+      if (this._pageHidden) return true;
       if (this._paused) {
         if (!(await this._waitIfPaused(runId))) return false;
       }
@@ -988,6 +997,10 @@ class Pipeline {
     if (canReuse) {
       (this._demuxer as TSDemuxer).resetSegmentBoundary(probeData as ConstructorParameters<typeof TSDemuxer>[0], {
         resetAudioParserState: canReuseTsInputBoundary,
+        // HLS 复用保留跨段解封装状态（ac3-lab 同款连续喂流）：跨段拆开的 PES 补完
+        // 而非丢弃，源在段边界的 CC 不连续照常检测 → insertDiscontinuity 干净重锚。
+        // 非 HLS TS 直链路径维持旧行为（清空 + normalization）。
+        preserveStreamState: canReuseHls,
       });
       this._remuxer?.setTsSegmentContinuityNormalization(canReuseTsInputBoundary);
       return;
@@ -1161,8 +1174,10 @@ class Pipeline {
   private _setupAudioDemuxerRemuxer(probeData: unknown, meta: SegmentMeta): void {
     const canReuse = !meta.resetRemuxer && this._audioDemuxer !== null && this._audioRemuxer !== null;
     if (canReuse) {
+      // 保留跨段解封装状态（ac3-lab 同款连续喂流）：跨段拆开的音频帧由解析器/WASM
+      // 携带态补完，不再每段丢弃；段边界不连续照常走 onTrackDiscontinuity。
       this._audioDemuxer?.resetSegmentBoundary(probeData as ConstructorParameters<typeof TSDemuxer>[0], {
-        resetAudioParserState: true,
+        preserveStreamState: true,
       });
       return;
     }
@@ -1358,10 +1373,11 @@ class Pipeline {
   private _workerDecoderCodec: SoftAudioCodec | null = null;
 
   /** Feed the main-thread playhead + MSE buffered end consumed by the buffer-lead gate. */
-  setClock(currentTimeMs: number, bufferedEndMs: number): void {
+  setClock(currentTimeMs: number, bufferedEndMs: number, hidden: boolean): void {
     this._playheadCurrentMs = currentTimeMs;
     this._playheadBufferedEndMs = bufferedEndMs;
     this._lastClockArrivalMs = performance.now();
+    this._pageHidden = hidden;
   }
 
   private _handleRawAudioFrame(frame: { codec: SoftAudioCodec; data: Uint8Array; pts: number }): void {
@@ -1525,8 +1541,10 @@ class Pipeline {
    * Separate-audio-rendition soft-decode path (mirror of _handleRawAudioFrame).
    * Renditions ride their own source PTS epoch, so decoded labels are re-based
    * relative to the first frame and mapped through the dedicated _audioRemuxer
-   * (base pinned to 0 via setPcmSourceBase; per-segment playlist-position anchors
-   * are armed by setAudioSegmentStartTarget, see _setupAudioDemuxerRemuxer).
+   * (base pinned to 0 via setPcmSourceBase; the segment's playlist position anchors
+   * the timeline only while unanchored — afterwards it rides the source PTS
+   * sample-contiguously and drift is corrected against the video clock, ac3-lab
+   * semantics — see _setupAudioDemuxerRemuxer / setAudioSegmentStartTarget).
    */
   private _handleAudioRenditionRawFrame(frame: { codec: SoftAudioCodec; data: Uint8Array; pts: number }): void {
     // The first raw rendition frame proves this rendition is soft-decoded

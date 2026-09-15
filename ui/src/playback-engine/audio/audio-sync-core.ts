@@ -581,7 +581,9 @@ export class AudioSyncCore {
 
       // 视频时钟停住（缓冲/不连续）时，desired 会随源时间轴一路前移：此时宁可不排程、
       // 等播放头追上来，也不要让排程链跑到未来几秒去。
-      if (desired - ctx.currentTime > MAX_SCHEDULE_LEAD_SEC) {
+      // 门不得小于排程窗口：页面隐藏时窗口放大到 6s（扛 timer 节流），若仍被 2s 门
+      // 压死，后台缓冲永远只有 2s —— 后台节流下缓冲见底即静音（v3.2.1 后台窗口为 6s）。
+      if (desired - ctx.currentTime > Math.max(MAX_SCHEDULE_LEAD_SEC, aheadSec)) {
         this.onSchedulingBlocked?.(desired - ctx.currentTime);
         // 不调 trimAudioLead()：队尾的 chunk 是合法的未来音频，丢掉就是静音。
         // 视频时钟在走，追上来后 pump 会自然锚定并消费。

@@ -374,6 +374,11 @@ export class PCMAudioPlayer {
    * 轴平移自愈：音频轴持续超前视频轴 ≥2s（blocked ≥3s）时，把音频轴前移实测超前量。
    * 10s 冷却防噪声；轴平移不依赖 worker 往返，立即生效。若超前持续再生（源持续漂移），
    * 下一轮 blocked 会再次触发，15s 兜底仍在最后把关。
+   *
+   * 页面隐藏时例外：后台 timer 节流会让视频时钟长时间不走（MSE 供流循环同样被节流），
+   * "视频推进"前置条件永远不满足 → 巨大 lead 持续 blocked 却永不自愈 → 后台静音死锁
+   * （实测：非标准源 lead=117s，后台 150s 无声，回前台才 rebase）。后台视频时钟不可信，
+   * 唯一正确的动作就是把音频轴拉回视频轴附近自由续播（等价 v3.2.1 的后台 free-run）。
    */
   private maybeRebaseAxis(blockedMs: number, now: number): void {
     const core = this.core;
@@ -381,7 +386,8 @@ export class PCMAudioPlayer {
     if (now - this.lastRebaseAt < REBASE_MIN_INTERVAL_MS) return;
     if (blockedMs < SUSTAINED_BLOCK_MS) return;
     const video = this.videoElement;
-    if (!video || video.currentTime - this.blockedVideoClockSec < MIN_VIDEO_ADVANCE_SEC) return;
+    if (!video) return;
+    if (!this.pageHidden && video.currentTime - this.blockedVideoClockSec < MIN_VIDEO_ADVANCE_SEC) return;
     const headSec = core.queueHeadSec();
     if (headSec === null) return;
     const leadSec = headSec - core.visibleVideoTime();

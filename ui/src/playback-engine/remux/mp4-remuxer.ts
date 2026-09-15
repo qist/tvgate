@@ -9,9 +9,6 @@ import {
 } from "./media-batch";
 import MP4 from "./mp4-generator";
 
-/** Per-segment PCM anchor tolerance (ms): closer targets must not reset PCM bridging. */
-const PCM_SEGMENT_START_TOLERANCE_MS = 50;
-
 interface AudioSample {
   unit: Uint8Array;
   dts: number;
@@ -377,6 +374,9 @@ class MP4Remuxer {
     this._pendingAudioSegmentStartMs = startMs;
     // Arm the PCM one-shot too: with software decode the rendition demuxer emits no
     // audio samples into the track, so only mapPcmTimestamp can honor this target.
+    // mapPcmTimestamp only consumes it while the PCM timeline is unanchored (session
+    // start / remuxer recreation); once anchored, the emitted timeline rides the
+    // source PTS contiguously and drift is left to AudioSyncCore (ac3-lab semantics).
     this._pendingPcmSegmentStartMs = startMs;
   }
 
@@ -519,16 +519,20 @@ class MP4Remuxer {
     }
 
     // Consume the per-segment PCM anchor armed by setAudioSegmentStartTarget
-    // (software-decoded audio renditions): pin the segment's first PCM chunk at the
-    // segment's playlist position. The 50ms tolerance avoids resetting bridging for
-    // sub-frame jitter while still re-pinning after a real discontinuity.
+    // (software-decoded audio renditions) ONLY while the PCM timeline is unanchored
+    // (session start / remuxer recreation / late audio join): pin the segment's first
+    // PCM chunk at the segment's playlist position, which lives on the video output
+    // timeline. Once anchored, later re-arms are ignored — the emitted timeline rides
+    // the source PTS sample-contiguously (bridging phase glitches), and drift against
+    // the video clock is corrected downstream by AudioSyncCore (ac3-lab semantics).
+    // Re-pinning every segment to the EXTINF axis would yank timeSec off the video
+    // timeline on sources with periodic PTS phase jumps → progressive A/V desync.
     if (this._pendingPcmSegmentStartMs !== null) {
       const target = this._pendingPcmSegmentStartMs;
       this._pendingPcmSegmentStartMs = null;
       const unanchored =
         this._pcmTiming.lastOriginalEndDts === undefined || this._pcmTiming.lastOutputEndDts === undefined;
-      if (unanchored || Math.abs(target - (this._pcmTiming.lastOutputEndDts ?? target)) > PCM_SEGMENT_START_TOLERANCE_MS) {
-        this._pcmTiming = this._createTrackTimingState();
+      if (unanchored) {
         this._forcedPcmStartMs = target;
       }
     }

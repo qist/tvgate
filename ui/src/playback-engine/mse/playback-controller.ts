@@ -209,6 +209,7 @@ export function createMSEPlaybackController(
             type: "clock",
             currentTimeMs: video.currentTime * 1000,
             bufferedEndMs: range ? range.end * 1000 : -1,
+            hidden: document.hidden,
             gen: mseGeneration,
           } satisfies WorkerCommand);
         }, 250);
@@ -304,6 +305,10 @@ export function createMSEPlaybackController(
   }
 
   function pauseWorkerForBackpressure(kind: "watermark" | "buffer-full"): void {
+    // Background tab: timers are throttled and the video clock barely advances, so
+    // any backpressure pause would stall fetch + soft-decode and silence the audio.
+    // Background playback is audio free-run — never pause the worker while hidden.
+    if (document.hidden) return;
     if (kind === "watermark") {
       watermarkPaused = true;
     } else {
@@ -317,6 +322,21 @@ export function createMSEPlaybackController(
     bufferFullPaused = false;
     worker?.postMessage({ type: "resume" } satisfies WorkerCommand);
   }
+
+  function onVisibilityChange(): void {
+    if (document.hidden) {
+      // Entering background: lift any backpressure pause taken in the foreground
+      // (the worker's own gates re-open on `hidden` clocks; see pipeline._pageHidden).
+      if (watermarkPaused || bufferFullPaused) {
+        resumeWorkerFromBackpressure();
+      }
+      return;
+    }
+    // Back to foreground: re-apply throttling if the buffer ran far ahead while hidden.
+    updateFetchBackpressure();
+  }
+
+  document.addEventListener("visibilitychange", onVisibilityChange);
 
   function updateFetchBackpressure(): void {
     const ahead = getForwardBufferAhead();
@@ -574,6 +594,7 @@ export function createMSEPlaybackController(
       }
       video.removeEventListener("play", onVideoPlay);
       video.removeEventListener("timeupdate", onVideoTimeUpdate);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       if (worker) {
         const cmd: WorkerCommand = { type: "destroy" };
         worker.postMessage(cmd);
