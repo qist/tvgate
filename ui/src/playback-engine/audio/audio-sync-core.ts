@@ -59,10 +59,6 @@ export const REANCHOR_MIN_INTERVAL_MS = 1500;
 export const REANCHOR_DRIFT_SEC = 0.25;
 /** 重锚/入队时丢弃"已落后于画面"样本的宽限（保留一点点，避免切到字缝上）。 */
 const STALE_KEEP_SEC = 0.05;
-/**
- * 允许"重新锚定"前，视频时钟必须已经**持续前进**的最小量（秒）。见不变量 2。
- */
-const MIN_ANCHOR_CLOCK_ADVANCE_SEC = 0.1;
 /** 判定"视频时钟仍在推进"的静默窗口（毫秒）：超过则认为时钟停住了。 */
 const CLOCK_STALE_MS = 150;
 
@@ -542,10 +538,14 @@ export class AudioSyncCore {
     // 否则 pump 永久不排程 → 切后台立即静音（v3.2.1 后台语义）。
     if (this.video.paused && !isHidden) return;
 
-    // 不变量 2：视频时钟是否真的在推进。刚起播 / MSE 还在缓冲时 paused 已为 false，
-    // 但 currentTime 停在原地（甚至只在起点附近微跳）；据此锚定会把"音频跑在静止画面
-    // 之前"写进整条链。所以要求：时钟最近仍在动，且自上次锚定起已真实推进了一节。
-    // 链延续不受此限制。
+    // 锚定判据（v3.2.1 同款 —— 当时修好了"1080i MP2 频道切台后无声"）：用**媒体可播
+    // 状态**判断视频时钟是否可信，而不是"时钟推进量"。视频数据没来（readyState 低于
+    // HAVE_FUTURE_DATA：重负载频道起播慢 / bwdif 软反交错 / 缓冲重建中）时不锚定、等数据；
+    // 数据一到立刻锚定。
+    //
+    // 旧判据（150ms 内时钟有变化 + 自上次锚定推进 ≥0.1s）在"数据已到、但时钟推进极慢或
+    // 被反复 rebase"时**永远不满足** → 永久静音（实测：videoClock 卡在 0.017~0.073 缓慢
+    // 爬升、音频队列堆到 303 个 chunk 仍一声不出）。链延续不受此判据限制。
     const videoClock = this.video.currentTime;
     const nowMs = performance.now();
     if (Math.abs(videoClock - this.lastVideoClockSec) > 0.0001) {
@@ -553,8 +553,9 @@ export class AudioSyncCore {
       this.lastClockChangeAtMs = nowMs;
     }
     const clockReady =
-      nowMs - this.lastClockChangeAtMs < CLOCK_STALE_MS &&
-      videoClock - this.lastAnchorClockSec >= MIN_ANCHOR_CLOCK_ADVANCE_SEC;
+      !this.video.paused &&
+      !this.video.seeking &&
+      this.video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
 
     const videoRate = Math.min(2, Math.max(0.5, this.getRate() || 1));
     const aheadSec = this.getScheduleAheadSec();
