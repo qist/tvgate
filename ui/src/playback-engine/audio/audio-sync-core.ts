@@ -351,6 +351,20 @@ export class AudioSyncCore {
   }
 
   /**
+   * 音频内容游标：**下一个会被听到的内容时间**（秒）。这是排程链的真实进度 ——
+   * 每次新排出一段就前移，比"队列头/span 结束时间"更可靠（队头在自动推进时可能
+   * 长时间不变，用它做停摆判据会把正常播放误判成停摆）。
+   * 与 `nextAudibleStreamSec()` 的区别：后者是"轴平移对齐"的测量点（对齐测量需要
+   * 排除已排程但未播出的部分），本方法则是进度观测点。
+   */
+  contentCursorSec(): number | null {
+    const lastSpan = this.spans[this.spans.length - 1];
+    if (lastSpan) return lastSpan.streamEnd;
+    if (this.outSegs.length > 0) return this.outSegs[this.outSegs.length - 1].streamStart;
+    return this.queueHeadSec();
+  }
+
+  /**
    * 伸缩级是否可用：注入了工厂**且未创建失败**。
    *
    * 注意不能只看"有没有传工厂"：一旦创建失败（wasm 拿不到、内存不足…），必须整体退回

@@ -42,6 +42,19 @@ interface FetchLoaderOptions {
   resumeMode?: ResumeMode;
 }
 
+/**
+ * 直播流的"无数据"看门狗（毫秒）。移动网络切换（WiFi → 4G/5G）不会立即让旧的
+ * TCP 连接报错：请求会静默挂住直到系统级超时（可达 30s+），期间拉流泵一层都不
+ * 推进、播放器停在缓冲上。主动掐掉连接走重试，能在秒级内把新连接建到新网络上。
+ */
+const LIVE_DATA_TIMEOUT_MS = 20_000;
+/** 自动重试上限（仅直播流；VOD/回看仍由上层按位置重建）。 */
+const MAX_AUTO_RETRIES = 5;
+/** 重试退避下限（毫秒）。 */
+const RETRY_BASE_DELAY_MS = 500;
+/** 重试退避上限（毫秒）。 */
+const RETRY_MAX_DELAY_MS = 8_000;
+
 interface FetchRequestContext {
   abortController: AbortController;
   contentLength: number | null;
@@ -94,6 +107,14 @@ class FetchLoader {
   private _status: LoaderStatus;
   private _abortController: AbortController | null;
 
+  // --- 自愈重连（仅直播流：resumeMode === "restart"）---
+  /** 因传输层错误自动重连的次数（成功收到数据后清零）。 */
+  private _retryCount: number;
+  /** 当前批次是否已收到过数据（用于判定"连接阶段失败" vs "中途断流"）。 */
+  private _receivingData: boolean;
+  private _retryTimer: ReturnType<typeof setTimeout> | null;
+  private _dataWatchdogTimer: ReturnType<typeof setTimeout> | null;
+
   constructor(dataSource: DataSource, config: PlayerConfig, extraData?: unknown, options: FetchLoaderOptions = {}) {
     this._config = config;
     this._dataSource = dataSource;
@@ -116,6 +137,12 @@ class FetchLoader {
     this._status = LoaderStatus.kIdle;
     this._abortController = null;
 
+    // 自愈重连状态
+    this._retryCount = 0;
+    this._receivingData = false;
+    this._retryTimer = null;
+    this._dataWatchdogTimer = null;
+
     // callbacks
     this.onDataArrival = null;
     this.onSeeked = null;
@@ -126,6 +153,8 @@ class FetchLoader {
   }
 
   destroy(): void {
+    this._clearRetryTimer();
+    this._stopDataWatchdog();
     if (this.isWorking()) {
       this.abort();
     }
@@ -176,6 +205,8 @@ class FetchLoader {
   }
 
   abort(): void {
+    this._clearRetryTimer();
+    this._stopDataWatchdog();
     this._abortFetch();
 
     if (this._paused) {
@@ -185,6 +216,8 @@ class FetchLoader {
   }
 
   pause(): void {
+    this._clearRetryTimer();
+    this._stopDataWatchdog();
     if (this.isWorking()) {
       this._abortFetch();
 
@@ -283,6 +316,8 @@ class FetchLoader {
     params.signal = request.abortController.signal;
 
     this._status = LoaderStatus.kConnecting;
+    this._receivingData = false;
+    this._stopDataWatchdog();
 
     self
       .fetch(seekConfig.url, params)
@@ -297,7 +332,9 @@ class FetchLoader {
           // detect HLS content-type before processing body
           const ct = res.headers.get("Content-Type")?.toLowerCase() ?? "";
           if (ct.includes("mpegurl") || ct.includes("m3u")) {
+            // 播放列表是短请求，读完即切 HLS 源：不需要直播看门狗。
             this._status = LoaderStatus.kIdle;
+            this._stopDataWatchdog();
             // Read the body so the already-fetched playlist can be reused (avoids a duplicate request)
             return res.text().then((text) => {
               if (!this._isRequestAborted(request)) {
@@ -315,15 +352,10 @@ class FetchLoader {
             }
           }
 
+          this._armDataWatchdog();
           return this._pump((res.body as ReadableStream<Uint8Array>).getReader(), range, request);
         } else {
-          this._status = LoaderStatus.kError;
-          const errInfo: LoaderErrorInfo = { code: res.status, msg: res.statusText, url: request.url };
-          if (this.onError) {
-            this._handleLoaderError(PlayerErrors.HTTP_STATUS_CODE_INVALID, errInfo);
-          } else {
-            throw new RuntimeException(`FetchLoader: Http code invalid, ${res.status} ${res.statusText}`);
-          }
+          this._handleHttpError(res.status, res.statusText, request.url);
         }
       })
       .catch((e: unknown) => {
@@ -335,11 +367,120 @@ class FetchLoader {
         const err = e as Record<string, unknown>;
         const errInfo: LoaderErrorInfo = { code: -1, msg: String(err.message ?? ""), url: request.url };
         if (this.onError) {
+          if (this._maybeRetry(PlayerErrors.REQUEST_FAILED, errInfo, true)) {
+            return;
+          }
           this._handleLoaderError(PlayerErrors.REQUEST_FAILED, errInfo);
         } else {
           throw e;
         }
       });
+  }
+
+  /** 非 2xx 响应：可重试的（5xx/429）交给重试，其余直接报错。 */
+  private _handleHttpError(status: number, statusText: string, url: string): void {
+    this._status = LoaderStatus.kError;
+    const errInfo: LoaderErrorInfo = { code: status, msg: statusText, url };
+    if (!this.onError) {
+      throw new RuntimeException(`FetchLoader: Http code invalid, ${status} ${statusText}`);
+    }
+    if (this._maybeRetry(PlayerErrors.HTTP_STATUS_CODE_INVALID, errInfo, false)) {
+      return;
+    }
+    this._handleLoaderError(PlayerErrors.HTTP_STATUS_CODE_INVALID, errInfo);
+  }
+
+  /**
+   * 传输层自愈：直播流（resumeMode === "restart"）遇到中途断流时不再直接判死，
+   * 而是按指数退避重连，并在重连成功后通过 `onRestarted` 让上层切一次 TS 输入边界
+   * （remuxer 会把源 PTS 空洞 bridge 到连续输出时间轴，画面继续、音画不脱轴）。
+   *
+   * 两条硬约束：
+   *  1. 只对直播生效 —— VOD/回看的字节流重头再来会造成内容重复，必须由上层按位置重建；
+   *  2. 只在"服务器可达性错误"上重试（网络错误 / 5xx / 429），4xx 是确定性失败，
+   *     重试只会拖慢上层按位置重建。
+   *
+   * @param atConnectPhase 调用点是否处于连接阶段（未收到任何数据）：连接阶段的失败
+   *        对任何模式都可重试，因为一个字节都还没消费。
+   */
+  private _maybeRetry(type: LoaderErrorDetail, info: LoaderErrorInfo, atConnectPhase: boolean): boolean {
+    const isLive = this._resumeMode === "restart";
+    if (!isLive && !atConnectPhase) {
+      return false;
+    }
+    if (this._retryCount >= MAX_AUTO_RETRIES) {
+      return false;
+    }
+    const status = info.code;
+    if (typeof status === "number" && status >= 400 && status < 500 && status !== 429) {
+      return false;
+    }
+    this._retryCount++;
+    const delay = Math.min(RETRY_BASE_DELAY_MS * 2 ** (this._retryCount - 1), RETRY_MAX_DELAY_MS);
+    Log.w(
+      this.TAG,
+      `Transient stream failure (${type}, code=${status ?? -1}, msg=${info.msg}); ` +
+        `reconnect ${this._retryCount}/${MAX_AUTO_RETRIES} in ${delay}ms`,
+    );
+    return this._scheduleRetry(delay, () => this._internalRestart(true));
+  }
+
+  /** 退避后重启请求；返回 false 表示已被销毁/pause 打断（调用方按最终失败处理）。 */
+  private _scheduleRetry(delayMs: number, action: () => void): boolean {
+    this._abortFetch();
+    this._clearRetryTimer();
+    this._stopDataWatchdog();
+    this._retryTimer = setTimeout(() => {
+      this._retryTimer = null;
+      if (this._dataSource === null) return; // destroy() 之后不得再发起请求
+      if (this._paused) {
+        this._paused = false;
+        this._resumeFrom = 0;
+        return;
+      }
+      action();
+    }, delayMs);
+    return true;
+  }
+
+  /** 直播流无数据看门狗：连接静默挂死（网络切换）时主动掐断走重试。 */
+  private _armDataWatchdog(): void {
+    if (this._resumeMode !== "restart") return;
+    this._stopDataWatchdog();
+    this._dataWatchdogTimer = setTimeout(() => {
+      this._dataWatchdogTimer = null;
+      if (this._dataSource === null || this._paused) return;
+      if (this._status !== LoaderStatus.kConnecting && this._status !== LoaderStatus.kBuffering) return;
+      if (this._receivingData) return;
+      if (this._maybeRetry(PlayerErrors.EARLY_EOF, { code: -1, msg: "no data within timeout" }, true)) {
+        return;
+      }
+      // 重试预算耗尽：按 Early-EOF 上报，让上层走会话重建。
+      this._handleLoaderError(PlayerErrors.EARLY_EOF, { code: -1, msg: "no data within timeout" });
+    }, LIVE_DATA_TIMEOUT_MS);
+  }
+
+  private _stopDataWatchdog(): void {
+    if (this._dataWatchdogTimer !== null) {
+      clearTimeout(this._dataWatchdogTimer);
+      this._dataWatchdogTimer = null;
+    }
+  }
+
+  private _clearRetryTimer(): void {
+    if (this._retryTimer !== null) {
+      clearTimeout(this._retryTimer);
+      this._retryTimer = null;
+    }
+  }
+
+  /** 记一次有效推进：收到数据后重试计数清零，看门狗重新计时。 */
+  private _noteProgress(): void {
+    this._receivingData = false;
+    this._retryCount = 0;
+    if (this._status === LoaderStatus.kBuffering) {
+      this._armDataWatchdog();
+    }
   }
 
   private _isRequestAborted(request: FetchRequestContext): boolean {
@@ -362,13 +503,21 @@ class FetchLoader {
           if (request.contentLength !== null && request.receivedLength < request.contentLength) {
             this._status = LoaderStatus.kError;
             const info: LoaderErrorInfo = { code: -1, msg: "Fetch stream meet Early-EOF", url: request.url };
+            if (this._maybeRetry(PlayerErrors.EARLY_EOF, info, false)) {
+              return;
+            }
             this._handleLoaderError(PlayerErrors.EARLY_EOF, info);
           } else {
             this._status = LoaderStatus.kComplete;
+            this._stopDataWatchdog();
+            this._clearRetryTimer();
             this._onFetchComplete(range.from, range.from + request.receivedLength - 1);
           }
         } else {
           this._status = LoaderStatus.kBuffering;
+          this._receivingData = true;
+          // 直播流：收到数据即视为链路健康，重试预算清零、看门狗重新计时。
+          this._noteProgress();
 
           const chunk = result.value as Uint8Array;
           const byteStart = range.from + request.receivedLength;
@@ -399,9 +548,15 @@ class FetchLoader {
         ) {
           type = PlayerErrors.EARLY_EOF;
           info = { code: errCode, msg: "Fetch stream meet Early-EOF", url: request.url };
+          if (this._maybeRetry(type, info, false)) {
+            return;
+          }
         } else {
           type = PlayerErrors.EXCEPTION;
           info = { code: errCode, msg: errMsg, url: request.url };
+          if (this._maybeRetry(type, info, false)) {
+            return;
+          }
         }
 
         this._handleLoaderError(type, info);
@@ -421,6 +576,8 @@ class FetchLoader {
   // --- internal seek -------------------------------------------------------
 
   private _internalSeek(bytes: number): void {
+    this._clearRetryTimer();
+    this._stopDataWatchdog();
     if (this._status === LoaderStatus.kConnecting || this._status === LoaderStatus.kBuffering) {
       this._abortFetch();
     }
@@ -438,7 +595,16 @@ class FetchLoader {
     }
   }
 
-  private _internalRestart(): void {
+  /**
+   * 重启请求。`fromRetry = false`（用户在 pause 后 resume / 初次装载）把退避预算
+   * 一并清零；自动重试链内部调用时保留计数，否则退避永远停在第一次。
+   */
+  private _internalRestart(fromRetry = false): void {
+    if (!fromRetry) {
+      this._retryCount = 0;
+    }
+    this._clearRetryTimer();
+    this._stopDataWatchdog();
     if (this._status === LoaderStatus.kConnecting || this._status === LoaderStatus.kBuffering) {
       this._abortFetch();
     }

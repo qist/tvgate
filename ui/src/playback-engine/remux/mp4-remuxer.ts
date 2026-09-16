@@ -627,6 +627,26 @@ class MP4Remuxer {
   }
 
   /**
+   * 无副作用的**预测**：若下一块 PCM 走正常的"内容连续 bridging"语义，它会被映射到
+   * 哪个输出时间（秒）。未初始化 / 尚未产出过 PCM（首块之前或刚 reset）时返回 null。
+   *
+   * 用途：上游"音轨不连续"（TS 连续性计数器抖动、丢包、断流恢复）时，不要盲目重置 PCM
+   * 时间轴 —— 那会在每次小抖动都强制丢弃已解码的 PCM 缓冲，声音听感就是"卡顿一下"。
+   * 先预测偏差，只有真脱轴（超出播放头允许范围）才值得重置重钉，其余让既有的
+   * "内容连续 bridging"平滑吸收（与 AC-3 周期性 PTS 相位跳变同款处理）。
+   */
+  probeNextPcmOutput(): number | null {
+    if (!this._dtsBaseInited) {
+      return null;
+    }
+    // 时间轴尚未锚定（首块 PCM 之前 / 刚 reset）：无从预测，交由调用方决定重置。
+    if (this._pcmTiming.lastOriginalEndDts === undefined || this._pcmTiming.lastOutputEndDts === undefined) {
+      return null;
+    }
+    return this._pcmTiming.lastOutputEndDts / 1000;
+  }
+
+  /**
    * Reset PCM timing state without forcing a specific anchor position.
    * The next PCM chunk will be mapped using the current video timeline
    * (presentation floor / output time) as its starting point.

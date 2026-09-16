@@ -93,6 +93,14 @@ const MAX_LIVE_SEGMENT_SKIPS = 8;
  * （通常 > 20s）才重锚。
  */
 const AUDIO_PTS_REANCHOR_THRESHOLD_MS = 20000;
+/**
+ * 软解 PCM 轴"脱轴判定"边界（秒，相对视频播放头）：
+ *  - 领先超过 `LEAD_BUFFER_AHEAD_MS`（30s）的预解码余量上限 + 余量，必为轴分离；
+ *  - 落后超过 3s 说明 PCM 已跟不上播放头（会被 stale floor 丢成静音）。
+ * 界内一律保留时间轴（bridging 吸收），避免"播放中声音卡顿一下"。
+ */
+const PCM_REANCHOR_AHEAD_SEC = 36;
+const PCM_REANCHOR_BEHIND_SEC = 3;
 /** 自由时钟(诊断用)与源 PTS 偏差达到该值就打印一次，用于定位"声音慢慢跑前面"。 */
 const AUDIO_PTS_DIVERGENCE_LOG_MS = 30;
 
@@ -864,6 +872,14 @@ class Pipeline {
     this._resetAudioTiming();
   }
 
+  /**
+   * 直播 TS 重连（网络切换 / 看门狗掐断重试 / pause→resume）后切一次输入边界。
+   *
+   * 除了让解封装状态归零，**还必须重钉软解 PCM 轴**：重连后的源 PTS 纪元不可预知
+   * （上游整体重启会归零、断流填洞会整体前跳）。不重钉时 PCM 会带着旧轴继续
+   * "内容连续 bridging"，与新视频轴分离 → 排程门压死（静音）或音画错位且无法自愈。
+   * 与"音频轨不连续"走同一条已实测路径：丢陈旧 PCM、按当前播放头重新种轴。
+   */
   private _prepareContinuousLiveTsRestart(meta: SegmentMeta, ioctl: FetchLoader): void {
     if (this._sourceMode !== "continuous-live-ts") {
       return;
@@ -872,6 +888,7 @@ class Pipeline {
     this._finishTsInputBoundary();
     this._fmp4Mode = false;
     this._fmp4Chunks = [];
+    this._reanchorPcmIfNeeded();
     ioctl.onDataArrival = (data, byteStart) => this._onInputChunk(meta, data, byteStart);
   }
 
@@ -884,20 +901,52 @@ class Pipeline {
   }
 
   /**
-   * audio 轨不连续：重置 PCM 时间轴，并把软解主路径的下一帧 PCM 钉到当前视频时间。
+   * audio 轨出现不连续时的 PCM 自愈：**只在真正脱轴时**才重置 PCM 时间轴并重钉，
+   * 其余交给 `mapPcmTimestamp` 的"内容连续 bridging"吸收。
    *
-   * 分片 404/502 恢复后（上游整点切目录等），视频 remuxer 会把源 PTS 跳变 bridge 到
-   * 输出时间轴（实测 29.5s）；而 PCM 标签直接用源 PTS（mapPcmTimestamp 直映射），
-   * 若不钉回视频时间轴，PCM 会领先视频 29.5s → 排程门压死 → 永久静音。
-   * setAudioSegmentStartTarget 只在 PCM 时间轴 unanchored（刚 reset）时生效，
-   * 首帧强制输出到当前视频时间，之后按源 PTS 连续 bridging —— 与视频同轴。
+   * 为什么不无条件重钉：TS 流的连续性计数器抖动 / 丢一个包 / PES 重整都会触发
+   * "audio discontinuity"，而每次重钉都要丢弃当前已解码的 PCM 缓冲（`resetPcmTiming`
+   * + 解码器 carry 清零），听感就是**播放中声音卡顿一下**（a/v 仍同轴，因为重钉本身
+   * 是对齐的）。小幅抖动让 bridging 吸收即可 —— 与 AC-3 周期性 PTS 相位跳变同款。
+   *
+   * 为什么脱轴必须重钉：上游断流恢复（404/502 后视频 remuxer 把源 PTS 跳变 bridge 到
+   * 连续输出时间轴，实测 29.5s）时 PCM 直映射源 PTS 会与视频轴分离数十秒 →
+   * 排程门压死 → 永久静音。`setAudioSegmentStartTarget` 只在 PCM 轴 unanchored
+   * （刚 reset）时生效，首帧钉到当前播放头，之后按源 PTS 连续 bridging。
+   *
+   * 判据（相对播放头的偏差，单位秒）：
+   *  - 落后 > `PCM_REANCHOR_BEHIND_SEC`：PCM 轴已跟不上视频轴（会被当过期丢成静音）；
+   *  - 领先 > `PCM_REANCHOR_AHEAD_SEC`：超出播放器最大缓冲领先量（`LEAD_BUFFER_AHEAD_MS`），
+   *    不可能是正常预解码余量，必为轴分离；
+   *  - 播放头未知（首帧前）：无从判定，按保守方向重置。
+   * 正常播放时 PCM 游标只比播放头领先一个排程/预解码余量（秒级），不会触碰这两条界。
    */
-  private _resetPcmOnAudioDiscontinuity(): void {
-    this._remuxer?.resetPcmTiming();
+  private _reanchorPcmIfNeeded(): void {
+    const remuxer = this._remuxer;
+    if (remuxer && this._playheadCurrentMs >= 0) {
+      const predictedSec = remuxer.probeNextPcmOutput();
+      if (predictedSec !== null) {
+        const playheadSec = this._playheadCurrentMs / 1000;
+        const deltaSec = predictedSec - playheadSec;
+        if (deltaSec <= PCM_REANCHOR_AHEAD_SEC && deltaSec >= -PCM_REANCHOR_BEHIND_SEC) {
+          Log.v(
+            this.TAG,
+            `PCM discontinuity within bounds (lead ${(deltaSec * 1000).toFixed(0)}ms vs playhead); ` +
+              `keeping the timeline (bridging absorbs it, no audible gap)`,
+          );
+          return;
+        }
+        Log.w(
+          this.TAG,
+          `PCM axis off by ${(deltaSec * 1000).toFixed(0)}ms vs playhead; re-anchoring the PCM timeline`,
+        );
+      }
+    }
+    remuxer?.resetPcmTiming();
     this._workerAudioDecoder?.reset();
     this._resetAudioTiming();
     if (this._config.wasmDecoders.mp2 || this._config.wasmDecoders.ac3) {
-      this._remuxer?.setAudioSegmentStartTarget(Math.max(0, this._playheadCurrentMs));
+      remuxer?.setAudioSegmentStartTarget(Math.max(0, this._playheadCurrentMs));
     }
     this._callbacks.onPCMAudioDiscontinuity();
   }
@@ -1052,15 +1101,16 @@ class Pipeline {
     demuxer.timestampBase = 0;
     demuxer.onTrackDiscontinuity = (track) => {
       if (track === "video") {
+        // 视频时间轴交给 remuxer 的 continuity normalization 桥接；
+        // 软解音频的解码器状态与 PCM 轴随之作废。
         this._remuxer?.flushStashedSamples();
         this._remuxer?.insertDiscontinuity();
-      }
-      if (track === "audio") {
-        this._resetPcmOnAudioDiscontinuity();
-      } else {
         this._workerAudioDecoder?.reset();
         this._resetAudioTiming();
+        return;
       }
+      // 音频轨不连续：只有真跳变才重钉 PCM 轴（见 _reanchorPcmIfNeeded）。
+      this._reanchorPcmIfNeeded();
     };
     demuxer.onPcr = (pcrBase, bytePosition, discontinuity) => {
       this._recordTsPcr(pcrBase, bytePosition, discontinuity);
@@ -1134,13 +1184,11 @@ class Pipeline {
       if (track === "video") {
         this._remuxer?.flushStashedSamples();
         this._remuxer?.insertDiscontinuity();
-      }
-      if (track === "audio") {
-        this._resetPcmOnAudioDiscontinuity();
-      } else {
         this._workerAudioDecoder?.reset();
         this._resetAudioTiming();
+        return;
       }
+      this._reanchorPcmIfNeeded();
     };
 
     this._remuxer.bindDataSource(

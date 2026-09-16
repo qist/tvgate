@@ -51,6 +51,19 @@ const MIN_AHEAD_SEC_FOR_REBASE = 2.0;
 const MIN_VIDEO_ADVANCE_SEC = 0.5;
 /** 回前台对齐的最小领先量（秒）：低于它音频链继续播即可，无需干预。 */
 const FOREGROUND_ALIGN_MIN_LEAD_SEC = 0.5;
+/**
+ * 静音看门狗：软解音频曾经出过声、随后超过该时长再也没有可听内容，而视频时钟
+ * 确实在推进（readyState 已到 HAVE_FUTURE_DATA）→ 判定音频链已停摆，强制按当前
+ * 播放头重建排程链。
+ *
+ * 为什么需要：内核的排程门（desired 超出 2s 即 blocked）与 reanchor 的陈旧水位
+ * 都假设"队列里还有合法未来音频"。网络断流重连后视频轴前跳、PCM 缺口（worker
+ * 补静音/跳过）等场景会让新 PCM 迟迟进不到播放头附近，于是既不排程、也没人纠正，
+ * 表现为"画面在走、声音永远不回来"。这是兜底网，正常情况下永不触发。
+ */
+const SILENT_STALL_MS = 5000;
+/** 看门狗最少观察窗口：排程链本身有 ~0.6s 前瞻，且允许一次正常 underrun，避免误判。 */
+const SILENT_STALL_MIN_UPTIME_MS = 3000;
 
 /**
  * 软解音频输出器。对外接口保持稳定（init / attachVideo / detachVideo / feed / play /
@@ -73,6 +86,14 @@ export class PCMAudioPlayer {
   private pageHidden = false;
   /** 进入后台后是否已尝试恢复被 UA 暂停的 video（只对抗一次，避免 play-pause 循环）。 */
   private backgroundResumeAttempted = false;
+
+  // ---- 静音看门狗（音频链停摆自愈）----
+  /** 挂载后首次成功排程的时刻（毫秒）；用于让看门狗避开正常的启动/缓冲期。 */
+  private chainStartedAtMs: number | null = null;
+  /** 最近一次音频内容真实推进的时刻；停摆判定以它为基准。 */
+  private lastAudioProgressMs = 0;
+  private lastAudioProgressSec = Number.NaN;
+  private silentWatchdogTrips = 0;
 
   /** 声道输出模式：mono = 左右合成 (L+R)/2（解决分离声道源手机端只能听到单边）。 */
   private channelMode: "stereo" | "mono" = "stereo";
@@ -105,6 +126,10 @@ export class PCMAudioPlayer {
   private driftLogCounter = 0;
   /** worker 侧软解 PCM 链路丢弃计数（经 pcm-audio-stats 消息更新）。 */
   private pipelineStats: PcmWorkerStats | null = null;
+  /** 上一诊断窗口的快照：用于把丢弃计数打成**增量**（定位"卡顿一下"来自哪个环节）。 */
+  private lastPipelineStatsForDelta: PcmWorkerStats | null = null;
+  private lastDroppedStaleForDelta = 0;
+  private lastUnderrunsForDelta = 0;
 
   private controlTimer: ReturnType<typeof setInterval> | null = null;
   private boundOnVisibilityChange: (() => void) | null = null;
@@ -219,6 +244,13 @@ export class PCMAudioPlayer {
       : null;
     this.core?.setCalibrationMs(this.config.audioSyncOffsetMs);
     this.core?.start();
+    // 新内核 = 新会话：看门狗基准与诊断增量一并归零，避免拿上一会话的数据误判。
+    this.chainStartedAtMs = null;
+    this.lastAudioProgressSec = Number.NaN;
+    this.lastAudioProgressMs = performance.now();
+    this.lastPipelineStatsForDelta = null;
+    this.lastDroppedStaleForDelta = 0;
+    this.lastUnderrunsForDelta = 0;
 
     this.boundOnVideoSeeking = () => this.onVideoSeeking();
     this.boundOnVideoSeeked = () => this.onVideoSeeked();
@@ -361,6 +393,8 @@ export class PCMAudioPlayer {
     // 音频链（最多 6s 前瞻），等视频恢复推进后由下面的回前台对齐统一处理。
     core.controlTick(!this.pageHidden && !this.pendingForegroundAlign && core.isVideoClockAdvancing());
 
+    this.audioStallWatchdog(core);
+
     // 回前台对齐：推迟到确认视频时钟恢复推进。等待期音频保持 free-run 继续播，
     // 覆盖视频解冻的间隙；时钟一走就执行对齐（seek video 到 heard，音频不中断）。
     if (this.pendingForegroundAlign && !this.pageHidden && core.isVideoClockAdvancing()) {
@@ -384,8 +418,37 @@ export class PCMAudioPlayer {
           `vidLead=${(core.getDisplayLeadSec() * 1000).toFixed(0)}ms, ` +
           `rate=${this.videoRate().toFixed(2)}, queue=${stats.queueSec.toFixed(2)}s, ` +
           `reanchor/drop/underrun=${stats.reanchors}/${stats.droppedStale}/${stats.underruns}` +
-          `, rebase=${this.rebaseCount}${pipeText}`,
+          `, rebase=${this.rebaseCount}, stall=${this.silentWatchdogTrips}${pipeText}`,
       );
+
+      // "播放中声音卡顿一下"的现场诊断：把这一窗口内各丢弃环节的**增量**打成 WARN。
+      // 各环节都为零 = 卡顿不来自软解 PCM 链路（查 MSE/bridging）；非零则直接定位
+      // 是 worker 侧丢（remux/trim/ovf）还是主线程侧丢（drop=过期、under=欠载）。
+      if (pipe) {
+        const prev = this.lastPipelineStatsForDelta;
+        const d = (get: (s: PcmWorkerStats) => number): number => (prev ? get(pipe) - get(prev) : 0);
+        const pipedDrops =
+          d((s) => s.remuxDrop) +
+          d((s) => s.trimDrop) +
+          d((s) => s.pendingOverflowDrops) +
+          d((s) => s.queueOverflowDrops) +
+          d((s) => s.genDrops);
+        const staleDelta = stats.droppedStale - this.lastDroppedStaleForDelta;
+        const underrunDelta = stats.underruns - this.lastUnderrunsForDelta;
+        if (pipedDrops > 0 || staleDelta > 0 || underrunDelta > 0) {
+          Log.w(
+            TAG,
+            `Audio drops in last ~60s: worker[remux=${d((s) => s.remuxDrop)} trim=${d((s) => s.trimDrop)} ` +
+              `ovf=${d((s) => s.pendingOverflowDrops) + d((s) => s.queueOverflowDrops)} ` +
+              `gen=${d((s) => s.genDrops)} carry=${d((s) => s.carryFrames)}] ` +
+              `player[stale=${staleDelta} underrun=${underrunDelta} reanchor=${stats.reanchors} ` +
+              `stall=${this.silentWatchdogTrips}]`,
+          );
+        }
+        this.lastPipelineStatsForDelta = pipe;
+      }
+      this.lastDroppedStaleForDelta = stats.droppedStale;
+      this.lastUnderrunsForDelta = stats.underruns;
     }
   }
 
@@ -393,6 +456,56 @@ export class PCMAudioPlayer {
   setPipelineStats(stats: PcmWorkerStats): void {
     this.pipelineStats = stats;
     this.onAudioStats?.(stats);
+  }
+
+  /**
+   * 静音看门狗：音频曾经出过声、随后长时间没有任何可听内容，而视频时钟确实在推进
+   * ——说明音频链与视频轴脱节（重连后 PCM 缺口、轴错位、worker 停摆等），此时
+   * `controlTick` 的漂移环看不到任何东西（drift 为 null、队列为空），不会有任何
+   * 自愈动作。兜底动作是按当前屏上帧时间强制重建排程链，让后续到达的 PCM 直接
+   * 锚定到播放头。正常情况下（链路健康）永不触发。
+   */
+  private audioStallWatchdog(core: AudioSyncCore): void {
+    const stats = core.stats();
+    // 有可听内容（已排程 / 已产出待排 / 队列有待排）→ 记录推进并退出。
+    if (stats.scheduledAheadSec > 0 || stats.queueSec > 0) {
+      // 用内核的**内容游标**判定推进：每次新排出/产出/入队的内容都会让它前移。
+      // 不能用队头或"最后一个 span 的结束时间"——它们在自动推进时可能长时间不变，
+      // 会把正常播放误判成停摆（误触发的重锚本身就是一次可听的卡顿）。
+      const cursor = core.contentCursorSec();
+      if (cursor !== null && (!Number.isFinite(this.lastAudioProgressSec) || cursor > this.lastAudioProgressSec)) {
+        this.lastAudioProgressSec = cursor;
+        this.lastAudioProgressMs = performance.now();
+      }
+      if (this.chainStartedAtMs === null && stats.scheduledChunks > 0) {
+        this.chainStartedAtMs = performance.now();
+      }
+      return;
+    }
+
+    // 从未成功排程过（起播阶段）→ 交给内核自身的锚定逻辑，不介入。
+    if (this.chainStartedAtMs === null) return;
+    // 后台 free-run / 回前台待对齐 / 用户暂停：时钟不可信或不应干预。
+    if (this.pageHidden || this.pendingForegroundAlign || this.awaitingNewTimeline) return;
+    const video = this.videoElement;
+    if (!video || video.paused || video.seeking) return;
+    if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) return;
+    if (!core.isVideoClockAdvancing()) return;
+
+    const now = performance.now();
+    if (now - this.chainStartedAtMs < SILENT_STALL_MIN_UPTIME_MS) return;
+    if (now - this.lastAudioProgressMs < SILENT_STALL_MS) return;
+
+    this.silentWatchdogTrips++;
+    Log.w(
+      TAG,
+      `Audio chain stalled ${Math.round(now - this.lastAudioProgressMs)}ms with the video clock advancing ` +
+        `(video=${video.currentTime.toFixed(2)}s, trip ${this.silentWatchdogTrips}) → force re-anchor at the playhead`,
+    );
+    this.lastAudioProgressMs = now;
+    // 按当前屏上帧时间重建：内核会丢掉落后于画面的陈旧队列，后续 PCM 到达时
+    // 直接锚定到播放头附近。只丢内容、不做任何时间轴平移。
+    core.reanchor("silent-stall", true);
   }
 
   /**
