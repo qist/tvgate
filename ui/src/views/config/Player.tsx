@@ -154,8 +154,8 @@ export function PlayerPage() {
                 <li><code className="font-mono text-violet-700 dark:text-violet-200">file:///opt/tvgate/tv.txt</code> — file:// 前缀本地路径</li>
                 <li><code className="font-mono text-violet-700 dark:text-violet-200">php://sub/tv.txt</code> — 相对 PHP docroot（也可 http://&lt;host&gt;/php/sub.php?id=x）</li>
                 <li>
-                  <code className="font-mono text-violet-700 dark:text-violet-200">php://jsyd.php?id=all</code> /{" "}
-                  <code className="font-mono text-violet-700 dark:text-violet-200">php://php/jsyd.php?id=all</code>
+                  <code className="font-mono text-violet-700 dark:text-violet-200">php://xxx.php?id=all</code> /{" "}
+                  <code className="font-mono text-violet-700 dark:text-violet-200">php://php/xxx.php?id=all</code>
                   {" "}— <b className="text-foreground">脚本源</b>：由内嵌 phpgo 直接执行该脚本（不走 HTTP 回环），脚本输出即订阅内容；脚本返回 302 到 http(s) 地址时自动跟随一次
                 </li>
                 <li><code className="font-mono text-violet-700 dark:text-violet-200">tv.txt</code> / <code className="font-mono text-violet-700 dark:text-violet-200">sub</code> — 裸相对路径，基准为 docroot</li>
@@ -177,7 +177,7 @@ export function PlayerPage() {
               value={subsText}
               onChange={(e) => setSubsText(e.target.value)}
               spellCheck={false}
-              placeholder={"http://172.18.173.88:8888/php/jsyd.php?id=all\n/opt/tvgate/tv2.txt\n/www/tv/"}
+              placeholder={"php://xxx.php?id=all\n/opt/tvgate/tv2.txt\n/www/tv/"}
             />
           </Field>
           <Field label="txt 订阅的 EPG 模板（可选）" hint="含 {name}=频道名、{date}=日期；也可填固定 XMLTV URL（如 xxx.xml.gz，整份节目单按频道名匹配，gzip 自动识别）；M3U 订阅用 x-tvg-url 的 XMLTV，无需填此项">

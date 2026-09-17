@@ -433,7 +433,7 @@ function EditCard({
             className="min-h-[80px] w-full rounded-[var(--radius)] border bg-background p-2 font-mono text-sm"
             value={task.command}
             onChange={(e) => onUpdate({ command: e.target.value })}
-            placeholder={'例如: /usr/bin/php /path/script.php\n或 php://php/akmg.php?id=cctv1（phpgo 内部执行，无需系统 php，路径相对 docroot）'}
+            placeholder={'例如: /usr/bin/php /path/script.php\n或 php://php/xxx.php?id=xxx（phpgo 内部执行，无需系统 php，路径相对 docroot）'}
           />
         </Field>
 
