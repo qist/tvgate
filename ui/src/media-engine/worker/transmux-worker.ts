@@ -44,8 +44,20 @@ function yieldToMacrotask(): Promise<void> {
   });
 }
 
-/** 响应前几 KB 判断是否 HLS（#EXTM3U）。 */
-async function sniffHls(url: string): Promise<boolean> {
+/** 源初始化重试参数：服务重启/上游抖动窗口内 fetch 必然短暂失败，需静默退避重试
+ *  （UI 侧只有 3 次重载预算，不能被暂时性失败消耗掉）。 */
+const SOURCE_INIT_MAX_ATTEMPTS = 6;
+const SOURCE_INIT_BASE_DELAY_MS = 500;
+const SOURCE_INIT_MAX_DELAY_MS = 5000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** 响应前几 KB 判断是否 HLS（#EXTM3U）。
+ *  返回 null 表示探测本身失败（网络不可用）——必须与「确定不是 HLS」区分开：
+ *  前者应退避重试（服务重启窗口内 fetch 必然短暂失败），后者才降级为直连 URL。 */
+async function sniffHls(url: string): Promise<boolean | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 4000);
   try {
@@ -72,40 +84,65 @@ async function sniffHls(url: string): Promise<boolean> {
     return acc.indexOf("#EXTM3U") !== -1;
   } catch {
     clearTimeout(timer);
-    return false;
+    // 探测失败（网络不可用 / 超时）：返回 null，由调用方退避重试而非降级直连
+    return null;
   }
 }
 
-/** worker 内解析动态源（HLS）。 */
+/**
+ * worker 内解析动态源（HLS）。
+ *
+ * 初始化必须带退避重试：服务重启 / 上游抖动窗口内 fetch 必然短暂失败，而 UI 侧只有
+ * MAX_RETRIES=3 次重载预算。若把一次性失败直接上报，几轮即耗尽预算并弹错误面板
+ * （实测服务重启窗口内出现多条 Failed to fetch）。此处静默退避重试，仅当连续失败到
+ * 上限才上报一次，交由上层按位置重载恢复。
+ */
 async function resolveSources(
   urls: string[],
   onError: (msg: string) => void,
 ): Promise<{ source: SegmentSource | null; audioSource: SegmentSource | null; urls: string[] }> {
   const first = urls[0];
   if (!first) return { source: null, audioSource: null, urls };
-  if (await sniffHls(first)) {
-    const hls = new HlsSource(first, { onError }, { liveEdgeSegments: 3 });
-    const info = await hls.load();
-    if (info) {
-      // 解析独立音频 rendition（EXT-X-MEDIA;TYPE=AUDIO）：重庆有线等「声画分流」流靠它出声。
-      // 解析失败不致命——仅播视频（该流静音），视频继续。
-      let audioSource: SegmentSource | null = null;
-      if (info.audioRendition?.uri) {
-        try {
-          // 音频 rendition 的拉流错误不冒泡到主播放器（否则音频 playlist 抖动会误触发整路重载）；
-          // 仅解析失败整体降级为「仅播视频」。播放期错误由 audioSource 自身重试逻辑消化。
-          const ah = new HlsSource(info.audioRendition.uri, { onError: () => {} }, { liveEdgeSegments: 3 });
-          const ainfo = await ah.load();
-          if (ainfo) audioSource = ah;
-        } catch (e) {
-          // eslint-disable-next-line no-console
-          console.warn(`[HLS] 音频 rendition 解析失败，仅播视频: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-      return { source: hls, audioSource, urls: [] };
+
+  for (let attempt = 1; attempt <= SOURCE_INIT_MAX_ATTEMPTS; attempt++) {
+    const sniff = await sniffHls(first);
+    if (sniff === false) {
+      // 确定不是 HLS（如直连 TS/FLV）：交给 pipeline 按直连流处理，无需重试
+      return { source: null, audioSource: null, urls };
     }
-    hls.destroy();
+    if (sniff === true) {
+      // 初始化期间 onError 静默：拉取失败由本函数的退避重试消化，不消耗 UI 重试预算
+      const hls = new HlsSource(first, { onError: () => {} }, { liveEdgeSegments: 3 });
+      const info = await hls.load().catch(() => null);
+      if (info) {
+        // 解析独立音频 rendition（EXT-X-MEDIA;TYPE=AUDIO）：部分「声画分流」流靠它出声。
+        // 解析失败不致命——仅播视频（该流静音），视频继续。
+        let audioSource: SegmentSource | null = null;
+        if (info.audioRendition?.uri) {
+          try {
+            // 音频 rendition 的拉流错误不冒泡到主播放器（否则音频 playlist 抖动会误触发整路重载）；
+            // 仅解析失败整体降级为「仅播视频」。播放期错误由 audioSource 自身重试逻辑消化。
+            const ah = new HlsSource(info.audioRendition.uri, { onError: () => {} }, { liveEdgeSegments: 3 });
+            const ainfo = await ah.load().catch(() => null);
+            if (ainfo) audioSource = ah;
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn(`[HLS] 音频 rendition 解析失败，仅播视频: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+        return { source: hls, audioSource, urls: [] };
+      }
+      hls.destroy();
+    }
+    // sniff === null（探测失败）或播放列表加载失败 → 退避后重试
+    if (attempt < SOURCE_INIT_MAX_ATTEMPTS) {
+      const delay = Math.min(SOURCE_INIT_BASE_DELAY_MS * 2 ** (attempt - 1), SOURCE_INIT_MAX_DELAY_MS);
+      // eslint-disable-next-line no-console
+      console.warn(`[TransmuxWorker] 源初始化失败，${delay}ms 后重试 ${attempt}/${SOURCE_INIT_MAX_ATTEMPTS}`);
+      await sleep(delay);
+    }
   }
+  onError(`播放列表连续 ${SOURCE_INIT_MAX_ATTEMPTS} 次加载失败`);
   return { source: null, audioSource: null, urls };
 }
 
