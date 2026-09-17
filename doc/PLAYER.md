@@ -2,14 +2,15 @@
 
 TVGate 内置 H5 播放器模块：服务端解析 IPTV 订阅（M3U 或逗号 TXT），为每个频道生成**不透明 key**（源地址哈希）对外发布，真实源地址与抓流 UA 全程只存在于服务器侧，浏览器/前端不可见。支持直播、EPG 节目单、回看（源具备 catchup 时）、换台与画中画等能力，自研播放引擎（MSE + wasm 转封装）随 SPA 构建，单二进制即可提供服务。
 
-模块支持配置热加载：修改 `player` 段后由配置重载自动生效，挂载/摘除路由无需重启。Web 后台「播放器」页提供可视化配置（订阅源、EPG/台标模板、刷新间隔、默认 UA）。
+模块支持配置热加载：修改 `player` 段后由配置重载自动生效，挂载/摘除路由无需重启；改 `subscription` / `subscriptions` / `epg` 会连带重新拉取订阅与 EPG（无需重启）。Web 后台「播放器」页提供可视化配置（订阅源与多订阅源、EPG/台标模板、刷新间隔、默认 UA）。
 
 ## 配置段
 
 ```yaml
 player:
   enabled: true                    # 是否启用播放器模块（热加载，挂载/摘除路由无需重启）
-  subscription: tv.txt             # 订阅源：HTTP(S) URL 或本地文件/目录（写法见下文）
+  subscription: tv.txt             # 订阅源：HTTP(S) URL 或本地文件/目录（写法见下文）；也可写多个源（换行/逗号/分号分隔）
+  subscriptions: []                # 追加订阅源（可选，按序在 subscription 之后合并解析，同源去重）
   epg: ""                          # EPG 模板或固定 XMLTV 地址（xml/xml.gz）；兼作订阅内嵌 EPG 失效时的回退（见「EPG 节目单」）
   logo: ""                         # TXT 订阅的台标模板，含 {name} 占位符；M3U 自带 tvg-logo 时优先
   logo_dir: ""                     # 本地台标目录（如 /opt/TVLogo）：取 <频道名>.png，优先于上方模板
@@ -23,7 +24,8 @@ player:
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `enabled` | bool | `false` | 是否启用播放器模块，热加载生效 |
-| `subscription` | string | `""` | 订阅源：HTTP(S) URL 或本地路径；可指向单个文件或目录（目录=递归收集 `.txt` / `.m3u` / `.m3u8` 合并解析，跳过隐藏文件，按路径排序保证合并顺序稳定，单文件上限 64MB） |
+| `subscription` | string | `""` | 订阅源：HTTP(S) URL 或本地路径；可指向单个文件或目录（目录=递归收集 `.txt` / `.m3u` / `.m3u8` 合并解析，跳过隐藏文件，按路径排序保证合并顺序稳定，单文件上限 64MB）。可写**多个源**（换行 / 逗号 / 分号分隔，等价于 `subscriptions`） |
+| `subscriptions` | list | `[]` | **追加订阅源**（多源合并）：在 `subscription` 之后按序解析，同一地址只解析一次；单个源失败只跳过该源，全部失败时保留上一次的频道表。元素写法与 `subscription` 完全相同（URL / 本地路径 / 目录 / `file://` / `php://`） |
 | `epg` | string | `""` | 频道 EPG 来源。两种形态：**模板**（含 `{name}` / `{date}` 占位符，按频道逐条请求）或 **固定 XMLTV 地址**（`http(s)` 开头且不含 `{`，如 `https://xxx/epg.xml.gz`，整份节目单，`.gz` 自动解压、按频道名匹配）。固定 XMLTV 兼作订阅内嵌 EPG 失效时的**回退源**（见「EPG 节目单」） |
 | `logo` | string | `""` | 逗号 TXT 订阅的台标模板，含 `{name}` 占位符；M3U 自带 `tvg-logo` 时优先生效 |
 | `logo_dir` | string | `""` | 本地台标目录（如 `/opt/TVLogo`），频道台标取该目录下 `<频道名>.png`，经 `/player/logo/` 服务；优先于 `logo` 模板 |
@@ -42,6 +44,8 @@ player:
 | `file:///opt/tvgate/tv.txt` | `file://` 前缀本地路径 |
 | `php://sub/tv.txt` | 相对 docroot（php 模块脚本目录）；也可写目录如 `php://sub` |
 | `tv.txt` / `sub` | 裸相对路径，基准为 docroot |
+
+**多订阅源合并**：`subscription` 可用换行 / 逗号 / 分号分隔写多个源，或用 `subscriptions` 列表追加。解析顺序为「先 `subscription`，再 `subscriptions`」，**同一地址只解析一次**；每个源独立拉取，单个源失败只跳过它自己（其余源照常加载），全部源都失败时保留上一次的频道表。后台「播放器」页的多订阅源输入框一行一个源。
 
 ## 订阅格式
 
@@ -109,7 +113,7 @@ logo=https://logo.example.com/{name}.png
 
 非白名单 key 的请求返回 `403 Forbidden`。
 
-> **布局**：桌面/电视端频道列表与节目单在视频**左侧**（可折叠），移动端在视频下方；界面固定简体中文，支持触摸与遥控器（方向键/数字换台）操作。
+> **布局**：桌面/电视端频道列表与节目单在视频**左侧**（可折叠），移动端在视频下方；频道列表支持分组筛选，**选中的分组跨会话记忆**（浏览器本地）。支持触摸与遥控器（方向键/数字换台）操作。界面文案当前固定简体中文（词条已备简体/繁體/English 三套，见 `ui/src/i18n/player.ts`，暂未开放切换）。
 
 ## 不透明 key 机制
 
@@ -169,6 +173,43 @@ player:
 - 修改方式：直接改配置文件，或 Web 后台「播放器」页的「安卓设备启动进入播放页」开关（保存写入 YAML，热加载生效）。
 - 未配置时播放器各接口行为不变；该标记不影响 `/player/<key>`、`/web/player` 等任何访问权限。
 
+## 播放引擎与前端能力
+
+播放页由自研引擎驱动（源码 `ui/src/media-engine/`，随 SPA 构建进二进制）：
+
+| 能力 | 说明 |
+|---|---|
+| 传输 | 直连与 HLS 分片拉取，`http/https` 源自动跟随 302；内建自愈重连（断流 / 网络切换、指数退避、直播无数据看门狗） |
+| 解封装 | MPEG-TS、FLV（H.264 / H.265 + AAC / MP2 / MP3 / AC-3 / E-AC-3） |
+| 视频 | MSE 转封装为 fMP4；不支持 MSE 的终端回落原生 `<video>`；可选 WebGL 画质增强与自动去隔行 |
+| 音频 | AAC 直通；MP2 / MP3 / AC-3 / E-AC-3 走 wasm 软解（WebAudio 输出），含 WSOLA 变速、PCM 重钉与静音看门狗 |
+| 同步 | 以视频输出时间轴为基准，漂移超阈值才重建（不轻易 seek）；页面切到后台时音频自由续播 |
+
+**媒体信息徽标**（播放页右上角，全部取自实际流而非声明值）：
+
+| 徽标 | 取值 | 数据来源 |
+|---|---|---|
+| 分辨率 | `4K`、`1080p`、`1080i`… | 视频轨宽高 + 扫描方式（H.264 `frame_mbs_only_flag`；H.265 VUI / PTL 约束位） |
+| 帧率 | `25 FPS` | 视频样本相邻 DTS 差的中位数估计；开启去隔行时显示 ×2 |
+| 视频编码 | `H.264` / `HEVC` / `VP9` / `AV1` | 轨道 codec 串 |
+| 音频编码 | `AAC` / `MP2` / `AC-3` / `E-AC-3` / `MP3` / `Opus` | 轨道 codec 串 |
+| 声道 | `立体声` / `5.1` / `7.1`… | AAC=ADTS 首帧；AC-3=BSI `acmod+lfeon`；E-AC-3=`acmod+lfeon`；MP2/MP3=帧头 `channelMode` |
+| 动态范围 | `SDR` / `HDR10` / `HLG` | 视频轨元数据 |
+| 码率 | `3.2 Mbps` | 声明值或实测值（悬停可见来源） |
+
+**界面风格**：播放页与 Web 后台共用同一设置（同一浏览器内保持一致），共 6 套配色：
+
+| 值 | 名称 | 主色 |
+|---|---|---|
+| `ocean` | 深海 | 天蓝 |
+| `emerald` | 翡翠 | 翠绿（**默认**） |
+| `sunset` | 落日 | 橙红 |
+| `rose` | 玫红 | 玫瑰 |
+| `amber` | 琥珀 | 琥珀金 |
+| `slate` | 石墨 | 中性灰蓝 |
+
+切换入口：播放页「设置 → 界面风格」，或 Web 后台右上角的风格选择器（登录页右上角同）。选择只保存在浏览器 `localStorage`（键 `tvgate-player-appearance`），服务端不参与，也不影响其他设备/访客。
+
 ## 安全设计
 
 - **源白名单 = 唯一可播放清单**：订阅内容即允许播放的频道清单，仅订阅内的频道可经播放器访问；白名单外 key 一律 `403`。
@@ -182,6 +223,9 @@ player:
 player:
   enabled: true
   subscription: https://sub.example.com/tv.m3u      # 远程订阅；也可写 /opt/tvgate/tv.txt、php://sub 等
+  subscriptions:                                    # 可选：追加订阅源（多源合并，同源去重）
+    - /opt/tvgate/tv2.txt
+    - php://sub
   epg: https://epg.example.com/?ch={name}&date={date}
   logo: https://logo.example.com/{name}.png
   logo_dir: /opt/TVLogo                             # 本地台标目录：<频道名>.png，优先于 logo 模板
@@ -193,6 +237,9 @@ player:
 ## 注意事项
 
 - 订阅按内容自动识别 M3U / TXT，文件扩展名仅作参考；目录订阅会合并全部 `.txt` / `.m3u` / `.m3u8`，单文件上限 64MB。
+- 多订阅源（`subscription` 内分隔多个 / `subscriptions`）按序合并、同源去重；单源失败只跳过它自己，**全部失败时保留上一次的频道表**，不会把频道清空。
+- 整份 XMLTV（`epg` 填固定 `xml` / `xml.gz` 地址）与订阅共用同一刷新时钟，每个刷新周期随订阅一起重拉；改 `player` 段后热加载即重新拉取，无需重启。
+- 界面风格是**浏览器本地设置**（`localStorage`），与服务器配置无关；换设备/换浏览器需重新选择。
 - TXT 订阅的组级 `ua=` 作用于其后的所有频道，注意书写顺序；`ua=`（空值）可恢复 `player.ua` 默认。
 - `epg` 模板仅对逗号 TXT 订阅生效；M3U 订阅的 EPG 以头行 `x-tvg-url` 为准。`player.epg` 填**固定 XMLTV 地址**时对两种订阅都生效：TXT 直接作为节目源，M3U 则作为内嵌 EPG 失效时的回退源（见「EPG 回退」）。
 - `logo` 模板仅对逗号 TXT 订阅生效；M3U 订阅的台标以 `tvg-logo` 属性为准。

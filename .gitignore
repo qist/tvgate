@@ -30,4 +30,5 @@ ts.log
 # 本地设计文档（仅本地留存，不入库）
 doc/player-ui-redesign-design.md
 doc/playback-engine-rewrite-design.md
+doc/PLAYER-SYNC-REDESIGN.md
 ui/src/media-engine/docs/
