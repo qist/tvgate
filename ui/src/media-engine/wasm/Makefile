@@ -20,6 +20,8 @@
 #
 # 许可：FFmpeg 部分为 LGPL-2.1+（未启用任何 GPL 组件），以独立 .wasm 资源分发
 # （等同动态链接）；分发时须保留 FFmpeg 源码获取途径（LGPL 义务）。
+# 对应 FFmpeg 源码：https://github.com/FFmpeg/FFmpeg （构建所用版本以 FFMPEG_LIB_DIR
+# 指向的裁剪静态库为准；对外分发时请随包提供该版本源码或书面提供方式）。
 #
 # 本机重建：/opt/emsdk/upstream 自带的 emscripten_config 有损坏符号，需自备
 # config（LLVM_ROOT 指 upstream/bin，NODE_JS 指本机 node）：

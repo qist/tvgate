@@ -339,8 +339,8 @@ server {
 ## 许可证
 
 - 本项目主体以 [MPL-2.0](LICENSE) 协议开源。
-- [ui/src/playback-engine/](ui/src/playback-engine/)（网页播放器引擎）移植自 [stackia/rtp2httpd](https://github.com/stackia/rtp2httpd) 的前端代码（上游 [oskar456/rtp2httpd](https://github.com/oskar456/rtp2httpd)），按其原始 **GPL-2.0** 协议单独授权，含后续全部衍生改进；详见该目录下的 [LICENSE](ui/src/playback-engine/LICENSE) 与 [README](ui/src/playback-engine/README.md)。
-- [ui/src/playback-engine/wasm/avcodec/](ui/src/playback-engine/wasm/avcodec/) 构建时链接裁剪的 FFmpeg 库（LGPL-2.1+，未启用 GPL 组件），对应源码获取方式见 `wasm/avcodec/Makefile` 内说明。
+- **播放引擎 `ui/src/media-engine/`**：clean-room 自研实现，同样以 [MPL-2.0](LICENSE) 协议开源；旧版 `ui/src/playback-engine/`（基于 GPL 上游 rtp2httpd 的派生代码）已整体移除——源码中不再包含任何 GPL 派生代码，也无对旧引擎目录的 `import` 依赖（零依赖已核验）。其合规处置记录见 `ui/src/media-engine/docs/gpl-compliance-audit.md`（本地文档，不入库）。
+- **软解后端 FFmpeg（WASM）**：`ui/src/media-engine/wasm/avcodec/` 构建时链接裁剪的 FFmpeg 库（LGPL-2.1+，未启用任何 GPL 组件），以独立 `.wasm` 资源分发（等同动态链接）；其源码获取途径见 `ui/src/media-engine/wasm/Makefile` 与 `ui/src/media-engine/wasm/README.md`。
 
 ---
 
