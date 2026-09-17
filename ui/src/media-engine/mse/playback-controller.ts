@@ -16,6 +16,8 @@ import type { SourceMode } from "../types";
 export interface PlaybackControllerCallbacks {
   onRateChange?(rate: number): void;
   onLiveStateChange?(isLive: boolean, lagSeconds: number): void;
+  /** 已跳过一段缓冲缺口（上游缺失内容导致的空洞），gapSeconds 为缺口时长。 */
+  onGapSkip?(gapSeconds: number): void;
 }
 
 export interface PlaybackControllerOptions {
@@ -62,6 +64,23 @@ const UNDERRUN_BACKOFF_MAX = 6;
  * 跟随加速，消耗快于 worker 解码供给 → 音频链欠载 → 播放几分钟后没声音。
  */
 const CHASE_HYSTERESIS = 1.0;
+
+// ==================== 缓冲缺口跳过（gap skip） ====================
+/**
+ * 上游（CDN）在整点切换时会永久缺失约 3 个分片（≈30s 内容），MSE 缓冲因此出现空洞：
+ * 播放头播到空洞前会一直 stall，不跳过就只能等停顿看门狗重载整条流（黑屏数十秒）。
+ * 原生 HLS 播放器有 gapController 专门处理这种空洞，此处对齐之。
+ */
+/** 播放头距当前缓冲区间末端小于该值（秒）时才允许跳（避免正常播放中被误跳）。 */
+const GAP_SKIP_TRIGGER_AHEAD_SEC = 0.35;
+/** 小于该值的空洞视为正常缓冲空隙，不跳。 */
+const GAP_SKIP_MIN_SEC = 0.5;
+/** 大于该值的空洞不自动跳（可能是源整体断层/换段，交上层处理）。 */
+const GAP_SKIP_MAX_SEC = 300;
+/** 缺口之后至少要有这么多可播数据才跳（否则跳过去也会立刻 stall）。 */
+const GAP_SKIP_MIN_TARGET_SEC = 0.3;
+/** 跳到缺口后的微小前移，避免落在区间边界上。 */
+const GAP_SKIP_EPSILON_SEC = 0.02;
 
 export class PlaybackController {
   private currentRate = 1;
@@ -118,8 +137,14 @@ export class PlaybackController {
     if (!enabled) this.applyRate(1);
   }
 
-  /** 周期调用：按直播边延迟微调速率（**只调 rate，不 seek**）。 */
+  /**
+   * 周期调用：按直播边延迟微调速率（**只调 rate，不 seek**）。
+   * 唯一例外是「缓冲缺口跳过」：缺口是上游缺失内容造成的空洞，播放头必须前跳过去，
+   * 否则会永久 stall，直到上层停顿看门狗重载整条流（黑屏数十秒）。
+   */
   tick(): void {
+    // 缺口检查对所有模式都做（点播/回看同样不该卡在缺口前）
+    this.maybeSkipBufferGap();
     if (!this.liveSyncEnabled || this.mode === "static-ts-list") {
       this.applyRate(1);
       return;
@@ -152,6 +177,46 @@ export class PlaybackController {
   }
 
   /**
+   * 缓冲缺口跳过：播放头所在缓冲区间之后存在空洞（上游整点缺失分片等），且空洞之后已有
+   * 可播数据时，直接前跳到空洞之后——把「卡在空洞前数十秒」变成「瞬间跳过缺失内容」。
+   * 只在播放头已接近当前区间末端时触发，正常播放不会误跳。
+   * @returns 是否已触发跳转
+   */
+  private maybeSkipBufferGap(): boolean {
+    const video = this.video;
+    if (video.seeking) return false;
+    const b = video.buffered;
+    if (b.length < 2) return false;
+    const t = video.currentTime;
+    let idx = -1;
+    for (let i = 0; i < b.length; i++) {
+      if (t >= b.start(i) && t <= b.end(i)) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0 || idx + 1 >= b.length) return false;
+    const currentEnd = b.end(idx);
+    const nextStart = b.start(idx + 1);
+    const gap = nextStart - currentEnd;
+    if (currentEnd - t > GAP_SKIP_TRIGGER_AHEAD_SEC) return false; // 还没播到空洞跟前
+    if (gap < GAP_SKIP_MIN_SEC || gap > GAP_SKIP_MAX_SEC) return false;
+    if (b.end(idx + 1) - nextStart < GAP_SKIP_MIN_TARGET_SEC) return false; // 空洞后数据太少，跳过去也会再 stall
+    const target = nextStart + GAP_SKIP_EPSILON_SEC;
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[MSE] 缓冲缺口 ${gap.toFixed(2)}s（${currentEnd.toFixed(2)} → ${nextStart.toFixed(2)}）→ 跳过缺失段`,
+    );
+    this.callbacks.onGapSkip?.(gap);
+    try {
+      video.currentTime = target;
+    } catch {
+      /* 某些 UA 在 readyState 不足时会抛错，忽略 */
+    }
+    return true;
+  }
+
+  /**
    * 直播边下溢退避：播放头已追到缓冲末端仍欠载（waiting）时，抬高延迟下限并回落速率。
    * 避免持续贴着直播边反复欠载（起播阶段尤其明显）。
    */
@@ -159,6 +224,8 @@ export class PlaybackController {
     if (!this.liveSyncEnabled || this.mode === "static-ts-list") return;
     // Seek / goLive 常带 waiting，此时仍有缓冲，不算欠载
     if (this.video.seeking) return;
+    // 缺口优先：播放头停在空洞前（stall）→ 立即跳过缺失段，而非走下面的直播边退避
+    if (this.maybeSkipBufferGap()) return;
 
     const latency = this.liveEdgeLatency();
     if (latency === null) return;
