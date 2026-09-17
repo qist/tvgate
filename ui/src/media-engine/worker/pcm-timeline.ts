@@ -8,10 +8,18 @@
  *
  * 本类在 worker 软解层就地消化这个偏移，复刻原始的两道工序：
  *  1. 首块：以视频锚点(0)为地板，整块在锚点之前 → 丢弃；跨锚点 → 裁掉前面那段，time 夹到 0。
- *  2. 后续块：按原始时间连续性排列，跨段空洞(distance>0)填 0 bridge，绝不回退；
- *     若某块仍落在锚点之前同样裁剪，保证输出 time 恒 ≥ 0。
+ *  2. 后续块：按原始时间连续性排列。**小空洞**（PES 拼接抖动）填 0 bridge，保持背靠背排程；
+ *     **大跳变**（断流/分片跳号恢复后源时间轴整体前跳，如整点切换跳过数个分片）必须保留——
+ *     抹掉跳跃会让 PCM 轴永远落后 MSE 视频轴（视频按源 PTS 连续推进），数据一到就被当过期
+ *     丢弃 → 表现为「画面恢复、声音永不回来」。
  * 这样首个进 PCM 播放器的块起始就是 0，与 video.currentTime 同起点，起播无硬重同步。
  */
+
+/**
+ * 桥接上限（秒）：原始时间空洞超过它即视为「源时间轴真跳变」并保留跳跃。
+ * 正常 PES 拼接抖动远小于 1s；断流/分片跳号恢复的跳变通常数秒到数十秒。
+ */
+const MAX_BRIDGE_GAP_SEC = 1.0;
 
 export class PcmTimeline {
   /** 原始（未裁剪）端点时间（秒），用于跨块连续性。 */
@@ -46,9 +54,11 @@ export class PcmTimeline {
       // 首块：以视频锚点 0 为地板，负值留待下方裁剪
       rawOutputStart = originalStart;
     } else {
-      // 后续块：贴合上一块输出端点；原始时间出现空洞(distance>0)时填 0 bridge，不回退
+      // 后续块：贴合上一块输出端点。小空洞（< MAX_BRIDGE_GAP_SEC）填 0 bridge 不回退；
+      // 大跳变保留跳跃，让 PCM 轴跟随源/视频轴（见文件头说明）。
       const distance = originalStart - this.lastOriginalEnd;
-      rawOutputStart = this.lastOutputEnd + (distance > 0 ? 0 : distance);
+      const advance = distance > MAX_BRIDGE_GAP_SEC ? distance : distance > 0 ? 0 : distance;
+      rawOutputStart = this.lastOutputEnd + advance;
     }
 
     let outputStart = rawOutputStart;

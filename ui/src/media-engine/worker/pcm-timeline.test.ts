@@ -43,6 +43,25 @@ describe("PcmTimeline（对齐原始 mapPcmTimestamp 的 drop/trim/bridge）", (
     expect(b!.time).toBeCloseTo(0.1, 6);
   });
 
+  it("后续块大跳变（断流/分片跳号恢复，源时间轴整体前跳）→ 保留跳跃，PCM 轴跟随视频轴", () => {
+    const tl = new PcmTimeline();
+    tl.map(0.0, pcm(4800), SR, 2); // 0 → 0.1
+    // 断档 30s 后新数据（如整点切换跳过数个分片）：输出时间必须同样前跳，
+    // 否则 PCM 永久落后 MSE 视频轴 → 一到就被当过期丢弃（画面在走、声音不回来）
+    const b = tl.map(30.1, pcm(4800), SR, 2);
+    expect(b!.time).toBeCloseTo(30.1, 6);
+    // 跳变之后的块继续背靠背
+    const c = tl.map(30.2, pcm(4800), SR, 2);
+    expect(c!.time).toBeCloseTo(30.2, 6);
+  });
+
+  it("小空洞（< 1s）仍 bridge，不破坏背靠背排程", () => {
+    const tl = new PcmTimeline();
+    tl.map(0.0, pcm(4800), SR, 2); // 0 → 0.1
+    const b = tl.map(0.9, pcm(4800), SR, 2); // 空洞 0.8s（PES 拼接抖动量级）
+    expect(b!.time).toBeCloseTo(0.1, 6);
+  });
+
   it("后续块重叠（distance<0）→ 输出端点按 distance 前移，不出现负 time", () => {
     const tl = new PcmTimeline();
     tl.map(0.0, pcm(4800), SR, 2); // 0 → 0.1
