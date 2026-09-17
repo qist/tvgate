@@ -31,6 +31,8 @@ export default defineConfig(() => ({
       "/web": "http://127.0.0.1:8888",
       // 播放器页面数据与拉流同源代理
       "/api/player": "http://127.0.0.1:8888",
+      // 推流发布页的预览/拉流（/live/play/<name>.flv|m3u8）：dev 下同样要能播
+      "/live": "http://127.0.0.1:8888",
       // 注意：`/player` 前缀会连带匹配 `/player.html`，把它一起代理到后端；而后端只服务
       // `/web/player.html`，于是 dev 下打开播放器页面得到 502。bypass 让「页面本身」由
       // vite 自己服务，只有 `/player/<key>` 的数据/拉流请求才走后端。
@@ -52,11 +54,11 @@ export default defineConfig(() => ({
     emptyOutDir: true,
     sourcemap: false,
     rollupOptions: {
-      // 三入口：管理后台 index.html + H5 播放器 player.html + AC-3 独立实验页 ac3-lab.html
+      // 两入口：管理后台 index.html + H5 播放器 player.html
+      // （ac3-lab 独立实验页已随"去 GPL"收尾删除：它是旧引擎的唯一外部依赖者）
       input: {
         index: resolve(__dirname, "index.html"),
         player: resolve(__dirname, "player.html"),
-        "ac3-lab": resolve(__dirname, "ac3-lab.html"),
       },
       output: {
         manualChunks: {
