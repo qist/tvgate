@@ -10,7 +10,11 @@
 #
 
 APP_NAME="tvgate"
-APP_DIR="/opt/tvgate"
+# 部署根目录：默认取脚本自身所在目录（跟随软链解析）。
+# 不要硬编码路径 —— 各部署布局不同（/opt/tvgate、/opt/tv-gate、自定义目录），
+# 写死任一个都会让其它部署拉取代码后直接失效。需要覆盖时用环境变量：
+#   APP_DIR=/your/path ./start.sh
+APP_DIR="${APP_DIR:-$(cd "$(dirname "$(readlink -f "$0")")" && pwd)}"
 APP_BIN="${APP_DIR}/build/TVGate-linux-64"
 CONFIG="${APP_DIR}/build/config.yaml"
 PID_FILE="${APP_DIR}/${APP_NAME}.pid"

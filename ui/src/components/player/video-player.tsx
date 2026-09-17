@@ -104,6 +104,27 @@ interface PlaybackErrorDisplay {
 const MAX_RETRIES = 3;
 const INACTIVE_RENDER_STATE: PlayerRenderState = { active: false, deinterlacing: false };
 
+// ---- 播放停摆看门狗（网络异常兜底）----
+/** 播放时钟无推进多久判定为停摆（毫秒）。正常直播每 1~2s 必有推进。 */
+const STALL_DETECT_MS = 12000;
+/** 连续触发时的重建冷却基值与上限（毫秒，指数退避）。 */
+const STALL_REBUILD_COOLDOWN_BASE_MS = 30_000;
+const STALL_REBUILD_MAX_MS = 180_000;
+/** 看门狗轮询间隔（毫秒）。 */
+const STALL_WATCH_INTERVAL_MS = 2000;
+
+/** 当前播放位置所处的缓冲区间内、还能往前播多久（秒）。 */
+function getForwardBufferAhead(video: HTMLVideoElement): number {
+  const t = video.currentTime;
+  const buffered = video.buffered;
+  for (let i = 0; i < buffered.length; i++) {
+    if (t >= buffered.start(i) && t <= buffered.end(i)) {
+      return buffered.end(i) - t;
+    }
+  }
+  return 0;
+}
+
 type SlotId = "a" | "b";
 
 type PendingTransition = { gen: number; slotId: SlotId; player: PlaybackBackend; startedAt: number };
@@ -345,6 +366,17 @@ function VideoPlayerComponent({
   const shouldAutoPlayRef = useRef(true);
   const userPausedRef = useRef(false);
   const wallClockCalibratedRef = useRef(false);
+  // ---- 播放停摆看门狗状态 ----
+  /** 最近一次播放时钟推进到的位置（停摆判定基准）。 */
+  const stallWatchdogVideoTimeRef = useRef(0);
+  /** 播放时钟最后一次推进的时刻（毫秒）。 */
+  const stallWatchdogAtRef = useRef(0);
+  /** 上一次重建的时刻（毫秒）。 */
+  const stallWatchdogLastRecoveryRef = useRef(0);
+  /** 连续重建次数（退避用）；时钟恢复推进即清零。 */
+  const stallWatchdogCountRef = useRef(0);
+  /** 上次采样的解码帧数（区分"元素没动"与"解码卡死"）。 */
+  const stallWatchdogDecodeRef = useRef(-1);
   const mediaSessionPositionUpdatedAtRef = useRef(0);
 
   const [digitBuffer, setDigitBuffer] = useState("");
@@ -1167,6 +1199,85 @@ function VideoPlayerComponent({
     const handler = () => handleVisibilityChange();
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
+  }, []);
+
+  /**
+   * 播放停摆兜底：网络切换（WiFi → 4G/5G）时旧连接可能静默挂死，元素停在缓冲上，
+   * 底层自动重连要经历数次退避。这里在"整体停摆"时介入，做最后一道自愈：
+   *
+   *  - 缓冲里还有数据却推不动（被 UA 挂起等）→ 补播一次；
+   *  - 缓冲已耗尽（断流）→ 按直播边缘 / 当前位置重建会话（复用既有错误重试路径）。
+   *
+   * 时间轴本身的自愈由传输层（`fetch-loader` 自动重连 + 直播无数据看门狗）与
+   * worker（重连后重钉 PCM 轴）承担；这里只保证"永不永久卡死"。阈值保守，
+   * 连续失败时按 30s→60s→120s→180s 退避，避免弱网下的重建风暴。
+   */
+  const handleStallWatchdog = useEffectEvent(() => {
+    if (document.visibilityState !== "visible") return;
+    if (userPausedRef.current || needsUserInteraction || error) return;
+    if (isAnyPictureInPictureActive()) return;
+    const video = getActiveVideo();
+    const activePlayer = getActivePlayer();
+    if (!video || !activePlayer) return;
+    if (activePlayer.getState().paused || video.seeking) return;
+
+    const now = performance.now();
+    const currentTime = video.currentTime;
+    if (Math.abs(currentTime - stallWatchdogVideoTimeRef.current) > 0.25) {
+      stallWatchdogVideoTimeRef.current = currentTime;
+      stallWatchdogAtRef.current = now;
+      stallWatchdogCountRef.current = 0;
+      return;
+    }
+    // 尚未起播（换台/重建冷启动）：交给既有起播超时判定。
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      stallWatchdogAtRef.current = now;
+      return;
+    }
+
+    const stalledFor = now - stallWatchdogAtRef.current;
+    if (stalledFor < STALL_DETECT_MS) return;
+    // 连续触发时按指数退避冷却：弱网下不反复重建会话（30s → 60s → 120s → 180s）。
+    const cooldown = Math.min(
+      STALL_REBUILD_COOLDOWN_BASE_MS * 2 ** Math.max(0, stallWatchdogCountRef.current - 1),
+      STALL_REBUILD_MAX_MS,
+    );
+    if (now - stallWatchdogLastRecoveryRef.current < cooldown) return;
+
+    stallWatchdogVideoTimeRef.current = currentTime;
+    stallWatchdogAtRef.current = now;
+    stallWatchdogLastRecoveryRef.current = now;
+
+    const state = activePlayer.getState();
+    const video2 = video as HTMLVideoElement & { webkitDecodedFrameCount?: number };
+    const decodeStuck =
+      video2.webkitDecodedFrameCount !== undefined && video2.webkitDecodedFrameCount === stallWatchdogDecodeRef.current;
+    stallWatchdogDecodeRef.current = video2.webkitDecodedFrameCount ?? -1;
+
+    if (getForwardBufferAhead(video) > 0.3 && !decodeStuck) {
+      // 数据在手却停着：补播一次即可，重建会白丢已缓冲内容。
+      console.warn(`Playback stalled ${Math.round(stalledFor)}ms with data buffered; resuming playback`);
+      activePlayer.play().catch(() => {});
+      return;
+    }
+
+    stallWatchdogCountRef.current++;
+    console.warn(
+      `Playback stalled ${Math.round(stalledFor)}ms with no usable buffer (readyState=${video.readyState}, ` +
+        `paused=${state.paused}, decodeStuck=${decodeStuck}); rebuilding the stream`,
+    );
+    shouldAutoPlayRef.current = true;
+    if (playMode === "live") {
+      onSeek?.(new Date(), true);
+    } else {
+      const seekTime = mseToWallClock(currentVideoTimeRef.current, streamStartTime);
+      onSeek?.(seekTime, isNearLiveWallClock(seekTime, liveSessionAnchor, streamStartTime));
+    }
+  });
+
+  useEffect(() => {
+    const timer = window.setInterval(() => handleStallWatchdog(), STALL_WATCH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
   }, []);
 
   const handleMuteToggle = useEffectEvent(() => {

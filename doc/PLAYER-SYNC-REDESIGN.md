@@ -31,7 +31,8 @@
       ├─[分叉A] pipeline.ts:516  hls / continuous-live-ts / static-ts-list
       ├─[分叉B] pipeline.ts:835  TSDemuxer / FLVDemuxer / fMP4 直通
       └─ audio ─┬─[分叉C] AAC/MP3         → MP4Remuxer → MSE audio SourceBuffer
-                └─        MP2/AC-3/E-AC-3 → onRawAudioData
+                └─        MP2/AC-3/E-AC-3 → demuxer 按帧头切帧 + 逐帧 PTS 外推
+                          → onRawAudioData（每帧带自己的 PTS）
                           → worker-audio-decoder → avcodec-audio-decoder(WASM)
                           → pcm-audio-data → playback-controller.ts:169
                           → audio/pcm-audio-player.ts (WebAudio)
@@ -152,7 +153,7 @@ bufferContains(sb: TimeRanges, t: number): boolean;  // 唯一实现，替换 4 
 ### 3.3 P1 同步内核（提炼自 `ac3-lab/audio-sync.ts`）
 
 ✅ **已实现**：`audio/audio-sync-core.ts`（580 行），`ac3-lab` 与 `PCMAudioPlayer` 共用同一实例化入口。
-对外接口：`enqueue / pump / controlTick / reanchor / resetChain / stopChain / flushQueue / driftSec /
+对外接口：`enqueue / pump / controlTick / reanchor / resetChain / driftSec /
 heardStreamTime / visibleVideoTime / getOutputLatencySec / setCalibrationMs / stats / start / destroy`，
 以及注入钩子 `getRate / getScheduleAheadSec / maxAudioLeadSec / maxQueueChunks / reanchorDriftSec /
 onSchedulingBlocked / onSchedulingResumed`。
@@ -423,6 +424,59 @@ nextStartTime = X + s
 4. **拆分 `wasmDecoders.ac3` 为按 codec 的独立开关** —— 现在两个 codec 共用一个开关，导致"只支持 ac-3、不支持 ec-3"的设备拿不到硬解收益。拆开后可放宽 §3.2 的第 3 条硬规则。
 5. ~~**WSOLA 接线方式（阶段 2 待做）**~~ —— ✅ 内核接线、lab 验收、**播放器启用**均已完成（见 §3.4 与 §4 阶段 2）。剩余：**真机听感验证**（无变调/无金属声，无头环境测不了）+ 真机长跑。`source.playbackRate` 路径保留为伸缩器不可用时的回退。
 6. **环路增益/死区是否要在真机上重标** —— `RATIO_DRIFT_GAIN=0.6` 是按"死时间 ≈ 0.9s"推的；真机上排程前瞻与设备输出延迟不同，若观察到 drift 小幅周期振荡，先降增益（0.6 → 0.4）再看。
+7. **"音频落后画面"方向没有自愈（待定方案）** —— 内核只有 `maybeRebaseAxis`（音频**超前** → 轴平移）；音频**落后**时 `enqueue()`/`reanchor()` 的 stale floor 与 `pump()` 的 `skipFrames >= seg.frames` 会持续把块丢成 `droppedStale`（现场日志 `anchor: dropped N fully-stale PCM chunk(s)`）。而 PCM 轴（`MP4Remuxer._pcmTiming`）是"内容连续 bridging"语义：**上流任何丢音频都只让轴变短、不留缺口**，重钉只发生在音频轨不连续或重建 remuxer 时 —— 于是"视频轴跑到 PCM 轴前面"（视频侧 TS 不连续、seek、分片跳过）可能永久静音。待定方案：① 主线程→worker 新增"重钉 PCM 轴"指令（等价 `_resetPcmOnAudioDiscontinuity`；**不能**用 `rebaseAxis` 反向平移——那会把过期内容按新标签播出去）；② 上流丢音频的闸门（等视频关键帧、`Unknown pts`、坏帧跳过）显式记账并在恢复时请求重钉。
+8. **`PCMAudioPlayer.awaitingNewTimeline` 是无超时的粘滞闸（待加兜底）** —— 只有收到 `time <= reanchorAtSec + 2.5s` 的块才解除；视频 seek/时间轴重锚后若新 PCM 标签整体落在窗口之外，`feed()` 会**永久静默丢弃**（连 `anchor:` 日志都不会出现，现场特征就是"日志停在 `reanchor(video-seeked): queue=0` 之后"）。建议加超时 + 丢弃计数告警，并让 `onVideoSeeked` 不再无条件 `force` 重锚（落点相近时保留在播的链）。~~部分兜底~~：2026-09-16 已加静音看门狗（§9 第 3 层），粘滞期间超过 5s 无音频链会被强制重锚；但 `feed()` 层的丢弃计数告警仍未做。
+9. **弱网/网络切换的端到端验证** —— §9 的四层自愈需要真机复验：WiFi ↔ 4G/5G 来回切换（含隧道/电梯等真实断网），观察 `Transient stream failure ... reconnect` 日志、`rebase axis`/`silent-stall` 计数与 drift 是否回到 ±20ms；理想情况是切换全程不触发第 4 层（会话重建）。
+
+---
+
+## 9. 网络异常自愈（2026-09-16）
+
+**故障现象**：WiFi 切 4G/5G 后音画永久错位、或画面在走声音不回来、或永久转圈。根因是链路上所有环节都假设"网络不会断"：`fetch-loader` 单次请求失败即判死整条流水线 → 上层整会话重建（上限 3 次、无退避），重建期间无任何时间轴重钉，源 PTS 纪元变化后 PCM 与视频轴分离且无自愈。
+
+分四层加固（由下到上，正常情况下上层永不触发）：
+
+| 层 | 位置 | 触发条件 | 动作 | 关键常量 |
+|---|---|---|---|---|
+| 1 传输层 | `io/fetch-loader.ts` | 直播流（`resumeMode==="restart"`）请求中途失败 | 指数退避重连（`_internalRestart` → `onRestarted`，解封装/Rmuxer 走 TS 边界桥接） | `RETRY_BASE_DELAY_MS=500`、上限 5 次、`RETRY_MAX_DELAY_MS=8s`；4xx（除 429）不重试 |
+| 1' 传输层 | 同上 | 直播流 20s 内一个字节都没到（TCP 静默挂死，网络切换典型表现） | 掐断连接并走同一重连路径 | `LIVE_DATA_TIMEOUT_MS=20s` |
+| 2 时间轴 | `worker/pipeline.ts` | 连续直播 TS 重连成功 | `_finishTsInputBoundary()` + **`_resetPcmOnAudioDiscontinuity()`**：源 PTS 纪元不可预知，重钉 PCM 轴到当前播放头 | 复用既有的音频轨不连续路径 |
+| 3 音频链 | `audio/pcm-audio-player.ts` | 曾成功排程过 + 5s 无可听内容（队列空、无前瞻）+ 视频时钟在推进 + `readyState≥HAVE_FUTURE_DATA` | `reanchor("silent-stall", true)`：按屏上帧时间重建链，后续 PCM 直接锚定播放头 | `SILENT_STALL_MS=5s`、`SILENT_STALL_MIN_UPTIME_MS=3s` |
+| 4 播放层 | `components/player/video-player.tsx` | 播放时钟 12s 无推进（可见、未暂停、非 PiP） | 有前向缓冲且解码计数在动 → 补播一次；否则按直播边缘/当前位置重建会话 | `STALL_DETECT_MS=12s`、冷却 30→60→120→180s |
+
+**为什么第 1 层是主路径**：只要重连在 12s 内成功，元素、MSE 缓冲、音频链全部保持，用户只会看到一次短暂卡顿而不是重建；第 3、4 层只是"永不永久卡死"的保险。
+
+**不做的事**（避免回退既有结论）：不碰 `AudioSyncCore` 的锚定/记账不变量；重连不使用 `rebaseAxis` 反向平移（会把过期内容按新标签播出去）；VOD/回看不做字节流重连（重复内容），仍由上层按位置重建。
+
+### 9.1 音频"卡顿一下"的根因修正（同日后续）
+
+**现象**：播放中偶发"丢帧 + 声音卡顿一下"，但音画保持同步。
+
+**根因**：`_resetPcmOnAudioDiscontinuity`（5b0d973 引入的"断流恢复自愈"）是**无条件**的
+——TS 流里任何一次"audio discontinuity"（连续性计数器抖动、丢一个包、PES 重整、重连）
+都会：`resetPcmTiming()` + 解码器 carry 清零 + 把 PCM 轴重钉到播放头。这等于**每次都
+丢弃当前已解码的 PCM 缓冲**，听感正是"卡顿一下"（音画仍同步，因为重钉本身是对齐的）。
+
+**修正**（`pipeline._reanchorPcmIfNeeded` + `MP4Remuxer.probeNextPcmOutput`）：
+
+| 判据（PCM 游标 − 播放头） | 动作 |
+|---|---|
+| −3s ≤ Δ ≤ +36s（正常预解码余量 / 小幅抖动） | **保留时间轴**，交给 `mapPcmTimestamp` 的"内容连续 bridging"吸收（与 AC-3 周期 PTS 相位跳变同款），无可听接缝 |
+| Δ > +36s（超过 `LEAD_BUFFER_AHEAD_MS` 的合法上限）或 Δ < −3s（PCM 已跟不上播放头） | 真脱轴：`resetPcmTiming` + 钉到播放头（原 5b0d973 语义） |
+| 播放头未知（首帧前） | 保守重置 |
+
+同时修正两处会**放大**卡顿的判据缺陷：
+
+1. `PCMAudioPlayer.audioStallWatchdog` 的"推进标记"原用 `nextAudibleStreamSec()`（队头/链尾）
+   —— 自动推进时它可能长时间不变，会把正常播放误判成停摆并强制重锚（重锚本身即一次卡顿）。
+   改为内核新增的 `contentCursorSec()`（内容游标：已排程链尾 → 已产出尾 → 队头），
+   只在**真实前进**时刷新进度时间戳。
+2. 视频轨不连续分支原本**不会**清软解音频解码器 carry（`else` 挂在 `if (track === "audio")`
+   上导致永假）—— 修正为视频/音频两条分支各自正确处理。
+
+**诊断**：`PCMAudioPlayer` 每 ~60s 的诊断日志新增各丢弃环节的**增量** WARN
+（`Audio drops in last ~60s: worker[remux/trim/ovf/gen/carry] player[stale/underrun/reanchor/stall]`）
+—— 全零即说明卡顿不来自软解 PCM 链路（应查 MSE / bridging），非零则直接定位环节。
 
 ---
 
@@ -458,3 +512,6 @@ WSOLA_RATIO_SLEW_PER_SEC        = 0.02   // ratio 变化率上限
 | 2026-09-13 | v2 +阶段2测 | 完成阶段 2 第一步实测：`wsola_position()` 语义成立（`position = out×ratio`），**无 `L_w` 需标定**，改用它做权威内容游标；实测固有代价 = 52ms 预填 / ~48ms 尾部丢弃（无 flush 接口）/ ratio==1 逐位直通。§3.4 记账公式与约束表据此改写，§7 遗留项 1 关闭 |
 | 2026-09-13 | v2 +阶段2线 | 内核加入可注入伸缩级（`stretcherFactory`，默认关闭）；排程改为统一"段"模型；缺口补静音保证 position↔媒体时间线性。lab 挂上伸缩器并通过验收（1.2x 追速 drift 收敛到 8~16ms、ratio→1.200、0 丢帧 0 重锚）。实测发现并修正环路极限环：`K×θ<1` + 20ms 死区（K 1.5→0.6）。§3.4 增环路整定表 |
 | 2026-09-13 | v2 +阶段2启 | 播放器启用 WSOLA：注入 `stretcherFactory`，`source.playbackRate` 跟随退居回退路径。修正"创建失败即永久静音"的实现缺陷（`stretchEnabled` 同时判断"已注入"与"未失败"）；伸缩级可用时变速不再硬重锚。lab 回归复验通过（ratio→1.200、0 丢帧 0 重锚）。待真机听感 + 长跑 |
+| 2026-09-15 | v2 +软解统一 | MP2 由"整段转发 PES payload"（WASM parser 切帧 + PES PTS 打标签）改为与 AC-3/E-AC-3 **同模型**：demuxer 按 MPEG 帧头切帧（`demux/mp3.ts` 新增 `MP3Parser`，覆盖 MPEG-1/2/2.5 × Layer I/II/III）+ 逐帧 PTS 外推 + 跨 PES carry + 坏帧跳过并推进 PTS。逐帧标签精度由 `samplesBeforeInput` 回退保证（WASM parser 的一帧延迟不改变帧起点）。三条软解路径在 demuxer → WASM → PCM 时间轴上行为一致 |
+| 2026-09-16 | v2 +网络自愈 | **网络异常自愈加固**（背景：WiFi → 4G/5G 切换后音画再也对不齐/无声/永久卡转圈）。四层：① `io/fetch-loader.ts` 直播流传输层自动重连（指数退避 0.5→8s、上限 5 次、4xx 不重试）+ 20s 无数据看门狗（静默挂死主动掐断重试）；② `worker/pipeline.ts` 连续直播 TS 重连后 `_reanchorPcmIfNeeded()` 按需重钉 PCM 轴（源 PTS 纪元不可预知时避免与新视频轴分离）；③ `audio/pcm-audio-player.ts` 静音看门狗（曾出过声 + 5s 无可听内容 + 视频时钟在推进 → `reanchor("silent-stall")`）；④ `components/player/video-player.tsx` 播放停摆看门狗（12s 时钟无推进 → 有缓冲补播 / 无缓冲按直播边缘重建，30→180s 退避）。参见 §9 |
+| 2026-09-16 | v2 +卡顿修正 | **修复"播放中声音卡顿一下"**：`_resetPcmOnAudioDiscontinuity` 原为无条件重钉，任何 audio discontinuity（计数抖动/丢包/重连）都丢弃已解码 PCM 缓冲 → 可听卡顿。改为**有界判定**（`_reanchorPcmIfNeeded` 比较 PCM 游标与播放头：±(-3s,36s] 内保留时间轴由 bridging 吸收，越界才重钉）；修正 `audioStallWatchdog` 的推进标记（改用内核新增 `contentCursorSec()`，避免误判正常播放为停摆）；修正视频轨不连续分支不清音频解码器 carry 的死分支；新增每 60s 各环节丢弃增量 WARN 诊断（定位卡顿来自 worker 还是主线程）。参见 §9.1 |
