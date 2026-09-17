@@ -149,4 +149,23 @@ describe("HlsSource", () => {
     seq += 6;
     expect(await source.next()).toBe("https://x/hls/seg6.ts");
   });
+
+  it("整点切换：invalidatePending 丢弃旧序列批次，刷新后只入队新序列（不重啃已跳过分片）", async () => {
+    let seq = 0;
+    const textFor = (): string => {
+      const lines = ["#EXTM3U", "#EXT-X-TARGETDURATION:4", "#EXT-X-MEDIA-SEQUENCE:" + seq];
+      for (let i = seq; i < seq + 6; i++) lines.push("#EXTINF:4,", "seg" + i + ".ts");
+      return lines.join("\n");
+    };
+    const source = new HlsSource("https://x/hls/live.m3u8", {}, { fetcher: () => Promise.resolve(textFor()) });
+    await source.load(); // seq=0：pending = seg3..seg5，lastSequence=5
+
+    // 整点切换：上游播放列表前移，旧序列分片（seg3..seg5）已被删 → 通知批次失效
+    source.invalidatePending();
+    seq += 3; // 新序列：seg3..seg8，其中 seg6..seg8 为全新分片
+
+    // 丢弃旧批次后 next() 去刷新播放列表，只取「领先于旧序列末尾」的新分片（不重啃旧序列）
+    expect(await source.next()).toBe("https://x/hls/seg6.ts");
+    expect(await source.next()).toBe("https://x/hls/seg7.ts");
+  });
 });

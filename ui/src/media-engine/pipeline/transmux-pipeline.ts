@@ -97,10 +97,18 @@ const LEAD_GATE_POLL_MS = 100;
  */
 const PCM_REANCHOR_AHEAD_SEC = 36;
 const PCM_REANCHOR_BEHIND_SEC = 3;
-/** 直播流自愈重连上限与指数退避（仅直播源；4xx 除 429 为确定性失败，不重试）。 */
+/** 直播流自愈重连上限与指数退避（仅连续流直播源；4xx 除 429 为确定性失败，不重试）。 */
 const MAX_LIVE_RELOADS = 5;
 const RETRY_BASE_DELAY_MS = 500;
 const RETRY_MAX_DELAY_MS = 8000;
+/**
+ * 分段源（HLS）分片加载的短重试次数：分片是「可替换」的——失败即由 start() 丢弃整批旧分段
+ * 并刷新播放列表，改用新序列续播（原生 HLS 播放器的标准行为）。绝不在此长退避：
+ * 否则整点切换（旧序列分片 404、新分片未就绪）时会逐个啃完旧分片、耗尽重试预算并上报播放错误。
+ */
+const SEGMENT_MAX_ATTEMPTS = 1;
+/** 分片批次失效后、重新请求播放列表前的短等待（ms）。 */
+const SEGMENT_REFRESH_DELAY_MS = 300;
 
 /** 帧率估计窗口：至少 12 帧才出值，窗口滚动上限 40 帧（≈1.6s@25fps）。 */
 const FPS_MIN_SAMPLES = 12;
@@ -279,7 +287,15 @@ export class TransmuxPipeline {
           }
           break; // VOD 已播完
         }
-        await this.loadUrl(url);
+        const ok = await this.loadUrl(url);
+        if (this.stopped) break;
+        if (!ok && this.config.source.live) {
+          // 分片不可用（如整点切换：旧序列分片被删、新分片尚未就绪）：丢弃该批次的其余旧分段，
+          // 短等后重新请求播放列表 → 用新序列的分片续播。MSE 缓冲/时间轴不重建，恢复即无缝接上。
+          // 这正是原生 HLS 播放器处理 segment 404 的方式（reload playlist，而非死啃旧分片）。
+          this.config.source.invalidatePending?.();
+          await sleep(SEGMENT_REFRESH_DELAY_MS);
+        }
       }
     } else {
       for (const url of this.urls) {
@@ -295,12 +311,16 @@ export class TransmuxPipeline {
     if (!this.config.source?.live) this.callbacks.onLoadingComplete?.();
   }
 
-  private async loadUrl(url: string): Promise<void> {
+  /** 拉取一个 URL（分片或连续流）。返回是否成功拉到内容（false 表示该 URL 不可用/被掐断）。 */
+  private async loadUrl(url: string): Promise<boolean> {
     let attempt = 0;
     let range: { from: number; to?: number } | undefined;
-    // 直播：自愈重连（更大预算 + 退避 + 无数据看门狗）；点播/回看维持原行为
+    // 分段源（HLS）：分片是「可替换」的——失败即由 start() 丢弃整批旧分段并刷新播放列表
+    // （见 SEGMENT_MAX_ATTEMPTS 注释），这里只做 1 次短重试覆盖瞬时抖动，绝不长退避；
+    // 连续流（直连 TS/FLV）：直播自愈重连（更大预算 + 退避 + 无数据看门狗）；点播/回看维持原行为。
+    const segmented = this.config.source !== undefined;
     const live = this.isLivePlayback();
-    const maxAttempts = live ? MAX_LIVE_RELOADS : this.maxRetries;
+    const maxAttempts = segmented ? SEGMENT_MAX_ATTEMPTS : live ? MAX_LIVE_RELOADS : this.maxRetries;
 
     while (attempt <= maxAttempts && !this.stopped) {
       const loader = new FetchStreamLoader(
@@ -310,7 +330,8 @@ export class TransmuxPipeline {
           onError: (info) => {
             // 自身 stop/destroy 引起的 abort 不计入致命 IO 错误，否则会触发无意义的重试风暴
             if (this.stopped) return;
-            // 直播：传输层失败先抑制上报（由下方退避重连自愈），只在确定性失败/预算耗尽后上报
+            // 直播：传输层失败先抑制上报（由下方退避重连自愈），只在确定性失败/预算耗尽后上报；
+            // 分段源：分片失败属「批次失效」，由 start() 刷新播放列表消化，同样不上报。
             if (live) {
               this.lastIoError = info;
               return;
@@ -324,10 +345,11 @@ export class TransmuxPipeline {
       try {
         await loader.open(range);
       } catch {
-        if (this.stopped) return; // 停止导致的异常直接忽略
+        if (this.stopped) return false; // 停止导致的异常直接忽略
       }
 
-      if (loader.isCompleted || this.stopped) return;
+      if (loader.isCompleted) return true;
+      if (this.stopped) return false;
 
       // 缓冲满被暂停：等待恢复后从续传起点继续。
       // **关键：暂停导致的中断不是失败，绝不能消耗重试预算**——缓冲满在直播中很常见
@@ -335,7 +357,7 @@ export class TransmuxPipeline {
       // start() 随即 flush + onLoadingComplete → 后端 endOfStream() → 永久卡死。
       if (this.paused) {
         await this.waitResume();
-        if (this.stopped) return;
+        if (this.stopped) return false;
         range = loader.getResumeRange();
         if (!range) {
           // restart 模式：丢弃已缓冲数据，从头再来
@@ -351,8 +373,10 @@ export class TransmuxPipeline {
       // 可重试性判定：4xx（除 429）是确定性失败，重试只会拖慢上层按位置重建
       const code = this.lastIoError?.code ?? -1;
       if (!isRetryableIoError(code)) {
-        if (live && this.lastIoError) this.callbacks.onIOError?.(this.lastIoError);
-        return;
+        // 分片 404 等确定性失败不上报：分片失效由 start() 刷新播放列表消化；
+        // 若整个源真失效，播放列表刷新失败会成为 UI 信号（HlsSource 只上报一次）。
+        if (!segmented && live && this.lastIoError) this.callbacks.onIOError?.(this.lastIoError);
+        return false;
       }
 
       // 未完成（错误/断流/无数据看门狗掐断）：按 resumeMode 决定续传起点并计入一次重试
@@ -363,7 +387,7 @@ export class TransmuxPipeline {
         range = undefined;
       }
       attempt++;
-      if (live && attempt <= maxAttempts) {
+      if (!segmented && live && attempt <= maxAttempts) {
         const delay = Math.min(RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), RETRY_MAX_DELAY_MS);
         // eslint-disable-next-line no-console
         console.warn(
@@ -371,11 +395,12 @@ export class TransmuxPipeline {
             `${delay}ms 后重连 ${attempt}/${maxAttempts}`,
         );
         await sleep(delay);
-        if (this.stopped) return;
+        if (this.stopped) return false;
       }
     }
-    // 预算耗尽：把此前抑制的错误上报一次（触发上层会话重建）
-    if (!this.stopped && live && this.lastIoError) this.callbacks.onIOError?.(this.lastIoError);
+    // 预算耗尽：把此前抑制的错误上报一次（触发上层会话重建）；分段源不上报（同上）
+    if (!this.stopped && !segmented && live && this.lastIoError) this.callbacks.onIOError?.(this.lastIoError);
+    return false;
   }
 
   private handleTracks(tracks: TrackInfo[]): void {

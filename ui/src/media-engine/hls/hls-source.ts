@@ -51,6 +51,8 @@ export class HlsSource implements SegmentSource {
   private lastSequence = -1;
   private playlistUrl = "";
   private refreshFailures = 0;
+  /** 刷新失败是否已上报（成功刷新后复位）：避免整点/断流窗口内反复上报成 UI 错误风暴。 */
+  private refreshFailureNotified = false;
   private destroyed = false;
   private info: HlsInfo | null = null;
   private readonly liveEdgeSegments: number;
@@ -144,15 +146,20 @@ export class HlsSource implements SegmentSource {
     if (text === null) {
       this.refreshFailures++;
       if (this.refreshFailures >= this.maxRefreshFailures) {
-        // 上报一次错误供 UI 做恢复/重载决策；**绝不可**在此置 destroyed=true——
-        // 那会让 next() 永久返回 null，而 pipeline 对 live 源只会每秒空转重试，
-        // 结果是「拉流静默死亡、永不恢复」。直播应持续重试。
-        this.callbacks.onError?.(`播放列表连续刷新失败 ${this.refreshFailures} 次，继续重试`);
+        // **绝不可**在此置 destroyed=true——那会让 next() 永久返回 null，而 pipeline
+        // 对 live 源只会每秒空转重试，结果是「拉流静默死亡、永不恢复」。直播应持续重试。
+        // 上报只做一次（成功刷新后复位）：整点/断流窗口内反复上报会把「上游暂时不可用」
+        // 放大成 UI 播放错误与重连风暴，而此处本就在持续重试、无需上层介入。
+        if (!this.refreshFailureNotified) {
+          this.refreshFailureNotified = true;
+          this.callbacks.onError?.(`播放列表连续刷新失败 ${this.refreshFailures} 次，继续重试`);
+        }
         this.refreshFailures = 0;
       }
       return false;
     }
     this.refreshFailures = 0;
+    this.refreshFailureNotified = false;
 
     const media = parseM3U8(this.playlistUrl, text);
     const base = media.mediaSequence ?? 0;
@@ -197,6 +204,15 @@ export class HlsSource implements SegmentSource {
 
   get currentInfo(): HlsInfo | null {
     return this.info;
+  }
+
+  /**
+   * 分段批次失效（如整点切换：旧序列分片被删、新分片未就绪）。
+   * 丢弃当前批次未消费的分段；lastSequence 已是旧播放列表末尾序号，因此下一次 refresh()
+   * 只会入队真正的新序列分片（不会把已跳过的旧序列重新拉回来）。
+   */
+  invalidatePending(): void {
+    this.pending.length = 0;
   }
 
   destroy(): void {

@@ -14,6 +14,12 @@ export interface SegmentSource {
    */
   next(): Promise<string | null>;
   destroy(): void;
+  /**
+   * 分段批次失效通知（可选实现）：分片连续不可用（如整点切换后旧序列分片被删、新分片未就绪）时，
+   * 调用方丢弃尚未消费的旧分段，促使下一次 next() 去刷新播放列表、改用新序列续播。
+   * 未实现则退化为「按原列表逐个重试」。
+   */
+  invalidatePending?(): void;
 }
 
 /** 静态分段列表（点播/回看）。 */

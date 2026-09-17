@@ -634,8 +634,12 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 	var resp *http.Response
 	for attempt := 0; attempt < maxUpstreamAttempts; attempt++ {
 		if attempt > 0 {
-			// 无效响应：丢弃缓存/失效地址，回到频道原始地址重跑 302 解析链
-			h.clearRedirect(ch.Key)
+			// 无效响应：解析型源丢弃缓存地址、回到频道原始地址重跑 302 解析链。
+			// 非解析型（分片等）没有解析缓存可清——redirects 是频道级共用，误清会把
+			// 正在使用的直播解析结果一起丢掉（分片 404 重试时尤其明显）。
+			if origin == ch.RawURL {
+				h.clearRedirect(ch.Key)
+			}
 			abs = origin
 			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 		}

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { TransmuxPipeline, isRetryableIoError } from "./transmux-pipeline";
+import type { SegmentSource } from "../hls/segment-source";
 
 const VIDEO_TRACK = {
   id: 1,
@@ -245,5 +246,96 @@ describe("直播重试判定（C9a）", () => {
     expect(isRetryableIoError(429)).toBe(true); // 限流：可重试
     expect(isRetryableIoError(404)).toBe(false);
     expect(isRetryableIoError(403)).toBe(false);
+  });
+});
+
+// ===== 分段源分片失效恢复（整点切换）=====
+// mock FetchStreamLoader（不依赖真实 fetch/Response）：URL 含 "old-" → 404；否则一小段 TS 后完成。
+const harness = vi.hoisted(() => {
+  const requests: string[] = [];
+  class HarnessLoader {
+    isCompleted = false;
+    dataStalled = false;
+    private readonly url: string;
+    private readonly cbs: {
+      onError?: (info: { code: number; msg: string; url: string }) => void;
+      onDataArrival?: (chunk: Uint8Array, byteStart: number, received: number) => void;
+      onComplete?: (from: number, to: number) => void;
+    };
+    // biome-ignore lint/suspicious/noExplicitAny: 测试用弱类型
+    constructor(source: { url: string }, callbacks: any) {
+      this.url = source.url;
+      this.cbs = callbacks;
+    }
+    async open(): Promise<void> {
+      requests.push(this.url);
+      if (this.url.includes("old-")) {
+        // 整点切换：旧序列分片已被上游删除（404）
+        this.cbs.onError?.({ code: 404, msg: "HTTP 404", url: this.url });
+        return;
+      }
+      this.cbs.onDataArrival?.(new Uint8Array([0x47, 0x40, 0x00, 0x10]), 0, 4);
+      this.isCompleted = true;
+      this.cbs.onComplete?.(0, 3);
+    }
+    getResumeRange(): undefined {
+      return undefined;
+    }
+    abort(): void {
+      /* noop */
+    }
+  }
+  return { requests, HarnessLoader };
+});
+
+vi.mock("../io/fetch-loader", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../io/fetch-loader")>();
+  return {
+    ...actual,
+    FetchStreamLoader: harness.HarnessLoader as unknown as typeof actual.FetchStreamLoader,
+  };
+});
+
+describe("分段源分片失效恢复（整点切换）", () => {
+  it("分片 404：丢弃整批旧分段并刷新播放列表续播，不逐个啃旧分片、不上报播放错误", async () => {
+    harness.requests.length = 0;
+    const errors: unknown[] = [];
+
+    let pipelineRef: TransmuxPipeline | null = null;
+    class FakeHlsSource implements SegmentSource {
+      readonly live = true;
+      invalidations = 0;
+      private readonly oldQueue = ["https://x/old-1.ts", "https://x/old-2.ts"];
+      private readonly newQueue = ["https://x/new-1.ts"];
+
+      async next(): Promise<string | null> {
+        if (this.oldQueue.length > 0) return this.oldQueue.shift()!;
+        if (this.newQueue.length > 0) return this.newQueue.shift()!;
+        pipelineRef?.destroy(); // 新序列已消费：结束测试中的无限直播循环
+        return null;
+      }
+      /** 分片批次失效：丢弃旧序列、改用新播放列表序列（模拟上游整点切换后 m3u8 前进）。 */
+      invalidatePending(): void {
+        this.invalidations++;
+        this.oldQueue.length = 0;
+      }
+      destroy(): void {
+        /* noop */
+      }
+    }
+
+    const source = new FakeHlsSource();
+    const pipeline = new TransmuxPipeline(
+      { urls: [], source },
+      { onIOError: (info) => errors.push(info), onDemuxError: () => {} },
+    );
+    pipelineRef = pipeline;
+
+    await pipeline.start();
+
+    expect(source.invalidations).toBe(1); // 发生一次批次失效（丢弃旧序列）
+    expect(harness.requests.some((u) => u.includes("new-1.ts"))).toBe(true); // 改用新序列续播
+    expect(harness.requests.some((u) => u.includes("old-2.ts"))).toBe(false); // 旧批次其余分片不再被请求
+    expect(errors).toEqual([]); // 分片失败不上报（不把整点切换当成播放错误）
   });
 });
