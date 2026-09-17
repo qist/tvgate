@@ -440,6 +440,11 @@ export class TransmuxPipeline {
         }
         continue;
       }
+      // passthrough 音频（AAC 等）同样只注册主音轨：IPTV 多伴音流可并存 6 路 AAC，
+      // MSE 的一个 audio SourceBuffer 只能绑定一个 init（track_ID），多条音轨的
+      // init/media 段混入同一 SB 会被浏览器整段拒收（实测 VIDERR audio SB error）。
+      // 未注册轨的样本由 remuxer.addSample 丢弃，声音与徽标都只认主音轨。
+      if (t.kind === "audio" && t.id !== this.primaryAudioTrackId) continue;
       this.remuxer.addTrack({
         id: t.id,
         kind: t.kind,
