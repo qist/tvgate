@@ -318,6 +318,10 @@ function VideoPlayerComponent({
   const [slotMediaInfo, setSlotMediaInfo] = useState<Record<SlotId, PlayerMediaInfo | null>>({ a: null, b: null });
   const transitionGenRef = useRef(0);
   const pendingTransitionRef = useRef<PendingTransition | null>(null);
+  // 无缝过渡期"临时静音"隔离状态：切台时对旧实例的静音**不得写回应用级音量状态**，
+  // 否则污染 isMuted（及持久化），并被 completeTransition 带给新实例 → 新台无声。
+  const transitionSilencedSlotRef = useRef<SlotId | null>(null);
+  const transitionSavedMutedRef = useRef<boolean | null>(null);
   const hasStartedPlaybackRef = useRef(false);
   const prevStreamRef = useRef<{ channelId: string; sourceIndex: number } | null>(null);
   const skipNextSegmentsLoadRef = useRef(false);
@@ -555,6 +559,15 @@ function VideoPlayerComponent({
 
   const cancelPendingTransition = useEffectEvent(() => {
     pendingTransitionRef.current = null;
+    // 恢复"切换期被静音的旧实例"：取消/失败/回退后用户仍在看它，声音按**过渡前快照**回来
+    // （快照即当时用户意图；组件 isMuted 可能已被其它路径更新）。随后清隔离位，
+    // 让音量事件恢复正常写回。
+    const silenced = transitionSilencedSlotRef.current;
+    if (silenced !== null) {
+      slotPlayerRef(silenced).current?.setMuted(transitionSavedMutedRef.current ?? isMuted);
+      transitionSilencedSlotRef.current = null;
+      transitionSavedMutedRef.current = null;
+    }
   });
 
   const applyPlayerSettings = useEffectEvent((player: PlaybackBackend) => {
@@ -583,9 +596,11 @@ function VideoPlayerComponent({
   const completeTransition = useEffectEvent((newActiveId: SlotId) => {
     const oldActiveId = getActiveSlotId();
     const oldPlayer = slotPlayerRef(oldActiveId).current;
-    const oldState = oldPlayer?.getState();
-    const savedVolume = oldState?.volume ?? volume;
-    const savedMuted = oldState?.muted ?? isMuted;
+    // 音量/静音取过渡前的**快照**（当时的用户意图）：过渡期对旧实例的临时静音既不能从
+    // 旧实例 state 读、也不能直接用可能已被其它路径改过的组件状态 —— 否则新实例被误静音
+    //（实测"新台静音"）。
+    const savedVolume = volume;
+    const savedMuted = transitionSavedMutedRef.current ?? isMuted;
 
     const newPlayer = slotPlayerRef(newActiveId).current;
     if (newPlayer) {
@@ -593,6 +608,9 @@ function VideoPlayerComponent({
       newPlayer.setMuted(savedMuted);
       applyPlayerSettings(newPlayer);
     }
+    // 过渡结束：旧实例即将 stop，清隔离位让音量事件恢复正常写回
+    transitionSilencedSlotRef.current = null;
+    transitionSavedMutedRef.current = null;
 
     activeSlotIdRef.current = newActiveId;
     setVisibleSlotId(newActiveId);
@@ -830,6 +848,10 @@ function VideoPlayerComponent({
     });
     player.on("volume-change", (nextVolume, nextMuted) => {
       if (slotPlayerRef(slotId).current !== player || slotId !== getActiveSlotId()) return;
+      // 过渡期临时静音（切台发起时对旧实例）产生的上报一律忽略：该静音是内部过渡动作，
+      // 不是用户意图——写回会污染 isMuted 与持久化（下次打开仍静音），并被 completeTransition
+      // 带给新实例（实测"新台静音"）。
+      if (transitionSilencedSlotRef.current === slotId && nextMuted) return;
       setVolume(nextVolume);
       setIsMuted(nextMuted);
       saveVolume(nextVolume);
@@ -865,6 +887,9 @@ function VideoPlayerComponent({
   );
 
   const loadActiveSlotSegments = useEffectEvent((player: PlaybackBackend, slotId: SlotId, newSegments: PlayerSegment[]) => {
+    // 防御：该实例可能刚从"无缝切换期被静音"的状态复用（硬切换/回退路径），
+    // 立即按用户意图恢复音量状态，避免新流无声。
+    player.setMuted(isMuted);
     setSlotMediaInfo((previous) => ({ ...previous, [slotId]: null }));
     player.loadSegments(newSegments);
     if (shouldAutoPlayRef.current) playVideoWithAutoplayFallback();
@@ -1027,6 +1052,12 @@ function VideoPlayerComponent({
       pendingPlayer.setVolume(activeState.volume);
       pendingPlayer.setMuted(true);
     }
+    // 无缝过渡期保持旧实例"画面+声音"正常播放：过渡期先静音旧实例会造成"还没切过去
+    // 就哑了"的断音体验（用户实测反馈）。声音的切换点交给 completeTransition ——
+    // 新实例 playing（新画面出现）时同步 stop 旧实例，画面与声音一起切。
+    // 若过渡期偏长（表现为旧声残留较久），根因是新流起播速度而非静音时机。
+    // （隔离位 transitionSilencedSlotRef 保留：音量事件与恢复路径对"过渡期内部静音"
+    //   已有防护，未来若再引入临时静音不会污染应用状态。）
 
     const pendingTransition = { gen, slotId: pendingId, player: pendingPlayer, startedAt: performance.now() };
     pendingTransitionRef.current = pendingTransition;
