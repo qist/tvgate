@@ -143,8 +143,7 @@ html.panel-alpha-40 { --panel-alpha: 0.40; --panel-row-alpha: 0.12; --panel-blur
 html[class*="panel-alpha-"] .player-performance-dock,
 html[class*="panel-alpha-"] .player-performance-dock .player-performance-panel-background:not([role="dialog"]),
 html[class*="panel-alpha-"] .player-performance-dock .player-performance-epg-header,
-html[class*="panel-alpha-"] .player-performance-dock .player-performance-channel-groups,
-html[class*="panel-alpha-"] .player-performance-dock .player-performance-input-background {
+html[class*="panel-alpha-"] .player-performance-dock .player-performance-channel-groups {
   background-color: rgb(255 255 255 / var(--panel-alpha));
   background-image: none;
   -webkit-backdrop-filter: blur(var(--panel-blur)) saturate(160%);
@@ -152,12 +151,22 @@ html[class*="panel-alpha-"] .player-performance-dock .player-performance-input-b
   /* 平面化：不留内高光（那圈亮线是"立体感"的主要来源） */
   box-shadow: none;
 }
+/* 输入框（搜索频道）比面板更实一档：若与面板同 alpha，在透明档位下会完全融进面板
+ * ——搜索框"看不见"（用户反馈）。故单独给更高的 alpha（上限 1）。 */
+html[class*="panel-alpha-"] .player-performance-dock .player-performance-input-background {
+  background-color: rgb(255 255 255 / min(1, calc(var(--panel-alpha) + 0.25)));
+  background-image: none;
+  box-shadow: none;
+}
 html.dark[class*="panel-alpha-"] .player-performance-dock,
 html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-panel-background:not([role="dialog"]),
 html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-epg-header,
-html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-channel-groups,
-html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-input-background {
+html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-channel-groups {
   background-color: rgb(15 11 38 / var(--panel-alpha));
+  box-shadow: none;
+}
+html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-input-background {
+  background-color: rgb(15 11 38 / min(1, calc(var(--panel-alpha) + 0.35)));
   box-shadow: none;
 }
 

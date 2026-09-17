@@ -277,7 +277,7 @@ const ChannelBrowserComponent = function ChannelBrowserComponent({
 
       <div className="flex min-h-0 flex-1">
         <div ref={categoriesPaneRef} data-pane="categories" className={[paneClass, "w-[28%] max-w-44"].join(" ")}>
-          <PaneHeader icon={<Layers className="h-3.5 w-3.5 shrink-0 text-violet-500 dark:text-violet-300" />} label={t("channelGroups")} />
+          <PaneHeader icon={<Layers className="h-3.5 w-3.5 shrink-0 text-violet-600 dark:text-violet-300" />} label={t("channelGroups")} />
           <div className="flex-1 overflow-y-auto py-1">
             <div className="flex flex-col">
               {[null, ...groups].map((group) => (
@@ -306,7 +306,7 @@ const ChannelBrowserComponent = function ChannelBrowserComponent({
 
         <div ref={channelsPaneRef} data-pane="channels" className={[paneClass, "flex-1"].join(" ")}>
           <PaneHeader
-            icon={<Tv className="h-3.5 w-3.5 shrink-0 text-violet-500 dark:text-violet-300" />}
+            icon={<Tv className="h-3.5 w-3.5 shrink-0 text-violet-600 dark:text-violet-300" />}
             label={`${t("channels")}${filteredChannels.length ? ` (${filteredChannels.length})` : ""}`}
           />
           <div className="flex-1 overflow-y-auto py-1">
@@ -333,7 +333,7 @@ const ChannelBrowserComponent = function ChannelBrowserComponent({
         {epgOpen && (
           <div ref={replayPaneRef} data-pane="replay" className={[paneClass, "w-[42%] max-w-[20rem]"].join(" ")}>
             <PaneHeader
-              icon={<History className="h-3.5 w-3.5 shrink-0 text-violet-500 dark:text-violet-300" />}
+              icon={<History className="h-3.5 w-3.5 shrink-0 text-violet-600 dark:text-violet-300" />}
               label={`${t("catchup")}${previewChannel ? ` · ${previewChannel.name}` : ""}`}
             />
             {epgConfigured === false && (
@@ -384,7 +384,7 @@ function PaneHeader({ icon, label }: { icon: ReactNode; label: string }) {
   return (
     <div className="flex h-8 shrink-0 items-center gap-1.5 border-violet-950/10 border-b px-3 dark:border-violet-100/10">
       {icon}
-      <span className="min-w-0 truncate text-[11px] font-semibold tracking-[0.02em] text-slate-500 dark:text-slate-400">
+      <span className="min-w-0 truncate text-[11px] font-semibold tracking-[0.02em] text-slate-700 dark:text-slate-200">
         {label}
       </span>
     </div>
@@ -436,9 +436,9 @@ const SearchBox = memo(function SearchBox({
             (document.activeElement as HTMLElement)?.blur();
           }
         }}
-        className="player-performance-input-background player-performance-motion h-8 w-full rounded-md border border-violet-900/10 bg-white/45 px-3 py-0 pl-8 text-slate-800 text-xs shadow-none transition placeholder:text-slate-400 focus:border-violet-400/50 focus:bg-white/70 focus:outline-none dark:border-violet-100/10 dark:bg-white/6 dark:text-violet-50 dark:placeholder:text-slate-500 dark:focus:bg-white/10"
+        className="player-performance-input-background player-performance-motion h-8 w-full rounded-md border border-violet-900/20 bg-white/85 px-3 py-0 pl-8 text-slate-800 text-xs shadow-none transition placeholder:text-slate-500 focus:border-violet-400/70 focus:bg-white/95 focus:outline-none dark:border-violet-100/20 dark:bg-white/14 dark:text-violet-50 dark:placeholder:text-slate-400 dark:focus:bg-white/20"
       />
-      <Search className="absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-violet-600/65 dark:text-violet-300/55" />
+      <Search className="absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-violet-600/85 dark:text-violet-300/80" />
       {results.length > 0 && (
         <div className="player-performance-overlay-background absolute top-full left-0 z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-violet-200/40 bg-white/90 p-1 shadow-[0_12px_28px_-16px_rgba(0,0,0,0.55)] backdrop-blur-lg dark:border-violet-100/10 dark:bg-slate-950/88">
           {results.map((channel) => (

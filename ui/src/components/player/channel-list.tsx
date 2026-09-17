@@ -203,9 +203,9 @@ function ChannelListComponent({ channels, groups, currentChannel, onChannelSelec
               value={searchQuery}
               onChange={handleSearchInputChange}
               onKeyDown={handleSearchKeyDown}
-              className="player-performance-input-background player-performance-motion h-8 w-full rounded-xl border border-violet-900/10 bg-white/80 px-3 py-0 pl-8 text-slate-800 text-xs shadow-none transition placeholder:text-slate-400 focus:border-violet-400/50 focus:bg-white/70 focus:outline-none dark:border-violet-100/10 dark:bg-slate-900/85 dark:text-violet-50 dark:placeholder:text-slate-500 md:h-9 md:pl-9 md:text-sm"
+              className="player-performance-input-background player-performance-motion h-8 w-full rounded-xl border border-violet-900/20 bg-white/90 px-3 py-0 pl-8 text-slate-800 text-xs shadow-none transition placeholder:text-slate-500 focus:border-violet-400/70 focus:bg-white/95 focus:outline-none dark:border-violet-100/20 dark:bg-slate-900/90 dark:text-violet-50 dark:placeholder:text-slate-400 md:h-9 md:pl-9 md:text-sm"
             />
-            <Search className="absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-violet-600/65 dark:text-violet-300/55 md:h-4 md:w-4" />
+            <Search className="absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-violet-600/85 dark:text-violet-300/80 md:h-4 md:w-4" />
           </div>
           {settingsSlot && <div className="shrink-0">{settingsSlot}</div>}
         </div>
@@ -220,7 +220,7 @@ function ChannelListComponent({ channels, groups, currentChannel, onChannelSelec
             className="flex h-8 w-full cursor-pointer items-center justify-between rounded-lg px-1.5 text-left font-medium text-slate-600 text-xs transition-colors hover:text-violet-800 focus-visible:border-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 dark:text-slate-300 dark:hover:text-violet-100 md:text-[13px]"
           >
             <span className="flex min-w-0 items-center gap-1.5">
-              <Layers className="h-3.5 w-3.5 shrink-0 text-violet-500 dark:text-violet-300" />
+              <Layers className="h-3.5 w-3.5 shrink-0 text-violet-600 dark:text-violet-300" />
               <span className="shrink-0">{t("channelGroups")}</span>
               <span className="min-w-0 truncate text-slate-400 dark:text-slate-500">· {selectedGroup ?? t("allChannels")}</span>
             </span>
