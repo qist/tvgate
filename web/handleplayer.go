@@ -21,6 +21,7 @@ func (h *ConfigHandler) handlePlayerConfig(w http.ResponseWriter, r *http.Reques
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"enabled":          p.Enabled,
 		"subscription":     p.Subscription,
+		"subscriptions":    p.Subscriptions, // 多订阅源（追加在 subscription 之后）
 		"epg":              p.Epg,
 		"logo":             p.Logo,
 		"logo_dir":         p.LogoDir,
@@ -71,19 +72,20 @@ func (h *ConfigHandler) handlePlayerConfigSave(w http.ResponseWriter, r *http.Re
 				if keyNode.Kind == yaml.ScalarNode && keyNode.Value == "player" {
 					oldNode := doc.Content[i+1]
 					newNode := buildPlayerNode(cfg)
-					// 保留 android_autoplay 标记位：后台 UI 不编辑该标记（由安卓客户端读取），
-					// 重建 player 节点时原样带过去，避免后台保存把 YAML 里的标记抹掉。
-					// 仅当提交里没有该键时才回填，防止写入重复键。
-					hasFlag := false
-					for j := 0; j+1 < len(newNode.Content); j += 2 {
-						if newNode.Content[j].Kind == yaml.ScalarNode && newNode.Content[j].Value == "android_autoplay" {
-							hasFlag = true
-							break
+					// 保留后台 UI 不编辑的键：android_autoplay（安卓客户端读取的标记位）与
+					// subscriptions（多订阅源，只有手改 YAML 时才存在）。重建 player 节点时
+					// 原样带过去，避免后台保存把 YAML 里的这些键抹掉；仅当提交里没有该键时才回填，
+					// 防止写入重复键。
+					preservePlayerKeys := []string{"android_autoplay", "subscriptions"}
+					for _, key := range preservePlayerKeys {
+						// 判定"提交里有没有这个键"，而不是"新节点里写没写"：
+						// subscriptions 提交空数组时 buildPlayerNode 不写该键（等价于删除），
+						// 若按新节点判定就会被旧值回填 → 用户清空不生效。
+						if _, submitted := cfg[key]; submitted {
+							continue
 						}
-					}
-					if !hasFlag {
 						for j := 0; j+1 < len(oldNode.Content); j += 2 {
-							if oldNode.Content[j].Kind == yaml.ScalarNode && oldNode.Content[j].Value == "android_autoplay" {
+							if oldNode.Content[j].Kind == yaml.ScalarNode && oldNode.Content[j].Value == key {
 								newNode.Content = append(newNode.Content, oldNode.Content[j], oldNode.Content[j+1])
 								break
 							}
@@ -123,6 +125,17 @@ func buildPlayerNode(cfg map[string]interface{}) *yaml.Node {
 			node.Content = append(node.Content,
 				&yaml.Node{Kind: yaml.ScalarNode, Value: "subscription"},
 				&yaml.Node{Kind: yaml.ScalarNode, Value: s})
+		}
+	}
+	// subscriptions：多订阅源（一条一个源）。后台可能提交 JSON 数组或分隔字符串，统一归一化后写成 YAML 序列。
+	if v, ok := cfg["subscriptions"]; ok {
+		if items := playerSourceList(v); len(items) > 0 {
+			seq := &yaml.Node{Kind: yaml.SequenceNode}
+			for _, s := range items {
+				seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: s})
+			}
+			node.Content = append(node.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "subscriptions"}, seq)
 		}
 	}
 	if v, ok := cfg["epg"]; ok {
@@ -176,4 +189,29 @@ func buildPlayerNode(cfg map[string]interface{}) *yaml.Node {
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: val})
 	}
 	return node
+}
+
+// playerSourceList 归一化多订阅源的提交值：JSON 数组（[]interface{} / []string）或
+// 换行/逗号/分号/竖线分隔的字符串都接受；逐项 trim 去空，保持原序。
+func playerSourceList(v interface{}) []string {
+	var raw []string
+	switch t := v.(type) {
+	case []interface{}:
+		for _, item := range t {
+			raw = append(raw, fmt.Sprintf("%v", item))
+		}
+	case []string:
+		raw = append(raw, t...)
+	default:
+		raw = strings.FieldsFunc(fmt.Sprintf("%v", v), func(r rune) bool {
+			return r == '\n' || r == '\r' || r == ',' || r == ';' || r == '|'
+		})
+	}
+	out := make([]string, 0, len(raw))
+	for _, s := range raw {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

@@ -19,6 +19,7 @@ import (
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/php"
 	httpclient "github.com/qist/tvgate/utils/http"
 )
 
@@ -59,13 +60,21 @@ type Manager struct {
 	order    []*Channel          // 频道，按订阅行序
 	groups   []string
 
+	// EPG 来源（随 /api/player/epg 查询 + /api/player/channels 下发）：
+	// epgSource 为当前主来源；epgURLs 为 xml 型源链（主 + 配置固定 XMLTV 回退），
+	// 整份 XMLTV 失效时 EPGBank 自动切换到链内下一个可用源。
 	epgSource EPGSource
-	epg       *EPGBank
+	epgURLs   []string
+	// epgBak 跨类型回退来源（主为 template 时配固定 XMLTV，或主为 xml 时配模板）：
+	// 主来源失效（template 查询失败 / xml 从未加载成功）时 ServeEPG 用它兜底。
+	epgBak EPGSource
+	epg    *EPGBank
 
-	cfg          *config.PlayerConfig
-	httpClient   *http.Client
-	subscription string
-	stop         chan struct{}
+	cfg        *config.PlayerConfig
+	httpClient *http.Client
+	// sources 为最近一次 Reload 实际使用的订阅源列表（多订阅：subscription + subscriptions 合并去重）。
+	sources []string
+	stop    chan struct{}
 	// resetCh 配置热加载通知：收到后立即按新配置重载并重置刷新计时
 	// （否则新 update_interval 要等当前周期计时器到期才生效，最长延迟一个周期）。
 	resetCh chan struct{}
@@ -79,7 +88,9 @@ func NewManager(cfg *config.PlayerConfig) *Manager {
 		httpClient: httpclient.NewHTTPClient(&config.Cfg, nil),
 		epg:        NewEPGBank(),
 		stop:       make(chan struct{}),
-		resetCh:    make(chan struct{}),
+		// 缓冲 1：配置热加载通知在"刷新协程尚未进入 select / 正在重载"时也不丢
+		// （无缓冲 + 非阻塞发送会静默丢弃 → 改配置后订阅不重载）。多次变更合并为一次重载。
+		resetCh: make(chan struct{}, 1),
 	}
 }
 
@@ -146,7 +157,68 @@ func (m *Manager) Stop() {
 }
 
 func (m *Manager) Enabled() bool {
-	return m.cfg != nil && m.cfg.Enabled && m.cfg.Subscription != ""
+	return m.cfg != nil && m.cfg.Enabled && len(subscriptionSources(*m.cfg)) > 0
+}
+
+// subscriptionSources 把配置里的订阅源展开为有序列表（多订阅支持）：
+//   - Subscription 支持换行/逗号/分号分隔的多个源；若整串本身就是一个存在的本地文件/目录，
+//     按单源处理（避免路径里的逗号被误切）；
+//   - Subscriptions 列表的每一项同样做分隔展开，按序追加；
+//   - 逐项 trim、丢空、按原序去重（同一源只解析一次）。
+func subscriptionSources(p config.PlayerConfig) []string {
+	raw := splitSourceList(p.Subscription, true)
+	for _, s := range p.Subscriptions {
+		raw = append(raw, splitSourceList(s, false)...)
+	}
+	seen := make(map[string]bool, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, s := range raw {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+// splitSourceList 展开单个配置项的多个源；singleFirst 为真时先尝试"整串是一个已存在的本地路径"。
+func splitSourceList(v string, singleFirst bool) []string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	// 整串本身就是一个源时不要按分隔符切开：存在的本地文件/目录，或 php:// 脚本源
+	// （脚本源带 ?query，里面可能有逗号，切开就废了）
+	if singleFirst && !strings.ContainsAny(v, "\r\n") && (isExistingLocalPath(v) || isPHPScriptSource(v)) {
+		return []string{v}
+	}
+	return strings.FieldsFunc(v, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ',' || r == ';' || r == '|'
+	})
+}
+
+// isExistingLocalPath 判断 src 是否指向存在的本地文件/目录（file:// / php:// / 绝对/相对 docroot）。
+func isExistingLocalPath(src string) bool {
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		return false
+	}
+	path := src
+	switch {
+	case strings.HasPrefix(path, "file://"):
+		path = strings.TrimPrefix(path, "file://")
+	case strings.HasPrefix(path, "php://"):
+		path = filepath.Join(docroot(), strings.TrimPrefix(path, "php://"))
+	default:
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(docroot(), path)
+		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+	return true
 }
 
 // DefaultUA 返回当前配置的默认 User-Agent（热重载后重新读取）；未配置时用内置浏览器 UA。
@@ -180,17 +252,28 @@ func (m *Manager) Reload() {
 	// 热重载会整体替换 config.Cfg（config.Cfg = newCfg），故每次读当前全局配置，
 	// 避免持有指向旧结构的陈旧指针导致后台修改不生效。
 	p := readPlayerCfg()
-	if !p.Enabled || p.Subscription == "" {
+	sources := subscriptionSources(p)
+	if !p.Enabled || len(sources) == 0 {
 		return
 	}
 	// 同步本实例持有的配置副本，供 Enabled/取源/EPG 使用
 	copyCfg := p
 	m.cfg = &copyCfg
+	m.sources = sources
 
-	src := copyCfg.Subscription
-	files := m.fetchAll(src)
+	// 多订阅：逐个源展开为文件列表后合并。单个源失败只跳过自身（其余源照常加载），
+	// 全部源都失败才放弃本次刷新（保留上一次的频道表）。
+	var files []subFile
+	for _, src := range sources {
+		fs := m.fetchAll(src)
+		if len(fs) == 0 {
+			logger.LogPrintf("⚠️ [player] 订阅源拉取失败(已跳过): %s", src)
+			continue
+		}
+		files = append(files, fs...)
+	}
 	if len(files) == 0 {
-		logger.LogPrintf("❌ [player] 订阅拉取失败: %s", src)
+		logger.LogPrintf("❌ [player] 全部订阅源拉取失败: %s", strings.Join(sources, ", "))
 		return
 	}
 	// 多文件（目录订阅）：逐文件独立识别格式解析后合并；EPG/台标取第一个非空来源
@@ -209,6 +292,39 @@ func (m *Manager) Reload() {
 			epgSrc = EPGSource{Type: "template", URL: p.Epg, Logo: epgSrc.Logo}
 		} else if strings.HasPrefix(p.Epg, "http") {
 			epgSrc = EPGSource{Type: "xml", URL: p.Epg, Logo: epgSrc.Logo}
+		}
+	}
+	// EPG 回退链：
+	//   ① xml 型源链（epgURLs）——内嵌 x-tvg-url / 固定 XMLTV 失效时，自动改用配置
+	//      player.epg 的固定 XMLTV（xml/xml.gz）。同 URL 去重，内嵌先行。
+	//   ② 跨类型回退（epgBak）——主来源与配置来源类型不同时（如内嵌 template、
+	//      配置固定 XMLTV，或反之），ServeEPG 在主来源失效后用它兜底查询。
+	var xmlURLs []string
+	bak := EPGSource{Type: "none"}
+	if epgSrc.Type == "xml" && epgSrc.URL != "" {
+		xmlURLs = append(xmlURLs, epgSrc.URL)
+	}
+	if p.Epg != "" && !strings.Contains(p.Epg, "{") && strings.HasPrefix(p.Epg, "http") {
+		// 配置为固定 XMLTV：并入 xml 源链（内嵌已有则跳过重复）
+		dup := false
+		for _, u := range xmlURLs {
+			if u == p.Epg {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			if epgSrc.Type == "xml" {
+				xmlURLs = append(xmlURLs, p.Epg)
+			} else {
+				// 主来源非 xml（内嵌 template）：配置固定 XMLTV 作为模板失效时的兜底
+				bak = EPGSource{Type: "xml", URL: p.Epg}
+			}
+		}
+	} else if p.Epg != "" && strings.Contains(p.Epg, "{") {
+		// 配置为模板：主来源为 xml 时作为失效兜底；主来源同为 template 且 URL 不同时同样兜底
+		if epgSrc.Type != "template" || epgSrc.URL != p.Epg {
+			bak = EPGSource{Type: "template", URL: p.Epg}
 		}
 	}
 	// 台标模板：内容内嵌 `logo=...`（txt）优先，否则用配置 `player.logo`；M3U/txt 的频道 logo 为空时兜底填充
@@ -257,18 +373,23 @@ func (m *Manager) Reload() {
 	m.order = newOrder
 	m.groups = newGroups
 	m.epgSource = epgSrc
+	m.epgURLs = xmlURLs
+	m.epgBak = bak
 	m.mu.Unlock()
 
-	if len(files) > 1 {
-		logger.LogPrintf("✅ [player] 订阅加载完成: %d 频道 / %d 分组（目录合并 %d 个文件）", len(newOrder), len(newGroups), len(files))
+	if len(sources) > 1 || len(files) > 1 {
+		logger.LogPrintf(
+			"✅ [player] 订阅加载完成: %d 频道 / %d 分组（%d 个订阅源 / %d 个文件合并）",
+			len(newOrder), len(newGroups), len(sources), len(files),
+		)
 	} else {
 		logger.LogPrintf("✅ [player] 订阅加载完成: %d 频道 / %d 分组", len(newOrder), len(newGroups))
 	}
 
-	// EPG：M3U XMLTV 由服务端拉取解析
-	if epgSrc.Type == "xml" && epgSrc.URL != "" {
-		go m.epg.Load(epgSrc.URL)
-		m.epg.startRefresh(epgSrc.URL, m.cfg.UpdateInterval)
+	// EPG：xml 型源链由服务端拉取解析（整份 XMLTV，gzip 自动识别）；主源失效自动切链内回退源
+	if len(xmlURLs) > 0 {
+		go m.epg.Load(xmlURLs...)
+		m.epg.startRefresh(m.cfg.UpdateInterval, xmlURLs...)
 	}
 }
 
@@ -283,6 +404,14 @@ type subFile struct {
 //   - 目录（支持绝对路径 / file://dir / php://dir）：递归收集其中 .txt/.m3u/.m3u8，
 //     跳过隐藏文件/目录，按路径名排序保证合并顺序稳定。
 func (m *Manager) fetchAll(src string) []subFile {
+	// php:// 脚本源（php://xxx.php?query）：执行脚本，输出即订阅内容（单文件）
+	if isPHPScriptSource(src) {
+		b := m.fetch(src)
+		if b == nil {
+			return nil
+		}
+		return []subFile{{name: src, content: b}}
+	}
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
 		b := m.fetch(src)
 		if b == nil {
@@ -348,8 +477,59 @@ func (m *Manager) fetchAll(src string) []subFile {
 	return out
 }
 
-// fetch 支持本地文件路径与 http(s) URL。
+// isPHPScriptSource 判断订阅源是否为 php:// **脚本源**（php://xxx.php?query）。
+// 与频道源 php://（handler.servePHPRaw）同一约定：脚本由内嵌 phpgo 解释器执行，输出即订阅内容；
+// 其余 php:// 路径（如 php://tv.txt、php://tv/）仍按 docroot 下的静态文件/目录处理。
+func isPHPScriptSource(src string) bool {
+	rest := strings.TrimPrefix(src, "php://")
+	if rest == src {
+		return false
+	}
+	if i := strings.Index(rest, "?"); i >= 0 {
+		rest = rest[:i]
+	}
+	return strings.HasSuffix(strings.ToLower(strings.Trim(rest, "/")), ".php")
+}
+
+// execPHPScriptSource 执行 php:// 订阅脚本并返回其输出体：
+//   - 脚本输出 Location（http/https）时跟随一次（与频道源解析语义一致）；
+//   - 执行失败 / 无输出返回 nil，由调用方按"该源拉取失败"处理（不影响其它源）。
+func (m *Manager) execPHPScriptSource(src string) []byte {
+	raw := strings.TrimPrefix(src, "php://")
+	rel, queryStr := raw, ""
+	if i := strings.Index(raw, "?"); i >= 0 {
+		rel, queryStr = raw[:i], raw[i+1:]
+	}
+	query := url.Values{}
+	if queryStr != "" {
+		if q, err := url.ParseQuery(queryStr); err == nil {
+			query = q
+		}
+	}
+	status, hdr, body, err := php.Capture(rel, query)
+	if err != nil {
+		logger.LogPrintf("⚠️ [player] php 订阅源执行失败: %s (%v)", src, err)
+		return nil
+	}
+	if loc := strings.TrimSpace(hdr.Get("Location")); loc != "" {
+		if strings.HasPrefix(loc, "http://") || strings.HasPrefix(loc, "https://") {
+			return m.fetch(loc)
+		}
+		logger.LogPrintf("⚠️ [player] php 订阅源 Location 不支持: %s (%s)", src, loc)
+		return nil
+	}
+	if status != http.StatusOK && len(body) == 0 {
+		logger.LogPrintf("⚠️ [player] php 订阅源返回 %d 且无输出: %s", status, src)
+		return nil
+	}
+	return body
+}
+
+// fetch 支持 php:// 脚本源、本地文件路径与 http(s) URL。
 func (m *Manager) fetch(src string) []byte {
+	if isPHPScriptSource(src) {
+		return m.execPHPScriptSource(src)
+	}
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
 		// 订阅拉取是短请求，加总超时兜底（见 subscriptionFetchTimeout 注释）
 		ctx, cancel := context.WithTimeout(context.Background(), subscriptionFetchTimeout)
@@ -480,6 +660,13 @@ func (m *Manager) EPGSource() EPGSource {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.epgSource
+}
+
+// EPGFallback 返回跨类型回退来源（主来源失效时 ServeEPG 用它兜底；无则为 Type "none"）。
+func (m *Manager) EPGFallback() EPGSource {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.epgBak
 }
 
 func (m *Manager) EPG() *EPGBank {

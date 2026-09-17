@@ -16,7 +16,6 @@ var distFS embed.FS
 
 const spaIndexPath = "dist/index.html"
 const playerIndexPath = "dist/player.html"
-const ac3LabIndexPath = "dist/ac3-lab.html"
 
 // serveEmbeddedHTMLPage 返回内嵌 dist 下的独立 HTML 入口。
 // 页面随二进制内嵌更新，必须禁缓存，避免浏览器用旧版页面。
@@ -48,11 +47,6 @@ func serveSPA(w http.ResponseWriter, r *http.Request) {
 // 页面随二进制内嵌更新，必须禁缓存，避免浏览器用旧版页面。
 func servePlayerPage(w http.ResponseWriter, r *http.Request) {
 	serveEmbeddedHTMLPage(w, r, playerIndexPath)
-}
-
-// serveAc3LabPage 返回 AC-3 独立实验页（ac3-lab.html，三入口构建产物）。
-func serveAc3LabPage(w http.ResponseWriter, r *http.Request) {
-	serveEmbeddedHTMLPage(w, r, ac3LabIndexPath)
 }
 
 // 独立播放页（/pp）的公开资源前缀：页面资源经此路径服务，
@@ -170,8 +164,6 @@ func registerSPARoutes(mux *http.ServeMux, webPath string) {
 	// H5 播放器入口（无尾斜杠：index.html 里的相对资源 ./assets/* 才能解析到 webPath/assets/）
 	mux.HandleFunc(webPath+"player", servePlayerPage)
 	mux.HandleFunc(webPath+"player.html", servePlayerPage)
-	// AC-3 独立实验页入口（/web/ac3-lab.html）
-	mux.HandleFunc(webPath+"ac3-lab.html", serveAc3LabPage)
 	// 无尾斜杠访问（如 /web）时重定向到 /web/，
 	// 否则 index.html 里的相对资源 ./assets/* 会解析到根路径而 404，
 	// 导致 SPA 无法挂载（页面空白/无法点开）。

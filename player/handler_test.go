@@ -1,16 +1,20 @@
 package player
 
 import (
+	"bytes"
+	"compress/gzip"
+	"context"
 	"encoding/json"
-	"time"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/php"
 )
 
 // setTestPlayer 写入全局播放器配置供 Reload 读取，测试结束还原。
@@ -98,6 +102,72 @@ func TestTxtEpgTemplateConfig(t *testing.T) {
 	es := mgr.EPGSource()
 	if es.Type != "template" || es.URL != "https://<your-domain>/?ch={name}&date={date}" {
 		t.Fatalf("配置 epg 模板未生效: %+v", es)
+	}
+}
+
+// TestM3UEmbeddedEpgConfigFallback M3U 内嵌 x-tvg-url（xml）存在时，配置 player.epg
+// 的固定 XMLTV 自动并入回退链（epgURLs = [内嵌, 配置]），内嵌失效后由 EPGBank 切换；
+// 内嵌为 template 时则配置固定 XMLTV 作为跨类型 epgBak。
+func TestM3UEmbeddedEpgConfigFallback(t *testing.T) {
+	b := false
+	config.Cfg.HTTP.InsecureSkipVerify = &b
+	config.Cfg.HTTP.DisableKeepAlives = &b
+
+	// M3U 内嵌 x-tvg-url（整份 XMLTV 地址）
+	inner := "https://epg-inner.example.com/epg.xml.gz"
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("#EXTM3U x-tvg-url=\"" + inner + "\"\n#EXTINF:-1 tvg-id=\"c1\",CCTV1\nhttp://10.0.0.1/c1.m3u8\n"))
+	}))
+	defer up.Close()
+
+	// 配置：固定 XMLTV（外部 xml.gz 兜底）
+	setTestPlayer(config.PlayerConfig{
+		Enabled:      true,
+		Subscription: up.URL,
+		Epg:          "https://example.com/e.xml.gz",
+	}, t)
+	mgr := NewManager(&config.Cfg.Player)
+	mgr.httpClient = up.Client()
+	mgr.Reload()
+
+	es := mgr.EPGSource()
+	if es.Type != "xml" || es.URL != inner {
+		t.Fatalf("M3U 内嵌 x-tvg-url 应为主来源: %+v", es)
+	}
+	mgr.mu.RLock()
+	urls := append([]string(nil), mgr.epgURLs...)
+	bak := mgr.epgBak
+	mgr.mu.RUnlock()
+	if len(urls) != 2 || urls[0] != inner || urls[1] != "https://example.com/e.xml.gz" {
+		t.Fatalf("xml 源链组装不对: %v", urls)
+	}
+	if bak.Type != "none" {
+		t.Fatalf("同型回退不应设置 epgBak: %+v", bak)
+	}
+
+	// 内嵌为 template、配置固定 XMLTV → epgBak 跨类型回退
+	up2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("央视,#genre#\nepg=https://tpl.example.com/?ch={name}&date={date}\nCCTV1,rtsp://10.0.0.2/c1\n"))
+	}))
+	defer up2.Close()
+	tpl := config.PlayerConfig{
+		Enabled:      true,
+		Subscription: up2.URL,
+		Epg:          "https://example.com/e.xml.gz",
+	}
+	setTestPlayer(tpl, t)
+	mgr2 := NewManager(&config.Cfg.Player)
+	mgr2.httpClient = up2.Client()
+	mgr2.Reload()
+	mgr2.mu.RLock()
+	bak2 := mgr2.epgBak
+	urls2 := append([]string(nil), mgr2.epgURLs...)
+	mgr2.mu.RUnlock()
+	if bak2.Type != "xml" || bak2.URL != "https://example.com/e.xml.gz" {
+		t.Fatalf("template 主源 + 配置固定 XMLTV 应设 epgBak: %+v", bak2)
+	}
+	if len(urls2) != 0 {
+		t.Fatalf("主为 template 时不应有 xml 源链: %v", urls2)
 	}
 }
 
@@ -189,6 +259,210 @@ func TestFetchAllDir(t *testing.T) {
 	if gs := m.Groups(); len(gs) != 3 {
 		t.Fatalf("期望 3 分组, got %v", gs)
 	}
+}
+
+// TestSubscriptionSourcesSplit 多订阅源展开：分隔符、去重、以及"路径里带逗号"不被误切。
+func TestSubscriptionSourcesSplit(t *testing.T) {
+	got := subscriptionSources(config.PlayerConfig{
+		Subscription:  " http://a/x.txt \nhttp://b/y.txt,http://c/z.txt;http://a/x.txt ",
+		Subscriptions: []string{"http://d/w.txt, http://e/v.txt", "", "http://b/y.txt"},
+	})
+	want := []string{"http://a/x.txt", "http://b/y.txt", "http://c/z.txt", "http://d/w.txt", "http://e/v.txt"}
+	if len(got) != len(want) {
+		t.Fatalf("源数不符: got=%v want=%v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("第 %d 个源不符: got=%q want=%q（应为原序去重）", i, got[i], want[i])
+		}
+	}
+
+	// 本地路径里含逗号：整串本身存在 → 按单源处理，不切开
+	tmp := t.TempDir()
+	weird := filepath.Join(tmp, "tv,backup.txt")
+	if err := os.WriteFile(weird, []byte("甲,#genre#\nA,rtsp://10.0.0.1/a.smil\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	one := subscriptionSources(config.PlayerConfig{Subscription: weird})
+	if len(one) != 1 || one[0] != weird {
+		t.Fatalf("带逗号的本地路径应作为单源: %v", one)
+	}
+}
+
+// TestMultiSubscriptionSources 多订阅合并：subscription 内多源 + subscriptions 列表 + 失效源跳过。
+func TestMultiSubscriptionSources(t *testing.T) {
+	b := false
+	config.Cfg.HTTP.InsecureSkipVerify = &b
+	config.Cfg.HTTP.DisableKeepAlives = &b
+
+	subA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("央视,#genre#\nCCTV1,rtsp://10.0.0.1/c1.smil\n"))
+	}))
+	defer subA.Close()
+	subB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("新江苏移动,#genre#\n凤凰资讯,rtsp://10.0.0.2/fh.smil\nCCTV1,rtsp://10.0.0.9/c1-hd.smil\n"))
+	}))
+	defer subB.Close()
+	subC := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("补充,#genre#\nCCTV2,rtsp://10.0.0.3/c2.smil\n"))
+	}))
+	defer subC.Close()
+
+	setTestPlayer(config.PlayerConfig{
+		Enabled: true,
+		// subscription 一栏里写两个源（换行分隔）
+		Subscription: subA.URL + "\n" + subB.URL,
+		// 列表再追加两个源，其中一个是必然失效的地址、一个是 subA 的重复源
+		Subscriptions: []string{subC.URL, "http://127.0.0.1:1/dead.txt", subA.URL},
+	}, t)
+	mgr := NewManager(&config.Cfg.Player)
+	mgr.httpClient = subA.Client()
+	mgr.Reload()
+
+	chans := mgr.Channels()
+	want := []string{"CCTV1", "凤凰资讯", "CCTV1", "CCTV2"} // 两条 CCTV1 的 URL 不同 → 均保留
+	if len(chans) != len(want) {
+		t.Fatalf("频道数不符: got %d want %d (%+v)", len(chans), len(want), chans)
+	}
+	for i := range want {
+		if chans[i].Name != want[i] {
+			t.Fatalf("第 %d 个频道应为 %s，got %s（应按源顺序合并）", i, want[i], chans[i].Name)
+		}
+	}
+	groups := mgr.Groups()
+	if len(groups) != 3 {
+		t.Fatalf("期望 3 分组, got %v", groups)
+	}
+	// 失效源被跳过，其余源照常加载；重复源不重复解析
+	if got := len(subscriptionSources(config.Cfg.Player)); got != 4 {
+		t.Fatalf("展开后的源数应为 4（去重后），got %d", got)
+	}
+	if !mgr.Enabled() {
+		t.Fatal("有可用订阅源时 Enabled 应为 true")
+	}
+}
+
+// TestMultiSubscriptionAllSourcesFail 全部源失效时保留上一次频道表（不清空）。
+func TestMultiSubscriptionAllSourcesFail(t *testing.T) {
+	b := false
+	config.Cfg.HTTP.InsecureSkipVerify = &b
+	config.Cfg.HTTP.DisableKeepAlives = &b
+
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("甲,#genre#\nA1,rtsp://10.0.0.1/a.smil\n"))
+	}))
+	defer up.Close()
+
+	setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: up.URL}, t)
+	mgr := NewManager(&config.Cfg.Player)
+	mgr.httpClient = up.Client()
+	mgr.Reload()
+	if len(mgr.Channels()) != 1 {
+		t.Fatalf("前置条件不成立: %+v", mgr.Channels())
+	}
+
+	// 换成两个都失效的源：本次刷新放弃，但不得清空已有频道表
+	setTestPlayer(config.PlayerConfig{
+		Enabled:       true,
+		Subscription:  "http://127.0.0.1:1/a.txt",
+		Subscriptions: []string{"http://127.0.0.1:1/b.txt"},
+	}, t)
+	mgr.httpClient = up.Client()
+	mgr.Reload()
+	if len(mgr.Channels()) != 1 {
+		t.Fatalf("全部源失效时不应清空频道表: %+v", mgr.Channels())
+	}
+}
+
+// TestFetchPHPScriptSource php:// 脚本源：订阅源写成 php://xxx.php?query 时由内嵌 phpgo 执行，
+// 输出即订阅内容；带/不带 `php/` 前缀两种写法都要能用（与频道源 php:// 同一约定）。
+func TestFetchPHPScriptSource(t *testing.T) {
+	// php.Init 会构造 PHP 专用 HTTP client（需要 HTTP 配置的指针字段，与其它测试一致地补默认）
+	b := false
+	config.Cfg.HTTP.InsecureSkipVerify = &b
+	config.Cfg.HTTP.DisableKeepAlives = &b
+
+	tmp := t.TempDir()
+	oldRoot := config.Cfg.PHP.DocRoot
+	config.Cfg.PHP.DocRoot = tmp
+	t.Cleanup(func() { config.Cfg.PHP.DocRoot = oldRoot })
+	php.Init(&config.Cfg)
+
+	script := "<?php\necho \"甲,#genre#\\n\";\necho \"A\" . (isset($_GET['id']) ? $_GET['id'] : 'none') . \",rtsp://10.0.0.1/a.smil\\n\";\n"
+	if err := os.WriteFile(filepath.Join(tmp, "sub.php"), []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, src := range []string{"php://sub.php?id=all", "php://php/sub.php?id=all"} {
+		setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: src}, t)
+		mgr := NewManager(&config.Cfg.Player)
+		mgr.Reload()
+		chans := mgr.Channels()
+		if len(chans) != 1 || chans[0].Name != "Aall" {
+			t.Fatalf("[%s] php 脚本源未生效（应解析出 Aall）: %+v", src, chans)
+		}
+	}
+
+	// 单源字段里的 php 脚本源不应被分隔符切开（query 里可能带逗号）
+	got := subscriptionSources(config.PlayerConfig{Subscription: "php://sub.php?id=all,hd"})
+	if len(got) != 1 {
+		t.Fatalf("php 脚本源被误切: %v", got)
+	}
+
+	// 脚本不存在的 php 源：拉取失败但不 panic（Reload 读全局配置，须同步设置）
+	setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: "php://missing.php"}, t)
+	m := NewManager(&config.Cfg.Player)
+	m.Reload()
+	if len(m.Channels()) != 0 {
+		t.Fatalf("不存在的 php 源不应产出频道: %+v", m.Channels())
+	}
+}
+
+// TestHotReloadNotifyReloadsSubscription 配置热加载通知链路：player 段变化后 NotifyConfigChanged
+// 必须让管理器立即按新源重载（多订阅加源即时生效就靠它）。
+func TestHotReloadNotifyReloadsSubscription(t *testing.T) {
+	b := false
+	config.Cfg.HTTP.InsecureSkipVerify = &b
+	config.Cfg.HTTP.DisableKeepAlives = &b
+
+	subA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("甲,#genre#\nA1,rtsp://10.0.0.1/a.smil\n"))
+	}))
+	defer subA.Close()
+	subB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("乙,#genre#\nB1,rtsp://10.0.0.2/b.smil\n"))
+	}))
+	defer subB.Close()
+
+	setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: subA.URL}, t)
+	mgr := NewManager(&config.Cfg.Player)
+	mgr.httpClient = subA.Client()
+	prevHandler := globalHandler
+	globalHandler = NewHandler(mgr)
+	t.Cleanup(func() {
+		globalHandler = prevHandler
+		mgr.Stop()
+	})
+	mgr.Start()
+
+	waitChans := func(want int, what string) {
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			if len(mgr.Channels()) == want {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("%s：期望 %d 个频道，got %d (%+v)", what, want, len(mgr.Channels()), mgr.Channels())
+	}
+	waitChans(1, "首次加载")
+
+	// 模拟后台改配置：追加 subscriptions 源 → 通知 → 立即重载
+	p := config.Cfg.Player
+	p.Subscriptions = []string{subB.URL}
+	config.Cfg.Player = p
+	NotifyConfigChanged()
+	waitChans(2, "热加载追加订阅源后")
 }
 
 func TestReloadPicksUpConfigChange(t *testing.T) {
@@ -300,6 +574,32 @@ func TestParseEPGContent(t *testing.T) {
 	}
 }
 
+// TestTxtEpgTemplateGzip txt 模板 EPG 源返回 gzip 压缩的 XMLTV（xml.gz）：
+// fetchTemplateEPG 需先解压再进解析链，否则 XML/JSON 解析全失败。
+func TestTxtEpgTemplateGzip(t *testing.T) {
+	xmlBody := `<tv><programme start="20260901000000 +0800" stop="20260901010000 +0800" channel="1"><title>新闻联播</title></programme></tv>`
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write([]byte(xmlBody)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Write(buf.Bytes())
+	}))
+	defer up.Close()
+
+	h := &Handler{stream: up.Client()}
+	progs := h.fetchTemplateEPG(context.Background(), up.URL)
+	if len(progs) != 1 || progs[0].Title != "新闻联播" {
+		t.Fatalf("gzip XMLTV 模板解析不对: %+v", progs)
+	}
+}
+
 func TestEPGBankNameLookup(t *testing.T) {
 	b := NewEPGBank()
 	xm := `<tv><channel id="CCTV10"><display-name lang="zh">CCTV10</display-name></channel>` +
@@ -313,6 +613,132 @@ func TestEPGBankNameLookup(t *testing.T) {
 	// 非匹配日期 → 空
 	if ps2 := b.Programs("CCTV10", "20260101"); len(ps2) != 0 {
 		t.Fatalf("日期过滤不对: %+v", ps2)
+	}
+}
+
+// TestEPGNormalizedNameLookup 归一化匹配：订阅频道名带质量后缀（4K/HD/高清）
+// 而 EPG display-name 不带时，应能按归一化别名查中；归一化冲突时宁缺毋滥。
+func TestEPGNormalizedNameLookup(t *testing.T) {
+	b := NewEPGBank()
+	xm := `<tv>` +
+		`<channel id="bjws"><display-name lang="zh">北京卫视</display-name></channel>` +
+		`<channel id="cctv4k"><display-name lang="zh">CCTV4K</display-name></channel>` +
+		`<channel id="cctv4"><display-name lang="zh">CCTV4</display-name></channel>` +
+		`<channel id="cctv"><display-name lang="zh">CCTV</display-name></channel>` +
+		`<programme channel="bjws" start="20260901120000 +0800" stop="20260901130000 +0800"><title>北京新闻</title></programme>` +
+		`<programme channel="cctv4k" start="20260901120000 +0800" stop="20260901130000 +0800"><title>4K 频道节目</title></programme>` +
+		`</tv>`
+	b.parse([]byte(xm))
+
+	// 北京卫视4K（订阅带后缀）→ 匹配 EPG "北京卫视"
+	ps := b.Programs("北京卫视4K", "20260901")
+	if len(ps) != 1 || ps[0].Title != "北京新闻" {
+		t.Fatalf("4K 后缀变体未匹配: %+v", ps)
+	}
+	// CCTV4K 精确匹配（EPG 里是独立频道），不被 4K 剥离逻辑破坏
+	ps2 := b.Programs("CCTV4K", "20260901")
+	if len(ps2) != 1 || ps2[0].Title != "4K 频道节目" {
+		t.Fatalf("CCTV4K 精确匹配不对: %+v", ps2)
+	}
+	// CCTV4K 与 CCTV 归一化冲突（均剥 4k → cctv）：宁缺毋滥，归一化键被删。
+	// "CCTV4KHD" 归一到 "cctv"，应查空而非误匹配到 CCTV4K 或 CCTV。
+	if ps3 := b.Programs("CCTV4KHD", "20260901"); len(ps3) != 0 {
+		t.Fatalf("归一化冲突应宁缺毋滥: %+v", ps3)
+	}
+}
+
+// TestEPGSourcChainFallback xml 型源链：主源（内嵌 x-tvg-url）失效时自动切到配置
+// player.epg 的固定 XMLTV。覆盖「M3U 内嵌 EPG 挂掉 → 外部 xml.gz 接管」场景。
+func TestEPGSourcChainFallback(t *testing.T) {
+	no := false
+	config.Cfg.HTTP.InsecureSkipVerify = &no
+	config.Cfg.HTTP.DisableKeepAlives = &no
+
+	// 主源：返回 404（失效）
+	bad := httptest.NewServer(http.NotFoundHandler())
+	defer bad.Close()
+	// 回退源：有效 XMLTV
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<tv><channel id="CCTV1"><display-name lang="zh">CCTV1</display-name></channel>` +
+			`<programme channel="CCTV1" start="20260901080000 +0800" stop="20260901090000 +0800"><title>朝闻天下</title></programme></tv>`))
+	}))
+	defer up.Close()
+
+	b := NewEPGBank()
+	b.Load(bad.URL, up.URL) // 先坏后好 → 应取回退源
+	if !b.HaveData() {
+		t.Fatalf("源链回退未生效: 主源失效后应加载回退源数据")
+	}
+	ps := b.Programs("CCTV1", "20260901")
+	if len(ps) != 1 || ps[0].Title != "朝闻天下" {
+		t.Fatalf("回退源查询不对: %+v", ps)
+	}
+
+	// 主源恢复：应重新优先主源
+	b2 := NewEPGBank()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<tv><programme channel="9" start="20260901" stop="20260901"><title>主源节目</title></programme></tv>`))
+	}))
+	defer good.Close()
+	b2.Load(good.URL, bad.URL)
+	if ps := b2.Programs("9", "20260901"); len(ps) != 1 || ps[0].Title != "主源节目" {
+		t.Fatalf("主源有效时应优先主源: %+v", ps)
+	}
+}
+
+// TestEPGFallbackTemplate 查询级回退：template 主来源查询失败（空）时，用配置的
+// 固定 XMLTV（xml）兜底查询 EPGBank。
+func TestEPGFallbackTemplate(t *testing.T) {
+	no := false
+	config.Cfg.HTTP.InsecureSkipVerify = &no
+	config.Cfg.HTTP.DisableKeepAlives = &no
+
+	// template 主来源：总是返回垃圾（解析失败 → 空）
+	tpl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not epg"))
+	}))
+	defer tpl.Close()
+	// xml 回退源：有效
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<tv><channel id="c1"><display-name lang="zh">CCTV1</display-name></channel>` +
+			`<programme channel="c1" start="20260901080000 +0800" stop="20260901090000 +0800"><title>朝闻天下</title></programme></tv>`))
+	}))
+	defer up.Close()
+
+	m := &Manager{
+		epgSource: EPGSource{Type: "template", URL: tpl.URL},
+		epgBak:    EPGSource{Type: "xml", URL: up.URL},
+		epg:       NewEPGBank(),
+	}
+	m.epg.parse([]byte(`<tv><channel id="c1"><display-name lang="zh">CCTV1</display-name></channel>` +
+		`<programme channel="c1" start="20260901080000 +0800" stop="20260901090000 +0800"><title>朝闻天下</title></programme></tv>`))
+	h := &Handler{mgr: m, stream: tpl.Client()}
+	progs := h.serveEPGQuery(context.Background(), "", "CCTV1", "20260901")
+	if len(progs) != 1 || progs[0].Title != "朝闻天下" {
+		t.Fatalf("template 主源失效应回退 xml 兜底: %+v", progs)
+	}
+}
+
+// TestEPGXmlFallbackTemplate xml 主来源整份失效（HaveData=false）时，用配置的
+// template 兜底逐频道拉取。
+func TestEPGXmlFallbackTemplate(t *testing.T) {
+	no := false
+	config.Cfg.HTTP.InsecureSkipVerify = &no
+	config.Cfg.HTTP.DisableKeepAlives = &no
+
+	// 备用 template：返回单频道 XMLTV
+	tpl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<tv><programme start="20260901080000 +0800" stop="20260901090000 +0800" channel="1"><title>新闻 30 分</title></programme></tv>`))
+	}))
+	defer tpl.Close()
+
+	m := &Manager{epgSource: EPGSource{Type: "xml", URL: "http://127.0.0.1:1/dead.xml"}, epg: NewEPGBank()}
+	// 主 xml 从未加载成功：epgBak 为 template
+	m.epgBak = EPGSource{Type: "template", URL: tpl.URL}
+	h := &Handler{mgr: m, stream: tpl.Client()}
+	progs := h.serveEPGQuery(context.Background(), "", "CCTV1", "20260901")
+	if len(progs) != 1 || progs[0].Title != "新闻 30 分" {
+		t.Fatalf("xml 主源失效应回退 template 兜底: %+v", progs)
 	}
 }
 

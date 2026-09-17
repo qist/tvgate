@@ -140,12 +140,15 @@ type PHPConfig struct {
 
 // PlayerConfig 表示 H5 播放器的订阅源配置
 type PlayerConfig struct {
-	Enabled        bool          `yaml:"enabled"`         // 是否启用播放器模块
-	Subscription   string        `yaml:"subscription"`    // 订阅源：HTTP(S) URL，或本地路径（绝对路径 / file:// / php://相对docroot / docroot相对路径）；可指向文件或目录（目录递归收集 .txt/.m3u/.m3u8 合并解析）
-	Epg            string        `yaml:"epg"`             // 逗号TXT 订阅的 EPG 模板（含 {name}/{date} 占位符）
+	Enabled      bool   `yaml:"enabled"`      // 是否启用播放器模块
+	Subscription string `yaml:"subscription"` // 订阅源：HTTP(S) URL，或本地路径（绝对路径 / file:// / php://相对docroot / docroot相对路径）；可指向文件或目录（目录递归收集 .txt/.m3u/.m3u8 合并解析）。支持换行/逗号/分号分隔的多个源（等价于 subscriptions，按序合并）
+	// Subscriptions 多订阅源：追加在 Subscription 之后的 URL/本地路径/目录列表。
+	// 与 Subscription 合并解析（先 Subscription，再本列表），同源去重；单个源失败只跳过该源。
+	Subscriptions  []string      `yaml:"subscriptions,omitempty"`
+	Epg            string        `yaml:"epg"`             // 逗号TXT 订阅的 EPG 模板（含 {name}/{date} 占位符）；也可填固定 XMLTV URL（xml.gz，整份节目单按频道名匹配，gzip 自动识别）
 	Logo           string        `yaml:"logo"`            // 逗号TXT 订阅的台标模板（含 {name} 占位符），如 https://logo.<your-domain>/{name}.png
 	LogoDir        string        `yaml:"logo_dir"`        // 本地台标目录（如 /opt/TVLogo），频道 logo 用该目录下 <频道名>.png，经 /player/logo/ 服务
-	UpdateInterval time.Duration `yaml:"update_interval"` // 订阅定时刷新间隔，默认 2h
+	UpdateInterval time.Duration `yaml:"update_interval"` // 订阅定时刷新间隔，默认 2h；整份 XMLTV EPG（epg 填固定 xml/xml.gz URL）的刷新与订阅共用同一时钟，每周期随 Reload 一起重拉
 	UA             string        `yaml:"ua"`              // 默认 User-Agent；频道未指定 ua= 时请求上游使用（部分源限制浏览器 UA）
 	// AndroidAutoplay 纯 YAML 标记位：安卓设备启动是否进入播放页。
 	// 本端不含任何行为逻辑，由客户端 App（Java）读取该标记自行控制；
