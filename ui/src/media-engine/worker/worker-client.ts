@@ -56,10 +56,27 @@ export class TransmuxWorkerClient {
     }
     worker.onmessage = (ev: MessageEvent<WorkerEvent>) => this.handleEvent(ev.data);
     worker.onerror = (e: ErrorEvent) => {
+      // **关键**：崩溃/加载失败的 worker 必须立即作废，否则 ensureWorker 会一直返回这具
+      // "尸体"——上层（直播边重载 / 用户切台）会照常调用 load()，消息却全部石沉大海，
+      // 表现为「服务重启后立即断开、且重试完全不生效」。作废后下一次 load() 会自动重建
+      // worker 并重新拉流，服务恢复即自愈（与旧实现"错误交给上层 retry/reload"同语义）。
+      e.preventDefault();
+      this.dropWorker();
       this.callbacks.onError?.({ category: "io", info: e.message || "worker 异常" });
     };
     this.worker = worker;
     return worker;
+  }
+
+  /** 丢弃当前 worker（崩溃/退出/销毁时调用）：terminate 并置空，下次 send 按需重建。 */
+  private dropWorker(): void {
+    const worker = this.worker;
+    this.worker = null;
+    try {
+      worker?.terminate();
+    } catch {
+      // worker 已退出：terminate 可能抛，忽略
+    }
   }
 
   private handleEvent(event: WorkerEvent): void {
@@ -126,7 +143,15 @@ export class TransmuxWorkerClient {
   }
 
   private send(cmd: WorkerCommand): void {
-    this.ensureWorker().postMessage(cmd);
+    try {
+      this.ensureWorker().postMessage(cmd);
+    } catch (e) {
+      // 重建失败（服务重启窗口内 worker 脚本暂时拉不到）：丢弃以便下次重试重建，
+      // 不向外抛 —— 抛出会沿调用栈变成未捕获异常，直接打断上层播放流程。
+      this.dropWorker();
+      // eslint-disable-next-line no-console
+      console.warn(`[WorkerClient] postMessage 失败：${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   load(options: WorkerClientLoadOptions): void {
@@ -153,7 +178,6 @@ export class TransmuxWorkerClient {
   destroy(): void {
     if (!this.worker) return;
     this.send({ type: "destroy" });
-    this.worker.terminate();
-    this.worker = null;
+    this.dropWorker();
   }
 }
