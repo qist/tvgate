@@ -1,0 +1,40 @@
+# 第三方组件声明（THIRD-PARTY-NOTICES）
+
+本项目主体以 Mozilla Public License 2.0（MPL-2.0）协议开源，第三方组件仍按其
+各自许可条款执行。下列组件在分发时需要单独说明其许可与来源。
+
+## 1. FFmpeg（WASM 软解后端）
+
+- **组件**：FFmpeg WebAssembly 软解后端
+- **位置**：`ui/src/media-engine/wasm/`（构建脚本 `Makefile`、封装 `avcodec_audio.c` /
+  `wsola.c`，产出 `avcodec_audio.wasm`）
+- **许可**：GNU Lesser General Public License, version 2.1 or later（LGPL-2.1-or-later）
+- **说明**：本项目分发的是按 LGPL 兼容组件裁剪构建的独立 FFmpeg WebAssembly 二进制
+  （启用解码器 `mp2/mp3/ac3/eac3/aac` 及对应 parser），**未故意启用任何仅以 GPL
+  许可的 FFmpeg 组件**。该 `.wasm` 作为独立资源分发，由 media-engine 独立加载
+  （等同动态链接）。
+- **源码与构建**：FFmpeg 的源码获取、裁剪构建配置与启用组件清单见
+  `ui/src/media-engine/wasm/Makefile` 与 `ui/src/media-engine/wasm/README.md`。
+  依适用 FFmpeg 许可条款，接收该 `.wasm` 的一方有权获取对应源代码。
+- **版权**：FFmpeg 由 FFmpeg 项目贡献者开发，版权与许可声明以 FFmpeg 源码发行中的
+  NOTICE 为准。项目主页 https://ffmpeg.org/，源码仓库 https://git.ffmpeg.org/ffmpeg.git。
+
+## 2. 历史 GPL 播放引擎（已移除）
+
+- 历史目录 `ui/src/playback-engine/` 曾基于 GPL 许可的上游项目 rtp2httpd 的派生代码。
+- 该实现**已从当前仓库完全移除，不随本项目分发**。当前 `ui/src/media-engine/` 为
+  独立 clean-room 自研实现，不将历史播放引擎作为源代码依赖（零 `import` 依赖，
+  可复现：`grep -rIn -E "from .*playback-engine" ui/src/media-engine --include='*.ts'`
+  命中为空；源码注释中少量 `playback-engine` 字样仅为历史溯源说明，非代码包含）。
+- 本条目仅出于源码历史与许可透明度说明，当前源码树无意分发任何来自历史 GPL
+  播放引擎的代码。
+
+## 3. 许可分离一览
+
+| 组件 | 位置 | 许可 |
+| --- | --- | --- |
+| 项目播放引擎 | `ui/src/media-engine/` | MPL-2.0 |
+| FFmpeg WASM 软解后端 | `ui/src/media-engine/wasm/` | LGPL-2.1-or-later |
+| 历史播放引擎 | `ui/src/playback-engine/` | 已移除，不分发 |
+
+第三方组件按其各自许可条款执行；本文任何内容均不修改、限制或取代相应第三方许可条款。
