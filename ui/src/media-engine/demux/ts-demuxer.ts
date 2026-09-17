@@ -89,20 +89,76 @@ const PASSTHROUGH_AUDIO_CODECS: Record<number, string> = {
  * 从 MPEG 音频帧头推断 Layer（I/II/III）。
  * stream_type 0x03(MPEG-1)/0x04(MPEG-2) **不保证**内容层：0x03 也常承载 Layer II(MP2)。
  * 只按 stream_type 标码会把 MP2 误标成 mp3 → 路由到 mp3 解码器 → 解不出声。返回 null 表示未见到有效帧头。
+ *
+ * 注意：**必须校验整个帧头**。压缩载荷（尤其 AC-3）里随机出现 `0xFF 0xEx` 的概率约 1.6%/128B，
+ * 只看同步字会把 AC-3 误判成 MP2 → 整轨路由到 MP2 解码器 → 解出垃圾 PCM（听感为持续杂音）。
  */
 function detectMpegAudioLayer(data: Uint8Array): 1 | 2 | 3 | null {
-  const max = Math.min(data.length - 2, 128);
+  const max = Math.min(data.length - 4, 128);
   for (let i = 0; i < max; i++) {
     // 同步字：11 位 1（0xFF + 0xE0 高 3 位）
-    if (data[i] === 0xff && (data[i + 1] & 0xe0) === 0xe0) {
-      const layerBits = (data[i + 1] >> 1) & 0x03;
-      if (layerBits === 1) return 3; // 01 = Layer III (mp3)
-      if (layerBits === 2) return 2; // 10 = Layer II  (mp2)
-      if (layerBits === 3) return 1; // 11 = Layer I
-      return null; // 00 = reserved
-    }
+    if (data[i] !== 0xff || (data[i + 1] & 0xe0) !== 0xe0) continue;
+    const layerBits = (data[i + 1] >> 1) & 0x03;
+    if (layerBits === 0) continue; // 00 = reserved
+    // 整帧头校验：bitrate_index（第 3 字节高 4 位）与 sampling_rate_index（次 2 位）都必须合法，
+    // 否则只是随机出现的 0xFF 0xEx，不能据此定码。
+    const bitrateIdx = (data[i + 2] >> 4) & 0x0f;
+    const sampleRateIdx = (data[i + 2] >> 2) & 0x03;
+    if (bitrateIdx === 0 || bitrateIdx === 0x0f) continue; // free / bad
+    if (sampleRateIdx === 3) continue; // reserved
+    return layerBits === 1 ? 3 : layerBits === 2 ? 2 : 1;
   }
   return null;
+}
+
+/**
+ * Dolby 同步字搜索窗口（字节）。须不小于 AC-3 的最大帧长，否则"自帧中间开始的 PES"
+ * 在窗口内找不到下一个帧头会漏判：A/52 最高码率（640 kbps @ 32 kHz，A/52 表 5.18）
+ * 一帧为 3840 字节，故取 4096。
+ */
+const DOLBY_SYNC_SCAN_BYTES = 4096;
+
+/**
+ * 判定私有流载荷实际承载的 Dolby 编码（AC-3 / E-AC-3）。
+ *
+ * 依据公开规范独立实现：
+ *  - AC-3 与 E-AC-3 的同步字同为 16 位大端 `0x0B77`
+ *    （ATSC A/52 §5.4.1.1；ETSI TS 102 366 §F.4.2）；
+ *  - 同步字之后第 5 字节的高 5 位是 `bsid`（bit stream identification）：
+ *    标准 AC-3 取 1~8，E-AC-3（DD+）取 11~16，9/10 为保留值。
+ *
+ * PES 载荷可能自帧中间开始，故取窗口内**第一个**同步字作帧头判定；
+ * 窗口内未见同步字返回 null，交由后续 PES 继续判定。
+ */
+function probeDolbyCodec(data: Uint8Array): "ac3" | "eac3" | null {
+  const limit = Math.min(data.length, DOLBY_SYNC_SCAN_BYTES) - 6;
+  for (let i = 0; i < limit; i++) {
+    if (data[i] !== 0x0b || data[i + 1] !== 0x77) continue;
+    const bsid = (data[i + 5] >> 3) & 0x1f;
+    if (bsid >= 11) return "eac3";
+    if (bsid <= 8) return "ac3";
+    // 9/10 为保留值：大概率是随机字节命中同步字，继续向后找。
+  }
+  return null;
+}
+
+/** 按内容去重收集参数集（数量极少，线性比较即可；上限 8 组防异常流膨胀）。 */
+function addParamSet(list: Uint8Array[] | undefined, nal: Uint8Array): Uint8Array[] {
+  const out = list ?? [];
+  for (const existing of out) {
+    if (existing.length === nal.length) {
+      let same = true;
+      for (let i = 0; i < nal.length; i++) {
+        if (existing[i] !== nal[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return out;
+    }
+  }
+  if (out.length >= 8) return out;
+  return [...out, nal];
 }
 
 const VIDEO_TIMESCALE = 90000;
@@ -126,6 +182,11 @@ interface TrackState {
   // 视频
   sps?: Uint8Array;
   pps?: Uint8Array;
+  /** 已见到的全部 SPS/PPS（按内容去重）：avcC 必须收全 —— 多 PPS 交替的流
+   *  （不同 pps_id 对应不同 slice 类型/场帧编码）若只写最后一个，
+   *  解码器会缺另一个 PPS → 引用它的关键帧送包失败（MEDIA_ERR_DECODE）。 */
+  spsAll?: Uint8Array[];
+  ppsAll?: Uint8Array[];
   vps?: Uint8Array; // HEVC
   width?: number;
   height?: number;
@@ -222,9 +283,10 @@ export class TsDemuxer {
       let softAudio = false;
       for (const s of pmt.streams) {
         let st = s.streamType;
-        // DVB 私有流(0x06)不声明具体编码，靠 ES descriptor 识别 Dolby：Registration
-        // Descriptor(0x05) "AC-3"/"EC-3"、ATSC AC-3(0x82)/ETSI AC-3(0x6A)、EAC3(0x7A/0x7D)。
-        // 参考旧实现判定；缺了它私有 AC-3 轨（如 4K 频道）整轨不注册 → 有画面没声音。
+        // DVB 私有流(0x06) 不声明具体编码，按 ES descriptor 判定 Dolby：Registration
+        // Descriptor(0x05) "AC-3"/"EC-3"、ATSC AC-3(0x82) / ETSI AC-3(0x6A)、EAC3(0x7A/0x7D)。
+        // 描述符缺失时**不能丢弃该轨**（源站普遍不写）：registerTrack 会注册为待定轨，
+        // 由首个 PES 的内容嗅探定码 —— 否则主音轨整条消失（例：只剩并存的 MP2 备轨被播放）。
         if (st === STREAM_TYPE_PRIVATE) {
           const dolby = detectPrivateAudioCodec(s.esInfo);
           if (dolby === "ac3") st = STREAM_TYPE_AC3;
@@ -325,6 +387,20 @@ export class TsDemuxer {
         timescale: VIDEO_TIMESCALE,
         published: false,
       });
+    } else if (streamType === STREAM_TYPE_PRIVATE) {
+      // DVB 私有流(0x06) 而 ES descriptor 未标识 Dolby 编码（源站普遍不写描述符：
+      // ffprobe 也是靠内容同步字 0x0B77 才认出 AC-3 的）：注册为"待定音频轨"，
+      // 由首个 PES 的内容嗅探（probeDolbyCodec）定码。
+      // 若此处直接丢弃，主音轨会整条消失 —— 例如只并存的 MP2 备轨被播放、徽标显示 MP2。
+      this.tracks.set(pid, {
+        id: this.nextTrackId++,
+        pid,
+        kind: "audio",
+        streamType,
+        codecFinalized: false,
+        timescale: VIDEO_TIMESCALE,
+        published: false,
+      });
     }
   }
 
@@ -359,12 +435,14 @@ export class TsDemuxer {
       }
       // AAC 须等到首帧构造出 esds 才能发布（codec 串会随 AOT 变化，故按 streamType 判定）
       if (t.streamType === STREAM_TYPE_AAC && !t.codecPrivate) continue;
-      // MPEG-1/2 音频须等首帧 Layer 嗅探定码后才发布（避免 MP2 被误标 mp3 发布出去）
-      if (
-        (t.streamType === STREAM_TYPE_MPEG1_AUDIO || t.streamType === STREAM_TYPE_MPEG2_AUDIO) &&
-        !t.codecFinalized
-      )
-        continue;
+      // MPEG-1/2 音频须等首帧 Layer 嗅探定码后才发布（避免 MP2 被误标 mp3 发布出去）；
+      // 私有流(0x06) 同理：descriptor 未标识编码时也必须等首帧内容嗅探定码，
+      // 否则会被上面 `t.codec ?? "mp4a.40.2"` 兜底成错误 codec 发布出去。
+      const needsContentSniff =
+        t.streamType === STREAM_TYPE_MPEG1_AUDIO ||
+        t.streamType === STREAM_TYPE_MPEG2_AUDIO ||
+        t.streamType === STREAM_TYPE_PRIVATE;
+      if (needsContentSniff && !t.codecFinalized) continue;
       infos.push({
         id: t.id,
         kind: t.kind,
@@ -426,6 +504,7 @@ export class TsDemuxer {
       const type = nalUnitType(n);
       if (type === NAL_TYPE_SPS) {
         track.sps = n;
+        track.spsAll = addParamSet(track.spsAll, n);
         configChanged = true;
         const info = parseSps(n);
         if (info) {
@@ -438,6 +517,7 @@ export class TsDemuxer {
         }
       } else if (type === NAL_TYPE_PPS) {
         track.pps = n;
+        track.ppsAll = addParamSet(track.ppsAll, n);
         configChanged = true;
       } else if (type === NAL_TYPE_IDR) {
         isKeyframe = true;
@@ -445,7 +525,9 @@ export class TsDemuxer {
     }
 
     if (configChanged && track.sps && track.pps) {
-      track.codecPrivate = buildAvcC([track.sps], [track.pps]);
+      // 收全所有已见参数集：多 PPS 交替的流（不同 pps_id 对应不同 slice/场帧编码）
+      // 若只写最后一个，解码器会缺另一个 PPS，引用它的关键帧送包即失败 → MEDIA_ERR_DECODE。
+      track.codecPrivate = buildAvcC(track.spsAll ?? [track.sps], track.ppsAll ?? [track.pps]);
     }
     if (!track.published) this.publishTracks();
     if (!track.published) return; // 尚无可用的 codecPrivate，等下个 SPS
@@ -533,13 +615,27 @@ export class TsDemuxer {
    *  AC-3/E-AC-3/MP2/MP3：**一律逐帧切分**（每帧带连续推导的 PTS），纠正源流 PTS 重叠；
    *  跨 PES 半帧由各解析器的 carry 兜底，保证送进解码器的始终是完整帧。 */
   private handlePassthroughAudioPes(track: TrackState, payload: Uint8Array, pts90: number): void {
-    // MPEG-1/2 音频：从帧头解析实际 Layer 定 codec——stream_type 0x03 也可能承载 Layer II(MP2)，
-    // 只按 stream_type 会把 MP2 误标 mp3 并路由到 mp3 解码器 → 解不出声。
+    // 定码（一次性）：
+    //  1) PMT 已定 ac3/eac3（0x81/0x87，或 0x06 且 ES descriptor 已标识）时**直接信任**，
+    //     不再做 MPEG 层嗅探 —— AC-3 压缩载荷里随机出现的 `0xFF 0xEx` 会被误判成 MP2，
+    //     整轨随之路由到 MP2 解码器解出垃圾 PCM（持续杂音，界面也显示成 MP2）。
+    //  2) 容器声明不保证内容（0x03/0x04 与未标识的 0x06 都常见）：按内容定码 ——
+    //     先按 Dolby 同步字与 bsid 判 AC-3/E-AC-3，再退到 MPEG 帧头定 Layer。
     if (!track.codecFinalized) {
-      const layer = detectMpegAudioLayer(payload);
-      if (layer === null) return; // 尚未见到有效帧头，等后续 PES
-      track.codec = layer === 3 ? "mp3" : "mp2"; // Layer I/II → mp2，Layer III → mp3
-      track.codecFinalized = true;
+      if (track.codec === "ac3" || track.codec === "eac3") {
+        track.codecFinalized = true;
+      } else {
+        const dolby = probeDolbyCodec(payload);
+        if (dolby) {
+          track.codec = dolby;
+          track.codecFinalized = true;
+        } else {
+          const layer = detectMpegAudioLayer(payload);
+          if (layer === null) return; // 尚未见到有效帧头，等后续 PES
+          track.codec = layer === 3 ? "mp3" : "mp2"; // Layer I/II → mp2，Layer III → mp3
+          track.codecFinalized = true;
+        }
+      }
       this.publishTracks();
       if (!track.published) return;
     }

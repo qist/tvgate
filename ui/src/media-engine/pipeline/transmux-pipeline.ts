@@ -201,6 +201,12 @@ export class TransmuxPipeline {
   private pageHidden = false;
   /** 最近一块软解音频的输出时间（秒）；C9c 脱轴判定用（含 0 也要区分"未产出过"）。 */
   private lastSoftAudioTimeSec: number | null = null;
+  /**
+   * 主音轨 = PMT 声明顺序里的第一路音频轨。多音轨流（如 AC-3 主轨 + MP2 备轨）里，
+   * "播哪条声音"与"徽标显示哪个编码"都必须以它为准：轨道是多批发布的，若每次取
+   * "本批第一条音频"，后发布的备轨会把已设好的媒体信息覆盖掉（实测徽标从 AC-3 变 MP2）。
+   */
+  private primaryAudioTrackId: number | null = null;
   /** 是否已给 MSE 挂静音 AAC 假音轨（C2）。 */
   private silentAudioRegistered = false;
   /** 最近一次加载器错误（直播场景先抑制上报，等重试预算耗尽或确定性失败再上报）。 */
@@ -279,6 +285,7 @@ export class TransmuxPipeline {
     this.resetMediaInfo(); // 新流开始：清掉上一路累积的媒体信息
     this.pcmTimeBaseSec = null; // 新流：重新锚定软解音频时间基准
     this.pendingSoftAudio = [];
+    this.primaryAudioTrackId = null; // 新流：重新锁定主音轨
     if (this.config.source) {
       while (!this.stopped) {
         // 缓冲领先门：直播下缓冲领先播放头超限时在此等待（hidden/时基过期自行放行）
@@ -413,6 +420,11 @@ export class TransmuxPipeline {
     for (const t of tracks) {
       this.trackCodecs.set(t.id, t.codec);
       this.trackTimescales.set(t.id, t.timescale);
+      // 主音轨 = 首个注册的音频轨（PMT 声明顺序 = 广播方的主次顺序）：在此一次性锁定，
+      // 后续备轨（如并存的 MP2）发布时不再参与媒体信息与出声选择。
+      if (t.kind === "audio" && this.primaryAudioTrackId === null) {
+        this.primaryAudioTrackId = t.id;
+      }
       // audio-only 软解：不向 MSE remuxer 加任何轨（避免误发 MSE init/media 干扰主视频门控）
       if (this.audioOnly) continue;
       // 软解音轨不进 MSE（MSE 无法解码 ac3/eac3/mp2/mp3），真实声音由 WebAudio 输出；
@@ -441,7 +453,10 @@ export class TransmuxPipeline {
       });
     }
     const video = tracks.find((t) => t.kind === "video");
-    const audio = tracks.find((t) => t.kind === "audio");
+    // 音频只认主音轨：备轨批次（如并存 MP2）不得覆盖主轨的 codec 与声道数，
+    // 否则徽标会从 AC-3/5.1 被改写成 MP2/立体声（声音实际仍走主轨，造成表里不一）。
+    const audio =
+      this.primaryAudioTrackId !== null ? tracks.find((t) => t.id === this.primaryAudioTrackId) : undefined;
     // 音视频通常分两批发布（音频须等首帧 ADTS 才能构造 esds），此处按轨合并到已累积的
     // mediaInfo，否则后一批会整体覆盖前一批、导致另一半徽章（如"音频编码"）消失。
     this.mergeMediaInfo({
@@ -530,6 +545,13 @@ export class TransmuxPipeline {
         continue;
       }
       if (codec && this.softDecodeCodecs.has(codec)) {
+        // 多音轨流（例如 AC-3 主轨与 MP2 备轨并存）只播**第一条**出声：两条 PCM 同时灌进
+        // 同一个 PCM 播放器会叠音/杂音；其余软解轨完全忽略（也不参与时间轴基准）。
+        // 兜底：主音轨未由轨信息确定时（如纯分离音频路径）以首个软解样本的轨为准
+        if (this.primaryAudioTrackId === null) {
+          this.primaryAudioTrackId = s.trackId;
+        }
+        if (s.trackId !== this.primaryAudioTrackId) continue;
         // 软解音频时间须与 MSE 视频同基准（0 起）：减视频首样本基准秒。
         // 直播巨大 PTS 若直传会让 PCM 播放器漂移测量恒超阈值 → 反复硬重同步（卡顿）/无声。
         if (this.pcmTimeBaseSec === null) {
