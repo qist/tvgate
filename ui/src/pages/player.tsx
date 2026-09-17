@@ -5,8 +5,8 @@
  */
 import "../lib/polyfills"; // 旧 WebView 兼容 polyfill，必须在业务代码前
 import { clsx } from "clsx";
-import { Activity, AlertTriangle, ListChecks, RefreshCw } from "lucide-react";
-import { StrictMode, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ListChecks, RefreshCw } from "lucide-react";
+import { Activity, StrictMode, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ChannelList, nextScrollBehaviorRef as channelListNextScrollBehaviorRef } from "../components/player/channel-list";
 import { ChannelBrowser } from "../components/player/channel-browser";
