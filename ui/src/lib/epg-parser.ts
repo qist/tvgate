@@ -1,5 +1,5 @@
 /**
- * EPG 节目单解析 / 查询 / 缝隙填充（clean-room 重写）。
+ * EPG 节目单解析 / 查询 / 缝隙填充。
  * 仅依赖 types/player 的类型；不引用任何上游实现。
  */
 import type { Channel, EPGProgram } from "../types/player";

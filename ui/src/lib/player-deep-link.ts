@@ -1,5 +1,5 @@
 /**
- * 频道深链（地址栏 hash 可分享）clean-room 重写。
+ * 频道深链（地址栏 hash 可分享）。
  * 选台后将当前频道写进 URL hash（#频道名 或 #频道ID），刷新/分享可恢复。
  */
 import type { Channel } from "../types/player";

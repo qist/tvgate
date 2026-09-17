@@ -1,5 +1,5 @@
 /**
- * WebGL2 视频渲染（clean-room 实现）。
+ * WebGL2 视频渲染。
  * 设计 §5.10 行为：从 <video> 经 requestVideoFrameCallback 拉解码帧 → source stage
  * （去隔行或直通）→ enhancement（mosquito 降噪，须在源分辨率跑，避免放大压缩斑）→
  * present（上采样到 canvas）。门限：仅 SD/HD（≤1920×1088）走 WebGL；上采样上限 3840×2160；
@@ -304,7 +304,7 @@ export class VideoRenderer {
     if (vw > this.maxSrcW || vh > this.maxSrcH) return;
 
     // 输出尺寸**按源比例等比**放大到显示区域（不足则保持 1:1）：
-    // 旧实现按两轴各自取 max(source, display)，内在比例可能与源不一致，
+    // 若按两轴各自取 max(source, display)，内在比例可能与源不一致，
     // 配上 CSS object-contain 会变成"先拉伸、再留边"。
     const displayW = this.canvas.clientWidth || vw;
     const displayH = this.canvas.clientHeight || vh;

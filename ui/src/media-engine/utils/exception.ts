@@ -1,5 +1,5 @@
 /**
- * media-engine 内部错误类型（本项目自研，clean-room）。
+ * media-engine 内部错误类型（本项目自研。
  *
  * 定位：只表达「引擎内部不该发生」的断言式失败（位流越界 / 参数非法 / 状态冲突）。
  * 与 `errors.ts` 的 PlayerError 分工明确：

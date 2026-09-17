@@ -1,5 +1,5 @@
 /**
- * Worker 客户端（主线程侧，clean-room 实现）。
+ * Worker 客户端（主线程侧。
  * 用标准 `new Worker(new URL(...), { type: "module" })` 实例化（Vite 会内联打包该模块），
  * 把 PipelineCallbacks 语义桥接为跨线程消息；大数据经 transferable 零拷贝回传。
  */
@@ -63,7 +63,7 @@ export class TransmuxWorkerClient {
   }
 
   private handleEvent(event: WorkerEvent): void {
-    // init 段**同任务批量**下发（照旧实现 mse/playback-controller.ts 的做法）：
+    // init 段**同任务批量**下发（避免多次跨线程往返）：
     // 每个 worker 消息是独立任务；若 video init 先 append，UA 会在任务间隙解析它并**锁死
     // SourceBuffer 集合**，随后 audio 的 addSourceBuffer 直接抛
     // "This MediaSource has reached the limit of SourceBuffer objects" → **有画无声**。

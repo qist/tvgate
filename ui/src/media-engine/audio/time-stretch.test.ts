@@ -71,7 +71,7 @@ describe("WsolaStretcher 拉伸/透传切换（回归：切换丢段→毛刺）
     const data = sine(sr * 10); // 10s
     const s = new WsolaStretcher(1, sr);
     let totalOut = 0;
-    // 模拟漂移环在 ±0.5% 阈值附近抖动：1.0 与 1.2 交替（旧实现在切换边界丢段）
+    // 模拟漂移环在 ±0.5% 阈值附近抖动：1.0 与 1.2 交替（切换边界曾丢段）
     const speeds = [1.0, 1.2, 1.0, 1.2, 1.0, 1.0, 1.2, 1.0, 1.2, 1.0];
     const chunk = 4800;
     let passthrough = 0;
@@ -86,7 +86,7 @@ describe("WsolaStretcher 拉伸/透传切换（回归：切换丢段→毛刺）
     }
     // 期望：透传段原样 + 拉伸段按 1/speed 折算
     const expected = passthrough + stretched / 1.2;
-    // 旧实现每次切换丢 ~40ms（总量偏少）；新实现切换时把缓冲按当前速率无损排出
+    // 切换时若丢弃残余缓冲会每次丢 ~40ms（总量偏少）；现按当前速率无损排出
     // （总量可能略多：拉伸期缓冲的尾部以 1x 速率补出，最多 ~2%/次切换的瞬态）。
     // 关键回归点：**不得少于**预期（丢段方向），上界约束瞬态无累积。
     expect(totalOut).toBeGreaterThanOrEqual(expected * 0.995);

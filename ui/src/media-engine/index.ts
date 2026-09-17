@@ -1,5 +1,5 @@
 /**
- * media-engine —— 播放引擎（clean-room 自研实现，已全面取代旧 GPL 引擎，旧目录已移除）。
+ * media-engine —— 播放引擎（本项目自研实现）。
  * 覆盖格式解析 / 片段生成 / 解复用 / 转封装 / 软解 / MSE 播放与音频同步全链路。
  * 对外契约类型（PlayerConfig / PlaybackBackend / HlsInfo …）定义在 backends/types.ts，
  * UI 只依赖本模块导出的公共 API。

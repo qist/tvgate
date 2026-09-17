@@ -48,7 +48,7 @@ const Log: {
   },
 };
 
-/** MediaEngine 使用方的配置（对齐参照实现的 PlayerConfig 子集）。 */
+/** MediaEngine 使用方的配置。 */
 export interface PcmPlayerConfig {
   /** 当前视频时间（MSE 时间轴，秒）；attachVideo 后以 videoElement 为准。 */
   clock: () => number;
@@ -212,7 +212,7 @@ export class PCMAudioPlayer {
   /** 回前台对齐主动发起的 seek：seeking/seeked 事件不得再清链/重锚（音频正在播 heard 内容）。 */
   private aligningSeek = false;
 
-  // 起播对齐没有独立的启动门（与参照实现一致）：首个 PCM 块入队时按自身时间锚定
+  // 起播对齐没有独立的启动门：首个 PCM 块入队时按自身时间锚定
   // 调度链，随后由漂移环/WSOLA 收敛；解码远快于实时，PCM 很快追上视频时钟。
   // （原自研启动同步机已退役，见 docs/player-latest-port-design.md C7。）
 
@@ -663,7 +663,7 @@ export class PCMAudioPlayer {
   }
 
   /** 下一个将被排程（被听到）的内容时间（秒）。本架构无独立"已产出未排程"队列，
-   *  与 contentCursorSec 同源；保留该命名以对齐参照实现的轴平移测量点语义。 */
+   *  与 contentCursorSec 同源；保留该命名以保持轴平移测量点语义。 */
   nextAudibleStreamSec(): number | null {
     return this.contentCursorSec();
   }
@@ -782,7 +782,7 @@ export class PCMAudioPlayer {
   }
 
   /**
-   * 回前台恢复音视频同步（**视频追音频**，对齐参照实现 alignToVideoOnReturn）。
+   * 回前台恢复音视频同步（**视频追音频**）。
    *
    * 后台 free-run 期间音频按 AudioContext 时钟实时推进（紧跟直播边缘），video 被 UA
    * 节流/冻结，回前台时音频轴领先视频轴。恢复方向是把**画面跳到正在听到的位置**（heard）：
@@ -1100,7 +1100,7 @@ export class PCMAudioPlayer {
     // — skip drift so the chain simply drains and keeps pace instead of
     // fighting (or hard-resyncing against) a stopped clock.
     // 时钟未在推进（后台被节流、回前台待对齐、解冻前）时不做漂移纠偏/硬重同步：
-    // 对着冻结的时钟纠偏只会砍掉已排好的链（对齐参照实现 controlTick 的启用条件）。
+    // 对着冻结的时钟纠偏只会砍掉已排好的链（controlTick 的启用条件）。
     if (
       this.clockState !== "active" ||
       this.pendingForegroundAlign ||
@@ -1277,7 +1277,7 @@ export class PCMAudioPlayer {
     }
     this.buffering = false;
     // seek 期间只停掉已排的链、**不清队列**：等 seeked 后按新位置从缓冲重建
-    // （对齐参照实现 resyncFromBuffer 语义）。旧实现此处清空队列，是"seek 后
+    // 若此处清空队列，会造成"seek 后
     // queue=0、静音"的成因之一。
     this.cancelChain();
     this.clearStallGrace();

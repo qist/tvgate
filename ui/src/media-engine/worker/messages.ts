@@ -1,6 +1,6 @@
 /**
- * Worker 消息协议（clean-room 实现）。
- * 设计 §5.13：backends 经 postMessage 与 worker 通信；消息集保持稳定，便于新旧实现切换。
+ * Worker 消息协议。
+ * 设计 §5.13：backends 经 postMessage 与 worker 通信；消息集保持稳定，便于实现演进。
  * 大数据（init/media segment、PCM）以 transferable 方式传递，避免拷贝阻塞主线程。
  */
 

@@ -1,5 +1,5 @@
 /**
- * ISO BMFF（MP4/fMP4）box 解析（clean-room 实现）。
+ * ISO BMFF（MP4/fMP4）box 解析。
  * 依据 ISO/IEC 14496-12 公开规范重新实现，仅做只读解析，不做重封装。
  * 用途（见引擎设计 §5.7 fMP4 透传）：从 init(moov) 抽 codec 串与各轨 timescale，
  * 从 media segment(moof/tfdt) 抽起始解码时间，供 HLS fMP4 直通过路识别时间戳/codec。

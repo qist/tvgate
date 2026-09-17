@@ -1,5 +1,5 @@
 /**
- * Native 播放后端（clean-room 实现）。
+ * Native 播放后端。
  * 直接把 URL 交给 <video>，由浏览器/TV 自身硬解播放——低端设备上的轻量路径
  * （对应长期记忆中"TV 要原生支持"的方案①）。不做转封装、无 WebGL 后处理，
  * 因此 setAutoDeinterlace / setPictureEnhancement 为空操作。

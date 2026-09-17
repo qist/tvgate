@@ -1,5 +1,5 @@
 /**
- * 视频播放器整合层（clean-room 重写）。
+ * 视频播放器整合层。
  * 仅做 UI / 编排：把 segments 交给 PlaybackBackend、把用户操作映射回引擎，并负责
  * 双槽无缝换台、画中画（Document / 传统）、媒体会话（锁屏控制）、触控手势、错误处理与恢复。
  * 引擎契约来自 ../../media-engine 公共 API，本文件不内联任何解码/MSE 逻辑。
@@ -1633,7 +1633,7 @@ function VideoPlayerComponent({
       {/*
         视频呈现区：**尺寸恒定**（填满舞台），源画面比例一律交给 object-contain 内部消化。
         这样源比例变化（整屏广告 / 16:9 剧集 / 4:3 老片）不会引起外层盒子尺寸变化——
-        旧实现按容器比例在 w-full / h-full 间翻转，比例临界时来回切换就是"抽动/闪屏"的来源。
+        按容器比例在 w-full / h-full 间翻转时，比例临界会来回切换，就是"抽动/闪屏"的来源。
       */}
       <div className="absolute inset-0 overflow-hidden">
         {(visibleSlotId === "a" ? (["b", "a"] as const) : (["a", "b"] as const)).map((slotId) => (

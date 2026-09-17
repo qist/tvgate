@@ -1,5 +1,5 @@
 /**
- * MPEG-1/2/2.5 音频（Layer I/II/III）帧解析（clean-room 实现，依据 ISO/IEC 11172-3 / 13818-3 公开规范）。
+ * MPEG-1/2/2.5 音频（Layer I/II/III）帧解析（依据 ISO/IEC 11172-3 / 13818-3 公开规范）。
  *
  * 用途（对应 docs/player-latest-port-design.md C6）：把 PES 负载按帧头给出的帧长**逐帧切分**，
  * 供软解桥一帧一调；帧体跨 payload 时把残尾留作 incomplete data，由调用方拼到下一个 payload

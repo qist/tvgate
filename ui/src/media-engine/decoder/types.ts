@@ -1,5 +1,5 @@
 /**
- * 音频软解契约（clean-room 实现）。
+ * 音频软解契约。
  * 依据引擎设计 §5.9 / §6.1：Web Worker 内用 WASM 解码；**WASM URL 由 config 提供**，
  * 库不自带打包。重写方向为统一到 ffmpeg libavcodec-WASI 后端，覆盖 mp2/ac3/eac3/aac。
  *

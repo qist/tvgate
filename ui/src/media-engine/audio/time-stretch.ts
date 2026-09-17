@@ -1,5 +1,5 @@
 /**
- * 时域拉伸（WSOLA，clean-room 实现）。
+ * 时域拉伸（WSOLA。
  * 依据标准 WSOLA（Waveform Similarity Overlap-Add）算法重新实现：
  * 保音高变速——按「自然位置 + 相似度搜索」选帧，汉宁窗重叠相加输出，
  * 合成步长随目标速度变化，从而在不改采样率的前提下压缩/拉伸时长。
@@ -20,8 +20,8 @@ function buildHann(size: number): Float32Array {
   return w;
 }
 
-const SEARCH_STEP = 2; // 相似度搜索步长（跳样降低运算量；参照实现逐样本，纯 TS 折中取 2）
-/** 旁路迟滞：进入旁路的偏离上限（对齐参照 wasm-stretcher 的 1%）。 */
+const SEARCH_STEP = 2; // 相似度搜索步长（跳样降低运算量；逐样本精度更高但开销大，纯 TS 折中取 2）
+/** 旁路迟滞：进入旁路的偏离上限（1%）。 */
 const BYPASS_ENTER = 0.01;
 /** 旁路迟滞：已旁路时退出旁路的偏离上限（2%）——避免 speed 在 1 附近抖动时
  *  反复在「透传/拉伸」间切换（每次切换有缓冲尾部丢失与算力抖动）。 */
@@ -52,7 +52,7 @@ export class WsolaStretcher implements AudioStretcher {
   ) {
     this.frameSize = Math.max(128, Math.round((sampleRate * frameMs) / 1000));
     this.hop = this.frameSize >> 1;
-    // 搜索窗 ±hop（48kHz 下 ±10ms，对齐参照实现 SEEK_MS=10）：窗太小找不到
+    // 搜索窗 ±hop（48kHz 下 ±10ms，即 SEEK_MS=10）：窗太小找不到
     // 最佳波形对齐点，拉伸期会产生相位断裂的金属声/毛刺。
     this.searchWin = this.hop;
     this.hann = buildHann(this.frameSize);
@@ -73,7 +73,7 @@ export class WsolaStretcher implements AudioStretcher {
 
   process(input: Float32Array[], speed: number): Float32Array[] {
     if (input.length === 0 || input[0].length === 0) return [];
-    // 迟滞旁路：进入 1% / 退出 2%（对齐参照 wasm-stretcher），避免 speed 在 1
+    // 迟滞旁路：进入 1% / 退出 2%，避免 speed 在 1
     // 附近抖动时反复切换透传/拉伸。
     const bypass = Math.abs(speed - 1) < (this.bypassActive ? BYPASS_EXIT : BYPASS_ENTER);
     this.bypassActive = bypass;
@@ -144,7 +144,7 @@ export class WsolaStretcher implements AudioStretcher {
 
   /**
    * 在自然位置附近搜索与上一帧最相似的偏移。
-   * 评分对齐参照实现：单声道混合归一化互相关 dot / sqrt(候选能量)——
+   * 评分：单声道混合归一化互相关 dot / sqrt(候选能量)——
    * 未归一化的裸点积会偏向高能量位置（如鼓点），导致对齐点漂移、拉伸期产生
    * 相位断裂的可闻毛刺。
    */

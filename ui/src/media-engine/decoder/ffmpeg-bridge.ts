@@ -1,5 +1,5 @@
 /**
- * FFmpeg(libavcodec)-WASI 解码桥（clean-room 实现）。
+ * FFmpeg(libavcodec)-WASI 解码桥。
  *
  * 驱动「独立 WASM（无 Emscripten JS 胶水）」：
  * - import 契约：env.emscripten_notify_memory_growth 空函数；wasi_snapshot_preview1 打桩

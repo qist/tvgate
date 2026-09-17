@@ -1,5 +1,5 @@
 /**
- * 播放位置时间上下文（clean-room 重写）。
+ * 播放位置时间上下文。
  * 让深层子组件能读取当前播放时间（秒，相对媒体原点），无需逐层透传 prop。
  */
 import { createContext, useContext, type ReactNode } from "react";

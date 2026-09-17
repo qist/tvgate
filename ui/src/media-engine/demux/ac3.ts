@@ -1,5 +1,5 @@
 /**
- * AC-3 / E-AC-3 帧解析（clean-room 实现）。
+ * AC-3 / E-AC-3 帧解析。
  * 依据 ETSI TS 102 366 / ATSC A/52 公开规范重新实现，复用 demux/exp-golomb 的比特流读取。
  *
  * 用途：把 TS PES 负载里的 AC-3/E-AC-3 比特流按 16-bit 同步字 0x0B77 切分为完整帧，

@@ -1,5 +1,5 @@
 /**
- * AAC 基本流工具（clean-room 实现）。
+ * AAC 基本流工具。
  * 依据 ISO/IEC 13818-7（ADTS）与 ISO/IEC 14496-3（AudioSpecificConfig）公开规范重新实现：
  * ADTS 头解析（采样率/声道/帧长）、AudioSpecificConfig 构造、esds box 构造。
  * 均为无状态纯算法，供 demux/remux 复用。
@@ -74,7 +74,7 @@ function channelConfigToCount(cfg: number): number {
  * 解析 init 中要声明的 AOT（音频对象类型）。
  *
  * 重要：Chrome 等浏览器的 MSE AAC 解码器对「裸 LC（2 字节）ASC」存在静默不发声的
- * 已知问题。参考实现沿用 flv.js 系规避手法：即便实际是 LC-AAC，也把 esds 里的
+ * 已知问题。业界通行规避（flv.js 等 MSE 播放器）：即便实际是 LC-AAC，也把 esds 里的
  * ASC 声明成 HE-AAC（AOT=5）的 4 字节配置，再借扩展段（extended AOT=2）把真实
  * 格式强制回 LC-AAC。Firefox / Android 另有分支，需保持一致。
  */

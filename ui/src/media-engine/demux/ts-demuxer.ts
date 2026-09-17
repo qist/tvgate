@@ -1,5 +1,5 @@
 /**
- * MPEG-TS demuxer（clean-room 实现）。
+ * MPEG-TS demuxer。
  * 依据 ISO/IEC 13818-1 公开规范重新实现，复用 formats/ts、formats/avc、formats/aac 的纯算法。
  * 职责：同步/探包 → PAT/PMT 发现轨道 → 按 PID 重组 PES → 按 stream_type 分派解析器
  * → 产出带 dts/pts/cts/isKeyframe 的样本与 codecPrivate（avcC / esds）。

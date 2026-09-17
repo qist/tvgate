@@ -1,5 +1,5 @@
 /**
- * 自包含 fetch 加载器（clean-room 实现）。
+ * 自包含 fetch 加载器。
  * 依据 Fetch / Streams 公开标准重新实现，合并 IOController（缓冲 + 限速采样 + 分发）
  * 与 FetchStreamLoader（fetch + ReadableStream 泵循环）与 RangeSeekHandler（Range 头构造）。
  * 行为（见引擎设计 §5.8）：断点续传（range / restart）、重定向后取最终 URL、错误上报。

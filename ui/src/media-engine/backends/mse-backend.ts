@@ -1,5 +1,5 @@
 /**
- * MSE 播放后端（clean-room 实现）。
+ * MSE 播放后端。
  * 对外实现 PlaybackBackend 契约（设计 §5.12）：串联 TransmuxPipeline（加载→demux→remux）、
  * MediaSourceController（缓冲/流控）、PlaybackController（直播同步）与可选的 PCMAudioPlayer
  * （软解音频）。缓冲满暂停拉取、缓冲可用恢复（§5.3）。
@@ -126,7 +126,7 @@ export class MseBackend implements PlaybackBackend {
           this.playback.notifyBuffered(unionRanges(this.bufferedRanges));
         },
         onStartStreaming: () => this.worker?.resume(),
-        // 参照实现明确**不**在 endstreaming 时暂停 worker：MSE 层已在 ManagedMediaSource
+        // 明确**不**在 endstreaming 时暂停 worker：MSE 层已在 ManagedMediaSource
         // streaming=false 期间自行延迟 append。此处暂停会把上游拉流饿死 → 卡流。
         onError: (info) => this.emitError({ category: "media", info }),
         // 单轨编码不受支持（如无 HEVC）：跳过该轨 + 非阻断告警，绝不走重载恢复
@@ -218,7 +218,7 @@ export class MseBackend implements PlaybackBackend {
     this.unsupportedTracks.clear();
     // 新流/换台：重建 MediaSource，清掉旧频道的 buffered 区间与播放头。
     // 若复用同一 MS，旧 buffered 区间与旧 currentTime 残留会让新流（从 0 起缓冲）
-    // 与播放头错位 → "有数据但不开始播放"（参照实现每次 loadSegments 都重建 MSE）。
+    // 与播放头错位 → "有数据但不开始播放"（故每次 loadSegments 都重建 MSE）。
     this.mse.destroy();
     this.mse.open(() => this.startPipeline());
   }
@@ -235,7 +235,7 @@ export class MseBackend implements PlaybackBackend {
     // 启动 hold：音频 SourceBuffer 建齐（或确认纯视频）前不 append 任何数据，
     // 从根上杜绝 Chromium "首个 init 已 append → addSourceBuffer(audio) 抛已达上限"。
     this.startMseHold();
-    // 直播时长语义为无限（对齐参照：continuous-live-ts 立即 setDuration(Infinity)）。
+    // 直播时长语义为无限（continuous-live-ts 立即 setDuration(Infinity)）。
     // 有界 duration 会让直播边/seekable 判定失真。
     this.mse.setDuration(Infinity);
 
@@ -262,7 +262,7 @@ export class MseBackend implements PlaybackBackend {
       onMediaInfo: (info) => {
         this.mediaInfo = info;
         // 4K（≥3840×2160）必为逐行扫描：去隔行/增强均无正向意义，反而加重
-        // 主线程/GPU 负载（用户实测 4K 频道一直加载、旧实现秒开）。按分辨率强制降级。
+        // 主线程/GPU 负载（用户实测 4K 频道一直加载）。按分辨率强制降级。
         const vw = info.video?.width ?? 0;
         const vh = info.video?.height ?? 0;
         if (vw >= 3840 || vh >= 2160) {
@@ -430,7 +430,7 @@ export class MseBackend implements PlaybackBackend {
   /**
    * 单轨编码不受支持。
    * 例：4K 频道是 HEVC(hvc1)，在无 HEVC 的浏览器里 isTypeSupported 为假——
-   * 旧实现把它当整条流的致命错误：弹"播放错误"面板 + 触发重载恢复循环
+   * 若把它当整条流的致命错误：弹"播放错误"面板 + 触发重载恢复循环
    * （实测 CCTV4K 深链出现 4 次 Player error，而音频轨其实照播）。
    * 现在：单轨 → 跳过该轨 + CODEC_UNSUPPORTED 告警（播放器显示非阻断提示，继续播另一轨）；
    * 两轨都不支持 → 才升级为致命错误。
@@ -490,13 +490,13 @@ export class MseBackend implements PlaybackBackend {
       }
     }
     // play() 的 rejection（NotAllowedError / 中断）必须冒泡给 UI：
-    // 无缝换台 pending 失败时 UI 依赖它走硬切换兜底（原实现直接 return video.play()）
+    // 无缝换台 pending 失败时 UI 依赖它走硬切换兜底
     await this.mediaElement.play();
   }
 
   pause(): void {
     this.mediaElement.pause();
-    // 显式暂停才挂起软解音频（对齐参照：AudioContext 时钟冻结，链保留）。
+    // 显式暂停才挂起软解音频（AudioContext 时钟冻结，链保留）。
     // 不绑 video 的 pause 事件——换台/缓冲/重建 MSE 的自动 pause 不能挂起，
     // 否则 AudioContext 恢复不了 → 永久静音。
     this.pcmPlayer?.suspend();
@@ -551,7 +551,7 @@ export class MseBackend implements PlaybackBackend {
   }
 
   goLive(targetMseSeconds?: number): void {
-    // 缺省目标基于实际缓冲末端（对齐参照 getContinuousLiveTsGoLiveTarget）：
+    // 缺省目标基于实际缓冲末端（continuous-live-ts 的起播目标）：
     // wall-clock 外推的直播边（goLiveTargetMse）在缓冲不足时远超缓冲 → 跳洞卡死。
     // 传入的目标仍由 seek() 兜底 clamp 到缓冲末端。
     const end = this.bufferedEnd();
@@ -600,7 +600,7 @@ export class MseBackend implements PlaybackBackend {
     this.worker?.resume();
   }
 
-  /** 上报播放头 + MSE 缓冲末端给 worker 的缓冲领先门（250ms，与参照实现同周期）。 */
+  /** 上报播放头 + MSE 缓冲末端给 worker 的缓冲领先门（250ms 周期）。 */
   private postClock(): void {
     if (!this.worker) return;
     const end = this.bufferedEnd();

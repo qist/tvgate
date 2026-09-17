@@ -1,9 +1,8 @@
 /**
  * HTTP-FLV（直播）解封装器。
  *
- * 移植说明：本文件是**本项目自研实现**的移植版（原位于已退役的 playback-engine/demux/flv-demuxer.ts，
- * 参考实现 /opt/rtp2httpd 中并不存在该文件，故非 GPL 派生）。移植时按 media-engine 的输出契约重写接线，
- * FLV tag 解析 / 时间戳归一化逻辑保持等价行为。
+ * 实现说明：FLV tag 解析 / 时间戳归一化按 media-engine 的输出契约组织，
+ * 行为约定与 demux/ts-demuxer.ts 保持一致（首帧归零、时间轴不回退）。
  *
  * 输出协议与 demux/ts-demuxer.ts **完全一致**（onTracks / onSamples / onError / onStreamLayout），
  * 供 pipeline 直接消费：

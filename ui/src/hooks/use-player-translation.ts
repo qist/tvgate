@@ -1,5 +1,5 @@
 /**
- * 播放器文案翻译 hook（clean-room 重写）。
+ * 播放器文案翻译 hook。
  * 把当前 locale 绑定的翻译函数稳定暴露给组件（locale 变化时才重建）。
  */
 import { useCallback } from "react";

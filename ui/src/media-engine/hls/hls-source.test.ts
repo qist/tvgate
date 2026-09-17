@@ -1,5 +1,5 @@
 /**
- * HLS 源选择逻辑单测（clean-room）。聚焦 ⑤ 新增的 `pickAudioRendition`，
+ * HLS 源选择逻辑单测。聚焦 ⑤ 新增的 `pickAudioRendition`，
  * 该纯函数决定独立音频 rendition（EXT-X-MEDIA;TYPE=AUDIO）是否接入软解。
  */
 

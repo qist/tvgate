@@ -1,5 +1,5 @@
 /**
- * media-engine 内置软解 WASM 资产（构建产物，clean-room 封装 + FFmpeg libavcodec）。
+ * media-engine 内置软解 WASM 资产（构建产物，封装 + FFmpeg libavcodec）。
  * 一套模块覆盖 mp2/mp3/ac3/eac3/aac；由 Vite 以 ?url 作为独立资源打包（不内联）。
  * 允许配置覆盖（PlayerConfig.wasmDecoders），此处仅提供缺省，令 media-engine 自持可用。
  */

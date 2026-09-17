@@ -1,5 +1,5 @@
 /**
- * AudioContext 上的背靠背排程链（本项目自研，clean-room）。
+ * AudioContext 上的背靠背排程链（本项目自研。
  *
  * 软解 PCM 按块创建 `AudioBufferSourceNode`，每块的起点严格等于上一块的结束时刻
  * （由 AudioContext 时钟累加，sample-accurate、天然无缝）。**块的流时间戳不直接

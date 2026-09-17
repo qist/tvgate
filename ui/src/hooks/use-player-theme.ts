@@ -1,5 +1,5 @@
 /**
- * 播放器明暗主题 hook（clean-room 重写）。
+ * 播放器明暗主题 hook。
  * 支持 auto/light/dark；auto 跟随系统 prefers-color-scheme。把 `dark` 类与 color-scheme 挂到 <html>。
  */
 import { useEffect, useMemo } from "react";

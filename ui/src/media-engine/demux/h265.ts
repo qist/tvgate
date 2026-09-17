@@ -1,5 +1,5 @@
 /**
- * H.265/HEVC 的 Annex-B NAL 扫描与 hvcC 组装（本项目自研，clean-room）。
+ * H.265/HEVC 的 Annex-B NAL 扫描与 hvcC 组装（本项目自研。
  *
  * 规范依据：
  *   - ITU-T H.265 §7.3.1.2：NAL unit header（forbidden_zero_bit 1 + nal_unit_type 6 +

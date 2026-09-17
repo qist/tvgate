@@ -1,5 +1,5 @@
 /**
- * HLS 源（clean-room 实现）。
+ * HLS 源。
  * 行为见引擎设计 §5.6：拉 m3u8 → parseM3U8 解析 multivariant/media playlist →
  * 选 variant（bandwidth/codecs/resolution/frameRate/videoRange）→
  * 直播从 live edge 起播（LIVE_EDGE_SEGMENTS=3）→ 定期刷新 playlist（MAX_REFRESH_FAILURES=5）

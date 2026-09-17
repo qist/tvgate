@@ -1,5 +1,5 @@
 /**
- * fMP4 remuxer（clean-room 实现）。
+ * fMP4 remuxer。
  * 依据 ISO/IEC 14496-12 公开规范重新实现，把 demux 样本聚合成 MSE 可用的 fMP4 片段。
  * 行为（见引擎设计 §5.5）：按批聚合（时长/字节阈值 + 关键帧边界）→ 由 mp4-generator 生成
  * init(ftyp+moov) 与 media(moof+mdat) 段；media 段携带 timestampOffset。
@@ -52,7 +52,7 @@ export interface Fmp4RemuxerOptions {
 }
 
 /**
- * 成段阈值（对齐参照实现 `remux/media-batch.ts`：250ms / 512KB）。
+ * 成段阈值（250ms / 512KB）。
  * 曾用 2s / 2MB——首个 media 段要攒满 2 秒视频才发出，起播显著变慢、
  * 直播追边也恒定落后约 2 秒，是「播放起不来/起播慢」的主因之一。
  */
@@ -78,7 +78,7 @@ export class Fmp4Remuxer {
   private readonly firstSampleSec = new Map<string, number>();
   /**
    * **统一**时间基（秒）：所有轨共用，优先取首个视频样本，无视频时取首个音频样本。
-   * 参照实现 `_dtsBase = _videoDtsBase` 且音频共用视频锚点；若按 kind 各自归零，
+   * 视频锚点优先且音频共用同一锚点；若按 kind 各自归零，
    * 会抹掉 (audioFirstPts − videoFirstPts) 的固定偏移 → 音画恒定错位。
    */
   private unifiedBaseSec: number | null = null;

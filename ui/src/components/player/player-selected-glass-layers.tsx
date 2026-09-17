@@ -1,5 +1,5 @@
 /**
- * 选中项玻璃质感装饰层（clean-room 重写）。
+ * 选中项玻璃质感装饰层。
  * 纯装饰（aria-hidden）：选中频道行上的渐变光层 + 顶部高光线，由 visible 控制淡入淡出。
  */
 import { clsx } from "clsx";

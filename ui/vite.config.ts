@@ -55,7 +55,7 @@ export default defineConfig(() => ({
     sourcemap: false,
     rollupOptions: {
       // 两入口：管理后台 index.html + H5 播放器 player.html
-      // （ac3-lab 独立实验页已随"去 GPL"收尾删除：它是旧引擎的唯一外部依赖者）
+      // （ac3-lab 独立实验页已随旧引擎移除而删除：它是旧引擎的唯一外部依赖者）
       input: {
         index: resolve(__dirname, "index.html"),
         player: resolve(__dirname, "player.html"),

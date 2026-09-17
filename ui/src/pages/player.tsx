@@ -1,5 +1,5 @@
 /**
- * 播放页（clean-room 重写）。
+ * 播放页。
  * 数据层全部走 TVGate 服务端 API（频道 / EPG / 回看均由服务端签发受控短地址，真实源不出服务端）；
  * 引擎契约来自 ../../media-engine。本文件只做状态编排与布局，不含任何解码/MSE 逻辑。
  */
@@ -99,7 +99,7 @@ function todayYmd(): string {
   return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
 }
 
-/** EPG 重试冷却：取失败/空结果后到点可重试（旧实现一次失败 = 整场不再拉）。 */
+/** EPG 重试冷却：取失败/空结果后到点可重试（一次失败不再整场放弃）。 */
 const EPG_RETRY_COOLDOWN_MS = 60_000;
 /** EPG 定时刷新间隔：与后端 EPG 源刷新同量级，长时间播放时"正在播出"不漂移。 */
 const EPG_REFRESH_MS = 15 * 60 * 1000;

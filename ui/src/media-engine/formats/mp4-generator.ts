@@ -1,5 +1,5 @@
 /**
- * 片段化 MP4（fMP4）生成器（clean-room 实现）。
+ * 片段化 MP4（fMP4）生成器。
  * 依据 ISO/IEC 14496-12 / 14496-15 公开规范重新实现，把 demux 出的音视频 sample
  * 封装为 MSE 可用的 init segment（ftyp+moov）与 media segment（moof+mdat）。
  * 支持 H.264(avc1) 与 AAC(mp4a) 两条常见轨；纯字节构造，无外部依赖。
@@ -264,7 +264,7 @@ function buildFragment(run: Fmp4TrackRun): Uint8Array {
   return concat([moof, mdat]);
 }
 
-/** 每轨递增的 moof 序号（mfhd.sequence_number）。参照实现用递增序号，写死 trackId 会让
+/** 每轨递增的 moof 序号（mfhd.sequence_number）。写死 trackId 会让
  *  分片序号恒定，部分 UA 的 coded frame group 判定异常。 */
 const fragmentSequences = new Map<number, number>();
 

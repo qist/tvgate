@@ -1,5 +1,5 @@
 /**
- * 静音 AAC 帧表（clean-room 实现；帧字节为本项目自研生成的静音编码结果）。
+ * 静音 AAC 帧表（帧字节为本项目自研生成的静音编码结果）。
  *
  * 用途（见 docs/player-latest-port-design.md C2）：软解音频（AC-3/E-AC-3/MP2）的真实声音走
  * WebAudio，MSE 里只留一条**静音 AAC 假音轨** —— 让 video 元素"有音轨"，后台标签页不被 UA

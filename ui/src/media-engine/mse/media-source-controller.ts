@@ -1,5 +1,5 @@
 /**
- * MediaSource 集成（clean-room 实现）。
+ * MediaSource 集成。
  * 依据 Media Source Extensions 公开规范重新实现。契约见引擎设计 §5.3：
  * open(onOpen) / appendInit(track,data,codec,container) / appendMedia(track,data,timestampOffset?) /
  * setDuration(sec) / endOfStream() / destroy()；回调 onBufferFull / onBufferAvailable /
@@ -120,7 +120,7 @@ export class MediaSourceController {
       return;
     }
     this.opening = true;
-    // 参照实现：只有**不存在**标准 MediaSource 时（iOS Safari）才用 ManagedMediaSource。
+    // 只有**不存在**标准 MediaSource 时（iOS Safari）才用 ManagedMediaSource。
     // 把 MMS 排在最前很危险：MMS 有 UA 侧流控（streaming===false 期间不接受 append），
     // 而本控制器未实现该门控；再叠加 endstreaming 时暂停上游，极易造成 append 被丢弃/卡流。
     const hasStandardMSE = typeof window !== "undefined" && !!window.MediaSource;
@@ -457,7 +457,7 @@ export class MediaSourceController {
       this.objectUrl = null;
     }
     // 仅 removeAttribute("src") **不会**重置 video 元素的资源选择算法，旧 MediaSource
-    // 仍被挂载；必须再调 load() 才会真正释放旧管线（参照实现即如此）。
+    // 仍被挂载；必须再调 load() 才会真正释放旧管线。
     this.video.removeAttribute("src");
     this.video.load();
     this.mediaSource = null;

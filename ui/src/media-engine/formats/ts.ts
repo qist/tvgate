@@ -1,5 +1,5 @@
 /**
- * MPEG-TS 传输流解析（clean-room 实现）。
+ * MPEG-TS 传输流解析。
  * 依据 ISO/IEC 13818-1 公开规范重新实现。提供无状态纯解析：188 字节包帧、PAT/PMT PSI、
  * 以及 PES 头（含 PTS/DTS 抽取）。demux 上层（H264/H265/AAC/AC3 样本拆分）另行实现。
  */
@@ -90,7 +90,7 @@ export interface PmtInfo {
 }
 
 /** 从 ES_info 描述符识别 DVB 私有流(PES private, 0x06)承载的 Dolby 音频。
- *  与旧实现一致的判定：Registration Descriptor(0x05) "AC-3"/"EC-3"、
+ *  判定：Registration Descriptor(0x05) "AC-3"/"EC-3"、
  *  ATSC AC-3(0x82)/ETSI AC-3(0x6A)、ETSI EAC3(0x7D/0x7A —— DVB 注册表 0x7A 即 DD+)。 */
 export function detectPrivateAudioCodec(esInfo: Uint8Array): "ac3" | "eac3" | null {
   let p = 0;

@@ -1,5 +1,5 @@
 /**
- * H.264 / AVC 基本流工具（clean-room 实现）。
+ * H.264 / AVC 基本流工具。
  * 依据 ISO/IEC 14496-10（AVC）公开规范重新实现：AnnexB 起始码扫描与 NALU 拆分、
  * AnnexB↔AVCC(length-prefixed) 转换、SPS 解析（分辨率/profile/level）、avcC 构造。
  * 均为无状态纯算法，供 demux/remux 复用。

@@ -1,8 +1,8 @@
 /**
- * 播放控制与直播同步（clean-room 实现，行为对齐参照实现 mse/live-sync.ts）。
+ * 播放控制与直播同步（MSE 直播播放控制）。
  *
  * 关键（曾致「起播数秒抖动」的根因）：
- * 1. 直播同步**只调整 playbackRate，绝不 seek**。原实现 lag 过大时 seek 到缓冲末端，
+ * 1. 直播同步**只调整 playbackRate，绝不 seek**。lag 过大时若 seek 到缓冲末端，
  *    会让播放头贴着缓冲边、反复跳转 → 起播几秒内持续抖动。
  * 2. 直播边取「最后一个缓冲区间的末端」，**不可**用只增不减的高水位：HLS 起播会
  *    快速拉取多个分片使缓冲末端猛涨，用高水位会误判为「严重落后」而反复追速/跳转。
@@ -33,7 +33,7 @@ export interface PlaybackControllerOptions {
   /** 判定「在直播边」的容差（秒）。 */
   tolerance?: number;
   /**
-   * 直播边延迟提供者（对齐参照 getLiveEdgeLatency）。
+   * 直播边延迟提供者（连续直播的 live edge 延迟）。
    * 必须区分源模式：
    * - continuous-live-ts：最后一个缓冲区间末端 - 播放位置（缓冲即直播边）。
    * - hls：用 liveSessionAnchor 按墙钟外推直播边 - 播放位置。**绝不可**用
@@ -57,7 +57,7 @@ const UNDERRUN_BACKOFF_STEP = 1;
 /** 退避上限（秒）。 */
 const UNDERRUN_BACKOFF_MAX = 6;
 /**
- * 追速迟滞（秒，对齐参照 live-sync.ts CHASE_HYSTERESIS）。
+ * 追速迟滞（秒，迟滞窗口）。
  * 追速只会在 latency 超过 max + backoff + 本迟滞时（重新）开始，而停止点
  * 在远低于它的 target。形成死区：latency 在边界附近抖动（HLS 拉流/append
  * 不均，3-4s 常态）不再反复切换 1 ↔ 1.2——否则视频持续 1.2x，软解音频被迫
@@ -107,7 +107,7 @@ export class PlaybackController {
     this.chaseRate = options.chaseRate ?? DEFAULT_CHASE_RATE;
     this.tolerance = options.tolerance ?? LIVE_STATE_TOLERANCE;
     this.liveEdgeLatencyProvider = options.liveEdgeLatency;
-    // 直播边下溢退避：参照实现挂在 waiting 事件上
+    // 直播边下溢退避：挂在 waiting 事件上
     this.onWaitingBound = () => this.onWaiting();
     this.video.addEventListener("waiting", this.onWaitingBound);
   }
@@ -165,7 +165,7 @@ export class PlaybackController {
 
     if (latency > this.maxLatency + this.extraLatency + CHASE_HYSTERESIS) {
       // 落后过多（超过 max+backoff+迟滞）：加速追赶（不 seek）。
-      // 迟滞避免 latency 抖动反复触发 1↔1.2（对齐参照实现）。
+      // 迟滞避免 latency 抖动反复触发 1↔1.2。
       this.applyRate(Math.min(2, Math.max(1, this.chaseRate)));
     } else if (latency <= this.targetLatency + this.extraLatency) {
       this.applyRate(1);

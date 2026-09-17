@@ -1,5 +1,5 @@
 /**
- * 转封装流水线（clean-room 实现）。
+ * 转封装流水线。
  * 编排「加载 → demux → remux → 对外交付」，行为见引擎设计 §5.2：
  * 通过 PipelineCallbacks 向外交付 onInitSegment / onMediaSegment / onMediaInfo /
  * onLoadingComplete / onIOError / onDemuxError。
@@ -638,7 +638,7 @@ export class TransmuxPipeline {
   }
 
   /**
-   * 缓冲领先门（对齐参照实现 `waitForBufferRoom`）：MSE 缓冲末端领先播放头超过
+   * 缓冲领先门：MSE 缓冲末端领先播放头超过
    * `LEAD_BUFFER_AHEAD_MS` 时暂停拉流/解码，直到播放头追上来。仅直播生效，且依赖主线程
    * 经 `clock` 命令周期上报的播放头；时基过期或播放头未知时直接放行，绝不死锁、绝不卡播放。
    *

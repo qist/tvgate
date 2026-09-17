@@ -1,5 +1,5 @@
 /**
- * WSOLA wasm 回归测试（clean-room 内核 `wasm/wsola.c` + 封装 `wasm-stretcher.ts`）。
+ * WSOLA wasm 回归测试（内核 `wasm/wsola.c` + 封装 `wasm-stretcher.ts`）。
  *
  * 覆盖点：
  * 1. 直通：ratio ≈ 1 时输出与输入**位精确**相同（零失真路径，音质保真核心）。

@@ -1,5 +1,5 @@
 /**
- * 播放器面板透明度 hook（clean-room 重写）。
+ * 播放器面板透明度 hook。
  * 持久化透明度档位，把 `panel-alpha-<value>` 类挂到 <html>，由 CSS 变量驱动亚克力通透度。
  */
 import { useEffect, useMemo } from "react";

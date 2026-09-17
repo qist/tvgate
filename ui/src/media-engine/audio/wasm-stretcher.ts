@@ -1,5 +1,5 @@
 /**
- * WSOLA 时间拉伸器的 WASM 封装（本项目自研，clean-room）。
+ * WSOLA 时间拉伸器的 WASM 封装（本项目自研。
  *
  * 拉伸内核（`wsola_*` 导出）编译在统一软解 wasm（`wasm/avcodec_audio.wasm`）里，
  * 本文件在主线程**再实例化一次**同一个模块：拉伸必须紧邻 video 时钟运行，

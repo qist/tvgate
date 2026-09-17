@@ -1,5 +1,5 @@
 /**
- * 频道列表（clean-room 重写）。
+ * 频道列表。
  * 搜索（按名称/频道号，结果按匹配强度排序）+ 分组筛选（记忆上次选择）+ 当前节目映射 + 自动滚动居中。
  */
 import { ChevronDown, Layers, Search } from "lucide-react";

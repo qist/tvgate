@@ -1,5 +1,5 @@
 /**
- * 后端工厂（clean-room 实现）。
+ * 后端工厂。
  * 设计 §5.12 / §5.15：按设备能力在 MSE 与 native（<video src> 硬解）之间选择。
  * 低版本安卓电视/盒子的 WebView 常缺失或只部分支持 MSE → 回退 native，避免 MSE 链路静默黑屏。
  */

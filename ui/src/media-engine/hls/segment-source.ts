@@ -1,5 +1,5 @@
 /**
- * 分段源抽象（clean-room 实现）。
+ * 分段源抽象。
  * 行为见引擎设计 §5.2：ContinuousLiveSegmentSource（直播连续）与 StaticSegmentSource（点播/回看）。
  * 直播连续源只有一条不结束的 URL；点播源为有限分段列表；HLS 源另见 hls-source.ts。
  */

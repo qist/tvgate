@@ -1,5 +1,5 @@
 /**
- * 软解 PCM 的流时间轴缓冲（本项目自研，clean-room）。
+ * 软解 PCM 的流时间轴缓冲（本项目自研。
  *
  * worker 交出来的 PCM 块带的是**媒体时间**（MSE 时间轴，与 video.currentTime 同域，
  * 由 remuxer 的 dts 基点归一化）。本类维护一条「按时间排序、无重叠、间隙吸附」的

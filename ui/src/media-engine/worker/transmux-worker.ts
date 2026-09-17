@@ -1,5 +1,5 @@
 /**
- * 转封装 Worker 入口（clean-room 实现）。
+ * 转封装 Worker 入口。
  * 在 worker 线程内运行「HLS 拉流 → demux → remux → 软解」，把 init/media 段、PCM、媒体信息以
  * transferable 方式回传主线程；主线程只做 MSE append 与 WebAudio 排程，避免重活阻塞 UI。
  */
@@ -264,7 +264,7 @@ class WorkerSoftDecoder {
             st.samplesSinceAnchor = 0;
           }
         }
-        // 时间片让出（超越参照实现）：首个视频样本定基准后，预锚点音频会成批灌入解码循环，
+        // 时间片让出：首个视频样本定基准后，预锚点音频会成批灌入解码循环，
         // 若同步跑完会饿死 worker 内的视频 remux/append → 起播视频缓冲枯竭→卡顿。
         // 但「每块都让出」会因 setTimeout 的 ~4ms clamp 把吞吐钳死，故改为：
         // 连续处理到时间片预算耗尽才让出一次，且用 MessageChannel 零延迟让出。
@@ -416,7 +416,7 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
       break;
     }
     case "clock":
-      // 缓冲领先门：仅主流水线需要（与参照实现一致）；分离音频流水线不设此门。
+      // 缓冲领先门：仅主流水线需要；分离音频流水线不设此门。
       pipeline?.setClock(cmd.currentTimeMs, cmd.bufferedEndMs, cmd.hidden);
       break;
     case "pause":

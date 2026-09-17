@@ -125,7 +125,7 @@ describe("TransmuxPipeline 媒体信息聚合", () => {
   });
 });
 
-describe("TransmuxPipeline 缓冲领先门（对齐参照实现 waitForBufferRoom）", () => {
+describe("TransmuxPipeline 缓冲领先门", () => {
   function makeLive(): TransmuxPipeline {
     return new TransmuxPipeline({ urls: [], sourceMode: "continuous-live-ts" });
   }

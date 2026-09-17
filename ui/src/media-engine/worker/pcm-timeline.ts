@@ -1,5 +1,5 @@
 /**
- * 软解 PCM 时间轴映射（clean-room 实现，行为对齐原始 MP4Remuxer.mapPcmTimestamp）。
+ * 软解 PCM 时间轴映射（PCM 时间戳与 MSE 时间轴同基准）。
  *
  * 软解音频（mp2/ac3…）不经 MSE，其 PCM time 由 pipeline 归一到 MSE 时间轴（减视频首样本基准）。
  * 但 MP2/ac3 的 PES 常**先于首个视频 IDR 到达**（间隔可达 ~1.7s），导致首批 PCM 的 time 为负。
