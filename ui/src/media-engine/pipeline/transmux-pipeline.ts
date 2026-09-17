@@ -69,13 +69,19 @@ export interface PipelineConfig {
    */
   softDecodeCodecs?: string[];
   /**
-   * 分离音轨软解（EXT-X-MEDIA 独立音频 playlist）：音频走独立软解通路，
-   * base 钉到「音频首样本 dts」（与视频各自 0 起，跨时钟漂移由 PCM 漂移环兜底），
-   * 不依赖视频首样本。需配合 `audioOnly` 使用。
+   * 分离音轨（EXT-X-MEDIA 独立音频 playlist / 声画分流 variant）：音频走独立通路。
+   * 软解编码（ac3/mp2 等）走独立软解通路，base 钉到「音频首样本 dts」；
+   * passthrough 编码（AAC 等）走 MSE 直通（本流水线作为第二条发布者）。
    */
   separateAudio?: boolean;
   /** 仅音频流水线：不向 MSE remuxer 加任何轨（不产生 MSE init/media），只走软解。 */
   audioOnly?: boolean;
+  /**
+   * 抑制本流水线的全部音频输出（软解与 MSE 均不发）。
+   * 声画分流场景下主视频流水线必须置位：其 TS 内可能仍带与独立音轨同内容的音频，
+   * 若不抑制，两路音频会撞进同一个 audio SourceBuffer（MSE 拒收）或叠音。
+   */
+  suppressAudio?: boolean;
 }
 
 const DEFAULT_MAX_RETRIES = 2;
@@ -162,6 +168,7 @@ export class TransmuxPipeline {
   private readonly urls: string[];
   private readonly softDecodeCodecs: Set<string>;
   private readonly separateAudio: boolean;
+  private readonly suppressAudio: boolean;
   private readonly audioOnly: boolean;
   private readonly trackCodecs = new Map<number, string>();
   private readonly trackTimescales = new Map<number, number>();
@@ -220,6 +227,7 @@ export class TransmuxPipeline {
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.softDecodeCodecs = new Set(config.softDecodeCodecs ?? ["ac3", "eac3", "mp2", "mp3"]);
     this.separateAudio = config.separateAudio ?? false;
+    this.suppressAudio = config.suppressAudio ?? false;
     this.audioOnly = config.audioOnly ?? false;
 
     this.ioController = new IOController(
@@ -244,8 +252,12 @@ export class TransmuxPipeline {
         // 不被 UA 冻结）。布局必须**在任何 init append 前**就把 audio 轨算上：Chromium
         // 一旦 append 首个 init 便锁死 SourceBuffer 数量，后到的 audio 缓冲会抛
         // QuotaExceededError（音频轨直接作废）。
-        const silentAudio = !this.audioOnly && !this.separateAudio && layout.softAudio === true;
-        const mseAudio = layout.mseAudio || silentAudio || this.silentAudioRegistered;
+        const silentAudio =
+          !this.audioOnly && !this.separateAudio && !this.suppressAudio && layout.softAudio === true;
+        // 抑制音频的流水线不期待任何音频缓冲（其 TS 内的音频不参与输出）
+        const mseAudio = this.suppressAudio
+          ? false
+          : layout.mseAudio || silentAudio || this.silentAudioRegistered;
         // 通知下游（提前建缓冲/放行 hold）+ remuxer（纯视频立即放行起播门控）
         this.callbacks.onStreamLayout?.({ video: layout.video, mseAudio });
         this.remuxer.setAudioExpected(mseAudio);
@@ -420,6 +432,9 @@ export class TransmuxPipeline {
     for (const t of tracks) {
       this.trackCodecs.set(t.id, t.codec);
       this.trackTimescales.set(t.id, t.timescale);
+      // 抑制音频（声画分流的主视频流水线）：音频轨完全跳过（不进 remuxer、不软解、
+      // 不建静音假轨），声音统一由独立音轨流水线负责，避免两路撞同一 SourceBuffer。
+      if (this.suppressAudio && t.kind === "audio") continue;
       // 主音轨 = 首个注册的音频轨（PMT 声明顺序 = 广播方的主次顺序）：在此一次性锁定，
       // 后续备轨（如并存的 MP2）发布时不再参与媒体信息与出声选择。
       if (t.kind === "audio" && this.primaryAudioTrackId === null) {
@@ -543,6 +558,8 @@ export class TransmuxPipeline {
     for (const s of samples) {
       const codec = this.trackCodecs.get(s.trackId);
       const timescale = this.trackTimescales.get(s.trackId) ?? 90000;
+      // 抑制音频（声画分流的主视频流水线）：音频样本一律丢弃（软解/MSE 均不发）
+      if (this.suppressAudio && s.kind === "audio") continue;
       if (this.audioOnly && !(codec && this.softDecodeCodecs.has(codec))) {
         // audio-only 流水线只处理需软解的音轨；其余（如 AAC 分离音轨）本期不接入 MSE，丢弃并告警
         // eslint-disable-next-line no-console

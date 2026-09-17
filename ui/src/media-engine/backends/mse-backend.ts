@@ -216,9 +216,14 @@ export class MseBackend implements PlaybackBackend {
     this.sbLimitHealed = false;
     this.audioExpectedForced = false;
     this.unsupportedTracks.clear();
-    // 切台即切口：立即清空音频播放器（清 PCM 队列并停掉已排程的 WebAudio 节点）。
-    // 不能只依赖 sourceopen 回调里的 flush —— 慢台/主线程繁忙时该事件可能明显滞后，
-    // 期间旧 worker 仍在产 PCM，表现为「切台后旧音轨残留、慢台尤其明显」。
+    // 切台即切口（两步都必须在 sourceopen 之前同步完成）：
+    // 1) 立即停掉旧 worker —— 旧 worker 的 terminate 原本要等 sourceopen 回调
+    //    （beginPipeline），而该事件可能滞后数秒；期间旧 worker 仍在拉流并继续软解，
+    //    实测切台后旧频道仍被拉取 ~3 秒、且旧音轨持续出声（PCM 被重新灌入播放器）。
+    // 2) 清空音频播放器（清 PCM 队列并停掉已排程的 WebAudio 节点）。
+    // 已 post 的在途 PCM 由 worker-client 的 disposed 闸门丢弃，双重保险。
+    this.worker?.destroy();
+    this.worker = null;
     this.pcmPlayer?.flush();
     // 新流/换台：重建 MediaSource，清掉旧频道的 buffered 区间与播放头。
     // 若复用同一 MS，旧 buffered 区间与旧 currentTime 残留会让新流（从 0 起缓冲）
@@ -410,15 +415,18 @@ export class MseBackend implements PlaybackBackend {
   }
 
   /**
-   * 音频 SourceBuffer 创建失败 → 自愈一次：整条重建（全新 MediaSource + 重放当前 segments），
+   * SourceBuffer 创建失败 → 自愈一次：整条重建（全新 MediaSource + 重放当前 segments），
    * 重试时 audioExpectedForced=true，音频 SB 会在任何 append 之前建好。
-   * 非音频轨 / 已重建过 / 无 segments：不接管，交由控制器原有降级（禁用该轨 + 报错）。
+   * **对 audio/video 对称兜底**：muxed 场景后到轨通常是音频；声画分流下相反——
+   * 音频 SB 可能先建并 append（引擎初始化），video init 后到时 addSourceBuffer 必抛，
+   * 旧逻辑只认 audio，video 撞限会直接成致命错误（实测报"无法创建 video SourceBuffer"）。
+   * 已重建过 / 无 segments：不接管，交由控制器原有降级（禁用该轨 + 报错）。
    */
   private healSourceBufferLimit(track: string, message: string): boolean {
-    if (this.destroyed || track !== "audio" || this.sbLimitHealed || this.segments.length === 0) return false;
+    if (this.destroyed || this.sbLimitHealed || this.segments.length === 0) return false;
     this.sbLimitHealed = true;
     this.audioExpectedForced = true;
-    console.warn(`[MSE] 音频 SourceBuffer 创建失败，重建媒体源重试一次：${message}`);
+    console.warn(`[MSE] ${track} SourceBuffer 创建失败，重建媒体源重试一次：${message}`);
     // 不能在自己的 appendInit 调用栈里拆自己：推到下一个任务做
     setTimeout(() => {
       if (this.destroyed) return;

@@ -12,7 +12,7 @@ import { builtinWasmDecoders } from "../decoder/builtin-wasm";
 import type { WasmDecoderConfig } from "../decoder/types";
 import type { SegmentSource } from "../hls/segment-source";
 import type { WorkerCommand, WorkerEvent } from "./messages";
-import type { PcmWorkerStats } from "../backends/types";
+import type { PcmWorkerStats, PlayerMediaInfo } from "../backends/types";
 import { PcmTimeline } from "./pcm-timeline";
 
 let pipeline: TransmuxPipeline | null = null;
@@ -377,6 +377,38 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
         );
         if (softEnabled) soft = new WorkerSoftDecoder(wasmDecoders, cmd.pcmOutputChannels ?? 0);
 
+        // 声画分流（独立音轨）时：
+        // - 主视频流水线抑制其 TS 内音频：声音统一由第二路音频流水线输出，避免两路
+        //   撞进同一个 audio SourceBuffer（MSE 拒收）或叠音；
+        // - 音频期待**乐观预置**为 true：独立音轨若是 passthrough（AAC 等）会走 MSE
+        //   直通，其 audio SB 必须在第一路 init append 前就位（Chromium 首个 init
+        //   append 即锁死 SB 数量，后到的 addSourceBuffer 必抛）；若音频流水线拉流
+        //   demux 后确认是软解编码（ac3/mp2 等），会发 mseAudio=false 的 layout 撤回预置。
+        const hasSeparateAudio = resolved.audioSource !== null;
+        let mainLayout: { video: boolean; mseAudio: boolean } | null = null;
+        let audioLayout: { video: boolean; mseAudio: boolean } | null = hasSeparateAudio
+          ? { video: false, mseAudio: true }
+          : null;
+        const postMergedLayout = (): void => {
+          // 主流水线 layout 未到前**不可发布**：它承载视频期待 —— 若音频流水线 layout
+          // 先到就发出 video:false，hold 只等音频即放行，audio SB 先建立并 append
+          // （引擎初始化）后，video init 到达时 addSourceBuffer 必抛"已达上限"。
+          if (!mainLayout) return;
+          const video = mainLayout.video || (audioLayout?.video ?? false);
+          const mseAudio = mainLayout.mseAudio || (audioLayout?.mseAudio ?? false);
+          post({ type: "stream-layout", layout: { video, mseAudio } });
+        };
+        // 声画双方各自发布 mediaInfo，而 UI 按 slot 整体替换 —— 任一方单独上报都会
+        // 顶掉另一方的行（实测视频行被音频顶掉）；缓存合并后统一上报。
+        let mainMediaInfo: PlayerMediaInfo | null = null;
+        let audioMediaInfo: PlayerMediaInfo | null = null;
+        const postMergedMediaInfo = (): void => {
+          if (!mainMediaInfo && !audioMediaInfo) return;
+          const merged: PlayerMediaInfo = { ...(mainMediaInfo ?? {}) };
+          if (audioMediaInfo?.audio) merged.audio = audioMediaInfo.audio;
+          post({ type: "media-info", info: merged });
+        };
+
         pipeline = new TransmuxPipeline(
           {
             urls: resolved.urls,
@@ -387,6 +419,7 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
             maxBytes: cmd.maxBytes,
             bufferThreshold: cmd.bufferThreshold,
             softDecodeCodecs: cmd.softDecodeCodecs,
+            suppressAudio: hasSeparateAudio,
           },
           {
             onInitSegment: (seg) => {
@@ -408,8 +441,14 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
                 [data],
               );
             },
-            onMediaInfo: (info) => post({ type: "media-info", info }),
-            onStreamLayout: (layout) => post({ type: "stream-layout", layout }),
+            onMediaInfo: (info) => {
+              mainMediaInfo = info;
+              postMergedMediaInfo();
+            },
+            onStreamLayout: (layout) => {
+              mainLayout = layout;
+              postMergedLayout();
+            },
             onSoftAudioData: (chunk) => soft?.handle(chunk),
             onLoadingComplete: () => post({ type: "loading-complete" }),
             onIOError: (info) =>
@@ -424,8 +463,10 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
           });
         });
 
-        // 独立音频 rendition（分离音轨）：第二路软解流水线。base 钉音频首样本、只产 PCM，
-        // 不向 MSE 发 init/media/stream-layout，避免干扰主视频流水线的缓冲门控。
+        // 独立音频 rendition（分离音轨）：第二路发布者。
+        // - passthrough 编码（AAC 等）走 MSE 直通：产出的 audio init/media 段由主线程
+        //   append 到 audio SourceBuffer（与主视频流水线的 video SB 各占其一，按 kind 分流）；
+        // - 软解编码（ac3/mp2 等）继续走独立软解（separateAudio：base 钉音频首样本）。
         if (softEnabled && resolved.audioSource) {
           audioPipeline = new TransmuxPipeline(
             {
@@ -438,9 +479,36 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
               bufferThreshold: cmd.bufferThreshold,
               softDecodeCodecs: cmd.softDecodeCodecs,
               separateAudio: true,
-              audioOnly: true,
             },
             {
+              onInitSegment: (seg) => {
+                const data = toTransferable(seg.data);
+                post({ type: "init-segment", codec: seg.codec, container: seg.container, data, kind: seg.kind }, [data]);
+              },
+              onMediaSegment: (seg) => {
+                const data = toTransferable(seg.data);
+                post(
+                  {
+                    type: "media-segment",
+                    data,
+                    timestampOffset: seg.timestampOffset,
+                    startDts: seg.startDts,
+                    duration: seg.duration,
+                    kind: seg.kind,
+                    trackIds: seg.trackIds,
+                  },
+                  [data],
+                );
+              },
+              onMediaInfo: (info) => {
+                audioMediaInfo = info;
+                postMergedMediaInfo();
+              },
+              onStreamLayout: (layout) => {
+                // 音频流水线的实际布局：软解编码时 mseAudio=false，即撤回"预置的音频期待"
+                audioLayout = layout;
+                postMergedLayout();
+              },
               onSoftAudioData: (chunk) => soft?.handle(chunk),
             },
           );
