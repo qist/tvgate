@@ -48,7 +48,7 @@ func (c *captureRecorder) Write(p []byte) (int, error) {
 func (c *captureRecorder) Flush() {}
 
 // resolveScriptPath 解析 docroot 相对路径到实际脚本文件。
-// 兼容「php://php/akmg.php」与「php://akmg.php」两种写法：优先按原样，
+// 兼容「php://php/xxx.php」与「php://xxx.php」两种写法：优先按原样，
 // 不存在且以 php/ 开头时回退去前缀（对应 URL 挂载段 /php/ 的直觉写法）。
 // 返回空表示脚本不存在/路径越界。
 func resolveScriptPath(rel string) string {

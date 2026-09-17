@@ -782,7 +782,7 @@ func TestRewriteM3U8(t *testing.T) {
 	}
 }
 
-// TestServeCatchupPhpRtsp：php:// 与 rtsp:// 直连源（如 akmg 解析脚本、咪咕 IPTV）
+// TestServeCatchupPhpRtsp：php:// 与 rtsp:// 直连源（如 xxx 解析脚本、咪咕 IPTV）
 // 同样支持 playseek 回看；udp/rtp 组播无时移仍拒绝。
 func TestServeCatchupPhpRtsp(t *testing.T) {
 	b := false
@@ -792,7 +792,7 @@ func TestServeCatchupPhpRtsp(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write([]byte("爱看咪咕,#genre#\n" +
-			"CCTV1,php://akmg.php?id=cctv1\n" +
+			"CCTV1,php://xxx.php?id=cctv1\n" +
 			"CCTV2,rtsp://115.153.245.70/PLTV/88888888/224/3221225699/iptv8040.smil\n" +
 			"CCTV3,udp://239.3.1.1:8001\n"))
 	}))
@@ -828,7 +828,7 @@ func TestServeCatchupPhpRtsp(t *testing.T) {
 		t.Fatalf("php catchup 响应异常: %s", body)
 	}
 	parts := strings.SplitN(strings.TrimPrefix(resp.URL, "/player/"), "/", 2)
-	if got := h.resolveToken(keys["CCTV1"], parts[1]); got != "php://akmg.php?id=cctv1&playseek=20260904120000-20260904130000" {
+	if got := h.resolveToken(keys["CCTV1"], parts[1]); got != "php://xxx.php?id=cctv1&playseek=20260904120000-20260904130000" {
 		t.Fatalf("php 回看地址不对: %q", got)
 	}
 

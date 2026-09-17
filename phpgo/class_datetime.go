@@ -9,7 +9,7 @@ import (
 // 内置 DateTime 类的最小实现。
 //
 // phpgo 没有真正的 DateTime 类（instanceof 走 eval.go 的特例），但大量
-// IPTV 解析脚本（如 akmg.php 的 playseek 回看分支）依赖：
+// IPTV 解析脚本（如 xxx.php 的 playseek 回看分支）依赖：
 //
 //	$d = new DateTime('YmdHis 字符串');
 //	$d->modify('-8 hours');

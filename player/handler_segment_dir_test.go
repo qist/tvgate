@@ -10,8 +10,8 @@ func TestShiftSegmentHourDir(t *testing.T) {
 	}{
 		{
 			name: "整点跨小时目录 → 回退上一小时（实测 13:00 的 178962117：13 点目录 404、12 点目录 200）",
-			in:   "http://bstali01.cdn.huan.tv/TOKEN/live/program/live/cctv4k/15000000/2026091713/178962117.ts",
-			want: "http://bstali01.cdn.huan.tv/TOKEN/live/program/live/cctv4k/15000000/2026091712/178962117.ts",
+			in:   "http://cdn.example.com/path/live/program/live/ch-demo/8000000/2026091713/178962117.ts",
+			want: "http://cdn.example.com/path/live/program/live/ch-demo/8000000/2026091712/178962117.ts",
 		},
 		{
 			name: "跨天（00 点 → 前一天 23 点）",
@@ -41,10 +41,10 @@ func TestShiftSegmentHourDirSkipsNonSegment(t *testing.T) {
 	for _, in := range []string{
 		"http://x/live/index.m3u8",
 		"http://x/live/2026091713/index.m3u8",
-		"http://x/live/program/live/cctv4k/15000000/2026091713/178962117.tsx",
-		"http://x/live/program/live/cctv4k/15000000/2026091713/abc.ts",
-		"http://x/live/program/live/cctv4k/15000000/202609171/178962117.ts",
-		"http://x/live/program/live/cctv4k/15000000/178962117.ts",
+		"http://x/live/program/live/ch-demo/8000000/2026091713/178962117.tsx",
+		"http://x/live/program/live/ch-demo/8000000/2026091713/abc.ts",
+		"http://x/live/program/live/ch-demo/8000000/202609171/178962117.ts",
+		"http://x/live/program/live/ch-demo/8000000/178962117.ts",
 	} {
 		if got, ok := shiftSegmentHourDir(in, -1); ok {
 			t.Fatalf("shiftSegmentHourDir(%q) 不应改写，却得到 %q", in, got)

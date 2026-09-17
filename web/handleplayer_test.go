@@ -36,7 +36,7 @@ func TestPlayerSourceList(t *testing.T) {
 
 // TestBuildPlayerNodeSubscriptions 保存 player 段时写出 subscriptions 序列；未提交该键时不写。
 func TestBuildPlayerNodeSubscriptions(t *testing.T) {
-	want := []string{"http://172.18.173.88:8888/php/jsyd.php?id=all", "http://x/y.txt"}
+	want := []string{"http://127.0.0.1:8888/php/xxx.php?id=all", "http://x/y.txt"}
 	node := buildPlayerNode(map[string]interface{}{
 		"enabled":      true,
 		"subscription": "/opt/tvgate/build/tv.txt",

@@ -48,11 +48,11 @@ func TestParseTXTUA(t *testing.T) {
 	// 进入新分组时重置（未配置 ua= 的分组回落 player.ua 全局默认，即空）
 	content := []byte("蜀小果,#genre#\n" +
 		"ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) Edg/152\n" +
-		"峨眉电影4K,http://192.168.100.1/live/xg.php?id=emdy4k\n" +
-		"CCTV1,http://192.168.100.1/live/xg.php?id=cctv1\n" +
-		"特例,http://192.168.100.1/live/ahbst.php?id=cctv2,ua=okhttp/3.8.1\n" +
+		"峨眉电影4K,http://192.0.2.1/live/xxx.php?id=emdy4k\n" +
+		"CCTV1,http://192.0.2.1/live/xxx.php?id=cctv1\n" +
+		"特例,http://192.0.2.1/live/yyy.php?id=cctv2,ua=okhttp/3.8.1\n" +
 		"百视通,#genre#\n" +
-		"CCTV3,http://192.168.100.1/live/ahbst.php?id=cctv3\n")
+		"CCTV3,http://192.0.2.1/live/yyy.php?id=cctv3\n")
 	chans, _ := parseSubscription(content, "sub")
 	if len(chans) != 4 {
 		t.Fatalf("期望 4 频道, got %d", len(chans))

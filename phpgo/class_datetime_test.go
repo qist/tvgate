@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TestDateTimeClass：内置 DateTime 最小实现，覆盖 akmg.php 回看分支的用法
+// TestDateTimeClass：内置 DateTime 最小实现，覆盖 xxx.php 回看分支的用法
 // （new DateTime('YmdHis') → modify('-8 hours') → format('YmdHis')）。
 func TestDateTimeClass(t *testing.T) {
 	out := runPHP(t, `<?php

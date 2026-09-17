@@ -329,7 +329,7 @@ func (h *Handler) ServeCatchup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// http(s)/php/rtsp 源支持回看：拼接 playseek 后仍走各自播放链路
-	// （php 解析脚本如 akmg 自行处理 playseek；rtsp 由源侧时移服务处理）。
+	// （php 解析脚本如 xxx 自行处理 playseek；rtsp 由源侧时移服务处理）。
 	switch ch.Scheme {
 	case "http", "https", "php", "rtsp":
 	default:
@@ -441,10 +441,10 @@ func (h *Handler) ServePull(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// servePHP 内部执行 php:// 频道源脚本（如 php://php/akmg.php?id=cctv1）：
+// servePHP 内部执行 php:// 频道源脚本（如 php://php/xxx.php?id=cctv1）：
 // 不走 HTTP 回环、无 IP 依赖，直接由内嵌 phpgo 解释器执行并捕获输出。
 // 输出处理：
-//   - 302/Location（akmg 类解析脚本）→ 以解析出的真实源地址走 http 拉流链路
+//   - 302/Location（xxx 类解析脚本）→ 以解析出的真实源地址走 http 拉流链路
 //     （代理组 + 重定向跟随 + m3u8 分片重写）
 //   - 输出体为 m3u8 → 同 http 源：分片重写为受控短地址
 //   - 其他输出（TS 连流等）→ 原样透传
