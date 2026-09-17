@@ -647,6 +647,24 @@ export class TransmuxPipeline {
    * 主线程上报播放头 + MSE 缓冲末端 + 页面可见性（缓冲领先门用）。
    * 缺失/过期时门直接放行，绝不让流控把播放卡死。
    */
+  /**
+   * 声画分流的音频流水线：把本流水线的时间基准锚到**视频基准**（透传 remuxer，见其文档）。
+   * 必须在首个媒体段成段（基准锁定）之前调用。
+   */
+  setExternalBase(baseSec: number): void {
+    this.remuxer.setExternalBase(baseSec);
+  }
+
+  /** 标记外部基准待定（见 remuxer.awaitExternalBase）：init 先发、媒体段等基准。 */
+  awaitExternalBase(): void {
+    this.remuxer.awaitExternalBase();
+  }
+
+  /** 本流水线首个视频样本的绝对秒（供音频流水线取视频基准）；未到时为 null。 */
+  getFirstVideoSampleSec(): number | null {
+    return this.remuxer.getFirstSampleSec("video");
+  }
+
   setClock(currentTimeMs: number, bufferedEndMs: number, hidden: boolean): void {
     this.playheadCurrentMs = currentTimeMs;
     this.playheadBufferedEndMs = bufferedEndMs;

@@ -18,6 +18,9 @@ import { PcmTimeline } from "./pcm-timeline";
 let pipeline: TransmuxPipeline | null = null;
 let audioPipeline: TransmuxPipeline | null = null;
 let soft: WorkerSoftDecoder | null = null;
+/** 载入世代：每次 load/stop 递增。音频 rendition 的异步加载结果只对当代有效——
+ *  旧世代迟到时直接丢弃，防止在新流上重建已被销毁的音频流水线。 */
+let loadGen = 0;
 
 
 
@@ -100,37 +103,58 @@ async function sniffHls(url: string): Promise<boolean | null> {
 async function resolveSources(
   urls: string[],
   onError: (msg: string) => void,
-): Promise<{ source: SegmentSource | null; audioSource: SegmentSource | null; urls: string[] }> {
+): Promise<{
+  source: SegmentSource | null;
+  /** 播放列表是否声明了独立音频 rendition（同步可得：决定主流水线是否抑制音频）。 */
+  hasAudioRendition: boolean;
+  /** 独立音频 rendition：异步加载（不阻塞主视频起播），完成后交付（失败为 null）。 */
+  audioSourcePromise: Promise<SegmentSource | null>;
+  urls: string[];
+}> {
   const first = urls[0];
-  if (!first) return { source: null, audioSource: null, urls };
+  if (!first) return { source: null, hasAudioRendition: false, audioSourcePromise: Promise.resolve(null), urls };
 
   for (let attempt = 1; attempt <= SOURCE_INIT_MAX_ATTEMPTS; attempt++) {
     const sniff = await sniffHls(first);
     if (sniff === false) {
       // 确定不是 HLS（如直连 TS/FLV）：交给 pipeline 按直连流处理，无需重试
-      return { source: null, audioSource: null, urls };
+      return { source: null, hasAudioRendition: false, audioSourcePromise: Promise.resolve(null), urls };
     }
     if (sniff === true) {
       // 初始化期间 onError 静默：拉取失败由本函数的退避重试消化，不消耗 UI 重试预算
-      const hls = new HlsSource(first, { onError: () => {} }, { liveEdgeSegments: 3 });
+      // liveEdgeSegments: 2 —— 起播点取 edge-1：比 3 片少下 1 片（更快），
+      // 又不像 1 片那样直接贴最新片（最新片可能尚未在 CDN 完全就绪 → 拉取失败/重试
+      // → 起播反而变慢）。续片由 IO 循环接续。
+      const hls = new HlsSource(first, { onError: () => {} }, { liveEdgeSegments: 2 });
       const info = await hls.load().catch(() => null);
       if (info) {
-        // 解析独立音频 rendition（EXT-X-MEDIA;TYPE=AUDIO）：部分「声画分流」流靠它出声。
-        // 解析失败不致命——仅播视频（该流静音），视频继续。
-        let audioSource: SegmentSource | null = null;
+        // 独立音频 rendition（声画分流）：**异步加载、不阻塞主视频流水线** ——
+        // 音频链与视频链并行，起播总耗时 = max(两链) 而非两者之和
+        // （实测串行时视频要等音频 playlist + 预拉完成后才启动，多等 ~0.5~1s）。
+        // 拉流错误不冒泡到主播放器（音频 playlist 抖动不得误触发整路重载）。
+        let resolveAudioSource: (s: SegmentSource | null) => void = () => {};
+        const audioSourcePromise = new Promise<SegmentSource | null>((resolve) => {
+          resolveAudioSource = resolve;
+        });
+        const hasAudioRendition = Boolean(info.audioRendition?.uri);
         if (info.audioRendition?.uri) {
-          try {
-            // 音频 rendition 的拉流错误不冒泡到主播放器（否则音频 playlist 抖动会误触发整路重载）；
-            // 仅解析失败整体降级为「仅播视频」。播放期错误由 audioSource 自身重试逻辑消化。
-            const ah = new HlsSource(info.audioRendition.uri, { onError: () => {} }, { liveEdgeSegments: 3 });
-            const ainfo = await ah.load().catch(() => null);
-            if (ainfo) audioSource = ah;
-          } catch (e) {
-            // eslint-disable-next-line no-console
-            console.warn(`[HLS] 音频 rendition 解析失败，仅播视频: ${e instanceof Error ? e.message : String(e)}`);
-          }
+          const uri = info.audioRendition.uri;
+          void (async () => {
+            try {
+              // liveEdgeSegments: 1 —— 同主源：贴直播边起播，减少预拉等待
+              const ah = new HlsSource(uri, { onError: () => {} }, { liveEdgeSegments: 1 });
+              const ainfo = await ah.load().catch(() => null);
+              resolveAudioSource(ainfo ? ah : null);
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.warn(`[HLS] 音频 rendition 解析失败，仅播视频: ${e instanceof Error ? e.message : String(e)}`);
+              resolveAudioSource(null);
+            }
+          })();
+        } else {
+          resolveAudioSource(null);
         }
-        return { source: hls, audioSource, urls: [] };
+        return { source: hls, hasAudioRendition, audioSourcePromise, urls: [] };
       }
       hls.destroy();
     }
@@ -143,7 +167,7 @@ async function resolveSources(
     }
   }
   onError(`播放列表连续 ${SOURCE_INIT_MAX_ATTEMPTS} 次加载失败`);
-  return { source: null, audioSource: null, urls };
+  return { source: null, hasAudioRendition: false, audioSourcePromise: Promise.resolve(null), urls };
 }
 
 /** worker 内软解：原始样本 → WASM 解码 → PCM（time 已由 pipeline 归一化）。 */
@@ -362,6 +386,8 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
   const cmd = ev.data;
   switch (cmd.type) {
     case "load": {
+      loadGen++;
+      const gen = loadGen;
       pipeline?.destroy();
       audioPipeline?.destroy();
       audioPipeline = null;
@@ -384,7 +410,7 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
         //   直通，其 audio SB 必须在第一路 init append 前就位（Chromium 首个 init
         //   append 即锁死 SB 数量，后到的 addSourceBuffer 必抛）；若音频流水线拉流
         //   demux 后确认是软解编码（ac3/mp2 等），会发 mseAudio=false 的 layout 撤回预置。
-        const hasSeparateAudio = resolved.audioSource !== null;
+        const hasSeparateAudio = resolved.hasAudioRendition;
         let mainLayout: { video: boolean; mseAudio: boolean } | null = null;
         let audioLayout: { video: boolean; mseAudio: boolean } | null = hasSeparateAudio
           ? { video: false, mseAudio: true }
@@ -467,62 +493,87 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
         // - passthrough 编码（AAC 等）走 MSE 直通：产出的 audio init/media 段由主线程
         //   append 到 audio SourceBuffer（与主视频流水线的 video SB 各占其一，按 kind 分流）；
         // - 软解编码（ac3/mp2 等）继续走独立软解（separateAudio：base 钉音频首样本）。
-        if (softEnabled && resolved.audioSource) {
-          audioPipeline = new TransmuxPipeline(
-            {
-              urls: [],
-              source: resolved.audioSource,
-              sourceMode: cmd.sourceMode,
-              resumeMode: cmd.resumeMode,
-              targetDuration: cmd.targetDuration,
-              maxBytes: cmd.maxBytes,
-              bufferThreshold: cmd.bufferThreshold,
-              softDecodeCodecs: cmd.softDecodeCodecs,
-              separateAudio: true,
-            },
-            {
-              onInitSegment: (seg) => {
-                const data = toTransferable(seg.data);
-                post({ type: "init-segment", codec: seg.codec, container: seg.container, data, kind: seg.kind }, [data]);
+        if (softEnabled) {
+          void resolved.audioSourcePromise.then((audioSource) => {
+            // 世代校验：stop / 重新 load 后迟到的交付直接丢弃（不得在新流上重建旧流水线）
+            if (gen !== loadGen || !audioSource) return;
+            audioPipeline = new TransmuxPipeline(
+              {
+                urls: [],
+                source: audioSource,
+                sourceMode: cmd.sourceMode,
+                resumeMode: cmd.resumeMode,
+                targetDuration: cmd.targetDuration,
+                maxBytes: cmd.maxBytes,
+                bufferThreshold: cmd.bufferThreshold,
+                softDecodeCodecs: cmd.softDecodeCodecs,
+                separateAudio: true,
               },
-              onMediaSegment: (seg) => {
-                const data = toTransferable(seg.data);
-                post(
-                  {
-                    type: "media-segment",
+              {
+                onInitSegment: (seg) => {
+                  const data = toTransferable(seg.data);
+                  post({ type: "init-segment", codec: seg.codec, container: seg.container, data, kind: seg.kind }, [
                     data,
-                    timestampOffset: seg.timestampOffset,
-                    startDts: seg.startDts,
-                    duration: seg.duration,
-                    kind: seg.kind,
-                    trackIds: seg.trackIds,
-                  },
-                  [data],
-                );
+                  ]);
+                },
+                onMediaSegment: (seg) => {
+                  const data = toTransferable(seg.data);
+                  post(
+                    {
+                      type: "media-segment",
+                      data,
+                      timestampOffset: seg.timestampOffset,
+                      startDts: seg.startDts,
+                      duration: seg.duration,
+                      kind: seg.kind,
+                      trackIds: seg.trackIds,
+                    },
+                    [data],
+                  );
+                },
+                onMediaInfo: (info) => {
+                  audioMediaInfo = info;
+                  postMergedMediaInfo();
+                },
+                onStreamLayout: (layout) => {
+                  // 音频流水线的实际布局：软解编码时 mseAudio=false，即撤回"预置的音频期待"
+                  audioLayout = layout;
+                  postMergedLayout();
+                },
+                onSoftAudioData: (chunk) => soft?.handle(chunk),
               },
-              onMediaInfo: (info) => {
-                audioMediaInfo = info;
-                postMergedMediaInfo();
-              },
-              onStreamLayout: (layout) => {
-                // 音频流水线的实际布局：软解编码时 mseAudio=false，即撤回"预置的音频期待"
-                audioLayout = layout;
-                postMergedLayout();
-              },
-              onSoftAudioData: (chunk) => soft?.handle(chunk),
-            },
-          );
-          void audioPipeline.start().catch((e: unknown) => {
-            // eslint-disable-next-line no-console
-            console.warn(`[HLS] 音频 rendition 流水线启动失败: ${e instanceof Error ? e.message : String(e)}`);
+            );
+            // 声画时间轴对齐（旧实现同语义：音频映射到输出/视频时间轴）：音频基准锚到视频首样本。
+            // **不阻塞启动**：标记"基准待定"——音频链立即拉流并发射 init（hold/起播门立即满足），
+            // 仅首个 media 段推迟到基准到达（remuxer 侧超时 1.5s 自行放行），避免为等基准拖慢起播。
+            audioPipeline.awaitExternalBase();
+            void audioPipeline.start().catch((e: unknown) => {
+              // eslint-disable-next-line no-console
+              console.warn(`[HLS] 音频 rendition 流水线启动失败: ${e instanceof Error ? e.message : String(e)}`);
+            });
+            // 后台轮询视频基准就绪后锚定（视频链通常先就绪；最多等 ~2s）
+            void (async () => {
+              for (let i = 0; i < 40; i++) {
+                if (gen !== loadGen) return;
+                const videoBase = pipeline?.getFirstVideoSampleSec() ?? null;
+                if (videoBase !== null) {
+                  audioPipeline?.setExternalBase(videoBase);
+                  return;
+                }
+                await sleep(50);
+              }
+            })();
           });
         }
       })();
       break;
     }
     case "clock":
-      // 缓冲领先门：仅主流水线需要；分离音频流水线不设此门。
+      // 缓冲领先门：主流水线与音频流水线都需要。音频链片小、处理快，若不设门会一路追到
+      // 远超视频的位置（元素缓冲被虚高、内存徒增、进度差越拉越大）；用同一播放头与
+      // 视频缓冲末端限流，把两链进度差约束在领先阈值内，保证音画时间轴贴近。
       pipeline?.setClock(cmd.currentTimeMs, cmd.bufferedEndMs, cmd.hidden);
+      audioPipeline?.setClock(cmd.currentTimeMs, cmd.bufferedEndMs, cmd.hidden);
       break;
     case "pause":
       pipeline?.pause();
@@ -533,6 +584,7 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
       audioPipeline?.resume();
       break;
     case "stop":
+      loadGen++; // 使迟到的音频 rendition 交付失效
       pipeline?.stop();
       audioPipeline?.stop();
       soft?.reset();

@@ -121,9 +121,15 @@ export class MseBackend implements PlaybackBackend {
         onBufferFull: () => this.pauseWorkerForBackpressure(),
         onBufferAvailable: () => this.resumeWorkerFromBackpressure(),
         onBufferUpdated: (track, ranges: BufferedRange[]) => {
-          // 音/视频各自独立 SourceBuffer：把两轨区间求并集再交给直播边估计
           this.bufferedRanges.set(track, ranges);
-          this.playback.notifyBuffered(unionRanges(this.bufferedRanges));
+          // 直播边估计以**视频缓冲**为准：声画分流（独立音轨）下音频链片小、处理快，
+          // 常领先视频链 1~2 片；若取并集，缓冲末端会被音频虚高十几秒 → live edge/seek
+          // 估到视频没有数据的位置 → 视频干等、播放头错乱（实测声画不同步）。
+          // 纯音频流（无视频轨）才用并集。
+          const videoRanges = this.bufferedRanges.get("video");
+          this.playback.notifyBuffered(
+            videoRanges && videoRanges.length > 0 ? videoRanges : unionRanges(this.bufferedRanges),
+          );
         },
         onStartStreaming: () => this.worker?.resume(),
         // 明确**不**在 endstreaming 时暂停 worker：MSE 层已在 ManagedMediaSource
@@ -546,8 +552,11 @@ export class MseBackend implements PlaybackBackend {
     };
   }
 
-  /** 最后一个缓冲区间末端（无缓冲时 undefined）。 */
+  /** 可播缓冲末端（无缓冲时 undefined）。声画分流下以视频轨为准：音频链领先会让
+   *  元素级并集虚高，把 seek/领先门的目标抬到视频没有数据的位置（声画错乱来源之一）。 */
   private bufferedEnd(): number | undefined {
+    const videoRanges = this.bufferedRanges.get("video");
+    if (videoRanges && videoRanges.length > 0) return videoRanges[videoRanges.length - 1].end;
     const b = this.mediaElement.buffered;
     return b.length > 0 ? b.end(b.length - 1) : undefined;
   }

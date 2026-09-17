@@ -67,6 +67,8 @@ const DEFAULT_MAX_BYTES = 512 * 1024;
  * 曾设 1500ms，被"音频晚于首段 video flush"的流击穿（addSourceBuffer 报已达上限）；提到 8000ms。
  */
 const DEFAULT_STARTUP_GRACE_MS = 8000;
+/** 外部基准（视频基准）最长等待（ms）：超时则音频用自身基准放行，避免音轨被拖死。 */
+const EXTERNAL_BASE_MAX_WAIT_MS = 1500;
 
 export class Fmp4Remuxer {
   private readonly targetDuration: number;
@@ -89,6 +91,10 @@ export class Fmp4Remuxer {
   private readonly startupGraceMs: number;
   /** PMT 是否声明了进 MSE 的 AAC 音轨：null=未知；false=纯视频（首个 init 即可放行）；true=须等音轨 init。 */
   private audioExpected: boolean | null = null;
+  /** 外部时间基准（见 setExternalBase）；null = 用本流水线首样本。 */
+  private externalBaseSec: number | null = null;
+  /** 基准待定模式（见 awaitExternalBase）：首个 media 段等外部基准（或超时放行）。 */
+  private awaitingExternalBase = false;
   /**
    * 静音 AAC 假音轨 id（C2）：muxed TS 的软解音轨（AC-3/E-AC-3/MP2）给 MSE 挂一条占位音频轨，
    * 使 video 元素"有音轨"，后台标签页不被 UA 判为无音频播放而冻结。null = 未启用（纯视频 MSE）。
@@ -231,6 +237,39 @@ export class Fmp4Remuxer {
   }
 
   /**
+   * 外部时间基准（声画分流的音频流水线专用）：把本流水线的样本时间轴锚到**视频的基准**上。
+   *
+   * 两条独立流水线各自「减自己的首样本 dts」会让音频失去与视频的对应：视频首样本的
+   * 显示时间 = cts（B 帧重排序延迟，实测 ~40ms），音频首样本 = 0 —— 听感就是
+   * **声音比画面快 ~40~51ms**（实测声画不同步的原因）。把音频基准改为视频基准后，
+   * 音频首样本输出 = 音频绝对时间 - 视频基准（实测 +51ms）≈ 与视频对齐（残差 ~11ms，
+   * 为两流片首的物理差，属正确值）。
+   *
+   * 必须在首个 flush（锁定 unifiedBaseSec）之前调用；已锁定后调用无效。
+   */
+  setExternalBase(baseSec: number): void {
+    if (this.unifiedBaseSec !== null) return;
+    this.externalBaseSec = baseSec;
+    // 等待期可能已攒下样本（门控拦住未发）：基准就绪后立即尝试成段
+    if (this.awaitingExternalBase) this.flush();
+  }
+
+  /**
+   * 标记"外部基准待定"（声画分流音频流水线）：**init 照常发射**（hold/起播门不受影响），
+   * 但首个 media 段推迟到 setExternalBase 到达或超时——避免为了拿视频基准而拖慢音频链
+   * 启动（音频 init 本来与 base 无关，先发能让 hold 立刻满足、视频秒起播）。
+   */
+  awaitExternalBase(): void {
+    this.awaitingExternalBase = true;
+  }
+
+  /** 首个样本的绝对秒（kind: "video" | "audio"）；未收到该轨样本时为 null。 */
+  getFirstSampleSec(kind: "video" | "audio"): number | null {
+    const v = this.firstSampleSec.get(kind);
+    return v === undefined ? null : v;
+  }
+
+  /**
    * 起播门控：首个 media 段是否允许发出。
    * Chromium 一旦 append 首个 init 便锁死 SourceBuffer 数量（后续 addSourceBuffer 抛
    * QuotaExceededError），故 media 必须晚于所有 SourceBuffer 创建。纯视频（PMT 无 AAC）
@@ -241,6 +280,19 @@ export class Fmp4Remuxer {
     const configs = [...this.trackConfigs.values()];
     const allInitEmitted = configs.length > 0 && configs.every((c) => this.emittedInit.has(c.id));
     const hasVideo = configs.some((c) => c.kind === "video");
+    // 基准待定（声画分流音频流水线）：首个 media 段等视频基准到达，上限
+    // EXTERNAL_BASE_MAX_WAIT_MS；init 不受此门影响（照常发射，hold 与起播门不被拖慢）。
+    if (
+      this.awaitingExternalBase &&
+      this.externalBaseSec === null &&
+      Date.now() - this.firstInitAt < EXTERNAL_BASE_MAX_WAIT_MS
+    ) {
+      return false;
+    }
+    // 纯音频轨（声画分流的独立音轨流水线）：无视频可等。门控的初衷是保证「首个 init
+    // append 前所有 SourceBuffer 都已创建」，本流水线只产 audio SB，其 init 齐即已满足；
+    // 若仍落到 8s 宽限期兜底，音频首段会被凭空压后 8 秒（实测"声音出来慢"的确切原因）。
+    if (!hasVideo) return allInitEmitted;
     if (this.audioExpected === false) return hasVideo; // 纯视频：无需等音频
     const hasAudioInit = configs.some((c) => c.kind === "audio" && this.emittedInit.has(c.id));
     if (hasVideo && hasAudioInit && allInitEmitted) return true;
@@ -322,12 +374,18 @@ export class Fmp4Remuxer {
     // 缓冲只剩首个关键帧那一段，播放头卡在洞前被 recoverFromStall 跳过 → 起播「第一帧后卡一下」。
     // 故：有视频轨时音频先于视频到达不锁定（音频批次暂留队列，见下）；仅纯音频流才用首个音频样本。
     if (this.unifiedBaseSec === null) {
-      const videoBase = this.firstSampleSec.get("video");
-      if (videoBase !== undefined) {
-        this.unifiedBaseSec = videoBase;
-      } else if (![...this.trackConfigs.values()].some((c) => c.kind === "video")) {
-        const audioBase = this.firstSampleSec.get("audio");
-        if (audioBase !== undefined) this.unifiedBaseSec = audioBase;
+      if (this.externalBaseSec !== null) {
+        // 声画分流的音频流水线：锚到视频基准（见 setExternalBase），
+        // 保证音频输出时间 = 音频绝对时间 - 视频首样本 dts，与视频同一坐标系。
+        this.unifiedBaseSec = this.externalBaseSec;
+      } else {
+        const videoBase = this.firstSampleSec.get("video");
+        if (videoBase !== undefined) {
+          this.unifiedBaseSec = videoBase;
+        } else if (![...this.trackConfigs.values()].some((c) => c.kind === "video")) {
+          const audioBase = this.firstSampleSec.get("audio");
+          if (audioBase !== undefined) this.unifiedBaseSec = audioBase;
+        }
       }
     }
 
