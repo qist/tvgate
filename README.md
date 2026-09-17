@@ -339,7 +339,7 @@ server {
 ## 许可证
 
 - 本项目主体以 [MPL-2.0](LICENSE) 协议开源。
-- **播放引擎 `ui/src/media-engine/`**：clean-room 自研实现，同样以 [MPL-2.0](LICENSE) 协议开源；旧版 `ui/src/playback-engine/`（基于 GPL 上游 rtp2httpd 的派生代码）已整体移除——源码中不再包含任何 GPL 派生代码，也无对旧引擎目录的 `import` 依赖（零依赖已核验，可在本仓库以 `grep -rIn "playback-engine" ui/src/media-engine --include='*.ts'` 复现：命中为空，旧引擎代码已不随本仓库分发）。
+- **播放引擎 `ui/src/media-engine/`**：clean-room 自研实现，同样以 [MPL-2.0](LICENSE) 协议开源；旧版 `ui/src/playback-engine/`（基于 GPL 上游 rtp2httpd 的派生代码）已整体移除——源码中不再包含任何 GPL 派生代码，也无对旧引擎目录的 `import` 依赖（零依赖已核验，可在本仓库以 `grep -rIn -E "from .*playback-engine" ui/src/media-engine` 复现：命中为空；源码注释中少量 `playback-engine` 字样仅为历史溯源说明，非代码包含）。
 - **软解后端 FFmpeg（WASM）**：`ui/src/media-engine/wasm/avcodec/` 构建时链接裁剪的 FFmpeg 库（LGPL-2.1+，未启用任何 GPL 组件），以独立 `.wasm` 资源分发（等同动态链接）；其源码获取途径见 `ui/src/media-engine/wasm/Makefile` 与 `ui/src/media-engine/wasm/README.md`。
 
 ---
