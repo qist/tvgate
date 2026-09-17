@@ -8,10 +8,11 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default:
-          "border-primary/24 bg-primary/12 text-[hsl(252_72%_34%)] hover:bg-primary/18 dark:text-[hsl(250_100%_88%)]",
+          // 文字色走 --primary-text（随界面风格变化，浅/深模式各自可读），不再写死紫色
+          "border-primary/25 bg-primary/12 text-[hsl(var(--primary-text))] hover:bg-primary/18",
         secondary: "border-border/70 bg-secondary/80 text-secondary-foreground hover:bg-secondary",
         destructive:
-          "border-destructive/24 bg-destructive/12 text-[hsl(354_76%_34%)] hover:bg-destructive/18 dark:text-[hsl(350_100%_88%)]",
+          "border-destructive/25 bg-destructive/12 text-[hsl(354_76%_34%)] hover:bg-destructive/18 dark:text-[hsl(350_100%_88%)]",
         outline: "border-border/65 bg-background/35 text-foreground backdrop-blur-sm",
       },
       size: {

@@ -2,7 +2,10 @@ import { api } from "./http";
 
 export interface PlayerConfig {
   enabled: boolean;
+  /** 主订阅源：单个源（也支持换行/逗号/分号分隔的多个源） */
   subscription: string;
+  /** 多订阅源：追加在主订阅源之后，逐项解析合并（同源去重；单个源失败只跳过自身） */
+  subscriptions: string[];
   epg: string;
   logo: string;
   logo_dir: string;
@@ -19,6 +22,9 @@ export async function getPlayer(): Promise<PlayerConfig> {
   return {
     enabled: data.enabled === true,
     subscription: data.subscription || "",
+    subscriptions: Array.isArray(data.subscriptions)
+      ? data.subscriptions.filter((s): s is string => typeof s === "string" && s.trim() !== "")
+      : [],
     epg: data.epg || "",
     logo: data.logo || "",
     logo_dir: data.logo_dir || "",

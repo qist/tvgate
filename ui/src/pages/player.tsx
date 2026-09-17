@@ -1,22 +1,15 @@
+/**
+ * 播放页（clean-room 重写）。
+ * 数据层全部走 TVGate 服务端 API（频道 / EPG / 回看均由服务端签发受控短地址，真实源不出服务端）；
+ * 引擎契约来自 ../../media-engine。本文件只做状态编排与布局，不含任何解码/MSE 逻辑。
+ */
 import "../lib/polyfills"; // 旧 WebView 兼容 polyfill，必须在业务代码前
 import { clsx } from "clsx";
-import { AlertTriangle, ListChecks, RefreshCw } from "lucide-react";
-import {
-  Activity,
-  StrictMode,
-  startTransition,
-  useCallback,
-  useDeferredValue,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Activity, AlertTriangle, ListChecks, RefreshCw } from "lucide-react";
+import { StrictMode, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  ChannelList,
-  nextScrollBehaviorRef as channelListNextScrollBehaviorRef,
-} from "../components/player/channel-list";
+import { ChannelList, nextScrollBehaviorRef as channelListNextScrollBehaviorRef } from "../components/player/channel-list";
+import { ChannelBrowser } from "../components/player/channel-browser";
 import { EPGView, nextScrollBehaviorRef as epgViewNextScrollBehaviorRef } from "../components/player/epg-view";
 import { PlaybackTimeProvider } from "../components/player/playback-time-context";
 import { SettingsDropdown } from "../components/player/settings-dropdown";
@@ -29,27 +22,36 @@ import { usePlayerPanelAlpha } from "../hooks/use-player-panel-alpha";
 import { usePlayerTranslation } from "../hooks/use-player-translation";
 import { useTheme } from "../hooks/use-player-theme";
 import { isDocumentPictureInPictureSupported } from "../lib/document-picture-in-picture";
-import { type EPGData, fillEPGGaps, getCurrentProgram, getEPGChannelId } from "../lib/epg-parser";
+import {
+  type EPGData,
+  fillEPGGaps,
+  getCurrentProgram,
+  getEPGChannelId,
+  mapPrograms,
+  parseEpgTime,
+  type RawEPGProgram,
+} from "../lib/epg-parser";
 import type { Locale } from "../lib/locale";
-import type { Channel, EPGProgram, M3UMetadata, Source } from "../types/player";
+import type { Channel, M3UMetadata, Source } from "../types/player";
 import { isLGWebOS } from "../lib/platform";
 import { findDeepLinkChannel, syncChannelDeepLink } from "../lib/player-deep-link";
 import {
+  getAudioChannelMode,
   getAutoDeinterlace,
   getLastChannelId,
   getLastSourceIndex,
   getPictureEnhancement,
   getSeamlessSwitch,
   getSidebarVisible,
+  saveAudioChannelMode,
   saveAutoDeinterlace,
   saveLastChannelId,
   saveLastSourceIndex,
   savePictureEnhancement,
   saveSeamlessSwitch,
-  saveSidebarVisible,
 } from "../lib/player-storage";
-import { getPlaybackBackendKind, type PlayerSegment } from "../playback-engine";
-import { mseToWallClock, NEAR_LIVE_EDGE_MS } from "../playback-engine/timeline/wall-clock";
+import { getPlaybackBackendKind, type PlayerSegment } from "../media-engine";
+import { mseToWallClock, NEAR_LIVE_EDGE_MS } from "../media-engine/timeline";
 import { PICTURE_IN_PICTURE_MODES, type PictureInPictureMode } from "../types/ui";
 
 // ---------------------------------------------------------------------------
@@ -70,12 +72,6 @@ interface TvgateChannelPayload {
 interface TvgateChannelsResponse {
   channels?: TvgateChannelPayload[];
   epg?: { type?: string; template?: string; logo?: string };
-}
-
-interface TvgateProgram {
-  start: string;
-  stop: string;
-  title: string;
 }
 
 /** 从页面 URL 取全局访问 token（my_token），透传给所有 API 与流请求。 */
@@ -103,36 +99,14 @@ function todayYmd(): string {
   return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
 }
 
-/**
- * 任意 EPG 时间 → Date：兼容 XMLTV（"20260901112900 +0800"）、
- * 纯数字（YYYYMMDDHHMMSS / YYYYMMDDHHMM）、ISO（"2026-09-01T11:29:00"）。
- * 与服务端/旧版语义一致：按本地时区解释。
- */
-function parseEpgTime(value: string): Date | null {
-  const s = (value ?? "").trim();
-  if (!s) return null;
-
-  if (s.length === 5 && s.includes(":")) {
-    const [h, m] = s.split(":");
-    const d = new Date();
-    d.setHours(Number(h), Number(m), 0, 0);
-    return d;
-  }
-
-  if (/^\d{8}(?:\d{2}){0,3}$/.test(s)) {
-    const y = Number(s.slice(0, 4));
-    const mo = Number(s.slice(4, 6)) - 1;
-    const da = Number(s.slice(6, 8));
-    const h = Number(s.slice(8, 10) || 0);
-    const mi = Number(s.slice(10, 12) || 0);
-    const se = Number(s.slice(12, 14) || 0);
-    return new Date(y, mo, da, h, mi, se);
-  }
-
-  const normalized = s.includes("T") ? s : s.replace(" ", "T");
-  const parsed = new Date(normalized);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
+/** EPG 重试冷却：取失败/空结果后到点可重试（旧实现一次失败 = 整场不再拉）。 */
+const EPG_RETRY_COOLDOWN_MS = 60_000;
+/** EPG 定时刷新间隔：与后端 EPG 源刷新同量级，长时间播放时"正在播出"不漂移。 */
+const EPG_REFRESH_MS = 15 * 60 * 1000;
+/** 可见频道预取上限：xml 源是服务端查表（快）可多取；template 源要逐频道外网拉取（保守）。 */
+const EPG_PREFETCH_LIMIT_XML = 40;
+const EPG_PREFETCH_LIMIT_TEMPLATE = 12;
+const EPG_PREFETCH_STAGGER_MS = 120;
 
 function toYmdHis(value: string): string {
   const d = parseEpgTime(value);
@@ -145,8 +119,7 @@ function toYmdHis(value: string): string {
 
 /**
  * 独立直播入口：`?live=<URL 编码后的播放地址>`（推流发布页本地 FLV/HLS 用它跳转）。
- * 只接受同源地址（发布流的 /<path>/play/<name>.flv|m3u8），拒绝跨源地址，
- * 避免把播放器变成任意 URL 转发代理。返回绝对地址或 null。
+ * 只接受同源地址（发布流的 /<path>/play/<name>.flv|m3u8），拒绝跨源地址。
  */
 function getLiveDirectUrl(): string | null {
   try {
@@ -174,11 +147,9 @@ function channelNameFromUrl(url: string): string {
 function mapChannels(payload: TvgateChannelPayload[]): { channels: Channel[]; groups: string[] } {
   const channels: Channel[] = [];
   const groupSet = new Set<string>();
-  for (let i = 0; i < payload.length; i++) {
-    const c = payload[i];
+  for (const c of payload) {
     if (!c?.key || !c.name) continue;
     const source: Source = { url: withToken(`/player/${c.key}`), label: c.scheme || undefined };
-    // http(s)/php/rtsp 源由服务端提供 catchup（/api/player/catchup），打标记供 UI 与 EPG 缝隙填充识别。
     if (c.scheme === "http" || c.scheme === "https" || c.scheme === "php" || c.scheme === "rtsp") {
       source.catchup = "server";
       source.catchupSource = "server";
@@ -190,6 +161,7 @@ function mapChannels(payload: TvgateChannelPayload[]): { channels: Channel[]; gr
       name: c.name,
       logo: c.tvg_logo || undefined,
       groups,
+      // 频道号 = 订阅里的序位（1 起）：界面展示用，替代裸短哈希 id
       number: channels.length + 1,
       tvgId: c.tvg_id || undefined,
       tvgName: c.tvg_name || undefined,
@@ -204,26 +176,11 @@ function epgIdForChannel(channel: Channel): string {
   return channel.tvgId || channel.tvgName || channel.name;
 }
 
-function mapPrograms(programs: TvgateProgram[] | undefined): EPGProgram[] {
-  const out: EPGProgram[] = [];
-  for (const p of programs ?? []) {
-    const start = parseEpgTime(p.start ?? "");
-    if (!start) continue;
-    const end = parseEpgTime(p.stop ?? p.start ?? "");
-    if (!end || end.getTime() <= start.getTime()) continue;
-    out.push({ id: `epg-${start.getTime()}`, title: p.title || "", start, end });
-  }
-  return out;
-}
-
-type LockableScreenOrientation = ScreenOrientation & {
-  lock?: (orientation: "landscape") => Promise<void>;
-};
+type LockableScreenOrientation = ScreenOrientation & { lock?: (orientation: "landscape") => Promise<void> };
 
 async function lockScreenToLandscape(): Promise<boolean> {
   const orientation = screen.orientation as LockableScreenOrientation | undefined;
   if (!orientation?.lock) return false;
-
   try {
     await orientation.lock("landscape");
     return true;
@@ -236,17 +193,13 @@ function unlockScreenOrientation(): void {
   try {
     screen.orientation?.unlock();
   } catch {
-    // The orientation may already have been unlocked when fullscreen ended.
+    // 全屏结束时 orientation 可能已被解锁。
   }
 }
 
 function shouldInsetSidebarRight(): boolean {
   const { angle, type } = screen.orientation;
   if (!type.startsWith("landscape")) return true;
-
-  // At 90°, the sidebar's right edge is on the device-bottom side and may
-  // overlap the smaller system area. Preserve the inset at 270° and for other
-  // angles, including naturally landscape devices.
   return angle !== 90;
 }
 
@@ -268,19 +221,32 @@ function PlayerPage() {
 
   const [metadata, setMetadata] = useState<M3UMetadata | null>(null);
   const [epgData, setEpgData] = useState<EPGData>({});
+  /** 已拿到真实节目（成功）的频道键——只有成功才写入，失败走冷却重试。 */
   const epgLoadedRef = useRef<Set<string>>(new Set());
+  /** 正在飞的 EPG 请求（去重）。 */
+  const epgInflightRef = useRef<Set<string>>(new Set());
+  /** 每个频道的上次尝试时间（失败/空结果后的冷却用）。 */
+  const epgAttemptAtRef = useRef<Map<string, number>>(new Map());
+  /** 后端下发的 EPG 源（type/template/logo）：预取限流与"未配置"提示都基于它。 */
+  const [epgSource, setEpgSource] = useState<{ type?: string; template?: string; logo?: string } | null>(null);
   const [currentChannel, setCurrentChannel] = useState<Channel | null>(null);
+  const [previewChannel, setPreviewChannel] = useState<Channel | null>(null);
   const [playMode, setPlayMode] = useState<"live" | "catchup">("live");
   const [playbackSegments, setPlaybackSegments] = useState<PlayerSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRevealing, setIsRevealing] = useState(false);
   const [showSidebar, setShowSidebar] = useState(() => getSidebarVisible());
+  /** 浮层内"节目单"栏是否展开：决定浮层宽度（收起=两列窄 / 展开=三列宽）。 */
+  const [dockEpgOpen, setDockEpgOpen] = useState(false);
   const [selectedSidebarView, setSelectedSidebarView] = useState<"channels" | "epg">("channels");
   const [renderedSidebarView, setRenderedSidebarView] = useState<"channels" | "epg">("channels");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
   const [insetSidebarRight, setInsetSidebarRight] = useState(shouldInsetSidebarRight);
+  /** 与上面两个状态同步的即时值：resize 里用它判断"值真的变了"才重渲染。 */
+  const isMobileRef = useRef(isMobile);
+  const insetSidebarRightRef = useRef(insetSidebarRight);
   const [seamlessSwitch, setSeamlessSwitch] = useState(() => (supportsSeamlessSwitch ? getSeamlessSwitch() : false));
   const [autoDeinterlace, setAutoDeinterlace] = useState(() =>
     supportsMSEVideoProcessing ? getAutoDeinterlace() : false,
@@ -288,91 +254,83 @@ function PlayerPage() {
   const [pictureEnhancement, setPictureEnhancement] = useState(() =>
     supportsMSEVideoProcessing ? getPictureEnhancement() : false,
   );
+  /** 软解音频声道模式（本地记忆）：mono = 左右合成单声道。 */
+  const [audioChannelMode, setAudioChannelModeState] = useState<"stereo" | "mono">(() => getAudioChannelMode());
   const pageContainerRef = useRef<HTMLDivElement>(null);
   const isSimulatedFullscreenRef = useRef(false);
 
-  // Track stream start time - the absolute time position when current stream started
-  // For live mode: now (no seeking)
-  // For catchup mode: the time user seeked to (start of catchup stream)
   const [streamStartTime, setStreamStartTime] = useState<Date>(() => new Date());
-  /** Whether the latest seek targets the session live edge (vs catchup). */
   const [seekAtLiveEdge, setSeekAtLiveEdge] = useState(true);
-  /** 回看流地址（服务端 /api/player/catchup 签发的受控短地址）。 */
   const [catchupUrl, setCatchupUrl] = useState<string | null>(null);
   const catchupSeqRef = useRef(0);
 
-  // Track current video playback time in seconds (relative to stream start)
   const [currentVideoTime, setCurrentVideoTime] = useState(0);
   const deferredCurrentVideoTime = useDeferredValue(currentVideoTime);
   const currentVideoTimeRef = useRef(0);
   const currentVideoSecondRef = useRef(0);
 
-  // Track active source index for multi-source channels
   const [activeSourceIndex, setActiveSourceIndex] = useState(0);
-
-  // Get the active source's URL
   const activeSource = currentChannel?.sources[activeSourceIndex] ?? currentChannel?.sources[0];
 
-  // Track fullscreen state
   useEffect(() => {
     const handleFullscreenChange = () => {
       const isDocumentFullscreen = !!document.fullscreenElement;
       if (!isDocumentFullscreen && isSimulatedFullscreenRef.current) return;
-
       setIsFullscreen(isDocumentFullscreen);
       if (!isDocumentFullscreen) {
         unlockScreenOrientation();
         setShowSidebar(true);
       }
     };
-
     document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-    };
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
 
-  // Track responsive layout and which physical edge is on the sidebar's right.
   useEffect(() => {
-    const handleViewportChange = () => {
+    // 手机浏览器工具栏收缩/展开（进出全屏常见）会连发 resize：
+    // 值没变就绝不 setState——否则整页反复重排，表现为画面抽动/闪屏。
+    // 高度变化不影响内宽，所以这类 resize 基本会被直接跳过；只在真跨断点时更新。
+    let timer = 0;
+    const applyViewport = () => {
+      timer = 0;
+      const nextMobile = window.innerWidth < 768;
+      const nextInset = shouldInsetSidebarRight();
+      if (nextMobile === isMobileRef.current && nextInset === insetSidebarRightRef.current) return;
+      isMobileRef.current = nextMobile;
+      insetSidebarRightRef.current = nextInset;
       startTransition(() => {
-        setIsMobile(window.innerWidth < 768);
-        setInsetSidebarRight(shouldInsetSidebarRight());
+        setIsMobile(nextMobile);
+        setInsetSidebarRight(nextInset);
       });
     };
-
+    const handleViewportChange = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(applyViewport, 120);
+    };
     window.addEventListener("resize", handleViewportChange);
     screen.orientation.addEventListener("change", handleViewportChange);
     return () => {
+      if (timer) window.clearTimeout(timer);
       window.removeEventListener("resize", handleViewportChange);
       screen.orientation.removeEventListener("change", handleViewportChange);
     };
   }, []);
 
-  // Live playback: single zero-duration segment; the engine sniffs the content
-  // (raw TS stream or HLS playlist) automatically.
   useEffect(() => {
     if (!activeSource || !seekAtLiveEdge) return;
-
     setPlayMode("live");
     setPlaybackSegments((prev) => {
       const next: PlayerSegment[] = [{ url: activeSource.url, duration: 0 }];
-      if (prev.length === 1 && prev[0].url === next[0].url) {
-        return prev;
-      }
+      if (prev.length === 1 && prev[0].url === next[0].url) return prev;
       return next;
     });
   }, [currentChannel, activeSource, activeSourceIndex, seekAtLiveEdge]);
 
-  // Catchup playback: server-issued VOD playlist URL (starts at the seek target).
   useEffect(() => {
     if (seekAtLiveEdge || !catchupUrl) return;
-
     setPlayMode("catchup");
     setPlaybackSegments((prev) => {
-      if (prev.length === 1 && prev[0].url === catchupUrl) {
-        return prev;
-      }
+      if (prev.length === 1 && prev[0].url === catchupUrl) return prev;
       return [{ url: catchupUrl, duration: 0 }];
     });
   }, [catchupUrl, seekAtLiveEdge]);
@@ -384,41 +342,36 @@ function PlayerPage() {
   }, []);
 
   const handleVideoSeek = useCallback(
-    (seekTime: Date, goingLive: boolean) => {
+    (seekTime: Date, goingLive: boolean, channel?: Channel) => {
+      const targetChannel = channel ?? currentChannel;
       resetCurrentVideoTime();
       if (goingLive) {
         catchupSeqRef.current += 1;
         setCatchupUrl(null);
         setStreamStartTime(new Date());
         setSeekAtLiveEdge(true);
-        // 立即切徽标，不等流切换完成
         setPlayMode("live");
         return;
       }
-      if (!currentChannel) return;
+      if (!targetChannel) return;
 
-      // TVGate catchup: ask the server for a playlist that starts at the target time.
       const seq = ++catchupSeqRef.current;
       const start = toYmdHis(seekTime.toISOString());
       const end = toYmdHis(new Date().toISOString());
       setStreamStartTime(seekTime);
       setSeekAtLiveEdge(false);
-      // 立即切徽标：回看 URL 由服务端异步签发，期间也应显示「返回直播」
       setPlayMode("catchup");
-      fetch(withToken(`/api/player/catchup?key=${encodeURIComponent(currentChannel.id)}&start=${start}&end=${end}`))
+      fetch(withToken(`/api/player/catchup?key=${encodeURIComponent(targetChannel.id)}&start=${start}&end=${end}`))
         .then((res) => {
           if (!res.ok) throw new Error(`catchup HTTP ${res.status}`);
           return res.json() as Promise<{ url?: string }>;
         })
         .then((data) => {
           if (seq !== catchupSeqRef.current) return;
-          if (data?.url) {
-            setCatchupUrl(withToken(data.url));
-          }
+          if (data?.url) setCatchupUrl(withToken(data.url));
         })
         .catch(() => {
           if (seq !== catchupSeqRef.current) return;
-          // 回看失败：回到直播
           setCatchupUrl(null);
           setStreamStartTime(new Date());
           setSeekAtLiveEdge(true);
@@ -432,8 +385,13 @@ function PlayerPage() {
     (programStart: Date, programEnd: Date) => {
       const goingLive = programEnd.getTime() >= Date.now() - NEAR_LIVE_EDGE_MS;
       handleVideoSeek(programStart, goingLive);
+      // 桌面/大屏：选完节目自动隐藏侧边栏（设计：点屏幕出现 → 选好收起）
+      if (!isMobile) setShowSidebar(false);
+      // 移动端：节目单是整屏 Tab，选完自动切回频道列表（等于收起节目单）
+      setSelectedSidebarView("channels");
+      startTransition(() => setRenderedSidebarView("channels"));
     },
-    [handleVideoSeek],
+    [handleVideoSeek, isMobile],
   );
 
   const handleSourceChange = useCallback(
@@ -444,7 +402,6 @@ function PlayerPage() {
         setSeekAtLiveEdge(true);
         setStreamStartTime(new Date());
       } else {
-        // Preserve current playback position when switching source in catchup mode
         setStreamStartTime(mseToWallClock(currentVideoTimeRef.current, streamStartTime));
       }
       resetCurrentVideoTime();
@@ -454,9 +411,7 @@ function PlayerPage() {
   );
 
   const handlePlaybackStarted = useCallback(() => {
-    if (currentChannel) {
-      saveLastSourceIndex(currentChannel.id, activeSourceIndex);
-    }
+    if (currentChannel) saveLastSourceIndex(currentChannel.id, activeSourceIndex);
   }, [currentChannel, activeSourceIndex]);
 
   const selectChannel = useCallback(
@@ -473,58 +428,122 @@ function PlayerPage() {
     [resetCurrentVideoTime],
   );
 
-  // Save last played channel when in live mode
+  const handleReplaySelect = useCallback(
+    (programStart: Date, programEnd: Date) => {
+      const target = previewChannel ?? currentChannel;
+      if (!target) return;
+      if (target.id !== currentChannel?.id) selectChannel(target);
+      const goingLive = programEnd.getTime() >= Date.now() - NEAR_LIVE_EDGE_MS;
+      handleVideoSeek(programStart, goingLive, target);
+    },
+    [previewChannel, currentChannel, selectChannel, handleVideoSeek],
+  );
+
   useEffect(() => {
-    if (currentChannel && playMode === "live") {
-      saveLastChannelId(currentChannel.id);
-    }
+    if (currentChannel && playMode === "live") saveLastChannelId(currentChannel.id);
   }, [currentChannel, playMode]);
 
-  // Keep the address bar shareable: rewrite the URL to #<name> (or #<id> if the name is ambiguous).
   useEffect(() => {
-    if (currentChannel && metadata) {
-      syncChannelDeepLink(currentChannel, metadata.channels);
-    }
+    if (currentChannel && metadata) syncChannelDeepLink(currentChannel, metadata.channels);
   }, [currentChannel, metadata]);
 
   useEffect(() => {
     if (!metadata) return;
-
     const onHashChange = () => {
       const channel = findDeepLinkChannel(metadata.channels);
-      if (channel && channel.id !== currentChannel?.id) {
-        selectChannel(channel);
-      }
+      if (channel && channel.id !== currentChannel?.id) selectChannel(channel);
     };
-
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, [metadata, currentChannel, selectChannel]);
 
-  // Fetch EPG for the selected channel (server-side fetch/parse, today only).
-  useEffect(() => {
-    if (!currentChannel) return;
-    const epgId = epgIdForChannel(currentChannel);
-    if (!epgId || epgLoadedRef.current.has(epgId)) return;
-    epgLoadedRef.current.add(epgId);
+  /**
+   * 拉单个频道的节目单（服务端已解析 XMLTV / 按模板代拉，前端不直连 EPG 源）。
+   * 关键：只有**拿到真实节目**才算"已加载"；失败/空结果只记尝试时间，冷却后可重试。
+   */
+  const loadEpgForChannel = useCallback((channel: Channel, opts?: { force?: boolean }) => {
+    const epgId = epgIdForChannel(channel);
+    if (!epgId || epgInflightRef.current.has(epgId)) return;
+    if (!opts?.force) {
+      if (epgLoadedRef.current.has(epgId)) return;
+      const last = epgAttemptAtRef.current.get(epgId) ?? 0;
+      if (Date.now() - last < EPG_RETRY_COOLDOWN_MS) return;
+    }
+    epgAttemptAtRef.current.set(epgId, Date.now());
+    epgInflightRef.current.add(epgId);
 
     const q =
       `date=${todayYmd()}` +
-      `&ch=${encodeURIComponent(currentChannel.tvgId ?? "")}` +
-      `&name=${encodeURIComponent(currentChannel.name)}`;
+      `&ch=${encodeURIComponent(channel.tvgId ?? "")}` +
+      `&name=${encodeURIComponent(channel.name)}`;
     fetch(withToken(`/api/player/epg?${q}`))
-      .then((res) => (res.ok ? (res.json() as Promise<{ programs?: TvgateProgram[] }>) : Promise.reject(new Error("epgFailed"))))
+      .then((res) => (res.ok ? (res.json() as Promise<{ programs?: RawEPGProgram[] }>) : Promise.reject(new Error("epgFailed"))))
       .then((data) => {
         const progs = mapPrograms(data.programs);
-        if (!progs.length) return;
+        if (!progs.length) throw new Error("epgEmpty");
+        epgLoadedRef.current.add(epgId);
         startTransition(() => {
           setEpgData((prev) => ({ ...prev, [epgId]: progs }));
         });
       })
       .catch(() => {
-        // EPG 不可用：保留缝隙填充占位
+        // 失败/为空：不写"已加载"，退避后可重试；界面保留缝隙填充占位。
+      })
+      .finally(() => {
+        epgInflightRef.current.delete(epgId);
       });
+  }, []);
+
+  useEffect(() => {
+    if (currentChannel) setPreviewChannel((prev) => prev ?? currentChannel);
   }, [currentChannel]);
+
+  useEffect(() => {
+    if (!currentChannel) return;
+    loadEpgForChannel(currentChannel);
+  }, [currentChannel, loadEpgForChannel]);
+
+  useEffect(() => {
+    if (!previewChannel) return;
+    loadEpgForChannel(previewChannel);
+  }, [previewChannel, loadEpgForChannel]);
+
+  /**
+   * 可见频道批量预取：让节目单栏与列表行显示真实节目，而不是只有"精彩节目"占位。
+   * 按后端 EPG 源类型限流，并错峰发起（template 源每次都要服务端外网拉取，故上限更低）。
+   */
+  const handleVisibleChannelsChange = useCallback(
+    (visible: Channel[]) => {
+      const limit = epgSource?.type === "template" ? EPG_PREFETCH_LIMIT_TEMPLATE : EPG_PREFETCH_LIMIT_XML;
+      const pending = visible.slice(0, limit).filter((channel) => {
+        const id = epgIdForChannel(channel);
+        return (
+          !!id &&
+          !epgLoadedRef.current.has(id) &&
+          !epgInflightRef.current.has(id) &&
+          Date.now() - (epgAttemptAtRef.current.get(id) ?? 0) >= EPG_RETRY_COOLDOWN_MS
+        );
+      });
+      pending.forEach((channel, index) => {
+        window.setTimeout(() => loadEpgForChannel(channel), index * EPG_PREFETCH_STAGGER_MS);
+      });
+    },
+    [epgSource?.type, loadEpgForChannel],
+  );
+
+  /** 定时刷新：清掉"已加载"标记后重取当前/预览频道（跨天、节目推进都能跟上）。 */
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      epgLoadedRef.current = new Set();
+      epgAttemptAtRef.current = new Map();
+      if (currentChannel) loadEpgForChannel(currentChannel, { force: true });
+      if (previewChannel) loadEpgForChannel(previewChannel, { force: true });
+    }, EPG_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [currentChannel, previewChannel, loadEpgForChannel]);
+
+  /** 后端是否配置了 EPG 源：未配置时节目单栏直接给提示，避免误判成"前端坏了"。 */
+  const epgConfigured = epgSource?.type === "xml" || epgSource?.type === "template";
 
   const handleCurrentVideoTimeChange = useCallback((time: number) => {
     currentVideoTimeRef.current = time;
@@ -535,16 +554,12 @@ function PlayerPage() {
   }, []);
 
   const handleThemeChange = useCallback(
-    (nextTheme: Parameters<typeof setTheme>[0]) => {
-      startTransition(() => setTheme(nextTheme));
-    },
+    (nextTheme: Parameters<typeof setTheme>[0]) => startTransition(() => setTheme(nextTheme)),
     [setTheme],
   );
 
   const handleAppearanceChange = useCallback(
-    (nextAppearance: Parameters<typeof setAppearance>[0]) => {
-      startTransition(() => setAppearance(nextAppearance));
-    },
+    (nextAppearance: Parameters<typeof setAppearance>[0]) => startTransition(() => setAppearance(nextAppearance)),
     [setAppearance],
   );
 
@@ -557,32 +572,24 @@ function PlayerPage() {
   const handleChannelNavigate = useCallback(
     (target: "prev" | "next" | number) => {
       if (!metadata?.channels.length) return;
-
       if (target === "prev" || target === "next") {
         if (!currentChannel) return;
         const currentIndex = metadata.channels.indexOf(currentChannel);
         let nextIndex = 0;
-
         if (target === "prev") {
-          // Wrap around to last channel if at first channel
           nextIndex = currentIndex > 0 ? currentIndex - 1 : metadata.channels.length - 1;
         } else {
-          // Wrap around to first channel if at last channel
           nextIndex = currentIndex < metadata.channels.length - 1 ? currentIndex + 1 : 0;
         }
         selectChannel(metadata.channels[nextIndex]);
       } else {
         const channel = metadata.channels[target - 1];
-        if (channel) {
-          selectChannel(channel);
-        }
+        if (channel) selectChannel(channel);
       }
     },
     [metadata, currentChannel, selectChannel],
   );
 
-  // Neighbours of the current channel, so the player can preview the target of a
-  // swipe-to-zap gesture. Wraps around exactly like handleChannelNavigate.
   const [prevChannel, nextChannel] = useMemo<[Channel | null, Channel | null]>(() => {
     const channels = metadata?.channels;
     if (!channels?.length || !currentChannel) return [null, null];
@@ -594,7 +601,6 @@ function PlayerPage() {
     ];
   }, [metadata, currentChannel]);
 
-  // 独立直播入口（?live=）：直接播放推流发布页的同源本地 FLV/HLS 地址
   const directLiveUrl = useMemo(getLiveDirectUrl, []);
 
   const loadPlaylist = useCallback(async () => {
@@ -602,10 +608,11 @@ function PlayerPage() {
       setIsLoading(true);
       setError(null);
       epgLoadedRef.current = new Set();
+      epgAttemptAtRef.current = new Map();
+      epgInflightRef.current = new Set();
 
       let mapped: { channels: Channel[]; groups: string[] };
       if (directLiveUrl) {
-        // 不加载订阅频道列表，直接用 ?live= 指定的同源地址（不经过 tvgate 转发，浏览器直连）
         const name = channelNameFromUrl(directLiveUrl);
         const liveChannel: Channel = {
           id: `direct-${name}`,
@@ -617,16 +624,11 @@ function PlayerPage() {
         mapped = { channels: [liveChannel], groups: [] };
       } else {
         const response = await fetch(withToken("/api/player/channels"));
-        if (!response.ok) {
-          throw new Error("failedToLoadPlaylist");
-        }
-
+        if (!response.ok) throw new Error("failedToLoadPlaylist");
         const data = (await response.json()) as TvgateChannelsResponse;
         mapped = mapChannels(data.channels ?? []);
-
-        if (mapped.channels.length === 0) {
-          throw new Error("emptyPlaylist");
-        }
+        if (mapped.channels.length === 0) throw new Error("emptyPlaylist");
+        setEpgSource(data.epg ?? null);
       }
 
       setMetadata({ channels: mapped.channels, groups: mapped.groups });
@@ -634,49 +636,34 @@ function PlayerPage() {
       const deepLinkChannel = directLiveUrl ? mapped.channels[0] : findDeepLinkChannel(mapped.channels);
       const lastChannelId = getLastChannelId();
       const channelToSelect =
-        directLiveUrl ? mapped.channels[0] : deepLinkChannel ?? mapped.channels.find((channel) => channel.id === lastChannelId) ?? mapped.channels[0];
+        directLiveUrl
+          ? mapped.channels[0]
+          : deepLinkChannel ?? mapped.channels.find((channel) => channel.id === lastChannelId) ?? mapped.channels[0];
       selectChannel(channelToSelect);
 
-      // Show empty-EPG fallback immediately so startup is not blocked by EPG fetching.
-      // Catchup-capable channels get 2-hour gap-fill programs until real data arrives.
       setEpgData(fillEPGGaps({}, mapped.channels));
-
-      // Trigger reveal animation
       setIsRevealing(true);
-      window.setTimeout(() => {
-        setIsLoading(false);
-      }, 500); // Match animate-zoom-fade-out duration
+      window.setTimeout(() => setIsLoading(false), 500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "failedToLoadPlaylist");
       setIsLoading(false);
     }
   }, [selectChannel, directLiveUrl]);
 
-  // Load playlist on mount
   useEffect(() => {
     loadPlaylist();
   }, [loadPlaylist]);
 
-  // Get current program for the video player
-  // Use tvgId / tvgName / name with fallback logic for EPG matching
-  // Use streamStartTime + currentVideoTime to determine the actual time position
   const currentVideoProgram = useMemo(() => {
     if (!currentChannel) return null;
-
-    // Get EPG channel ID using fallback logic (tvgId -> tvgName -> name)
     const epgChannelId = getEPGChannelId(currentChannel, epgData);
     if (!epgChannelId) return null;
-
-    // Calculate absolute time based on stream start + current video position
     const absoluteTime = mseToWallClock(deferredCurrentVideoTime, streamStartTime);
     return getCurrentProgram(epgChannelId, epgData, absoluteTime);
   }, [currentChannel, epgData, streamStartTime, deferredCurrentVideoTime]);
 
-  const handleVideoError = useCallback((err: string) => {
-    setError(err);
-  }, []);
+  const handleVideoError = useCallback((err: string) => setError(err), []);
 
-  // Handle fullscreen toggle
   const handleFullscreenToggle = useCallback(async (): Promise<boolean> => {
     const pageContainer = pageContainerRef.current;
     if (!pageContainer) return false;
@@ -713,14 +700,12 @@ function PlayerPage() {
         setShowSidebar(false);
         return true;
       }
-
       if (!isMobile) {
         isSimulatedFullscreenRef.current = true;
         setIsFullscreen(true);
         setShowSidebar(false);
         return true;
       }
-
       return false;
     }
   }, [isMobile]);
@@ -744,13 +729,32 @@ function PlayerPage() {
     savePictureEnhancement(enabled);
   }, []);
 
-  const handleToggleSidebar = useCallback(() => {
-    setShowSidebar((prev) => {
-      const newState = !prev;
-      saveSidebarVisible(newState);
-      return newState;
-    });
+  const handleAudioChannelModeChange = useCallback((mode: "stereo" | "mono") => {
+    setAudioChannelModeState(mode);
+    saveAudioChannelMode(mode);
   }, []);
+
+  const handleToggleSidebar = useCallback(() => {
+    setShowSidebar((prev) => !prev);
+  }, []);
+
+  /**
+   * 点击播放画面：切换侧边栏（设计：点屏幕出侧边栏选节目 → 选完自动隐藏）。
+   * 移动端侧栏是整屏 Tab（始终可用），不参与该手势。
+   */
+  const handleSurfaceClick = useCallback(() => {
+    if (isMobile) return;
+    setShowSidebar((prev) => !prev);
+  }, [isMobile]);
+
+  /** 选台：切流后自动收起侧边栏（"选好就自动隐藏"）。 */
+  const handleChannelSelectAndHide = useCallback(
+    (channel: Parameters<typeof selectChannel>[0]) => {
+      selectChannel(channel);
+      if (!isMobile) setShowSidebar(false);
+    },
+    [isMobile, selectChannel],
+  );
 
   const settingsSlot = useMemo(() => {
     return (
@@ -773,6 +777,8 @@ function PlayerPage() {
           onAutoDeinterlaceChange={handleAutoDeinterlaceChange}
           pictureEnhancement={pictureEnhancement}
           onPictureEnhancementChange={handlePictureEnhancementChange}
+          audioChannelMode={audioChannelMode}
+          onAudioChannelModeChange={handleAudioChannelModeChange}
           showVideoProcessing={supportsMSEVideoProcessing}
         />
       </div>
@@ -786,12 +792,14 @@ function PlayerPage() {
     seamlessSwitch,
     autoDeinterlace,
     pictureEnhancement,
+    audioChannelMode,
     handleThemeChange,
     handleAppearanceChange,
     setPictureInPictureMode,
     handleSeamlessSwitchChange,
     handleAutoDeinterlaceChange,
     handlePictureEnhancementChange,
+    handleAudioChannelModeChange,
     supportsSeamlessSwitch,
     supportsDocumentPictureInPicture,
     supportsMSEVideoProcessing,
@@ -802,14 +810,24 @@ function PlayerPage() {
     return (
       <div
         ref={pageContainerRef}
-        className="player-performance-page-background player-performance-scope player-viewport-height relative flex flex-col bg-[radial-gradient(circle_at_92%_8%,rgba(var(--pg-rgb),0.15),transparent_28%),radial-gradient(circle_at_72%_92%,rgba(217,70,239,0.13),transparent_32%),linear-gradient(145deg,#fbfaff,#f1edff)] dark:bg-[radial-gradient(circle_at_88%_10%,rgba(var(--pg-rgb),0.1),transparent_30%),radial-gradient(circle_at_70%_88%,rgba(217,70,239,0.12),transparent_34%),linear-gradient(145deg,#070516,#0d0a26)]"
+        className="player-performance-page-background player-performance-scope player-viewport-height relative flex flex-col bg-[radial-gradient(circle_at_92%_8%,rgba(var(--pg-rgb),0.15),transparent_28%),radial-gradient(circle_at_72%_92%,rgba(var(--pg-rgb-2),0.13),transparent_32%),linear-gradient(145deg,var(--pg-bg-a),var(--pg-bg-b))] dark:bg-[radial-gradient(circle_at_88%_10%,rgba(var(--pg-rgb),0.1),transparent_30%),radial-gradient(circle_at_70%_88%,rgba(var(--pg-rgb-2),0.12),transparent_34%),linear-gradient(145deg,var(--pg-bg-dark-a),var(--pg-bg-dark-b))]"
       >
         <title>{t("title")}</title>
 
-        {/* Main Content - Desktop/TV: sidebar on the LEFT (flex-row-reverse keeps video first in DOM for focus order), Mobile: sidebar below video */}
-        <div className="flex flex-col md:flex-row-reverse flex-1 overflow-hidden">
-          {/* Video Player - Mobile: fixed aspect ratio at top, Desktop: fills left side */}
-          <div className="w-full sticky md:static md:flex-1 shrink-0">
+        <div
+          className={clsx(
+            "relative flex min-h-0 flex-1 flex-col overflow-hidden",
+            !isMobile && showSidebar && "player-performance-dock-open",
+            !isMobile && (dockEpgOpen ? "player-performance-dock-expanded" : "player-performance-dock-compact"),
+          )}
+        >
+          <div
+            className={clsx(
+              "w-full sticky md:absolute md:inset-0",
+              // 手机全屏时视频区铺满整屏（flex-1 拿到确定高度）；平时按内容高（16:9 横条）
+              isFullscreen ? "min-h-0 flex-1" : "shrink-0",
+            )}
+          >
             <PlaybackTimeProvider value={currentVideoTime}>
               <VideoPlayer
                 channel={currentChannel}
@@ -827,11 +845,13 @@ function PlayerPage() {
                 nextChannel={nextChannel}
                 showSidebar={showSidebar}
                 onToggleSidebar={handleToggleSidebar}
+                onSurfaceClick={handleSurfaceClick}
                 isFullscreen={isFullscreen}
                 onFullscreenToggle={handleFullscreenToggle}
                 seamlessSwitch={supportsSeamlessSwitch && seamlessSwitch}
                 autoDeinterlace={autoDeinterlace}
                 pictureEnhancement={pictureEnhancement}
+                audioChannelMode={audioChannelMode}
                 pictureInPictureMode={pictureInPictureMode}
                 activeSourceIndex={activeSourceIndex}
                 onSourceChange={handleSourceChange}
@@ -840,70 +860,88 @@ function PlayerPage() {
             </PlaybackTimeProvider>
           </div>
 
-          {/* Sidebar - Mobile: always visible (below video, hidden in fullscreen), Desktop/TV: toggle-able LEFT side panel (visible in fullscreen) */}
           <div
             className={clsx(
-              "player-performance-panel-background flex w-full flex-1 flex-col overflow-hidden border-violet-950/10 border-t bg-white/68 pl-[env(safe-area-inset-left)] shadow-[14px_0_40px_rgba(91,33,182,0.06)] backdrop-blur-2xl dark:border-violet-100/10 dark:bg-[linear-gradient(160deg,rgba(10,7,26,0.96),rgba(23,16,53,0.92))] dark:shadow-[18px_0_48px_rgba(9,4,26,0.28)] md:w-[18rem] lg:w-[19rem] md:flex-initial md:border-t-0 md:border-r md:pt-[env(safe-area-inset-top)] md:pr-0",
+              // 浮层平面化（TV 播放器风格）：单层半透明底 + 一条右缘细线，不再叠主题渐变与投影
+              "player-performance-dock flex w-full flex-1 flex-col overflow-hidden border-violet-950/10 border-t bg-white/80 pl-[env(safe-area-inset-left)] backdrop-blur-2xl backdrop-saturate-150 dark:border-violet-100/10 dark:bg-slate-950/80 dark:backdrop-brightness-[0.6] md:absolute md:inset-y-0 md:left-0 md:z-20 md:h-full md:flex-none md:border-t-0 md:border-r md:pt-[env(safe-area-inset-top)] md:pr-0",
               insetSidebarRight && "pr-[env(safe-area-inset-right)]",
               (showSidebar || isMobile) && !(isFullscreen && isMobile) ? "" : "hidden",
             )}
           >
-            {/* Sidebar Tabs */}
-            <div className="player-performance-panel-background flex shrink-0 items-center border-violet-950/10 border-b bg-white/44 shadow-[0_8px_24px_rgba(91,33,182,0.045)] backdrop-blur-xl dark:border-violet-100/10 dark:bg-[linear-gradient(90deg,#1b1533,#2b2149)]">
-              {(["channels", "epg"] as const).map((view) => (
-                <button
-                  type="button"
-                  key={view}
-                  onClick={() => handleSidebarViewChange(view)}
-                  className={clsx(
-                    "player-performance-motion min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap border-b-2 px-3 py-2 text-center font-semibold text-xs leading-5 tracking-[0.01em] transition-[color,background-color,border-color,box-shadow] md:px-4 md:py-3 md:text-sm",
-                    selectedSidebarView === view
-                      ? "border-violet-500 bg-[linear-gradient(to_top,rgba(var(--pg-rgb),0.12),transparent)] text-violet-700 shadow-[inset_0_-1px_0_rgba(var(--pg-rgb),0.18)] dark:border-violet-300 dark:text-violet-200"
-                      : "cursor-pointer border-transparent text-slate-500 hover:bg-violet-400/5 hover:text-violet-700 dark:text-slate-400 dark:hover:text-violet-100",
-                  )}
-                >
-                  {view === "channels" ? `${t("channels")} (${metadata?.channels.length || 0})` : t("programGuide")}
-                </button>
-              ))}
-            </div>
+            {!isMobile ? (
+              <ChannelBrowser
+                channels={metadata?.channels ?? []}
+                groups={metadata?.groups ?? []}
+                currentChannel={currentChannel}
+                previewChannel={previewChannel}
+                onPreviewChannelChange={setPreviewChannel}
+                onChannelSelect={handleChannelSelectAndHide}
+                onProgramSelect={handleReplaySelect}
+                locale={locale}
+                settingsSlot={settingsSlot}
+                epgData={epgData}
+                currentPlayingProgram={currentVideoProgram}
+                supportsCatchup={!!previewChannel?.sources.some((s) => s.catchup && s.catchupSource)}
+                onEpgOpenChange={setDockEpgOpen}
+                onVisibleChannelsChange={handleVisibleChannelsChange}
+                epgConfigured={epgConfigured}
+              />
+            ) : (
+              <>
+                <div className="player-performance-panel-background flex shrink-0 items-center border-violet-950/10 border-b bg-white/44 shadow-[0_8px_24px_rgba(var(--pg-rgb),0.045)] backdrop-blur-xl dark:border-violet-100/10 dark:bg-[linear-gradient(90deg,var(--pg-bg-dark-a),var(--pg-bg-dark-b))]">
+                  {(["channels", "epg"] as const).map((view) => (
+                    <button
+                      type="button"
+                      key={view}
+                      onClick={() => handleSidebarViewChange(view)}
+                      className={clsx(
+                        "player-performance-motion min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap border-b-2 px-3 py-2 text-center font-semibold text-xs leading-5 tracking-[0.01em] transition-[color,background-color,border-color,box-shadow] md:px-4 md:py-3 md:text-sm",
+                        selectedSidebarView === view
+                          ? "border-violet-500 bg-[linear-gradient(to_top,rgba(var(--pg-rgb),0.12),transparent)] text-violet-700 shadow-[inset_0_-1px_0_rgba(var(--pg-rgb),0.18)] dark:border-violet-300 dark:text-violet-200"
+                          : "cursor-pointer border-transparent text-slate-500 hover:bg-violet-400/5 hover:text-violet-700 dark:text-slate-400 dark:hover:text-violet-100",
+                      )}
+                    >
+                      {view === "channels" ? `${t("channels")} (${metadata?.channels.length || 0})` : t("programGuide")}
+                    </button>
+                  ))}
+                </div>
 
-            {/* Sidebar Content */}
-            <div className="flex-1 overflow-hidden">
-              <Activity mode={renderedSidebarView === "channels" ? "visible" : "hidden"}>
-                <ChannelList
-                  channels={metadata?.channels}
-                  groups={metadata?.groups}
-                  currentChannel={currentChannel}
-                  onChannelSelect={selectChannel}
-                  locale={locale}
-                  settingsSlot={settingsSlot}
-                  epgData={epgData}
-                />
-              </Activity>
-              <Activity mode={renderedSidebarView === "epg" ? "visible" : "hidden"}>
-                <EPGView
-                  channelId={currentChannel ? getEPGChannelId(currentChannel, epgData) : null}
-                  epgData={epgData}
-                  onProgramSelect={handleProgramSelect}
-                  locale={locale}
-                  supportsCatchup={!!currentChannel?.sources.some((s) => s.catchup && s.catchupSource)}
-                  currentPlayingProgram={currentVideoProgram}
-                />
-              </Activity>
-            </div>
+                <div className="flex-1 overflow-hidden">
+                  <Activity mode={renderedSidebarView === "channels" ? "visible" : "hidden"}>
+                    <ChannelList
+                      channels={metadata?.channels}
+                      groups={metadata?.groups}
+                      currentChannel={currentChannel}
+                      onChannelSelect={handleChannelSelectAndHide}
+                      locale={locale}
+                      settingsSlot={settingsSlot}
+                      epgData={epgData}
+                    />
+                  </Activity>
+                  <Activity mode={renderedSidebarView === "epg" ? "visible" : "hidden"}>
+                    <EPGView
+                      channelId={currentChannel ? getEPGChannelId(currentChannel, epgData) ?? null : null}
+                      epgData={epgData}
+                      onProgramSelect={handleProgramSelect}
+                      locale={locale}
+                      supportsCatchup={!!currentChannel?.sources.some((s) => s.catchup && s.catchupSource)}
+                      currentPlayingProgram={currentVideoProgram}
+                    />
+                  </Activity>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
-        {/* Loading overlay shares the player viewport to avoid iOS standalone fixed-position gaps. */}
         {isLoading && (
           <div
             className={clsx(
-              "player-performance-page-background player-performance-motion absolute inset-0 z-50 flex items-center justify-center bg-[radial-gradient(circle_at_center,rgba(var(--pg-rgb),0.16),transparent_28%),radial-gradient(circle_at_65%_60%,rgba(217,70,239,0.14),transparent_35%),linear-gradient(145deg,#fbfaff,#f1edff)] pt-[max(1rem,env(safe-area-inset-top))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] dark:bg-[radial-gradient(circle_at_center,rgba(var(--pg-rgb),0.11),transparent_30%),radial-gradient(circle_at_65%_60%,rgba(217,70,239,0.12),transparent_38%),linear-gradient(145deg,#070516,#0d0a26)]",
+              "player-performance-page-background player-performance-motion absolute inset-0 z-50 flex items-center justify-center bg-[radial-gradient(circle_at_center,rgba(var(--pg-rgb),0.16),transparent_28%),radial-gradient(circle_at_65%_60%,rgba(var(--pg-rgb-2),0.14),transparent_35%),linear-gradient(145deg,var(--pg-bg-a),var(--pg-bg-b))] pt-[max(1rem,env(safe-area-inset-top))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] dark:bg-[radial-gradient(circle_at_center,rgba(var(--pg-rgb),0.11),transparent_30%),radial-gradient(circle_at_65%_60%,rgba(var(--pg-rgb-2),0.12),transparent_38%),linear-gradient(145deg,var(--pg-bg-dark-a),var(--pg-bg-dark-b))]",
               isRevealing && "animate-zoom-fade-out",
             )}
           >
             <div className="text-center space-y-4">
-              {/* Loading spinner */}
               <div className="player-performance-loading-spinner mx-auto h-12 w-12 animate-spin rounded-full border-4 border-violet-950/10 border-t-violet-500 border-r-(--pg-grad-b) shadow-[0_0_28px_rgba(var(--pg-rgb),0.22)] dark:border-violet-100/10 dark:border-t-violet-300 dark:border-r-(--pg-grad-b)" />
             </div>
           </div>
@@ -916,13 +954,13 @@ function PlayerPage() {
   const errorMessage = error ? t(error) : null;
 
   return (
-    <div className="player-performance-page-background player-performance-scope player-viewport-height overflow-y-auto bg-[radial-gradient(circle_at_18%_14%,rgba(var(--pg-rgb),0.16),transparent_28%),radial-gradient(circle_at_84%_82%,rgba(217,70,239,0.16),transparent_32%),linear-gradient(145deg,#fbfaff,#f1edff)] dark:bg-[radial-gradient(circle_at_18%_14%,rgba(var(--pg-rgb),0.1),transparent_30%),radial-gradient(circle_at_84%_82%,rgba(217,70,239,0.13),transparent_34%),linear-gradient(145deg,#070516,#0d0a26)]">
+    <div className="player-performance-page-background player-performance-scope player-viewport-height overflow-y-auto bg-[radial-gradient(circle_at_18%_14%,rgba(var(--pg-rgb),0.16),transparent_28%),radial-gradient(circle_at_84%_82%,rgba(var(--pg-rgb-2),0.16),transparent_32%),linear-gradient(145deg,var(--pg-bg-a),var(--pg-bg-b))] dark:bg-[radial-gradient(circle_at_18%_14%,rgba(var(--pg-rgb),0.1),transparent_30%),radial-gradient(circle_at_84%_82%,rgba(var(--pg-rgb-2),0.13),transparent_34%),linear-gradient(145deg,var(--pg-bg-dark-a),var(--pg-bg-dark-b))]">
       <title>{t("title")}</title>
       <div className="mx-auto flex min-h-full w-[calc(100%-2rem)] max-w-5xl items-center py-8 sm:w-[calc(100%-3rem)]">
-        <Card className="player-performance-panel-background min-w-0 w-full overflow-hidden rounded-3xl border-violet-900/10 bg-white/72 shadow-[0_28px_80px_rgba(91,33,182,0.16),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-2xl dark:border-violet-100/12 dark:bg-[linear-gradient(145deg,rgba(16,10,40,0.9),rgba(32,22,84,0.82))] dark:shadow-[0_30px_90px_rgba(9,4,26,0.62),inset_0_1px_0_rgba(255,255,255,0.08)]">
+        <Card className="player-performance-panel-background min-w-0 w-full overflow-hidden rounded-3xl border-violet-900/10 bg-white/72 shadow-[0_28px_80px_rgba(var(--pg-rgb),0.16),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-2xl dark:border-violet-100/12 dark:bg-[linear-gradient(145deg,rgba(2,6,23,0.9),rgba(15,23,42,0.82))] dark:shadow-[0_30px_90px_rgba(2,6,16,0.62),inset_0_1px_0_rgba(255,255,255,0.08)]">
           <div className="grid min-w-0 md:grid-cols-[minmax(0,1fr)_18rem]">
             <div className="min-w-0 p-6 sm:p-8 md:p-10">
-              <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl border border-rose-300/20 bg-[linear-gradient(145deg,rgba(251,113,133,0.16),rgba(217,70,239,0.12))] text-rose-500 shadow-[0_12px_28px_rgba(225,29,72,0.12)] dark:text-rose-300">
+              <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl border border-rose-300/20 bg-[linear-gradient(145deg,rgba(251,113,133,0.16),rgba(var(--pg-rgb-2),0.12))] text-rose-500 shadow-[0_12px_28px_rgba(225,29,72,0.12)] dark:text-rose-300">
                 <AlertTriangle className="h-6 w-6" aria-hidden="true" />
               </div>
 
@@ -957,7 +995,7 @@ function PlayerPage() {
                   type="button"
                   variant="outline"
                   onClick={loadPlaylist}
-                  className="w-full gap-2 rounded-xl border-primary/20 bg-violet-700 bg-[linear-gradient(135deg,#0e7490,#4338ca)] text-white shadow-[0_10px_28px_rgba(124,58,237,0.24)] transition-[color,background-color,border-color] hover:border-primary/30 hover:bg-violet-700 hover:bg-[linear-gradient(135deg,#0e7490,#4338ca)] hover:text-white sm:w-auto"
+                  className="w-full gap-2 rounded-xl border-primary/20 bg-violet-700 bg-[linear-gradient(135deg,var(--pg-grad-a),var(--pg-grad-c))] text-white shadow-[0_10px_28px_rgba(var(--pg-rgb),0.24)] transition-[color,background-color,border-color] hover:border-primary/30 hover:bg-[linear-gradient(135deg,var(--pg-grad-a),var(--pg-grad-c))] hover:text-white sm:w-auto"
                 >
                   <RefreshCw className="h-4 w-4" aria-hidden="true" />
                   {t("retry")}
@@ -975,7 +1013,7 @@ function PlayerPage() {
               </div>
             </div>
 
-            <div className="min-w-0 border-violet-900/10 border-t bg-[linear-gradient(145deg,rgba(224,242,254,0.42),rgba(238,242,255,0.58))] p-6 dark:border-violet-100/10 dark:bg-[linear-gradient(145deg,rgba(38,16,78,0.22),rgba(40,18,92,0.3))] md:border-t-0 md:border-l md:p-8">
+            <div className="min-w-0 border-violet-900/10 border-t bg-[linear-gradient(145deg,rgba(255,255,255,0.5),rgba(248,250,252,0.6))] p-6 dark:border-violet-100/10 dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.24),rgba(15,23,42,0.34))] md:border-t-0 md:border-l md:p-8">
               <div className="text-sm font-semibold text-foreground">{t("playlistEndpoint")}</div>
               <div className="mt-3 break-all rounded-xl border border-violet-900/10 bg-white/55 px-3 py-2 font-mono text-foreground text-sm leading-5 shadow-inner dark:border-violet-100/10 dark:bg-slate-950/42">
                 {withToken("/api/player/channels")}
@@ -990,7 +1028,6 @@ function PlayerPage() {
   );
 }
 
-// Mount the app
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
     <PlayerPage />

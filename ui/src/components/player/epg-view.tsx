@@ -1,16 +1,10 @@
-import { clsx } from "clsx";
+/**
+ * EPG 节目单视图（clean-room 重写）。
+ * 按日期分组展示某频道的节目；高亮正在播放 / 可回看节目；点击节目回调（直播中则点 "现在"）。
+ * 当前/正在播放节目变化时自动滚动居中；点击节目后跳过的滚动由 nextScrollBehaviorRef 控制。
+ */
 import { Circle, History } from "lucide-react";
-import {
-  memo,
-  type RefObject,
-  useCallback,
-  useDeferredValue,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, type RefObject, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePlayerTranslation } from "../../hooks/use-player-translation";
 import type { EPGData } from "../../lib/epg-parser";
 import type { Locale } from "../../lib/locale";
@@ -22,10 +16,9 @@ import {
   PLAYER_LIST_SURFACE_HOVER_CLASS,
   PLAYER_LIST_SURFACE_SELECTED_CLASS,
 } from "./classnames";
-import { PlayerSelectedGlassLayers } from "./player-selected-glass-layers";
 
 interface EPGViewProps {
-  channelId: string | null;
+  channelId: string | null | undefined;
   epgData: EPGData;
   onProgramSelect: (programStart: Date, programEnd: Date) => void;
   locale: Locale;
@@ -60,18 +53,20 @@ const EPGProgramItem = memo(function EPGProgramItem({
   const formatTime = (date: Date) => date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const durationMinutes = Math.round((program.end.getTime() - program.start.getTime()) / 60000);
 
+  const clickable = (isPast && supportsCatchup) || onAir;
+
   return (
     <button
       type="button"
       ref={playing ? currentProgramRef : null}
-      className={clsx(
+      className={[
         PLAYER_LIST_SURFACE_BASE_CLASS,
         PLAYER_EPG_LIST_ITEM_CLASS,
-        "w-full text-left",
+        "flex w-full text-left",
         playing ? PLAYER_LIST_SURFACE_SELECTED_CLASS : PLAYER_LIST_SURFACE_DEFAULT_CLASS,
-        ((isPast && supportsCatchup) || onAir) && "cursor-pointer",
-        !playing && ((isPast && supportsCatchup) || onAir) && PLAYER_LIST_SURFACE_HOVER_CLASS,
-      )}
+        clickable && !playing && PLAYER_LIST_SURFACE_HOVER_CLASS,
+        clickable && "cursor-pointer",
+      ].join(" ")}
       onClick={() => {
         if (isPast && supportsCatchup) {
           handleProgramClick(program.start, program.end);
@@ -81,27 +76,26 @@ const EPGProgramItem = memo(function EPGProgramItem({
         }
       }}
     >
-      <PlayerSelectedGlassLayers visible={playing} />
       <div className="relative z-10 flex items-center gap-2 p-2 md:gap-2.5 md:p-2.5">
         <div className="flex shrink-0">
           {playing ? (
             <div
-              className="h-8 w-1 rounded-full bg-[linear-gradient(to_bottom,var(--pg-grad-a),var(--pg-grad-c))] shadow-[0_0_12px_rgba(var(--pg-rgb),0.48)] md:h-10"
+              className="h-8 w-0.5 rounded-full bg-[linear-gradient(to_bottom,var(--pg-grad-a),var(--pg-grad-c))] md:h-10"
               title={t("nowPlaying")}
             />
           ) : isPast && supportsCatchup ? (
-            <div className="h-8 w-1 rounded-full bg-slate-400/25 dark:bg-violet-100/18 md:h-10" title={t("replay")} />
+            <div className="h-8 w-0.5 rounded-full bg-slate-400/25 dark:bg-violet-100/18 md:h-10" title={t("replay")} />
           ) : (
-            <div className="h-8 md:h-10 w-1 rounded-full bg-transparent" />
+            <div className="h-8 w-0.5 rounded-full bg-transparent md:h-10" />
           )}
         </div>
 
         <div className="flex w-[4.75rem] shrink-0 flex-col items-end md:w-[5.25rem]">
           <span
-            className={clsx(
+            className={[
               "whitespace-nowrap font-semibold text-xs tabular-nums leading-tight md:text-sm",
               playing && "text-violet-700 dark:text-violet-200",
-            )}
+            ].join(" ")}
           >
             {formatTime(program.start)}
           </span>
@@ -154,11 +148,10 @@ const EPGProgramList = memo(function EPGProgramList({
   supportsCatchup,
 }: EPGProgramListProps) {
   const t = usePlayerTranslation(locale);
-  const formatRelativeDate = (date: Date) => {
-    const today = new Date(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate());
-    const targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const daysDiff = Math.floor((targetDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 
+  const formatRelativeDate = (date: Date) => {
+    const today = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const daysDiff = Math.floor((date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
     switch (daysDiff) {
       case 0:
         return t("today");
@@ -180,7 +173,7 @@ const EPGProgramList = memo(function EPGProgramList({
     const date = new Date(dateKey);
     return (
       <div key={dateKey} className="relative">
-        <div className="player-performance-epg-header sticky top-0 z-10 border-violet-950/10 border-b bg-white/66 px-3 py-1.5 shadow-[0_8px_20px_rgba(91,33,182,0.06)] backdrop-blur-2xl dark:border-violet-100/10 dark:bg-[linear-gradient(90deg,#151c32,#25223f)] dark:shadow-[0_8px_20px_rgba(0,0,0,0.18)] md:px-4 md:py-2">
+        <div className="player-performance-epg-header sticky top-0 z-10 border-violet-950/10 border-b bg-white/85 px-3 py-1.5 backdrop-blur-xl dark:border-violet-100/10 dark:bg-slate-950/80 md:px-4 md:py-2">
           <h3 className="font-semibold text-violet-800 text-xs tracking-wide dark:text-violet-100 md:text-sm">
             {formatRelativeDate(date)}
           </h3>
@@ -207,75 +200,42 @@ const EPGProgramList = memo(function EPGProgramList({
   });
 });
 
-function EPGViewComponent({
-  channelId,
-  epgData,
-  onProgramSelect,
-  locale,
-  supportsCatchup,
-  currentPlayingProgram,
-}: EPGViewProps) {
+function EPGViewComponent({ channelId, epgData, onProgramSelect, locale, supportsCatchup, currentPlayingProgram }: EPGViewProps) {
   const t = usePlayerTranslation(locale);
   const currentProgramRef = useRef<HTMLButtonElement>(null);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const deferredCurrentTime = useDeferredValue(currentTime);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
+    const interval = window.setInterval(() => setCurrentTime(new Date()), 1000);
     return () => window.clearInterval(interval);
   }, []);
 
-  // Group programs by date
-  const programsByDate = useMemo(() => {
-    if (!channelId) return new Map<string, EPGProgram[]>();
-
+  const { programsByDate, channelPrograms } = useMemo(() => {
+    if (!channelId) return { programsByDate: new Map<string, EPGProgram[]>(), channelPrograms: [] as EPGProgram[] };
     const programs = epgData[channelId];
-    if (!programs || programs.length === 0) return new Map<string, EPGProgram[]>();
+    if (!programs || programs.length === 0) return { programsByDate: new Map<string, EPGProgram[]>(), channelPrograms: [] };
 
-    // Group all available programs by date (no date range filtering)
     const grouped = new Map<string, EPGProgram[]>();
-    programs.forEach((program) => {
-      const dateKey = new Date(
-        program.start.getFullYear(),
-        program.start.getMonth(),
-        program.start.getDate(),
-      ).toISOString();
-      const existing = grouped.get(dateKey) || [];
-      existing.push(program);
-      grouped.set(dateKey, existing);
-    });
-
-    return grouped;
+    for (const program of programs) {
+      const dateKey = new Date(program.start.getFullYear(), program.start.getMonth(), program.start.getDate()).toISOString();
+      const bucket = grouped.get(dateKey);
+      if (bucket) bucket.push(program);
+      else grouped.set(dateKey, [program]);
+    }
+    return { programsByDate: grouped, channelPrograms: programs };
   }, [channelId, epgData]);
 
-  const channelPrograms = useMemo(() => {
-    if (!channelId) return [];
-    const programs = epgData[channelId];
-    if (!programs || programs.length === 0) return [];
-    // Return all available programs (no date range filtering)
-    return programs;
-  }, [channelId, epgData]);
-
-  // Auto-scroll to center current/playing program when it changes or channel changes
   useLayoutEffect(() => {
     window.setTimeout(() => {
       nextScrollBehaviorRef.current = "smooth";
     }, 0);
-
     if (!currentPlayingProgram || !channelId || !channelPrograms.length) return;
-    const requestedBehavior = nextScrollBehaviorRef.current;
-    if (requestedBehavior === "skip") return;
+    const requested = nextScrollBehaviorRef.current;
+    if (requested === "skip") return;
     const behavior =
-      requestedBehavior === "smooth" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
-        ? "instant"
-        : requestedBehavior;
-
-    currentProgramRef.current?.scrollIntoView({
-      behavior,
-      block: "center",
-    });
+      requested === "smooth" && window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : requested;
+    currentProgramRef.current?.scrollIntoView({ behavior, block: "center" });
   }, [currentPlayingProgram, channelId, channelPrograms]);
 
   const handleProgramClick = useCallback(

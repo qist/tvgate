@@ -1,4 +1,8 @@
-import { createContext, type ReactNode, useContext } from "react";
+/**
+ * 播放位置时间上下文（clean-room 重写）。
+ * 让深层子组件能读取当前播放时间（秒，相对媒体原点），无需逐层透传 prop。
+ */
+import { createContext, useContext, type ReactNode } from "react";
 
 const PlaybackTimeContext = createContext(0);
 
@@ -11,6 +15,6 @@ export function PlaybackTimeProvider({ children, value }: PlaybackTimeProviderPr
   return <PlaybackTimeContext value={value}>{children}</PlaybackTimeContext>;
 }
 
-export function usePlaybackTime() {
+export function usePlaybackTime(): number {
   return useContext(PlaybackTimeContext);
 }

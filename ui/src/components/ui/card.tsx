@@ -2,7 +2,9 @@ import { clsx } from "clsx";
 import * as React from "react";
 
 const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
-  <div ref={ref} className={clsx("rounded-2xl border text-card-foreground", className)} {...props} />
+  /* 卡面质感（半透明 + 轻模糊 + 极淡投影）定义在 index.css 的 @layer components（.ui-card），
+   * 这样页面上的背景/阴影工具类（如播放页 Card 的 bg-white/72）能正常覆盖它。 */
+  <div ref={ref} className={clsx("ui-card rounded-2xl border text-card-foreground", className)} {...props} />
 ));
 Card.displayName = "Card";
 

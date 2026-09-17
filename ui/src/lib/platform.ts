@@ -12,11 +12,6 @@ export function isLGWebOS(): boolean {
   return document.documentElement.dataset.playerPlatform === "lg-webos";
 }
 
-/** Whether the current browser is a desktop-class device eligible for MSE video processing. */
-export function isDesktopDevice(): boolean {
-  return document.documentElement.dataset.playerPlatform === "desktop";
-}
-
 /**
  * Whether `HTMLMediaElement.volume` actually affects playback.
  *

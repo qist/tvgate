@@ -18,9 +18,9 @@ export function ConfirmDialog({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="w-full max-w-sm rounded-[var(--radius-lg)] border bg-card p-6 shadow-lg"
+        className="w-full max-w-sm rounded-[var(--radius-lg)] border border-border/60 bg-card/90 p-6 shadow-[0_24px_60px_-30px_rgba(2,6,23,0.7)] backdrop-blur-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-1 flex items-center gap-2">

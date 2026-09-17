@@ -9,8 +9,6 @@ const base: TranslationDict = {
   retry: "Retry",
 
   // Header controls
-  hideSidebar: "Hide Sidebar",
-  showSidebar: "Show Sidebar",
   goLive: "Go Live",
 
   // Sidebar tabs
@@ -26,6 +24,7 @@ const base: TranslationDict = {
 
   // EPG view
   noEpgAvailable: "No program guide available for this channel",
+  epgNotConfigured: "No EPG source configured on the server (player.epg is empty)",
   onAir: "On Air",
   replay: "Replay",
   nowPlaying: "Now Playing",
@@ -56,6 +55,7 @@ const base: TranslationDict = {
   noRewindSupport: "This channel does not support rewind",
   codecError: "Unsupported video/audio codec. Your browser cannot decode this stream.",
   audioCodecError: "This browser does not support the audio codec. Video will continue without sound.",
+  videoCodecError: "This browser does not support the video codec (e.g. HEVC/4K). Playing audio only.",
   dismiss: "Dismiss",
   mseNotSupported: "Your browser does not support MSE (Media Source Extensions)",
   failedToPlay: "Failed to play",
@@ -121,11 +121,13 @@ const base: TranslationDict = {
   themeLight: "Light",
   themeDark: "Dark",
   appearance: "Interface style",
-  appearanceFancy: "Fancy",
-  appearanceSimple: "Simple",
   appearanceOcean: "Ocean",
   appearanceEmerald: "Emerald",
   appearanceSunset: "Sunset",
+  appearanceRose: "Rose",
+  appearanceAmber: "Amber",
+  appearanceSlate: "Slate",
+  panelAlpha40: "40%",
   panelAlpha: "Panel opacity",
   panelAlpha100: "Opaque",
   panelAlpha85: "85%",
@@ -138,6 +140,9 @@ const base: TranslationDict = {
   resolutionLimitHint: "Options below apply to ≤1080p only",
   deinterlace: "Auto Deinterlacing",
   pictureEnhancement: "Video Enhancement",
+  audioChannelMode: "Audio channels",
+  audioChannelModeStereo: "Stereo",
+  audioChannelModeMono: "Mono mix",
 };
 
 const zhHans: TranslationDict = {
@@ -147,8 +152,6 @@ const zhHans: TranslationDict = {
   retry: "重试",
 
   // 头部控制
-  hideSidebar: "隐藏侧边栏",
-  showSidebar: "显示侧边栏",
   goLive: "返回直播",
 
   // 侧边栏标签
@@ -164,6 +167,7 @@ const zhHans: TranslationDict = {
 
   // EPG 视图
   noEpgAvailable: "此频道暂无节目单",
+  epgNotConfigured: "服务端未配置 EPG 源（player.epg 为空）",
   onAir: "直播中",
   replay: "回放",
   nowPlaying: "正在播放",
@@ -194,6 +198,7 @@ const zhHans: TranslationDict = {
   noRewindSupport: "此频道不支持时移功能",
   codecError: "不支持的视频/音频编码。您的浏览器无法解码此流。",
   audioCodecError: "浏览器不支持此音频编码，视频将继续无声播放。",
+  videoCodecError: "浏览器不支持此视频编码（如 HEVC/4K），将仅播放声音。",
   dismiss: "关闭",
   mseNotSupported: "您的浏览器不支持 MSE (媒体源扩展)",
   failedToPlay: "播放失败",
@@ -258,11 +263,13 @@ const zhHans: TranslationDict = {
   themeLight: "浅色",
   themeDark: "深色",
   appearance: "界面风格",
-  appearanceFancy: "Fancy",
-  appearanceSimple: "Simple",
   appearanceOcean: "深海",
   appearanceEmerald: "翡翠",
   appearanceSunset: "落日",
+  appearanceRose: "玫红",
+  appearanceAmber: "琥珀",
+  appearanceSlate: "石墨",
+  panelAlpha40: "40%",
   panelAlpha: "面板透明度",
   panelAlpha100: "不透明",
   panelAlpha85: "85%",
@@ -275,6 +282,9 @@ const zhHans: TranslationDict = {
   resolutionLimitHint: "以下选项仅 1080p 及以下生效",
   deinterlace: "自动反交错",
   pictureEnhancement: "画质增强",
+  audioChannelMode: "声道",
+  audioChannelModeStereo: "立体声",
+  audioChannelModeMono: "单声道合成",
 };
 
 // 繁體中文（偏好香港用語）
@@ -285,8 +295,6 @@ const zhHant: TranslationDict = {
   retry: "重試",
 
   // 頭部控制
-  hideSidebar: "隱藏側邊欄",
-  showSidebar: "顯示側邊欄",
   goLive: "返回直播",
 
   // 側邊欄標籤
@@ -302,6 +310,7 @@ const zhHant: TranslationDict = {
 
   // EPG 視圖
   noEpgAvailable: "此頻道暫無節目表",
+  epgNotConfigured: "伺服端未設定 EPG 來源（player.epg 為空）",
   onAir: "直播中",
   replay: "重播",
   nowPlaying: "正在播放",
@@ -332,6 +341,7 @@ const zhHant: TranslationDict = {
   noRewindSupport: "此頻道不支援時移功能",
   codecError: "不支援的視頻/音頻編碼。您的瀏覽器無法解碼此串流。",
   audioCodecError: "瀏覽器不支援此音頻編碼，視頻將繼續無聲播放。",
+  videoCodecError: "瀏覽器不支援此視訊編碼（如 HEVC/4K），將僅播放聲音。",
   dismiss: "關閉",
   mseNotSupported: "您的瀏覽器不支援 MSE (媒體來源擴展)",
   failedToPlay: "播放失敗",
@@ -396,11 +406,13 @@ const zhHant: TranslationDict = {
   themeLight: "淺色",
   themeDark: "深色",
   appearance: "介面風格",
-  appearanceFancy: "Fancy",
-  appearanceSimple: "Simple",
   appearanceOcean: "深海",
   appearanceEmerald: "翡翠",
   appearanceSunset: "落日",
+  appearanceRose: "玫紅",
+  appearanceAmber: "琥珀",
+  appearanceSlate: "石墨",
+  panelAlpha40: "40%",
   panelAlpha: "面板透明度",
   panelAlpha100: "不透明",
   panelAlpha85: "85%",
@@ -413,6 +425,9 @@ const zhHant: TranslationDict = {
   resolutionLimitHint: "以下選項僅 1080p 及以下生效",
   deinterlace: "自動反交錯",
   pictureEnhancement: "畫質增強",
+  audioChannelMode: "聲道",
+  audioChannelModeStereo: "立體聲",
+  audioChannelModeMono: "單聲道合成",
 };
 
 export const translations: Record<Locale, TranslationDict> = {

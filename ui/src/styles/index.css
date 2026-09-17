@@ -3,6 +3,13 @@
 @tailwind utilities;
 
 :root {
+  /* 圆角标尺：大量组件用 rounded-[var(--radius)] / rounded-[var(--radius-lg)]，
+   * 这两个变量此前**从未定义**（任意值解析失败 → 直角），是后台"按钮/输入框很难看"的主因。 */
+  --radius: 0.625rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  /* 主色文字（浅底上可读的主色；后台由 .admin-app 按风格覆盖） */
+  --primary-text: 234 74% 42%;
   --background: 226 44% 97%;
   --foreground: 229 36% 14%;
   --card: 0 0% 100%;
@@ -44,6 +51,7 @@
   --border: 228 23% 22%;
   --input: 228 24% 24%;
   --ring: 234 89% 64%;
+  --primary-text: 234 89% 78%;
 }
 
 @layer base {
@@ -63,6 +71,26 @@
   select,
   textarea {
     font: inherit;
+  }
+}
+
+@layer components {
+  /* 卡片面：半透明 + 轻模糊 + 极淡投影（靠色彩与层次划分区块，不堆"立体感"）。
+   * 放在 components 层：页面上的背景、阴影、模糊等工具类可随时覆盖（播放页的 Card 即如此）。 */
+  .ui-card {
+    background-color: hsl(var(--card) / 0.85);
+    border-color: hsl(var(--border) / 0.6);
+    backdrop-filter: blur(4px);
+    box-shadow:
+      0 1px 2px rgba(2, 6, 23, 0.04),
+      0 16px 40px -32px rgba(2, 6, 23, 0.55);
+  }
+
+  .dark .ui-card {
+    background-color: hsl(var(--card) / 0.72);
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.3),
+      0 18px 44px -32px rgba(0, 0, 0, 0.9);
   }
 }
 
@@ -88,112 +116,231 @@
   height: 100vh;
 }
 
-/* ===== Win11 亚克力面板（节目单/侧栏透明度档位） =====
- * 设置里选择非"不透明"档位后启用：面板背景半透明 + 背景模糊 + 饱和度提升
- * （Fluent Acrylic 质感），透出页面光晕；文本/图标不透明保持可读性。
+/* 真实全屏：容器本身就是全屏元素，直接用它浏览器给的全屏盒（100%）。
+ * 若继续用 100dvh，进入/退出全屏时浏览器工具栏收缩动画会让 dvh 逐帧变化，
+ * 页面高度跟着变 → 画面上下抽动/闪屏（手机端尤其明显）。
+ */
+.player-viewport-height:fullscreen,
+.player-viewport-height:-webkit-full-screen {
+  height: 100%;
+}
+
+/* ===== 皮肤透明度（统一亚克力） =====
+ * 单一变量驱动播放器所有表面；非 100 档位叠加 backdrop blur + saturate。
+ * 纯自有实现，不依赖任何外部库/上游代码；低版本兼容仅用 rgba()/backdrop-filter（-webkit- 前缀）。
  * 档位由 usePlayerPanelAlpha 挂 html.panel-alpha-* 类。
  */
-html.panel-alpha-85 {
-  --pa: 0.85;
-  --pa-row: 0.32;
-}
+html.panel-alpha-85 { --panel-alpha: 0.85; --panel-row-alpha: 0.34; --panel-blur: 18px; }
+html.panel-alpha-70 { --panel-alpha: 0.70; --panel-row-alpha: 0.22; --panel-blur: 22px; }
+html.panel-alpha-55 { --panel-alpha: 0.55; --panel-row-alpha: 0.16; --panel-blur: 26px; }
+html.panel-alpha-40 { --panel-alpha: 0.40; --panel-row-alpha: 0.12; --panel-blur: 30px; }
 
-html.panel-alpha-70 {
-  --pa: 0.70;
-  --pa-row: 0.18;
-}
-
-html.panel-alpha-55 {
-  --pa: 0.55;
-  --pa-row: 0.15;
-}
-
-/* 设置弹窗（[role="dialog"]）不参与面板透明度：恢复原有样式 */
-html[class*="panel-alpha-"] .player-performance-panel-background:not([role="dialog"]) {
-  background-color: rgb(255 255 255 / var(--pa));
+/* 统一玻璃表面：**只作用于左侧浮层（分组/频道/节目栏 = 侧边栏）**。
+ * 视频区上的浮层（底部控制条、音量与提示遮罩、设置弹层、错误卡片）**不参与**透明度档位——
+ * 它们一旦被换 `background-image: none`，控制条的深色渐隐会变成一块白色半透明，
+ * 视觉上就成了压在视频上的一层白雾（用户实测反馈）。
+ */
+html[class*="panel-alpha-"] .player-performance-dock,
+html[class*="panel-alpha-"] .player-performance-dock .player-performance-panel-background:not([role="dialog"]),
+html[class*="panel-alpha-"] .player-performance-dock .player-performance-epg-header,
+html[class*="panel-alpha-"] .player-performance-dock .player-performance-channel-groups,
+html[class*="panel-alpha-"] .player-performance-dock .player-performance-input-background {
+  background-color: rgb(255 255 255 / var(--panel-alpha));
   background-image: none;
-  -webkit-backdrop-filter: blur(30px) saturate(160%);
-  backdrop-filter: blur(30px) saturate(160%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.55);
+  -webkit-backdrop-filter: blur(var(--panel-blur)) saturate(160%);
+  backdrop-filter: blur(var(--panel-blur)) saturate(160%);
+  /* 平面化：不留内高光（那圈亮线是"立体感"的主要来源） */
+  box-shadow: none;
+}
+html.dark[class*="panel-alpha-"] .player-performance-dock,
+html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-panel-background:not([role="dialog"]),
+html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-epg-header,
+html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-channel-groups,
+html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-input-background {
+  background-color: rgb(15 11 38 / var(--panel-alpha));
+  box-shadow: none;
 }
 
-html.dark[class*="panel-alpha-"] .player-performance-panel-background:not([role="dialog"]) {
-  background-color: rgb(15 11 38 / var(--pa));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07);
-}
-
-html[class*="panel-alpha-"] .player-performance-epg-header {
-  background-color: rgb(255 255 255 / calc(var(--pa) - 0.02));
+/* ===== 浮层列表平面化（TV 播放器风格） =====
+ * 一行一段文字，行与行之间只留一条细分隔线：**没有卡片底盘、没有内高光、没有投影**。
+ * 层级只靠"当前项 = 左侧强调条 + 极淡主色填充"表达；悬停/键盘焦点 = 更淡的一层 wash。
+ * 这三个类只挂给浮层内的列表行（频道行 / 节目行 / 分组行）。
+ */
+.player-performance-list-surface-default,
+.player-performance-list-surface-selected,
+.player-performance-list-surface-hover {
   background-image: none;
-  -webkit-backdrop-filter: blur(30px) saturate(160%);
-  backdrop-filter: blur(30px) saturate(160%);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.player-performance-list-surface-default {
+  position: relative;
+  background-color: transparent;
+}
+.player-performance-list-surface-default::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 1px;
+  background-color: rgb(15 23 42 / 0.055);
+  pointer-events: none;
+}
+html.dark .player-performance-list-surface-default::after {
+  background-color: rgb(255 255 255 / 0.05);
+}
+.player-performance-list-surface-hover:hover {
+  background-color: rgb(15 23 42 / 0.035);
+}
+html.dark .player-performance-list-surface-hover:hover {
+  background-color: rgb(255 255 255 / 0.045);
+}
+.player-performance-list-surface-selected {
+  position: relative;
+  background-color: rgba(var(--pg-rgb), 0.16);
+}
+html.dark .player-performance-list-surface-selected {
+  background-color: rgba(var(--pg-rgb), 0.2);
+}
+.player-performance-list-surface-selected::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background-color: rgba(var(--pg-rgb), 0.95);
+  pointer-events: none;
+}
+.player-performance-list-surface-selected::after {
+  content: none; /* 选中行不画分隔线 */
+}
+.player-performance-dock
+  :is(.player-performance-list-surface-default, .player-performance-list-surface-selected, .player-performance-list-surface-hover):focus-visible {
+  outline: 1px solid rgba(var(--pg-rgb), 0.55);
+  outline-offset: -1px;
 }
 
-html.dark[class*="panel-alpha-"] .player-performance-epg-header {
-  background-color: rgb(20 17 44 / var(--pa));
-}
-
-html[class*="panel-alpha-"] .player-performance-channel-groups {
-  background-color: rgb(238 242 255 / calc(var(--pa) - 0.12));
+/* 透明档位下：行仍然保持透明（面板本身已经更透），只把"当前项"的主色填充略微加深。 */
+html[class*="panel-alpha-"] .player-performance-dock .player-performance-list-surface-default {
+  background-color: transparent;
   background-image: none;
 }
-
-html.dark[class*="panel-alpha-"] .player-performance-channel-groups {
-  background-color: rgb(18 15 42 / var(--pa));
-}
-
-html[class*="panel-alpha-"] .player-performance-input-background {
-  background-color: rgb(255 255 255 / calc(var(--pa) - 0.06));
+html[class*="panel-alpha-"] .player-performance-dock .player-performance-list-surface-selected {
+  background-color: rgba(var(--pg-rgb), 0.18);
   background-image: none;
 }
-
-html.dark[class*="panel-alpha-"] .player-performance-input-background {
-  background-color: rgb(12 10 32 / var(--pa));
+html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-list-surface-selected {
+  background-color: rgba(var(--pg-rgb), 0.24);
 }
 
-/* 列表行：透明档位下更通透，选中行保持较高不透明度以突出 */
-html[class*="panel-alpha-"] .player-performance-list-surface-default {
-  background-color: rgb(255 255 255 / var(--pa-row));
-  background-image: none;
+/* ===== 媒体信息徽标（固定高透明，不参与"面板透明度"档位） =====
+ * 设计意图：徽标是画面上的信息注释，始终高透明 + 轻微模糊，不随面板透明度档位变化；
+ * 列表自由换行、不裁切（列不设 max-height / overflow-hidden，见 player-media-badges.tsx）。
+ */
+.player-performance-media-badge {
+  background-color: rgb(2 6 23 / 0.3);
+  border-color: rgb(255 255 255 / 0.14);
+  color: rgb(255 255 255 / 0.92);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
 }
 
-html.dark[class*="panel-alpha-"] .player-performance-list-surface-default {
-  background-color: rgb(20 16 46 / calc(var(--pa-row) * 0.8));
+/* 兜底：任何透明度档位都不改徽标底色（防止将来通配规则误伤） */
+html[class*="panel-alpha-"] .player-performance-media-badge {
+  background-color: rgb(2 6 23 / 0.3);
 }
 
-html[class*="panel-alpha-"] .player-performance-list-surface-selected {
-  background-color: rgb(238 236 253 / calc(var(--pa) * 0.9));
-  background-image: none;
-}
-
-html.dark[class*="panel-alpha-"] .player-performance-list-surface-selected {
-  background-color: rgb(46 16 101 / calc(var(--pa) * 0.9));
-}
-
-/* ===== 播放器配色风格（appearance: ocean / emerald / sunset） =====
- * 与 player-theme-simple 同属"界面风格"，由 usePlayerAppearance 挂到 <html>。
- * 实现：重定义 Tailwind 的 --color-violet-* 色阶变量 + 渐变/光晕变量，
- * 精准替换 UI 配色；完全不触碰 img/video，画面与台标色彩保持原样。
+/* ===== 播放页浮层侧栏（视频铺底 + 左侧浮层） =====
+ * 屏幕端（含 TV/大屏）视频铺满整屏，浮层叠在左侧：
+ *   默认两列（分组 + 频道）= 窄；点击竖排"节目单"把手 / 遥控器向右 → 展开第三列（EPG / 回看）= 宽；
+ *   遥控器向左 / 点击把手再次收起。
+ * 浮层展开时底部控制条整体右移让位（宽度同源于 --player-dock-w，两处永远对齐）。
+ * 注意：只绘制 / 移动 UI 自身，视频画面不叠加任何遮罩或透明度处理。
  */
 :root {
-  --pg-rgb: 139, 92, 246;
-  /* 主色光晕（violet-500） */
-  --pg-rgb-2: 217, 70, 239;
-  /* 副光晕（fuchsia-500） */
-  --pg-grad-a: #8b5cf6;
+  --player-dock-w: 30rem;
+}
+
+@media (min-width: 768px) {
+  .player-performance-dock {
+    width: var(--player-dock-w);
+  }
+
+  /* 收起：两列（分组 + 频道） */
+  .player-performance-dock-compact {
+    --player-dock-w: 30rem;
+  }
+
+  /* 展开：三列（分组 + 频道 + 节目单） */
+  .player-performance-dock-expanded {
+    --player-dock-w: 34rem;
+  }
+
+  html .player-performance-dock-open .player-performance-controls-position {
+    left: var(--player-dock-w);
+  }
+}
+
+@media (min-width: 1024px) {
+  .player-performance-dock-expanded {
+    --player-dock-w: 40rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .player-performance-dock-expanded {
+    --player-dock-w: 44rem;
+  }
+}
+
+/* ===== 播放器配色风格（appearance：ocean / emerald / sunset / rose / amber / slate）=====
+ * 这 6 套是**我们自己的设计**（原始主题 Fancy / Simple 已整体移除，含其名字）。
+ * 由 usePlayerAppearance 挂 `player-theme-<name>` 到 <html>：重定义 Tailwind 的
+ * --color-violet-* 色阶 + 渐变/光晕变量，精准替换 UI 配色；完全不触碰 img/video。
+ * 低性能档（performanceTier=constrained，见 ui/player.html）另由
+ * `[data-performance-tier="constrained"]` 叠加"平面化 + 关特效"（即原 Simple 那套抑制）。
+ */:root {
+  /* 默认 = 翠绿（emerald）：未挂主题类时的兜底，避免首帧闪紫色 */
+  --pg-rgb: 16, 185, 129;
+  /* 主色光晕（emerald-500） */
+  --pg-rgb-2: 45, 212, 191;
+  /* 副光晕（teal-400） */
+  --pg-grad-a: #10b981;
   /* 进度条/高亮渐变起点 */
-  --pg-grad-b: #d946ef;
+  --pg-grad-b: #2dd4bf;
   /* 渐变中点 */
-  --pg-grad-c: #6366f1;
+  --pg-grad-c: #047857;
   /* 渐变终点 */
+  --pg-rgb-light: 167 243 208;
+  /* 高光/次级色调（emerald-200） */
+  --pg-rgb-lighter: 209 250 229;
+  /* 近白高光（emerald-100） */
 }
 
 /* 页面底色渐变端点（透明档位光晕增强用，随配色风格覆盖） */
 :root {
-  --pg-bg-a: #fbfaff;
-  --pg-bg-b: #f1edff;
-  --pg-bg-dark-a: #070516;
-  --pg-bg-dark-b: #0d0a26;
+  --pg-bg-a: #f7fdfa;
+  --pg-bg-b: #e8fbf2;
+  --pg-bg-dark-a: #04140f;
+  --pg-bg-dark-b: #06251c;
+}
+
+/* 兜底色阶：未挂任何 `player-theme-*` 类时（引导脚本之前的首帧 / 异常）也用**默认翠绿**，
+ * 避免"打开页面先闪一下紫色"。三元组格式供 Tailwind 的 `rgb(var(--x) / <alpha-value>)` 使用。 */
+:root {
+  --color-violet-50: 236 253 245;
+  --color-violet-100: 209 250 229;
+  --color-violet-200: 167 243 208;
+  --color-violet-300: 110 231 183;
+  --color-violet-400: 52 211 153;
+  --color-violet-500: 16 185 129;
+  --color-violet-600: 5 150 105;
+  --color-violet-700: 4 120 87;
+  --color-violet-800: 6 95 70;
+  --color-violet-900: 6 78 59;
+  --color-violet-950: 2 44 34;
 }
 
 /* —— 深海（sky 蓝） —— */
@@ -203,17 +350,19 @@ html.player-theme-ocean {
   --pg-grad-a: #0ea5e9;
   --pg-grad-b: #38bdf8;
   --pg-grad-c: #2563eb;
-  --color-violet-50: rgb(245 243 255);
-  --color-violet-100: rgb(237 233 254);
-  --color-violet-200: rgb(221 214 254);
-  --color-violet-300: rgb(196 181 253);
-  --color-violet-400: rgb(167 139 250);
-  --color-violet-500: rgb(139 92 246);
-  --color-violet-600: rgb(124 58 237);
-  --color-violet-700: rgb(109 40 217);
-  --color-violet-800: rgb(91 33 182);
-  --color-violet-900: rgb(76 29 149);
-  --color-violet-950: rgb(46 16 101);
+  --pg-rgb-light: 186 230 253;
+  --pg-rgb-lighter: 224 242 254;
+  --color-violet-50: 245 243 255;
+  --color-violet-100: 237 233 254;
+  --color-violet-200: 221 214 254;
+  --color-violet-300: 196 181 253;
+  --color-violet-400: 167 139 250;
+  --color-violet-500: 139 92 246;
+  --color-violet-600: 124 58 237;
+  --color-violet-700: 109 40 217;
+  --color-violet-800: 91 33 182;
+  --color-violet-900: 76 29 149;
+  --color-violet-950: 46 16 101;
 }
 
 /* —— 翡翠（emerald 绿） —— */
@@ -223,17 +372,19 @@ html.player-theme-emerald {
   --pg-grad-a: #10b981;
   --pg-grad-b: #2dd4bf;
   --pg-grad-c: #047857;
-  --color-violet-50: rgb(236 253 245);
-  --color-violet-100: rgb(209 250 229);
-  --color-violet-200: rgb(167 243 208);
-  --color-violet-300: rgb(110 231 183);
-  --color-violet-400: rgb(52 211 153);
-  --color-violet-500: rgb(16 185 129);
-  --color-violet-600: rgb(5 150 105);
-  --color-violet-700: rgb(4 120 87);
-  --color-violet-800: rgb(6 95 70);
-  --color-violet-900: rgb(6 78 59);
-  --color-violet-950: rgb(2 44 34);
+  --pg-rgb-light: 167 243 208;
+  --pg-rgb-lighter: 209 250 229;
+  --color-violet-50: 236 253 245;
+  --color-violet-100: 209 250 229;
+  --color-violet-200: 167 243 208;
+  --color-violet-300: 110 231 183;
+  --color-violet-400: 52 211 153;
+  --color-violet-500: 16 185 129;
+  --color-violet-600: 5 150 105;
+  --color-violet-700: 4 120 87;
+  --color-violet-800: 6 95 70;
+  --color-violet-900: 6 78 59;
+  --color-violet-950: 2 44 34;
 }
 
 /* —— 落日（orange/rose 暖色） —— */
@@ -243,17 +394,19 @@ html.player-theme-sunset {
   --pg-grad-a: #f97316;
   --pg-grad-b: #f43f5e;
   --pg-grad-c: #f59e0b;
-  --color-violet-50: rgb(255 247 237);
-  --color-violet-100: rgb(255 237 213);
-  --color-violet-200: rgb(254 215 170);
-  --color-violet-300: rgb(253 186 116);
-  --color-violet-400: rgb(251 146 60);
-  --color-violet-500: rgb(249 115 22);
-  --color-violet-600: rgb(234 88 12);
-  --color-violet-700: rgb(194 65 12);
-  --color-violet-800: rgb(154 52 18);
-  --color-violet-900: rgb(124 45 18);
-  --color-violet-950: rgb(67 20 7);
+  --pg-rgb-light: 254 215 170;
+  --pg-rgb-lighter: 255 237 213;
+  --color-violet-50: 255 247 237;
+  --color-violet-100: 255 237 213;
+  --color-violet-200: 254 215 170;
+  --color-violet-300: 253 186 116;
+  --color-violet-400: 251 146 60;
+  --color-violet-500: 249 115 22;
+  --color-violet-600: 234 88 12;
+  --color-violet-700: 194 65 12;
+  --color-violet-800: 154 52 18;
+  --color-violet-900: 124 45 18;
+  --color-violet-950: 67 20 7;
 }
 
 /* 页面底色与光晕（覆盖 TSX 内联的紫调渐变；加载页/错误页同钩子统一生效） */
@@ -330,9 +483,258 @@ html.dark.player-theme-sunset .player-performance-panel-background {
   box-shadow: 0 22px 60px rgba(12, 5, 2, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
-/* Simple theme uses explicit semantic hooks to avoid matching every player descendant. */
-html.player-theme-simple .player-performance-effect,
-html.player-theme-simple :is(.player-performance-page-background,
+/* —— 玫红（rose 粉） —— */
+html.player-theme-rose {
+  --pg-rgb: 244, 63, 94;
+  --pg-rgb-2: 236, 72, 153;
+  --pg-grad-a: #f43f5e;
+  --pg-grad-b: #ec4899;
+  --pg-grad-c: #e11d48;
+  --pg-rgb-light: 254 205 211;
+  --pg-rgb-lighter: 255 228 230;
+  --color-violet-50: 255 241 242;
+  --color-violet-100: 255 228 230;
+  --color-violet-200: 254 205 211;
+  --color-violet-300: 253 164 175;
+  --color-violet-400: 251 113 133;
+  --color-violet-500: 244 63 94;
+  --color-violet-600: 225 29 72;
+  --color-violet-700: 190 18 60;
+  --color-violet-800: 159 18 57;
+  --color-violet-900: 136 19 55;
+  --color-violet-950: 76 5 25;
+}
+html.player-theme-rose .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 92% 8%, rgba(244, 63, 94, 0.13), transparent 28%),
+    radial-gradient(circle at 72% 92%, rgba(236, 72, 153, 0.11), transparent 32%),
+    linear-gradient(145deg, #fff5f6, #fde9ee);
+}
+html.dark.player-theme-rose .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 88% 10%, rgba(244, 63, 94, 0.1), transparent 30%),
+    radial-gradient(circle at 70% 88%, rgba(236, 72, 153, 0.1), transparent 34%),
+    linear-gradient(145deg, #140408, #260c12);
+}
+html.player-theme-rose .player-performance-panel-background {
+  background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(255, 228, 230, 0.82));
+  box-shadow: 0 20px 55px rgba(225, 29, 72, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+html.dark.player-theme-rose .player-performance-panel-background {
+  background-image: linear-gradient(145deg, rgba(20, 9, 14, 0.94), rgba(44, 12, 26, 0.9));
+  box-shadow: 0 22px 60px rgba(12, 5, 7, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* —— 琥珀（amber 金） —— */
+html.player-theme-amber {
+  --pg-rgb: 245, 158, 11;
+  --pg-rgb-2: 217, 119, 6;
+  --pg-grad-a: #f59e0b;
+  --pg-grad-b: #fbbf24;
+  --pg-grad-c: #d97706;
+  --pg-rgb-light: 253 230 138;
+  --pg-rgb-lighter: 254 243 199;
+  --color-violet-50: 255 251 235;
+  --color-violet-100: 254 243 199;
+  --color-violet-200: 253 230 138;
+  --color-violet-300: 252 211 77;
+  --color-violet-400: 251 191 36;
+  --color-violet-500: 245 158 11;
+  --color-violet-600: 217 119 6;
+  --color-violet-700: 180 83 9;
+  --color-violet-800: 146 64 14;
+  --color-violet-900: 120 53 15;
+  --color-violet-950: 69 26 3;
+}
+html.player-theme-amber .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 92% 8%, rgba(245, 158, 11, 0.13), transparent 28%),
+    radial-gradient(circle at 72% 92%, rgba(251, 191, 36, 0.11), transparent 32%),
+    linear-gradient(145deg, #fffbf3, #fdefd6);
+}
+html.dark.player-theme-amber .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 88% 10%, rgba(245, 158, 11, 0.1), transparent 30%),
+    radial-gradient(circle at 70% 88%, rgba(251, 191, 36, 0.1), transparent 34%),
+    linear-gradient(145deg, #140d04, #261a08);
+}
+html.player-theme-amber .player-performance-panel-background {
+  background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(254, 243, 199, 0.82));
+  box-shadow: 0 20px 55px rgba(217, 119, 6, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+html.dark.player-theme-amber .player-performance-panel-background {
+  background-image: linear-gradient(145deg, rgba(20, 14, 4, 0.94), rgba(44, 28, 10, 0.9));
+  box-shadow: 0 22px 60px rgba(12, 7, 2, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* —— 石墨（slate 中性灰蓝） —— */
+html.player-theme-slate {
+  --pg-rgb: 100, 116, 139;
+  --pg-rgb-2: 71, 85, 105;
+  --pg-grad-a: #64748b;
+  --pg-grad-b: #94a3b8;
+  --pg-grad-c: #475569;
+  --pg-rgb-light: 203 213 225;
+  --pg-rgb-lighter: 226 232 240;
+  --color-violet-50: 248 250 252;
+  --color-violet-100: 241 245 249;
+  --color-violet-200: 226 232 240;
+  --color-violet-300: 203 213 225;
+  --color-violet-400: 148 163 184;
+  --color-violet-500: 100 116 139;
+  --color-violet-600: 71 85 105;
+  --color-violet-700: 51 65 85;
+  --color-violet-800: 30 41 59;
+  --color-violet-900: 15 23 42;
+  --color-violet-950: 2 6 23;
+}
+html.player-theme-slate .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 92% 8%, rgba(100, 116, 139, 0.12), transparent 28%),
+    radial-gradient(circle at 72% 92%, rgba(71, 85, 105, 0.1), transparent 32%),
+    linear-gradient(145deg, #f6f8fb, #e9eef4);
+}
+html.dark.player-theme-slate .player-performance-page-background {
+  background-image:
+    radial-gradient(circle at 88% 10%, rgba(100, 116, 139, 0.1), transparent 30%),
+    radial-gradient(circle at 70% 88%, rgba(71, 85, 105, 0.1), transparent 34%),
+    linear-gradient(145deg, #070b12, #0e1622);
+}
+html.player-theme-slate .player-performance-panel-background {
+  background-image: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(241, 245, 249, 0.82));
+  box-shadow: 0 20px 55px rgba(71, 85, 105, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+html.dark.player-theme-slate .player-performance-panel-background {
+  background-image: linear-gradient(145deg, rgba(8, 11, 18, 0.94), rgba(20, 28, 46, 0.9));
+  box-shadow: 0 22px 60px rgba(2, 6, 16, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* ===== 管理后台（.admin-app）配色：跟随「界面风格」=====
+ * 后台用的是语义色（--primary/--accent/--secondary/--ring/--border…），它们原本是写死的蓝紫、
+ * 与所选风格无关，所以切风格时后台几乎不变色。这里把语义色板**按风格重建**：
+ * 每套风格只给 hue/sat（--admin-h/--admin-s），明度按浅/深色模式统一推导，
+ * 于是 6 套风格 × 2 模式只需 8 处定义。播放器完全不受影响（它用 --pg-* 与 violet-*）。
+ */
+.admin-app {
+  --admin-h: 160;
+  --admin-s: 84%;
+  /* 浅色模式 */
+  --primary: var(--admin-h) var(--admin-s) 38%;
+  --primary-foreground: 0 0% 100%;
+  --primary-text: var(--admin-h) var(--admin-s) 32%;
+  --ring: var(--admin-h) var(--admin-s) 42%;
+  --accent: var(--admin-h) 44% 95%;
+  --accent-foreground: var(--admin-h) 55% 22%;
+  --secondary: var(--admin-h) 24% 95%;
+  --secondary-foreground: var(--admin-h) 34% 22%;
+  --muted: var(--admin-h) 22% 94%;
+  --muted-foreground: var(--admin-h) 12% 42%;
+  --border: var(--admin-h) 20% 88%;
+  --input: var(--admin-h) 22% 84%;
+  --background: var(--admin-h) 38% 97.5%;
+  --card: 0 0% 100%;
+  /* 极淡的风格色晕（不靠阴影堆立体感，靠色彩给层次） */
+  background-color: hsl(var(--background));
+  background-image:
+    radial-gradient(circle at 88% 0%, rgba(var(--pg-rgb), 0.1), transparent 40%),
+    radial-gradient(circle at 0% 100%, rgba(var(--pg-rgb-2), 0.08), transparent 44%);
+  background-attachment: fixed;
+}
+
+.dark .admin-app {
+  --primary: var(--admin-h) var(--admin-s) 52%;
+  --primary-foreground: var(--admin-h) 45% 10%;
+  --primary-text: var(--admin-h) 72% 74%;
+  --ring: var(--admin-h) var(--admin-s) 56%;
+  --accent: var(--admin-h) 30% 20%;
+  --accent-foreground: var(--admin-h) 62% 88%;
+  --secondary: var(--admin-h) 20% 18%;
+  --secondary-foreground: var(--admin-h) 22% 94%;
+  --muted: var(--admin-h) 16% 17%;
+  --muted-foreground: var(--admin-h) 12% 66%;
+  --border: var(--admin-h) 18% 24%;
+  --input: var(--admin-h) 18% 27%;
+  --background: var(--admin-h) 36% 7%;
+  --card: var(--admin-h) 30% 11%;
+  --popover: var(--admin-h) 32% 10%;
+  background-image:
+    radial-gradient(circle at 88% 0%, rgba(var(--pg-rgb), 0.12), transparent 42%),
+    radial-gradient(circle at 0% 100%, rgba(var(--pg-rgb-2), 0.09), transparent 46%);
+}
+
+/* 每套风格只改色相/饱和度 */
+html.player-theme-ocean .admin-app {
+  --admin-h: 199;
+  --admin-s: 89%;
+}
+html.player-theme-emerald .admin-app {
+  --admin-h: 160;
+  --admin-s: 84%;
+}
+html.player-theme-sunset .admin-app {
+  --admin-h: 25;
+  --admin-s: 92%;
+}
+html.player-theme-rose .admin-app {
+  --admin-h: 347;
+  --admin-s: 77%;
+}
+html.player-theme-amber .admin-app {
+  --admin-h: 38;
+  --admin-s: 88%;
+}
+html.player-theme-slate .admin-app {
+  --admin-h: 215;
+  --admin-s: 20%;
+}
+
+/* 页面标题：统一加一条风格色小竖条（后台各页首个 h1），省得逐页改 */
+.admin-app main h1:first-child {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.admin-app main h1:first-child::before {
+  content: "";
+  width: 0.25rem;
+  height: 1.1em;
+  border-radius: 9999px;
+  background-image: linear-gradient(180deg, rgb(var(--pg-rgb)), rgb(var(--pg-rgb-2)));
+  box-shadow: 0 0 10px rgba(var(--pg-rgb), 0.45);
+}
+
+/* 滚动条：默认滚动条在深色后台里很抢眼 —— 做细、透明底、悬停才显色 */
+.admin-app :is(nav, main, textarea, .overflow-y-auto, .overflow-auto)::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.admin-app :is(nav, main, textarea, .overflow-y-auto, .overflow-auto)::-webkit-scrollbar-track {
+  background: transparent;
+}
+.admin-app :is(nav, main, textarea, .overflow-y-auto, .overflow-auto)::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--foreground) / 0.16);
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-clip: content-box;
+}
+.admin-app :is(nav, main, textarea, .overflow-y-auto, .overflow-auto)::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--foreground) / 0.3);
+}
+.admin-app :is(nav, main, textarea, .overflow-y-auto, .overflow-auto) {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--foreground) / 0.22) transparent;
+}
+/* 选中文字用风格主色 */
+.admin-app ::selection {
+  background-color: hsl(var(--primary) / 0.26);
+}
+
+/* 低性能档（performanceTier=constrained）：用显式语义钩子做平面化，避免误伤播放器全部后代。 */
+html[data-performance-tier="constrained"] .player-performance-effect,
+html[data-performance-tier="constrained"] :is(.player-performance-page-background,
   .player-performance-panel-background,
   .player-performance-overlay-background,
   .player-performance-warning-background,
@@ -355,25 +757,25 @@ html.player-theme-simple :is(.player-performance-page-background,
   filter: none;
 }
 
-html.player-theme-simple .player-performance-gradient {
+html[data-performance-tier="constrained"] .player-performance-gradient {
   background-image: none;
 }
 
-html.player-theme-simple .player-performance-decoration {
+html[data-performance-tier="constrained"] .player-performance-decoration {
   display: none;
 }
 
-html.player-theme-simple {
+html[data-performance-tier="constrained"] {
   text-rendering: auto;
 }
 
-html.player-theme-simple body {
+html[data-performance-tier="constrained"] body {
   font-feature-settings: normal;
 }
 
-html.player-theme-simple .player-performance-motion,
-html.player-theme-simple .player-performance-motion::before,
-html.player-theme-simple .player-performance-motion::after {
+html[data-performance-tier="constrained"] .player-performance-motion,
+html[data-performance-tier="constrained"] .player-performance-motion::before,
+html[data-performance-tier="constrained"] .player-performance-motion::after {
   scroll-behavior: auto;
   animation-duration: 0.01ms;
   animation-iteration-count: 1;
@@ -381,64 +783,64 @@ html.player-theme-simple .player-performance-motion::after {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  html.player-theme-simple .player-performance-loading-spinner {
+  html[data-performance-tier="constrained"] .player-performance-loading-spinner {
     animation-duration: 1s;
     animation-iteration-count: infinite;
   }
 }
 
-html.player-theme-simple .player-performance-page-background {
+html[data-performance-tier="constrained"] .player-performance-page-background {
   background-color: #f1f5f9;
   background-image: none;
 }
 
-html.player-theme-simple .player-performance-panel-background {
+html[data-performance-tier="constrained"] .player-performance-panel-background {
   background-color: #ffffff;
   background-image: none;
 }
 
-html.dark.player-theme-simple .player-performance-panel-background {
+html.dark[data-performance-tier="constrained"] .player-performance-panel-background {
   background-color: #0f172a;
 }
 
-html.player-theme-simple .player-performance-overlay-background {
+html[data-performance-tier="constrained"] .player-performance-overlay-background {
   background-color: #0f172a;
   background-image: none;
   border-color: #475569;
 }
 
-html.player-theme-simple .player-performance-warning-background {
+html[data-performance-tier="constrained"] .player-performance-warning-background {
   border-color: #854d0e;
   background-color: #2b2111;
   background-image: none;
 }
 
-html.player-theme-simple .player-performance-error-backdrop {
+html[data-performance-tier="constrained"] .player-performance-error-backdrop {
   background-color: #140b18;
   background-image: none;
 }
 
-html.player-theme-simple .player-performance-error-background {
+html[data-performance-tier="constrained"] .player-performance-error-background {
   border-color: #9f1239;
   background-color: #2a1226;
   background-image: none;
 }
 
-html.dark.player-theme-simple .player-performance-page-background {
+html.dark[data-performance-tier="constrained"] .player-performance-page-background {
   background-color: #070516;
 }
 
-html.player-theme-simple .player-performance-video-background {
+html[data-performance-tier="constrained"] .player-performance-video-background {
   background-color: #01030a;
   background-image: none;
 }
 
-html.player-theme-simple .player-performance-controls-position {
+html[data-performance-tier="constrained"] .player-performance-controls-position {
   right: 0;
   left: 0;
 }
 
-html.player-theme-simple .player-performance-controls-background {
+html[data-performance-tier="constrained"] .player-performance-controls-background {
   width: auto;
   margin-right: 1rem;
   margin-bottom: 1rem;
@@ -454,12 +856,12 @@ html.player-theme-simple .player-performance-controls-background {
   background-image: none;
 }
 
-html.player-theme-simple .player-performance-controls-background.player-performance-controls-with-timeline {
+html[data-performance-tier="constrained"] .player-performance-controls-background.player-performance-controls-with-timeline {
   padding-top: 0.75rem;
 }
 
 @media (min-width: 48rem) {
-  html.player-theme-simple .player-performance-controls-background {
+  html[data-performance-tier="constrained"] .player-performance-controls-background {
     margin-right: 2rem;
     margin-bottom: 2rem;
     margin-left: 2rem;
@@ -470,13 +872,13 @@ html.player-theme-simple .player-performance-controls-background.player-performa
     gap: 0.5rem;
   }
 
-  html.player-theme-simple .player-performance-controls-background.player-performance-controls-with-timeline {
+  html[data-performance-tier="constrained"] .player-performance-controls-background.player-performance-controls-with-timeline {
     padding-top: 1rem;
   }
 }
 
 @container video (max-height: 320px) {
-  html.player-theme-simple .player-performance-controls-background {
+  html[data-performance-tier="constrained"] .player-performance-controls-background {
     margin-right: 0.5rem;
     margin-bottom: 0.5rem;
     margin-left: 0.5rem;
@@ -488,13 +890,13 @@ html.player-theme-simple .player-performance-controls-background.player-performa
     border-radius: 0.5rem;
   }
 
-  html.player-theme-simple .player-performance-controls-background.player-performance-controls-with-timeline {
+  html[data-performance-tier="constrained"] .player-performance-controls-background.player-performance-controls-with-timeline {
     padding-top: 0.5rem;
   }
 }
 
 @container video (max-height: 220px) {
-  html.player-theme-simple .player-performance-controls-background {
+  html[data-performance-tier="constrained"] .player-performance-controls-background {
     margin-right: 0.25rem;
     margin-bottom: 0.25rem;
     margin-left: 0.25rem;
@@ -502,89 +904,89 @@ html.player-theme-simple .player-performance-controls-background.player-performa
     padding-bottom: 0.125rem;
   }
 
-  html.player-theme-simple .player-performance-controls-background.player-performance-controls-with-timeline {
+  html[data-performance-tier="constrained"] .player-performance-controls-background.player-performance-controls-with-timeline {
     padding-top: 0.25rem;
   }
 }
 
-html.player-theme-simple .player-performance-progress-track {
+html[data-performance-tier="constrained"] .player-performance-progress-track {
   background-color: #334155;
 }
 
-html.player-theme-simple .player-performance-progress-fill {
-  background-color: #8b5cf6;
+html[data-performance-tier="constrained"] .player-performance-progress-fill {
+  background-color: var(--pg-grad-a);
   background-image: none;
 }
 
-html.player-theme-simple .player-performance-logo-background {
-  background-color: #2a1d52;
+html[data-performance-tier="constrained"] .player-performance-logo-background {
+  background-color: #0f172a;
   background-image: none;
 }
 
-html.player-theme-simple .player-performance-epg-header {
+html[data-performance-tier="constrained"] .player-performance-epg-header {
   background-color: #ffffff;
   background-image: none;
 }
 
-html.dark.player-theme-simple .player-performance-epg-header {
+html.dark[data-performance-tier="constrained"] .player-performance-epg-header {
   background-color: #070516;
 }
 
-html.player-theme-simple .player-performance-list-surface-selected {
+html[data-performance-tier="constrained"] .player-performance-list-surface-selected {
   background-color: #ede9fe;
   background-image: none;
 }
 
-html.dark.player-theme-simple .player-performance-list-surface-selected {
+html.dark[data-performance-tier="constrained"] .player-performance-list-surface-selected {
   background-color: #2e1065;
 }
 
-html.player-theme-simple .player-performance-list-surface-default {
+html[data-performance-tier="constrained"] .player-performance-list-surface-default {
   background-color: #ffffff;
   background-image: none;
 }
 
-html.dark.player-theme-simple .player-performance-list-surface-default {
+html.dark[data-performance-tier="constrained"] .player-performance-list-surface-default {
   background-color: #0f172a;
 }
 
-html.player-theme-simple .player-performance-input-background,
-html.player-theme-simple .player-performance-group-default {
+html[data-performance-tier="constrained"] .player-performance-input-background,
+html[data-performance-tier="constrained"] .player-performance-group-default {
   background-color: #ffffff;
   background-image: none;
 }
 
-html.dark.player-theme-simple .player-performance-input-background,
-html.dark.player-theme-simple .player-performance-group-default {
+html.dark[data-performance-tier="constrained"] .player-performance-input-background,
+html.dark[data-performance-tier="constrained"] .player-performance-group-default {
   background-color: #0f172a;
 }
 
-html.player-theme-simple .player-performance-channel-groups {
+html[data-performance-tier="constrained"] .player-performance-channel-groups {
   background-color: #f1f5f9;
   background-image: none;
 }
 
-html.dark.player-theme-simple .player-performance-channel-groups {
+html.dark[data-performance-tier="constrained"] .player-performance-channel-groups {
   background-color: #1d1636;
 }
 
-html.player-theme-simple .player-performance-group-selected,
-html.player-theme-simple .player-performance-channel-number-selected {
+html[data-performance-tier="constrained"] .player-performance-group-selected,
+html[data-performance-tier="constrained"] .player-performance-channel-number-selected {
   background-color: #ddd6fe;
   background-image: none;
 }
 
-html.dark.player-theme-simple .player-performance-group-selected,
-html.dark.player-theme-simple .player-performance-channel-number-selected {
+html.dark[data-performance-tier="constrained"] .player-performance-group-selected,
+html.dark[data-performance-tier="constrained"] .player-performance-channel-number-selected {
   background-color: #4c1d95;
 }
 
-html.player-theme-simple .player-performance-channel-number-default {
+html[data-performance-tier="constrained"] .player-performance-channel-number-default {
   background-color: #ede9fe;
   background-image: none;
 }
 
-html.dark.player-theme-simple .player-performance-channel-number-default {
+html.dark[data-performance-tier="constrained"] .player-performance-channel-number-default {
   background-color: #1e293b;
 }
 
@@ -633,3 +1035,26 @@ html.dark[class*="panel-alpha-"] .player-performance-page-background {
 .flex-row.flex-col { flex-direction: row; }
 .flex-col-reverse.flex-row-reverse,
 .flex-row-reverse.flex-col-reverse { flex-direction: row-reverse; }
+/* ==========================================================================
+ * 侧边栏透明度：把"内层白色表面"也纳入档位
+ * 旧实现只覆盖了 dock 自身 / 面板头 / 搜索框 / 列表行，分组标签等仍是固定白底，
+ * 调低档位时侧栏几乎看不出变化（实测 alpha40 下分组标签仍是 rgba(255,255,255,.55)）。
+ * 用类名匹配兜底：以后新增白底表面也自动跟随，不必再逐个加 hook。
+ * ========================================================================== */
+html[class*="panel-alpha-"] .player-performance-dock [class*="bg-white/"] {
+  background-color: rgb(255 255 255 / calc(var(--panel-alpha) * 0.62));
+  background-image: none;
+}
+
+html.dark[class*="panel-alpha-"] .player-performance-dock [class*="bg-slate-9"],
+html.dark[class*="panel-alpha-"] .player-performance-dock [class*="bg-slate-8"],
+/* 深色下同一批"白底"表面必须一并改深色：否则低档位会把侧栏刷成白块，与深色播放器割裂 */
+html.dark[class*="panel-alpha-"] .player-performance-dock [class*="bg-white/"] {
+  background-color: rgb(15 11 38 / calc(var(--panel-alpha) * 0.62));
+  background-image: none;
+}
+
+/* 行内装饰层（选中行/标签的高光渐变）会重新把表面"压实"：随档位一起淡出 */
+html[class*="panel-alpha-"] .player-performance-dock .player-performance-decoration {
+  opacity: var(--panel-alpha);
+}

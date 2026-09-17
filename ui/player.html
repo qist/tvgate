@@ -56,16 +56,22 @@
         }
         root.dataset.performanceTier = performanceTier;
 
-        let playerAppearance = root.dataset.performanceTier === "constrained" ? "simple" : "fancy";
+        // 界面风格：我们自己的 6 套配色（原始 Fancy/Simple 已移除），默认 emerald（翠绿）。
+        // 必须与 use-player-appearance.ts 的 DEFAULT_APPEARANCE 保持一致，否则首帧会闪另一种配色。
+        var playerAppearances = ["ocean", "emerald", "sunset", "rose", "amber", "slate"];
+        var playerAppearance = "emerald";
         try {
-          const storedPlayerAppearance = localStorage.getItem("tvgate-player-appearance");
-          if (storedPlayerAppearance === "fancy" || storedPlayerAppearance === "simple") {
+          var storedPlayerAppearance = localStorage.getItem("tvgate-player-appearance");
+          if (playerAppearances.indexOf(storedPlayerAppearance) !== -1) {
             playerAppearance = storedPlayerAppearance;
           }
         } catch (error) {
           console.warn("Failed to apply stored player appearance early", error);
         }
-        root.classList.toggle("player-theme-simple", playerAppearance === "simple");
+        for (var appearanceIndex = 0; appearanceIndex < playerAppearances.length; appearanceIndex++) {
+          var appearanceName = playerAppearances[appearanceIndex];
+          root.classList.toggle("player-theme-" + appearanceName, playerAppearance === appearanceName);
+        }
 
         try {
           const storageKey = "tvgate-player-theme";

@@ -1,3 +1,14 @@
+/**
+ * violet 色阶改为**由 CSS 变量驱动**：`--color-violet-N` 由 `player-theme-*`（6 套配色）与
+ * `:root` 兜底（默认翠绿）给出，三元组格式供 `<alpha-value>` 使用。
+ * 这样 `bg-violet-500/24`、`text-violet-700` 等 161 处工具类会随配色风格真正换色
+ * （此前 Tailwind 把它们编译成写死的紫色，主题里的变量没人消费）。
+ */
+const VIOLET_SHADES = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
+const violet = Object.fromEntries(
+  VIOLET_SHADES.map((shade) => [shade, `rgb(var(--color-violet-${shade}) / <alpha-value>)`]),
+);
+
 /** @type {import('tailwindcss').Config} */
 export default {
   // 与 index.css 中 .dark 类的应用范围对齐（.dark 挂在 html/body，整棵树后代生效）。
@@ -55,6 +66,8 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // 播放器配色风格接管的主色阶（见上方 VIOLET_SHADES 说明）
+        violet,
       },
       borderRadius: {
         sm: "0.5rem",

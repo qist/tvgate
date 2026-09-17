@@ -17,8 +17,18 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
+/** 多订阅源文本框 ↔ 列表：一行一个源；空行与首尾空白忽略。 */
+function parseSources(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+}
+
 export function PlayerPage() {
   const [cfg, setCfg] = useState<PlayerConfig | null>(null);
+  /** 多订阅源用多行文本框编辑（一行一个），保存时转成数组提交 */
+  const [subsText, setSubsText] = useState("");
   const [notice, setNotice] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [copied, setCopied] = useState(false);
   // 独立播放入口外链（跟随当前访问的 host:port）。只展示 /pp——
@@ -48,7 +58,11 @@ export function PlayerPage() {
     }
   };
 
-  const refresh = useCallback(async () => setCfg(await getPlayer()), []);
+  const refresh = useCallback(async () => {
+    const next = await getPlayer();
+    setCfg(next);
+    setSubsText(next.subscriptions.join("\n"));
+  }, []);
   useEffect(() => {
     refresh();
   }, [refresh]);
@@ -56,13 +70,14 @@ export function PlayerPage() {
   if (!cfg) return <div className="text-sm text-muted-foreground">加载中…</div>;
 
   const save = async () => {
-    if (cfg.enabled && !cfg.subscription.trim()) {
-      setNotice({ type: "err", msg: "启用时必须填写订阅源" });
+    const subscriptions = parseSources(subsText);
+    if (cfg.enabled && !cfg.subscription.trim() && subscriptions.length === 0) {
+      setNotice({ type: "err", msg: "启用时至少要有一个订阅源（单源或多订阅源任填一处）" });
       setTimeout(() => setNotice(null), 4000);
       return;
     }
     try {
-      await savePlayer({ ...cfg, subscription: cfg.subscription.trim(), epg: cfg.epg.trim(), logo: cfg.logo.trim(), logo_dir: cfg.logo_dir.trim(), update_interval: cfg.update_interval.trim(), ua: cfg.ua.trim() });
+      await savePlayer({ ...cfg, subscriptions, subscription: cfg.subscription.trim(), epg: cfg.epg.trim(), logo: cfg.logo.trim(), logo_dir: cfg.logo_dir.trim(), update_interval: cfg.update_interval.trim(), ua: cfg.ua.trim() });
       setNotice({ type: "ok", msg: "配置保存成功，热加载将自动刷新" });
       setTimeout(refresh, 6500);
     } catch (e) {
@@ -124,7 +139,7 @@ export function PlayerPage() {
           </div>
           <p className="text-xs text-muted-foreground">YAML 标记位（player.android_autoplay）：安卓客户端 App 读取该标记自行控制启动是否进入播放页；未配置默认不进入，显式开启后才自动进入。本服务不做任何行为控制。</p>
           <p className="text-xs text-muted-foreground">开启后挂载 /api/player/channels、/player/&lt;key&gt;、/api/player/epg 与播放页 /web/player；/pp/ 为独立播放页入口（不跳转、不暴露后台路径）</p>
-          <Field label="订阅源" hint="M3U 或 逗号TXT；此地址 = 允许拉取的源白名单，真实流地址不外露">
+          <Field label="订阅源" hint="M3U 或 逗号TXT；此地址 = 允许拉取的源白名单，真实流地址不外露。本栏也可直接写多个源（换行/逗号/分号分隔），更多源建议填下方「多订阅源」">
             <Input
               className="font-mono"
               value={cfg.subscription}
@@ -138,6 +153,11 @@ export function PlayerPage() {
                 <li><code className="font-mono text-violet-700 dark:text-violet-200">/opt/tvgate/tv.txt</code> — 本地绝对路径</li>
                 <li><code className="font-mono text-violet-700 dark:text-violet-200">file:///opt/tvgate/tv.txt</code> — file:// 前缀本地路径</li>
                 <li><code className="font-mono text-violet-700 dark:text-violet-200">php://sub/tv.txt</code> — 相对 PHP docroot（也可 http://&lt;host&gt;/php/sub.php?id=x）</li>
+                <li>
+                  <code className="font-mono text-violet-700 dark:text-violet-200">php://jsyd.php?id=all</code> /{" "}
+                  <code className="font-mono text-violet-700 dark:text-violet-200">php://php/jsyd.php?id=all</code>
+                  {" "}— <b className="text-foreground">脚本源</b>：由内嵌 phpgo 直接执行该脚本（不走 HTTP 回环），脚本输出即订阅内容；脚本返回 302 到 http(s) 地址时自动跟随一次
+                </li>
                 <li><code className="font-mono text-violet-700 dark:text-violet-200">tv.txt</code> / <code className="font-mono text-violet-700 dark:text-violet-200">sub</code> — 裸相对路径，基准为 docroot</li>
               </ul>
               <p className="pt-1">
@@ -148,7 +168,19 @@ export function PlayerPage() {
               </p>
             </div>
           </Field>
-          <Field label="txt 订阅的 EPG 模板（可选）" hint="含 {name}=频道名、{date}=日期；M3U 订阅用 x-tvg-url 的 XMLTV，无需填此项">
+          <Field
+            label="多订阅源（可选，一行一个）"
+            hint="与上方「订阅源」合并解析：先解析订阅源，再按顺序解析这里的每一项（同一地址只解析一次）。写法与订阅源完全相同（URL / 绝对路径 / file:// / php:// / docroot 相对路径，也可指向目录）。单个源拉取失败只跳过它自己，其余源照常加载；全部失败时保留上一次的频道表。保存后热加载自动生效，无需重启。"
+          >
+            <textarea
+              className="flex min-h-[5.5rem] w-full rounded-[var(--radius)] border border-input bg-background px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={subsText}
+              onChange={(e) => setSubsText(e.target.value)}
+              spellCheck={false}
+              placeholder={"http://172.18.173.88:8888/php/jsyd.php?id=all\n/opt/tvgate/tv2.txt\n/www/tv/"}
+            />
+          </Field>
+          <Field label="txt 订阅的 EPG 模板（可选）" hint="含 {name}=频道名、{date}=日期；也可填固定 XMLTV URL（如 xxx.xml.gz，整份节目单按频道名匹配，gzip 自动识别）；M3U 订阅用 x-tvg-url 的 XMLTV，无需填此项">
             <Input
               className="font-mono"
               value={cfg.epg}
@@ -173,7 +205,7 @@ export function PlayerPage() {
             />
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="订阅刷新间隔" hint="如 2h / 30m，留空用默认 2h">
+            <Field label="订阅刷新间隔" hint="如 2h / 30m，留空用默认 2h；整份 XMLTV EPG（epg 填固定 xml/xml.gz URL）与此共用同一时钟，同步刷新">
               <Input value={cfg.update_interval} onChange={(e) => setCfg({ ...cfg, update_interval: e.target.value })} placeholder="2h" />
             </Field>
             <Field label="默认 User-Agent（可选）" hint="请求上游（m3u8/分片）用；频道在 txt 里带 ua=xxx 则优先生效，否则用此默认。留空用内置浏览器 UA">

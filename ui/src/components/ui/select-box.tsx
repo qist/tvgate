@@ -24,7 +24,7 @@ export function SelectBox({
     >
       <select
         className={clsx(
-          "peer w-full cursor-pointer appearance-none border border-border/40 bg-background/70 font-semibold text-foreground shadow-none transition-[color,background-color,border-color,box-shadow] hover:border-primary/30 hover:bg-background/75 motion-reduce:transition-none focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 dark:bg-secondary/72",
+          "peer w-full cursor-pointer appearance-none border border-border/50 bg-background/70 font-semibold text-foreground shadow-none backdrop-blur-sm transition-[color,background-color,border-color,box-shadow] hover:border-primary/35 hover:bg-background/80 motion-reduce:transition-none focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-secondary/50",
           variant === "sm" ? "h-8 rounded-lg px-2.5 pr-8 text-xs" : "h-9 rounded-[var(--radius)] px-3 pr-10 text-sm",
           className,
         )}

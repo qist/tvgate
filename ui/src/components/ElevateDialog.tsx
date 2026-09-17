@@ -26,8 +26,8 @@ export function ElevateDialog({ onDone, onClose }: { onDone: () => void; onClose
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-sm rounded-[var(--radius-lg)] border bg-card p-6 shadow-lg">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-[var(--radius-lg)] border border-border/60 bg-card/90 p-6 shadow-[0_24px_60px_-30px_rgba(2,6,23,0.7)] backdrop-blur-xl">
         <div className="mb-1 flex items-center gap-2">
           <Lock className="h-4 w-4 text-primary" />
           <h2 className="text-base font-semibold">二次验证</h2>

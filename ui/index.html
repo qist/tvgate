@@ -5,9 +5,40 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
     <title>管理后台</title>
+    <script>
+      // 首帧前应用界面风格（6 套配色）与深浅主题，避免加载瞬间闪默认色。
+      // 风格存储键与播放页共用；默认值/候选列表必须与 src/types/ui.ts、lib/appearance.ts 一致。
+      (() => {
+        const root = document.documentElement;
+        const names = ["ocean", "emerald", "sunset", "rose", "amber", "slate"];
+        let appearance = "emerald";
+        try {
+          const stored = localStorage.getItem("tvgate-player-appearance");
+          if (stored && names.indexOf(stored) !== -1) appearance = stored;
+        } catch (error) {
+          console.warn("Failed to apply stored appearance early", error);
+        }
+        for (let i = 0; i < names.length; i++) {
+          root.classList.toggle("player-theme-" + names[i], appearance === names[i]);
+        }
+
+        try {
+          const mode = localStorage.getItem("tvgate.theme");
+          const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          // mode: "dark" 一定深色；"light" 一定浅色；"auto"/未设置 跟随系统
+          const dark = mode === "dark" || (mode !== "light" && prefersDark);
+          root.classList.toggle("dark", dark);
+          root.style.colorScheme = dark ? "dark" : "light";
+        } catch (error) {
+          console.warn("Failed to apply stored theme early", error);
+        }
+      })();
+    </script>
+    <link href="/src/styles/index.css" rel="stylesheet" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
+
 </html>

@@ -1,8 +1,14 @@
+/**
+ * 媒体信息徽章（clean-room 重写）。
+ * 把引擎上报的 PlayerMediaInfo 格式化为可读徽章：分辨率/帧率/视频编码/音频编码/声道/动态范围/码率。
+ * 徽标本身是**固定高透明**样式（`.player-performance-media-badge`），不参与"面板透明度"档位；
+ * 列表不裁切（自由换行），保证所有徽章都完整可见。
+ */
 import type { ReactNode } from "react";
 import { usePlayerTranslation } from "../../hooks/use-player-translation";
 import type { Locale } from "../../lib/locale";
-import type { PlayerMediaInfo, PlayerRenderState, PlayerVideoScanType } from "../../playback-engine";
-import { identifyAudioCodec, identifyVideoCodec } from "../../playback-engine/media-codecs";
+import { identifyAudioCodec, identifyVideoCodec } from "../../media-engine/media-codecs";
+import type { PlayerMediaInfo, PlayerRenderState } from "../../media-engine";
 import { Badge } from "../ui/badge";
 
 interface PlayerMediaBadgesProps {
@@ -51,73 +57,62 @@ function formatAudioCodec(codec: string | undefined): string | null {
   }
 }
 
-function formatResolution(mediaInfo: PlayerMediaInfo, scanType: PlayerVideoScanType | undefined): string | null {
-  const width = mediaInfo.video?.width;
-  const height = mediaInfo.video?.height;
+function formatResolution(height: number | undefined, width: number | undefined, scanType: string | undefined): string | null {
   if (!height || !Number.isFinite(height) || height <= 0) return null;
-
-  const is4kResolution = (width !== undefined && Number.isFinite(width) && width >= 3840) || Math.round(height) >= 2160;
-  if (is4kResolution) return "4K";
-
-  const scanSuffix = scanType === "interlaced" ? "i" : "p";
-  return `${Math.round(height)}${scanSuffix}`;
+  const isUhd = (width !== undefined && Number.isFinite(width) && width >= 3840) || Math.round(height) >= 2160;
+  if (isUhd) return "4K";
+  const scan = scanType === "interlaced" ? "i" : "p";
+  return `${Math.round(height)}${scan}`;
 }
 
-function formatFrameRate(frameRate: number | undefined, doubleFrameRate: boolean): string | null {
+function formatFrameRate(frameRate: number | undefined, doubled: boolean): string | null {
   if (!frameRate || !Number.isFinite(frameRate) || frameRate <= 0) return null;
-
-  const renderedFrameRate = doubleFrameRate ? frameRate * 2 : frameRate;
-  const roundedFrameRate = Math.round(renderedFrameRate * 100) / 100;
-  return `${roundedFrameRate} FPS`;
+  const shown = doubled ? frameRate * 2 : frameRate;
+  return `${Math.round(shown * 100) / 100} FPS`;
 }
 
-function formatDynamicRange(dynamicRange: NonNullable<PlayerMediaInfo["video"]>["dynamicRange"]): string | null {
-  if (dynamicRange === "sdr") return "SDR";
-  if (dynamicRange === "hdr10") return "HDR10";
-  if (dynamicRange === "hlg") return "HLG";
+function formatDynamicRange(range: string | undefined): string | null {
+  if (range === "sdr") return "SDR";
+  if (range === "hdr10") return "HDR10";
+  if (range === "hlg") return "HLG";
   return null;
 }
 
 function formatBitrate(bitsPerSecond: number | undefined): string | null {
   if (!bitsPerSecond || !Number.isFinite(bitsPerSecond) || bitsPerSecond <= 0) return null;
-
   if (bitsPerSecond >= 1_000_000) {
-    const megabitsPerSecond = Math.round((bitsPerSecond / 1_000_000) * 100) / 100;
-    return `${megabitsPerSecond} Mbps`;
+    return `${Math.round((bitsPerSecond / 1_000_000) * 100) / 100} Mbps`;
   }
+  return `${Math.round((bitsPerSecond / 1_000) * 10) / 10} Kbps`;
+}
 
-  const kilobitsPerSecond = Math.round((bitsPerSecond / 1_000) * 10) / 10;
-  return `${kilobitsPerSecond} Kbps`;
+function formatChannels(channelCount: number | undefined, t: (key: string) => string): string | null {
+  if (!channelCount || !Number.isFinite(channelCount) || channelCount <= 0) return null;
+  if (channelCount === 1) return t("mediaInfoMono");
+  if (channelCount === 2) return t("mediaInfoStereo");
+  if (channelCount === 6) return "5.1";
+  if (channelCount === 8) return "7.1";
+  return `${Math.round(channelCount)} ${t("mediaInfoChannels")}`;
 }
 
 export function PlayerMediaBadges({ mediaInfo, locale, renderState }: PlayerMediaBadgesProps) {
   const t = usePlayerTranslation(locale);
-
   if (!mediaInfo) return null;
 
-  const videoCodec = formatVideoCodec(mediaInfo.video?.codec);
-  const resolution = formatResolution(mediaInfo, mediaInfo.video?.scanType);
-  const frameRate = formatFrameRate(mediaInfo.video?.frameRate, renderState.deinterlacing);
-  const dynamicRange = formatDynamicRange(mediaInfo.video?.dynamicRange);
-  const audioCodec = formatAudioCodec(mediaInfo.audio?.codec);
-  const channelCount = mediaInfo.audio?.channelCount;
-  const audioChannels =
-    channelCount === 1
-      ? t("mediaInfoMono")
-      : channelCount === 2
-        ? t("mediaInfoStereo")
-        : channelCount === 6
-          ? "5.1"
-          : channelCount === 8
-            ? "7.1"
-            : channelCount && Number.isFinite(channelCount) && channelCount > 0
-              ? `${Math.round(channelCount)} ${t("mediaInfoChannels")}`
-              : null;
+  const video = mediaInfo.video;
+  const audio = mediaInfo.audio;
+
+  const resolution = formatResolution(video?.height, video?.width, video?.scanType);
+  const frameRate = formatFrameRate(video?.frameRate, renderState.deinterlacing);
+  const videoCodec = formatVideoCodec(video?.codec);
+  const audioCodec = formatAudioCodec(audio?.codec);
+  const audioChannels = formatChannels(audio?.channelCount, t);
+  const dynamicRange = formatDynamicRange(video?.dynamicRange);
   const bitrate = formatBitrate(mediaInfo.bitrate?.bitsPerSecond);
-  const bitrateTooltip =
+  const bitrateSourceLabel =
     mediaInfo.bitrate?.source === "advertised" ? t("mediaInfoAdvertisedBitrate") : t("mediaInfoMeasuredBitrate");
 
-  const badges: Array<MediaBadgeValue | null> = [
+  const candidates: Array<MediaBadgeValue | null> = [
     resolution ? { key: "resolution", value: resolution, tooltip: `${t("mediaInfoResolution")}: ${resolution}` } : null,
     frameRate ? { key: "frame-rate", value: frameRate, tooltip: `${t("mediaInfoFrameRate")}: ${frameRate}` } : null,
     videoCodec
@@ -127,36 +122,28 @@ export function PlayerMediaBadges({ mediaInfo, locale, renderState }: PlayerMedi
       ? { key: "audio-codec", value: audioCodec, tooltip: `${t("mediaInfoAudioCodec")}: ${audioCodec}` }
       : null,
     audioChannels
-      ? {
-          key: "audio-channels",
-          value: audioChannels,
-          tooltip: `${t("mediaInfoAudioChannels")}: ${audioChannels}`,
-        }
+      ? { key: "audio-channels", value: audioChannels, tooltip: `${t("mediaInfoAudioChannels")}: ${audioChannels}` }
       : null,
     dynamicRange
-      ? {
-          key: "dynamic-range",
-          value: dynamicRange,
-          tooltip: `${t("mediaInfoDynamicRange")}: ${dynamicRange}`,
-        }
+      ? { key: "dynamic-range", value: dynamicRange, tooltip: `${t("mediaInfoDynamicRange")}: ${dynamicRange}` }
       : null,
-    bitrate ? { key: "bitrate", value: bitrate, tooltip: `${bitrateTooltip}: ${bitrate}` } : null,
+    bitrate ? { key: "bitrate", value: bitrate, tooltip: `${bitrateSourceLabel}: ${bitrate}` } : null,
   ];
-  const visibleBadges = badges.filter((badge): badge is MediaBadgeValue => badge !== null);
 
-  if (!visibleBadges.length) return null;
+  const badges = candidates.filter((b): b is MediaBadgeValue => b !== null);
+  if (!badges.length) return null;
 
   return (
     <ul
-      className="m-0 flex max-h-5 w-full min-w-0 touch-pan-x list-none flex-nowrap content-start items-center gap-x-1 gap-y-1 overflow-x-auto overflow-y-hidden overscroll-x-contain p-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:max-h-11 md:touch-auto md:flex-wrap md:overflow-hidden"
+      className="m-0 flex w-full min-w-0 list-none flex-wrap content-start items-center gap-x-1 gap-y-1 p-0"
       aria-label={t("mediaInfoLabel")}
     >
-      {visibleBadges.map((badge) => (
+      {badges.map((badge) => (
         <li key={badge.key} className="flex h-5 shrink-0 items-center leading-none">
           <Badge
             variant="outline"
             size="compact"
-            className="!border-violet-100/20 !bg-violet-950/35 !text-white backdrop-blur-sm"
+            className="player-performance-media-badge"
             title={badge.tooltip}
           >
             {badge.value}
