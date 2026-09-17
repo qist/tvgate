@@ -631,8 +631,16 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 		}
 	}
 	const maxUpstreamAttempts = 3
+	// 重试仅对解析型源（origin == ch.RawURL）有意义：会丢弃缓存地址、回到频道原始地址
+	// 重跑 302 解析链。非解析型（HLS 分片、解析后的最终地址）重试只是重复请求同一地址：
+	// 分片在整点切换时上游要数十秒才产出可用分片，本地重试毫无帮助，且把日志成倍放大——
+	// 改由前端「丢批次 + 刷新播放列表取新分片」消化（见 media-engine 分段源恢复）。
+	attemptLimit := maxUpstreamAttempts
+	if origin != ch.RawURL {
+		attemptLimit = 1
+	}
 	var resp *http.Response
-	for attempt := 0; attempt < maxUpstreamAttempts; attempt++ {
+	for attempt := 0; attempt < attemptLimit; attempt++ {
 		if attempt > 0 {
 			// 无效响应：解析型源丢弃缓存地址、回到频道原始地址重跑 302 解析链。
 			// 非解析型（分片等）没有解析缓存可清——redirects 是频道级共用，误清会把
@@ -663,7 +671,7 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 		resp = nil
 	}
 	if resp == nil {
-		logger.LogPrintf("[player] upstream invalid after %d attempts key=%s origin=%s", maxUpstreamAttempts, ch.Key, origin)
+		logger.LogPrintf("[player] upstream invalid after %d attempts key=%s origin=%s", attemptLimit, ch.Key, origin)
 		http.Error(w, "upstream stream unavailable", http.StatusBadGateway)
 		return
 	}
