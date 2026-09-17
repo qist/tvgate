@@ -91,6 +91,12 @@ const CLOCK_STALE_MS = 1000;
 /** 缓冲领先门轮询间隔（ms）。 */
 const LEAD_GATE_POLL_MS = 100;
 /**
+ * 领先门最长连续暂停（ms）：暂停超时立即放行一次拉取。
+ * 领先门本意是「限内存」，但上游切小时/抖动窗口内长时间停拉会让缓冲被"饿死"
+ * （实测整点会停拉 38 秒、播放中断）；强制周期性放行可保证缓冲持续前进。
+ */
+const LEAD_PAUSE_MAX_MS = 8000;
+/**
  * 软解 PCM 轴"脱轴判定"边界（秒，相对播放头）：领先超过 AHEAD 必为轴分离（超出播放器
  * 最大缓冲领先量）；落后超过 BEHIND 说明 PCM 已跟不上播放头（会被当过期丢成静音）。
  * 界内一律保留时间轴（小幅抖动由源 PTS 连续语义吸收），只有真脱轴才重钉。
@@ -624,11 +630,15 @@ export class TransmuxPipeline {
     if (this.playheadCurrentMs < 0 || this.playheadBufferedEndMs < 0) return true;
     if (performance.now() - this.lastClockArrivalMs > CLOCK_STALE_MS) return true;
 
+    let pausedSince: number | null = null;
     while (!this.stopped && this.isLivePlayback()) {
       if (this.pageHidden) return true;
       if (this.playheadCurrentMs < 0 || this.playheadBufferedEndMs < 0) return true;
       if (performance.now() - this.lastClockArrivalMs > CLOCK_STALE_MS) return true;
       if (this.playheadBufferedEndMs - this.playheadCurrentMs <= LEAD_BUFFER_AHEAD_MS) return true;
+      // 暂停超时：强制放行一次拉取（见 LEAD_PAUSE_MAX_MS 注释），避免上游恢复后仍长时间无新数据。
+      if (pausedSince === null) pausedSince = performance.now();
+      if (performance.now() - pausedSince >= LEAD_PAUSE_MAX_MS) return true;
       await sleep(LEAD_GATE_POLL_MS);
     }
     return !this.stopped;

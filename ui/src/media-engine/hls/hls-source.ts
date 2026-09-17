@@ -47,8 +47,17 @@ const MAX_REFRESH_FAILURES = 5;
 export class HlsSource implements SegmentSource {
   live = false;
 
-  private pending: string[] = [];
-  private lastSequence = -1;
+  private pending: { seq: number; uri: string }[] = [];
+  /** 已入队（或已交付）的最大分片序号：刷新时只取「序号 > 它」的新分片。 */
+  private lastQueued = -1;
+  /**
+   * 已交付给消费方的最大分片序号。批次作废时把入队游标回退到此，使「未交付」的分片
+   * （含刚失败的那个）能在下次 refresh 重新入队——否则要等播放列表滑过一整窗
+   * （实测整点会因此断流数十秒，并跳过中间若干分片）。
+   */
+  private lastDelivered = -1;
+  /** 是否已完成首次（直播 = live edge 切片）入队。 */
+  private started = false;
   private playlistUrl = "";
   private refreshFailures = 0;
   /** 刷新失败是否已上报（成功刷新后复位）：避免整点/断流窗口内反复上报成 UI 错误风暴。 */
@@ -97,7 +106,10 @@ export class HlsSource implements SegmentSource {
       const media = parseM3U8(variant.uri, variantText);
       const audioRend = pickAudioRendition(parsed.renditions, variant.audioGroup);
       this.live = !media.endlist;
-      this.enqueueSegments(media.segments.map((s) => s.uri), media.mediaSequence ?? 0, this.live);
+      this.enqueueSegments(
+        media.segments.map((s, i) => ({ seq: (media.mediaSequence ?? 0) + i, uri: s.uri })),
+        this.live,
+      );
       this.info = {
         live: this.live,
         targetDuration: media.targetDuration ?? 0,
@@ -114,7 +126,10 @@ export class HlsSource implements SegmentSource {
       };
     } else {
       this.live = !parsed.endlist;
-      this.enqueueSegments(parsed.segments.map((s) => s.uri), parsed.mediaSequence ?? 0, this.live);
+      this.enqueueSegments(
+        parsed.segments.map((s, i) => ({ seq: (parsed.mediaSequence ?? 0) + i, uri: s.uri })),
+        this.live,
+      );
       this.info = {
         live: this.live,
         targetDuration: parsed.targetDuration ?? 0,
@@ -129,14 +144,24 @@ export class HlsSource implements SegmentSource {
 
   async next(): Promise<string | null> {
     if (this.destroyed) return null;
-    if (this.pending.length > 0) return this.pending.shift()!;
+    const head = this.pending.shift();
+    if (head) return this.deliver(head);
     if (!this.live) return null;
 
     // 直播：刷新一次播放列表。没有新分段时返回 null，由消费方（pipeline）稍后重试；
     // 不在此阻塞等待，否则分段间隔期内 next() 会挂起且无法被测试/调用方控制节奏。
     const got = await this.refresh();
-    if (got && this.pending.length > 0) return this.pending.shift()!;
+    if (got) {
+      const item = this.pending.shift();
+      if (item) return this.deliver(item);
+    }
     return null;
+  }
+
+  /** 交付一个分片并推进「已交付」游标（供批次作废时回退）。 */
+  private deliver(item: { seq: number; uri: string }): string {
+    if (item.seq > this.lastDelivered) this.lastDelivered = item.seq;
+    return item.uri;
   }
 
   /** 刷新播放列表，把新分段入队；返回是否有新分段。 */
@@ -163,28 +188,29 @@ export class HlsSource implements SegmentSource {
 
     const media = parseM3U8(this.playlistUrl, text);
     const base = media.mediaSequence ?? 0;
-    const fresh: string[] = [];
+    const fresh: { seq: number; uri: string }[] = [];
     for (let i = 0; i < media.segments.length; i++) {
       const seq = base + i;
-      if (seq > this.lastSequence) fresh.push(media.segments[i].uri);
+      if (seq > this.lastQueued) fresh.push({ seq, uri: media.segments[i].uri });
     }
     if (fresh.length === 0) return false;
-    this.enqueueSegments(fresh, base, true, media.segments.length);
+    this.enqueueSegments(fresh, true);
     return true;
   }
 
-  private enqueueSegments(uris: string[], mediaSequence: number, live: boolean, total = uris.length): void {
-    if (uris.length === 0) return;
-    if (live && this.lastSequence < 0) {
-      // 首次：从距直播边 liveEdgeSegments 段处起播
-      const startIndex = Math.max(0, total - 1 - (this.liveEdgeSegments - 1));
-      const start = Math.min(startIndex, uris.length - 1);
-      this.pending.push(...uris.slice(start));
-      this.lastSequence = mediaSequence + total - 1;
-      return;
+  /** 入队分段（items 已带序号）。直播首次从距直播边 liveEdgeSegments 段处起播。 */
+  private enqueueSegments(items: { seq: number; uri: string }[], live: boolean): void {
+    if (items.length === 0) return;
+    let batch = items;
+    if (live && !this.started) {
+      const start = Math.max(0, batch.length - 1 - (this.liveEdgeSegments - 1));
+      batch = batch.slice(start);
     }
-    this.pending.push(...uris);
-    this.lastSequence = mediaSequence + total - 1;
+    if (batch.length === 0) return;
+    this.started = true;
+    this.pending.push(...batch);
+    const maxSeq = batch[batch.length - 1].seq;
+    if (maxSeq > this.lastQueued) this.lastQueued = maxSeq;
   }
 
   private async fetchPlaylist(url: string): Promise<string | null> {
@@ -207,12 +233,14 @@ export class HlsSource implements SegmentSource {
   }
 
   /**
-   * 分段批次失效（如整点切换：旧序列分片被删、新分片未就绪）。
-   * 丢弃当前批次未消费的分段；lastSequence 已是旧播放列表末尾序号，因此下一次 refresh()
-   * 只会入队真正的新序列分片（不会把已跳过的旧序列重新拉回来）。
+   * 分段批次失效（如整点切换：源站分片暂时不可用）。
+   * 丢弃未消费分段，并把入队游标回退到「已交付」位置：下次 refresh 会把未交付的分片
+   * （含刚失败那个）重新入队，而不是死等播放列表滑过一整窗——否则上游恢复后仍要等
+   * 数十秒才有新分片可拉（实测整点断流），且中间分片会被永久跳过。
    */
   invalidatePending(): void {
     this.pending.length = 0;
+    this.lastQueued = this.lastDelivered;
   }
 
   destroy(): void {
