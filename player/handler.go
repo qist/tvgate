@@ -665,6 +665,27 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 			break
 		} else {
 			logger.LogPrintf("[player] upstream invalid key=%s 状态=%d 内容=%q 最终=%s", ch.Key, code, head, final)
+			// 整点跨小时目录纠偏：源站 m3u8 在整点时刻会把「内容属于上一小时」的分片目录
+			// 写成当前小时（实测 13:00 的 178962117 在 13 点目录 404、12 点目录 200；
+			// 11:59:2x~5x 同理在 11 点目录），于是整点后约 50 秒内的分片请求全部 404。
+			// 回退尝试上一小时目录——内容本身没丢，命中即正常返回：前端零感知、时间轴连续。
+			if code == http.StatusNotFound {
+				if alt, shifted := shiftSegmentHourDir(abs, -1); shifted {
+					altResp, altErr := doFetch(alt)
+					if altErr == nil {
+						if ok2, _, _, _ := usable(altResp); ok2 {
+							logger.LogPrintf("[player] 分片跨小时目录回退命中 key=%s alt=%s", ch.Key, alt)
+							resp = altResp
+							abs = alt
+							break
+						}
+						io.Copy(io.Discard, io.LimitReader(altResp.Body, 4<<20))
+						altResp.Body.Close()
+					} else if !errors.Is(altErr, context.Canceled) {
+						logger.LogPrintf("[player] 分片目录回退失败 key=%s alt=%s err=%v", ch.Key, alt, altErr)
+					}
+				}
+			}
 		}
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<20))
 		resp.Body.Close()
@@ -717,6 +738,60 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 	}
 
 	stream.HandleProxyResponse(ctx, w, r, base, resp, func() {})
+}
+
+// shiftSegmentHourDir 把分片 URL 中的「小时目录」前移/后移 deltaHours（-1 = 上一小时）。
+// 只处理形如 .../<10位目录>/<数字序号>.<ts|m4s|mp4|aac|mp3> 的分片 URL，其余返回 false。
+// 用途：源站 m3u8 在整点时刻可能把跨小时分片的目录写成当前小时，而文件实际在上一小时
+// 目录（内容时间所属小时）里——回退尝试即可拿到本应存在的内容。
+func shiftSegmentHourDir(rawURL string, deltaHours int) (string, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", false
+	}
+	p := u.Path
+	slash := strings.LastIndex(p, "/")
+	if slash <= 0 {
+		return "", false
+	}
+	file := p[slash+1:]
+	slash2 := strings.LastIndex(p[:slash], "/")
+	if slash2 < 0 {
+		return "", false
+	}
+	dir := p[slash2+1 : slash]
+	if len(dir) != 10 || !isAllDigits(dir) {
+		return "", false
+	}
+	dot := strings.LastIndex(file, ".")
+	if dot <= 0 || !isAllDigits(file[:dot]) {
+		return "", false
+	}
+	switch strings.ToLower(file[dot+1:]) {
+	case "ts", "m4s", "mp4", "aac", "mp3":
+	default:
+		return "", false
+	}
+	t, err := time.ParseInLocation("2006010215", dir, time.Local)
+	if err != nil {
+		return "", false
+	}
+	newDir := t.Add(time.Duration(deltaHours) * time.Hour).Format("2006010215")
+	u.Path = p[:slash2+1] + newDir + p[slash:]
+	return u.String(), true
+}
+
+// isAllDigits 判断字符串是否非空且全为数字。
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 const segOriginTTL = 30 * time.Minute
