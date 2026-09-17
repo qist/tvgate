@@ -216,6 +216,10 @@ export class MseBackend implements PlaybackBackend {
     this.sbLimitHealed = false;
     this.audioExpectedForced = false;
     this.unsupportedTracks.clear();
+    // 切台即切口：立即清空音频播放器（清 PCM 队列并停掉已排程的 WebAudio 节点）。
+    // 不能只依赖 sourceopen 回调里的 flush —— 慢台/主线程繁忙时该事件可能明显滞后，
+    // 期间旧 worker 仍在产 PCM，表现为「切台后旧音轨残留、慢台尤其明显」。
+    this.pcmPlayer?.flush();
     // 新流/换台：重建 MediaSource，清掉旧频道的 buffered 区间与播放头。
     // 若复用同一 MS，旧 buffered 区间与旧 currentTime 残留会让新流（从 0 起缓冲）
     // 与播放头错位 → "有数据但不开始播放"（故每次 loadSegments 都重建 MSE）。

@@ -41,6 +41,13 @@ export interface WorkerClientLoadOptions {
 
 export class TransmuxWorkerClient {
   private worker: Worker | null = null;
+  /**
+   * 已销毁：destroy() 后置位，此后收到的任何 worker 消息一律丢弃。
+   * 切台时旧 worker 被 terminate 前可能已 post 出若干消息（尤其软解 PCM 批量下发），
+   * 这些"在途消息"会在新流启动后才抵达主线程 —— 若继续转发，会灌进音频播放器，
+   * 表现为切台后**旧音轨残留**（慢台尤其明显：新流迟迟无数据，旧音占满空窗）。
+   */
+  private disposed = false;
 
   constructor(private readonly callbacks: WorkerClientCallbacks = {}) {}
 
@@ -54,8 +61,15 @@ export class TransmuxWorkerClient {
       this.callbacks.onError?.({ category: "io", info: e instanceof Error ? e.message : "无法创建 worker" });
       throw e;
     }
-    worker.onmessage = (ev: MessageEvent<WorkerEvent>) => this.handleEvent(ev.data);
+    worker.onmessage = (ev: MessageEvent<WorkerEvent>) => {
+      // 仅处理当前活跃 worker 的消息：崩溃/重建替换后，旧 worker 在途的残留消息
+      // （尤其软解 PCM 批量下发）一律丢弃 —— 否则会在新流上继续灌入旧音轨。
+      if (this.worker !== worker) return;
+      this.handleEvent(ev.data);
+    };
     worker.onerror = (e: ErrorEvent) => {
+      // 旧 worker 的迟到 error：忽略，不得误伤已替换的新 worker
+      if (this.worker !== worker) return;
       // **关键**：崩溃/加载失败的 worker 必须立即作废，否则 ensureWorker 会一直返回这具
       // "尸体"——上层（直播边重载 / 用户切台）会照常调用 load()，消息却全部石沉大海，
       // 表现为「服务重启后立即断开、且重试完全不生效」。作废后下一次 load() 会自动重建
@@ -80,6 +94,8 @@ export class TransmuxWorkerClient {
   }
 
   private handleEvent(event: WorkerEvent): void {
+    // 已销毁（切台/重建/停止）：丢弃一切后续消息 —— 含 terminate 前已 post 的在途消息
+    if (this.disposed) return;
     // init 段**同任务批量**下发（避免多次跨线程往返）：
     // 每个 worker 消息是独立任务；若 video init 先 append，UA 会在任务间隙解析它并**锁死
     // SourceBuffer 集合**，随后 audio 的 addSourceBuffer 直接抛
@@ -176,6 +192,8 @@ export class TransmuxWorkerClient {
   }
 
   destroy(): void {
+    // 先置失效闸门（即使 worker 已崩溃为空也要置位），再通知/停掉底层 worker
+    this.disposed = true;
     if (!this.worker) return;
     this.send({ type: "destroy" });
     this.dropWorker();
