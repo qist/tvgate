@@ -19,15 +19,21 @@
 - **版权**：FFmpeg 由 FFmpeg 项目贡献者开发，版权与许可声明以 FFmpeg 源码发行中的
   NOTICE 为准。项目主页 https://ffmpeg.org/，源码仓库 https://git.ffmpeg.org/ffmpeg.git。
 
-## 2. 历史 GPL 播放引擎（已移除）
+## 2. 历史 GPL 播放引擎与 UI 外壳（已移除 / 已重写）
 
 - 历史目录 `ui/src/playback-engine/` 曾基于 GPL 许可的上游项目 rtp2httpd 的派生代码。
 - 该实现**已从当前仓库完全移除，不随本项目分发**。当前 `ui/src/media-engine/` 为
   独立 clean-room 自研实现，不将历史播放引擎作为源代码依赖（零 `import` 依赖，
   可复现：`grep -rIn -E "from .*playback-engine" ui/src/media-engine --include='*.ts'`
   命中为空；源码注释中少量 `playback-engine` 字样仅为历史溯源说明，非代码包含）。
+- **UI 外壳层**：2026-09-03 曾从同一 GPL 上游引入 React 管理界面/播放页的外壳组件
+  （页面骨架、UI 基础组件、i18n 骨架等）。该部分已于 2026-09-18 完成全量 clean-room
+  重写——依据行为规范脱离源码重写，仅保留功能性字面量（Tailwind 类串、W3C 类型、
+  DOM API 名称），并同步将内部契约（导出名、props、i18n key、TS 类型字段、引擎
+  事件/配置名）全部换为本项目自有命名。完整审计方法、逐文件清单与指纹复测数据见
+  `ui/src/media-engine/docs/gpl-removal-landing-audit-20260918.md`。
 - 本条目仅出于源码历史与许可透明度说明，当前源码树无意分发任何来自历史 GPL
-  播放引擎的代码。
+  播放引擎或 UI 外壳的代码。
 
 ## 3. 许可分离一览
 
@@ -35,6 +41,6 @@
 | --- | --- | --- |
 | 项目播放引擎 | `ui/src/media-engine/` | MPL-2.0 |
 | FFmpeg WASM 软解后端 | `ui/src/media-engine/wasm/` | LGPL-2.1-or-later |
-| 历史播放引擎 | `ui/src/playback-engine/` | 已移除，不分发 |
+| 历史播放引擎与 UI 外壳 | `ui/src/playback-engine/` 及历史外壳组件 | 已移除 / 已重写，不分发 |
 
 第三方组件按其各自许可条款执行；本文任何内容均不修改、限制或取代相应第三方许可条款。
