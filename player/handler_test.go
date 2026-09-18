@@ -965,3 +965,50 @@ func TestServeHTTPRedirectCache(t *testing.T) {
 		t.Fatalf("回看解析污染直播缓存, got %q", got)
 	}
 }
+
+// TestNormalizeEPGQuery：/api/player/epg 统一入口——ch 接受 tvg-id / tvg-name / 频道名 /
+// 播放页不透明 key，name 作为兼容别名（TXT 无 tvg-id 时前端发 name），date 容忍三种写法、空则今天。
+func TestNormalizeEPGQuery(t *testing.T) {
+	b := false
+	config.Cfg.HTTP.InsecureSkipVerify = &b
+	config.Cfg.HTTP.DisableKeepAlives = &b
+
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("#EXTM3U\n#EXTINF:-1 tvg-id=\"1\" tvg-name=\"CCTV1\" group-title=\"央视\",CCTV1\nhttp://192.0.2.1/live/1.m3u8\n"))
+	}))
+	defer up.Close()
+
+	setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: up.URL}, t)
+	mgr := NewManager(&config.Cfg.Player)
+	mgr.httpClient = up.Client()
+	mgr.Reload()
+	h := NewHandler(mgr)
+	if len(mgr.Channels()) != 1 {
+		t.Fatalf("频道数不符: %d", len(mgr.Channels()))
+	}
+	key := mgr.Channels()[0].Key
+
+	cases := []struct{ ch, name, wantCh, wantName string }{
+		{key, "", "1", "CCTV1"},         // 播放页不透明 key
+		{"CCTV1", "", "1", "CCTV1"},     // 频道显示名 → 补出 tvg-id
+		{"1", "", "1", "CCTV1"},         // tvg-id → 补出显示名（模板 EPG 需要名字）
+		{"", "CCTV1", "CCTV1", "CCTV1"}, // 兼容别名：只有 name
+		{"无名台", "", "无名台", "无名台"},       // 都不匹配 → 原样透传
+	}
+	for _, c := range cases {
+		gotCh, gotName := h.normalizeEPGQuery(c.ch, c.name)
+		if gotCh != c.wantCh || gotName != c.wantName {
+			t.Fatalf("normalizeEPGQuery(%q,%q)=%q,%q，期望 %q,%q", c.ch, c.name, gotCh, gotName, c.wantCh, c.wantName)
+		}
+	}
+	for _, c := range []struct{ in, want string }{
+		{"2026-09-18", "20260918"},
+		{"2026/09/18", "20260918"},
+		{"20260918", "20260918"},
+		{"", time.Now().Format("20060102")},
+	} {
+		if got := normalizeEPGDate(c.in); got != c.want {
+			t.Fatalf("normalizeEPGDate(%q)=%q，期望 %q", c.in, got, c.want)
+		}
+	}
+}

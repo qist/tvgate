@@ -106,7 +106,7 @@ logo=https://logo.example.com/{name}.png
 | `/web/player` | SPA 播放页（频道列表 / EPG / 回看 / 设置） |
 | `/pp`、`/pp/<key>` | 独立播放页入口（旧版地址保留）：直接服务播放页，**不跳转后台路径**，`/pp/<key>` 转为 `/pp#<key>` 深链 |
 | `/api/player/channels` | 频道列表 API（含不透明 key、分组、台标） |
-| `/api/player/epg?ch=<tvg-id>&date=YYYY-MM-DD` | EPG 节目单 API |
+| `/api/player/epg?ch=<tvg-id|频道名|key>&date=YYYYMMDD` | EPG 节目单 API（**统一入口**）：`ch` 三种写法都认——M3U `tvg-id`、频道显示名、播放页的不透明 `key`；`name` 为兼容别名（逗号 TXT 订阅没有 `tvg-id`，前端发 `name`）；`date` 可省略（默认今天）且容忍 `YYYY-MM-DD` / `YYYY/MM/DD` / `YYYYMMDD` |
 | `/api/player/catchup?key=<key>&start=<YmdHis>&end=<YmdHis>` | 回看 API（基于 EPG 节目单起止时间） |
 | `/player/<key>` | 播放流入口；HLS 分片走 `/player/<key>/<token>` 短路径 |
 | `/player/logo/` | 台标服务（`logo_dir` 本地台标经此输出） |

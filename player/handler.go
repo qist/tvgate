@@ -153,7 +153,10 @@ func (h *Handler) ServeChannels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ServeEPG GET /api/player/epg?ch=<tvg-id>&name=<频道名>&date=YYYYMMDD → 节目单。
+// ServeEPG GET /api/player/epg?ch=<tvg-id|频道名|key>&name=<频道名>&date=YYYYMMDD → 节目单。
+// 对外是**统一入口**：ch 三种写法都认（tvg-id、频道显示名、播放页用的不透明 key），name 作为
+// 兼容别名（M3U 有 tvg-id 时前端发 ch，逗号 TXT 没有 tvg-id 时前端发 name）；date 可省略
+// （默认今天），并容忍 YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD 三种写法。第三方无需知道订阅格式。
 // M3U/固定（x-tvg-url XMLTV）：由服务端解析的 EPGBank 查；txt（模板）：服务端填 {name}/{date} 后拉取，规避前端跨域 CORS。
 // 主来源失效时回退：
 //   - template 主来源查询失败（返回空）→ 用配置的备用来源（固定 XMLTV 查 EPGBank，或另一模板拉取）；
@@ -163,15 +166,55 @@ func (h *Handler) ServeEPG(w http.ResponseWriter, r *http.Request) {
 	if !h.requireToken(w, r) {
 		return
 	}
-	ch := r.URL.Query().Get("ch")
-	name := r.URL.Query().Get("name")
-	date := r.URL.Query().Get("date")
+	ch, name := h.normalizeEPGQuery(r.URL.Query().Get("ch"), r.URL.Query().Get("name"))
+	date := normalizeEPGDate(r.URL.Query().Get("date"))
 	progs := h.serveEPGQuery(r.Context(), ch, name, date)
 	if progs == nil {
 		progs = []Program{}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writeJSON(w, map[string]interface{}{"programs": progs})
+}
+
+// normalizeEPGQuery 把 ch/name 归一到 (tvg-id, 频道名)：第三方调用给哪种写法都能查到节目单。
+//   - 不透明 key（与 /player/<key> 同一个 key）→ 换成该频道的 tvg-id + 显示名；
+//   - 只给 ch，且值其实是频道显示名 / tvg-name → 回频道表补出规范显示名与 tvg-id
+//     （模板型 EPG 只认频道名，XMLTV 优先 tvg-id）；
+//   - 都没匹配上 → 原样透传（XMLTV 按该值查、模板按该值当名字填）。
+func (h *Handler) normalizeEPGQuery(ch, name string) (string, string) {
+	id, nm := strings.TrimSpace(ch), strings.TrimSpace(name)
+	if id == "" && nm == "" {
+		return "", ""
+	}
+	if c := h.mgr.GetByKey(id); c != nil {
+		return c.TVGID, c.Name
+	}
+	if nm == "" {
+		for _, c := range h.mgr.Channels() {
+			if c.TVGID == id || c.TVGName == id || c.Name == id {
+				return c.TVGID, c.Name
+			}
+		}
+		return id, id
+	}
+	if id == "" {
+		id = nm
+	}
+	return id, nm
+}
+
+// normalizeEPGDate 归一日期：容忍 YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD，空则取今天（本地时区）。
+func normalizeEPGDate(date string) string {
+	d := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, date)
+	if len(d) == 8 {
+		return d
+	}
+	return time.Now().Format("20060102")
 }
 
 func (h *Handler) serveEPGQuery(ctx context.Context, ch, name, date string) []Program {
