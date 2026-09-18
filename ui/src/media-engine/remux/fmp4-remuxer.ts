@@ -69,6 +69,12 @@ const DEFAULT_MAX_BYTES = 512 * 1024;
 const DEFAULT_STARTUP_GRACE_MS = 8000;
 /** 外部基准（视频基准）最长等待（ms）：超时则音频用自身基准放行，避免音轨被拖死。 */
 const EXTERNAL_BASE_MAX_WAIT_MS = 1500;
+/**
+ * 视频段最长时长（秒）：只有长 GOP 源（等不到下一个 IDR）才会攒到这个上限后在中途切段，
+ * 用来把"首帧必须等到第二个分片"这类起播延迟压下来。短 GOP 源（IDR 间隔 ≤ 该值）永远
+ * 走在关键帧边界上，与旧行为完全一致。
+ */
+const VIDEO_CHUNK_MAX_SECONDS = 2;
 
 export class Fmp4Remuxer {
   private readonly targetDuration: number;
@@ -204,7 +210,7 @@ export class Fmp4Remuxer {
         return undefined; // 还没等到关键帧：继续攒
       }
     }
-    const cut = this.videoCutIndex(q, ts, force);
+    const cut = this.videoCutIndex(q, ts);
     if (cut !== undefined) {
       this.markVideoStarted(q[0], ts);
       return { runSamples: q.slice(0, cut), consume: cut };
@@ -224,20 +230,24 @@ export class Fmp4Remuxer {
 
   /**
    * 视频切点：返回本段应消耗的样本数（undefined = 还不到切的时候）。
-   * 关键帧边界优先（短 GOP 源的成段行为与旧实现一致：一段 = 一个 GOP）；没有关键帧可等时
-   * 按目标时长/字节切在任意样本边界 —— 首段以关键帧开头（解码入口）之后，后续段只是同一
-   * 队列的顺序续切：解码时间戳连续（buildRun 给末样本取上一段时长，下一段恰从该处接着），
-   * 浏览器按 moof 顺序续解码，不需要每个段都以 IDR 开头（LL-HLS/CMAF 分片同理）。
+   *
+   * ① **关键帧边界永远可切**（一段 = 一个 GOP）。对短 GOP 源（实测广东联通 CCTV1 是 1s 一个
+   *    IDR）这就等于旧行为：每段都以关键帧开头、段内绝对完整 —— 这种流上按 0.25s 切到 GOP
+   *    中间会被浏览器丢弃，缓冲只剩"每个关键帧后的一小段"，播放变成每 1 秒卡一下（= 用户
+   *    反馈的"不流畅、一直缓冲"）。
+   * ② 长 GOP 源（实测江苏移动系流 10s 才一个 IDR）最多攒 VIDEO_CHUNK_MAX_SECONDS 就切，
+   *    否则首帧要等到第二个分片（"下载完两个分片才开播"）。续切段是同一队列的顺序续切
+   *    （解码时间戳连续、不重叠），LL-HLS/CMAF 分片同此形态。
    */
-  private videoCutIndex(q: QueuedSample[], ts: number, force: boolean): number | undefined {
-    const minDur = this.targetDuration * ts;
-    let bytes = 0;
+  private videoCutIndex(q: QueuedSample[], ts: number): number | undefined {
+    const maxChunkTicks = VIDEO_CHUNK_MAX_SECONDS * ts;
     for (let i = 1; i < q.length; i++) {
-      bytes += q[i - 1].data.length;
-      if (q[i].isKeyframe) return i; // GOP 边界：优先切
-      if (force || q[i - 1].dts - q[0].dts >= minDur || bytes >= this.maxBytes) return i;
+      if (q[i].isKeyframe) return i; // ① GOP 边界：短 GOP 源与旧行为一致
+      if (q[i - 1].dts - q[0].dts >= maxChunkTicks) return i; // ② 长 GOP：封顶后切
     }
     return undefined;
+    // 注意：force（收尾/seek 的 flush(true)）不在这里切——交给 selectVideoRun 的
+    // 「整段发出」兜底，否则会在 force 下每段只切 1 个样本（实测尾部样本被整批漏发）。
   }
 
   /** PMT 是否声明了视频轨（早于任何样本）：统一时间基只等视频锚定（见 videoExpected）。 */
