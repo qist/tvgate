@@ -20,6 +20,11 @@ export interface SegmentSource {
    * 未实现则退化为「按原列表逐个重试」。
    */
   invalidatePending?(): void;
+  /**
+   * 空闲轮询间隔（毫秒，可选实现）：next() 返回 null（暂无新分片）后，调用方隔多久再来问一次。
+   * 未实现 / 返回 0 表示用调用方默认值。HLS 源按播放列表的目标时长给出（见 HlsSource）。
+   */
+  pollIntervalMs?(): number;
 }
 
 /** 静态分段列表（点播/回看）。 */

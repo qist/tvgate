@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { pickAudioRendition } from "./hls-source";
+import { HlsSource, pickAudioRendition } from "./hls-source";
 import type { HlsMediaRendition } from "../formats/m3u8";
 
 function rendition(p: Partial<HlsMediaRendition>): HlsMediaRendition {
@@ -62,5 +62,31 @@ describe("pickAudioRendition", () => {
     );
     expect(r?.uri).toBe("audio/chongqing.m3u8");
     expect(r?.language).toBe("zh");
+  });
+});
+
+describe("HlsSource.pollIntervalMs", () => {
+  /** 目标时长 target 的媒体播放列表。 */
+  const playlist = (target: number): string =>
+    `#EXTM3U\n#EXT-X-TARGETDURATION:${target}\n#EXT-X-MEDIA-SEQUENCE:1\n` +
+    `#EXTINF:${target},\nseg1.ts\n#EXTINF:${target},\nseg2.ts\n`;
+
+  it("空闲轮询 = 目标时长的一半，夹在 1~5 秒（避免把播放列表刷爆）", async () => {
+    for (const [target, want] of [
+      [10, 5000], // 江苏移动这类 10s 分片：5 秒一问
+      [4, 2000],
+      [2, 1000], // 短分片：不小于 1 秒
+      [30, 5000], // 超长分片：封顶 5 秒
+    ] as const) {
+      const source = new HlsSource("http://x/p.m3u8", {}, { fetcher: async () => playlist(target) });
+      await source.load();
+      expect(source.pollIntervalMs()).toBe(want);
+    }
+  });
+
+  it("未解析出目标时长时退回 1 秒", async () => {
+    const source = new HlsSource("http://x/p.m3u8", {}, { fetcher: async () => "#EXTM3U\n" });
+    await source.load();
+    expect(source.pollIntervalMs()).toBe(1000);
   });
 });

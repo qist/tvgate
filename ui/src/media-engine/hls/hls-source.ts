@@ -233,6 +233,20 @@ export class HlsSource implements SegmentSource {
   }
 
   /**
+   * 空闲轮询间隔（毫秒）：没有新分片时 pipeline 隔多久再问一次播放列表。
+   *
+   * 播放列表本来就按目标时长滚动（本组江苏移动源 TARGETDURATION=10s / 一片 10 秒），
+   * 固定 1 秒轮询纯属浪费：每次都要穿一遍上游（实测同一分片间隔里刷出十几次 playlist
+   * 请求，服务端与上游都被无谓地打）。取目标时长的一半（HLS 客户端常见做法），
+   * 并夹在 1~5 秒：既不会错过新分片太久，也不会把上游刷爆。
+   */
+  pollIntervalMs(): number {
+    const target = this.info?.targetDuration ?? 0;
+    if (!(target > 0)) return 1000;
+    return Math.min(5000, Math.max(1000, Math.round((target * 1000) / 2)));
+  }
+
+  /**
    * 分段批次失效（如整点切换：源站分片暂时不可用）。
    * 丢弃未消费分段，并把入队游标回退到「已交付」位置：下次 refresh 会把未交付的分片
    * （含刚失败那个）重新入队，而不是死等播放列表滑过一整窗——否则上游恢复后仍要等
