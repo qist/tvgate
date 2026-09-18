@@ -5,7 +5,7 @@
  * 防止被 video-player 的全局键位接管。
  */
 import { ChevronsLeft, ChevronsRight, History, Layers, Tv } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { usePlayerTranslation } from "../../hooks/use-player-translation";
 import { type EPGData, getCurrentProgram, getEPGChannelId } from "../../lib/epg-parser";
 import type { Locale } from "../../lib/locale";
@@ -135,6 +135,8 @@ function ThreePaneChannelBrowser({
   const groupPaneRef = useRef<HTMLDivElement>(null);
   const channelPaneRef = useRef<HTMLDivElement>(null);
   const schedulePaneRef = useRef<HTMLDivElement>(null);
+  /** "正在播放的频道"那一行：打开浮层 / 换台 / 切分组后把它定到列表正中。 */
+  const playingRowRef = useRef<HTMLButtonElement | null>(null);
 
   // 节目单栏**默认收起且不持久化**（不记忆上次状态，避免"自己弹出来"）：
   // 常态只有"分组 + 频道"两列；点竖排把手 / 点行内节目 / 遥控器向右才展开；
@@ -240,6 +242,21 @@ function ThreePaneChannelBrowser({
     prevPanelVisibleRef.current = visible;
     if (justReopened) alignGroupWithPlayingChannel();
   }, [panelVisible, alignGroupWithPlayingChannel]);
+
+  /**
+   * 把"正在播放的频道"那行定到可视区**正中**：
+   * 原生 focus 的滚动是 nearest（贴住上/下边缘），遥控器一开侧栏，正在播的台就卡在列表边沿、
+   * 甚至被底部控制条压住一半；居中后上下各露出几个台，一眼能看出"现在在看哪个、前后是哪些"。
+   * 与移动端频道列表、节目单保持同一套行为（那两处也走 block:"center"）。
+   * 用 instant：浮层是滑入的，这时列表自己再滚一段会显得很脏。
+   */
+  const playingChannelId = currentChannel?.id ?? null;
+  useLayoutEffect(() => {
+    if (!panelVisible) return;
+    playingRowRef.current?.scrollIntoView({ behavior: "instant", block: "center" });
+    // 依赖：开合状态、在播频道、可见列表（切分组/搜索后重新定位）。
+    // 在播频道不在当前分组/搜索结果里时 ref 为空，自然不动。
+  }, [panelVisible, playingChannelId, visibleChannels]);
 
   // 选台 = 换流 + 把预览同步过去；预览本来就是它就跳过，省一次 state 抖动。
   const handleChannelPicked = useCallback(
@@ -404,6 +421,7 @@ function ThreePaneChannelBrowser({
               {visibleChannels.map((channel) => (
                 <ChannelListItem
                   key={channel.id}
+                  ref={channel.id === currentChannel?.id ? playingRowRef : null}
                   channel={channel}
                   isCurrentChannel={channel.id === currentChannel?.id}
                   handleChannelClick={handleChannelPicked}
