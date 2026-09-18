@@ -43,7 +43,13 @@ start() {
     fi
 
     echo "🚀 启动 ${APP_NAME}..."
-    nohup "${APP_BIN}" -config "${CONFIG}" > "${LOG_FILE}" 2>&1 &
+    # 追加而非截断：重启不再抹掉上一次的现场（进程崩溃时那几十行 panic 堆栈是唯一线索，
+    # 而"发现挂了→重启"这个动作正好会把它截掉）。每次启动写一行分隔标记，方便找本轮日志。
+    # stdout/stderr 同样并进该文件：进程起来之前的输出（配置读取失败等）只能靠它留下。
+    # 注意：程序自身的日志由 lumberjack 轮转（log.file），日志过大轮转后，这里与崩溃输出
+    # （fd 跟随 inode）会落在轮转出的备份文件里。
+    echo "===== $(date '+%F %T') 启动 ${APP_NAME} =====" >> "${LOG_FILE}"
+    nohup "${APP_BIN}" -config "${CONFIG}" >> "${LOG_FILE}" 2>&1 &
     local pid=$!
     echo "${pid}" > "${PID_FILE}"
 

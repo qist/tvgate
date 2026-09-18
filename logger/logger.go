@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
+	"log"
 	"os"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -23,6 +25,10 @@ var logger = struct {
 	sync.RWMutex
 	enabled bool
 	output  io.Writer
+	// sinkFile 是给 debug.SetCrashOutput / 标准库 log 用的日志文件句柄（OpenFile 打开）。
+	// SetupLogger 每次都会重新打开（热重载会重复调用），这里记住上一个并在替换时关掉，
+	// 否则每次配置重载泄漏一个 fd。
+	sinkFile *os.File
 }{
 	enabled: false,
 	output:  io.Discard,
@@ -116,24 +122,69 @@ func SetupLogger(cfg LogConfig) {
 	logger.Lock()
 	defer logger.Unlock()
 
+	// 上一个 sink 句柄交给下面替换时统一关闭（debug.SetCrashOutput 内部已复制 fd，
+	// 关掉我们这份不影响它的崩溃输出）
+	prevSink := logger.sinkFile
+	logger.sinkFile = nil
+	defer func() {
+		if prevSink != nil {
+			prevSink.Close()
+		}
+	}()
+
 	if !cfg.Enabled {
 		logger.enabled = false
 		logger.output = io.Discard
+		_ = debug.SetCrashOutput(nil, debug.CrashOptions{})
 		return
 	}
 
 	logger.enabled = true
 	if cfg.File == "" {
 		logger.output = os.Stdout
-	} else {
-		logger.output = &lumberjack.Logger{
-			Filename:   cfg.File,
-			MaxSize:    cfg.MaxSizeMB,
-			MaxBackups: cfg.MaxBackups,
-			MaxAge:     cfg.MaxAgeDays,
-			Compress:   cfg.Compress,
+		// 未配置日志文件（标准输出）：崩溃输出留在 stderr，由启动方式决定去哪
+		_ = debug.SetCrashOutput(nil, debug.CrashOptions{})
+		return
+	}
+	logger.output = &lumberjack.Logger{
+		Filename:   cfg.File,
+		MaxSize:    cfg.MaxSizeMB,
+		MaxBackups: cfg.MaxBackups,
+		MaxAge:     cfg.MaxAgeDays,
+		Compress:   cfg.Compress,
+	}
+	// 崩溃输出也写进日志文件：panic 堆栈 / fatal error 走的是 fd 2（stderr），只靠启动脚本的
+	// 2>&1 才看得到 —— systemd、后台面板、容器启动都会丢，而"进程莫名消失"时这条堆栈恰恰是
+	// 唯一线索（实测：空指针 panic 只出现在 shell 重定向里）。debug.SetCrashOutput 会另开一份
+	// 复制 fd 写该文件，与启动方式无关；重复调用覆盖旧目标，不会泄漏 fd。
+	if f, err := os.OpenFile(cfg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+		if err := debug.SetCrashOutput(f, debug.CrashOptions{}); err != nil {
+			f.Close()
+		} else {
+			// 标准库 log（如 net/http 的 "panic serving ..."、"http: Server closed"）同样并入日志文件；
+			// stderr 与日志文件本就是同一个文件时（启动脚本 2>&1 到它）不再写第二遍，避免重复行。
+			writers := []io.Writer{f}
+			if differentFiles(os.Stderr, f) {
+				writers = append(writers, os.Stderr)
+			}
+			log.SetOutput(io.MultiWriter(writers...))
+			logger.sinkFile = f
 		}
 	}
+}
+
+// differentFiles 判断两个已打开的文件是否不是同一个文件（管道/终端也算不同）。
+// 用于避免"stderr 已被启动脚本重定向到日志文件"时再写一遍导致重复行。
+func differentFiles(a, b *os.File) bool {
+	ai, err := a.Stat()
+	if err != nil {
+		return true
+	}
+	bi, err := b.Stat()
+	if err != nil {
+		return true
+	}
+	return !os.SameFile(ai, bi)
 }
 
 // GetBufferSnapshot returns the latest log lines kept in memory.
