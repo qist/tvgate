@@ -1,6 +1,6 @@
 /**
  * 频道列表单项。
- * 平面行（TV 播放器风格）：频道号 / 名称（+ 当前节目）/ 回看徽标 / logo；行底盘与选中强调
+ * 平面行（TV 播放器风格）：频道号 / 台标 / 名称（+ 当前节目）/ 回看徽标；行底盘与选中强调
  * 全部由 CSS（.player-performance-list-surface-*）给出，组件里不再叠卡片与光层。
  */
 import { History } from "lucide-react";
@@ -8,6 +8,7 @@ import { forwardRef, memo, useCallback } from "react";
 import { usePlayerTranslation } from "../../hooks/use-player-translation";
 import type { Locale } from "../../lib/locale";
 import type { Channel } from "../../types/player";
+import { ChannelLogo } from "./channel-logo";
 import {
   PLAYER_CHANNEL_LIST_ITEM_CLASS,
   PLAYER_LIST_SURFACE_BASE_CLASS,
@@ -59,6 +60,18 @@ const ChannelListItemComponent = forwardRef<HTMLButtonElement, ChannelListItemPr
         >
           {channel.number ?? ""}
         </span>
+        {channel.logo && (
+          /* 台标用一块极简深色底（无边框/投影）：台标多为白色透明 PNG，浅色面板上否则看不见。
+             lazy：手机端一行上千个频道，只在可视区附近真正取图（否则首屏上千个请求挤占连接，
+             瞬时失败还会被当成加载失败），失败态由组件自愈，见 channel-logo.tsx。 */
+          <ChannelLogo
+            src={channel.logo}
+            alt={channel.name}
+            lazy
+            className="relative z-10 flex h-6 w-10 shrink-0 items-center justify-center overflow-hidden rounded bg-slate-900/85 px-0.5 md:h-7 md:w-14 md:px-1 dark:bg-slate-900/60"
+            imgClassName="h-full w-full object-contain opacity-95"
+          />
+        )}
         <div className="relative z-10 min-w-0 flex-1 overflow-hidden">
           <div className="flex items-center gap-1.5">
             <div
@@ -103,20 +116,6 @@ const ChannelListItemComponent = forwardRef<HTMLButtonElement, ChannelListItemPr
             )}
           </div>
         </div>
-        {channel.logo && (
-          /* 台标用一块极简深色底（无边框/投影）：台标多为白色透明 PNG，浅色面板上否则看不见 */
-          <div className="relative z-10 flex h-6 w-10 shrink-0 items-center justify-center overflow-hidden rounded bg-slate-900/85 px-0.5 md:h-7 md:w-14 md:px-1 dark:bg-slate-900/60">
-            <img
-              src={channel.logo}
-              alt={channel.name}
-              referrerPolicy="no-referrer"
-              className="h-full w-full object-contain opacity-95"
-              onError={(event) => {
-                (event.target as HTMLImageElement).style.display = "none";
-              }}
-            />
-          </div>
-        )}
       </button>
     );
   },

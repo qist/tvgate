@@ -824,6 +824,10 @@ function PlayerPage() {
           <div
             className={clsx(
               "w-full sticky md:absolute md:inset-0",
+              // 手机非全屏：高度由自身 16:9 比例给出。视频舞台是"尺寸容器"（container-type:size，
+              // 见 styles/index.css），其高度不再计入父元素高度；若这里仍靠内容撑高，外层会塌成 0 高，
+              // 下方面板（flex-1）就顶到屏幕最上方、把画面整个盖住。
+              !isFullscreen && "aspect-video md:aspect-auto",
               // 手机全屏时视频区铺满整屏（flex-1 拿到确定高度）；平时按内容高（16:9 横条）
               isFullscreen ? "min-h-0 flex-1" : "shrink-0",
             )}

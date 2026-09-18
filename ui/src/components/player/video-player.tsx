@@ -54,6 +54,7 @@ import {
 } from "../../media-engine/timeline";
 import type { Channel, EPGProgram } from "../../types/player";
 import type { PictureInPictureMode } from "../../types/ui";
+import { ChannelLogo } from "./channel-logo";
 import { PLAYER_OVERLAY_SURFACE_CLASS } from "./classnames";
 import { PlayerControls } from "./player-controls";
 import { PlayerGestureIndicatorOverlay } from "./player-gesture-overlay";
@@ -1653,6 +1654,8 @@ function VideoPlayerComponent({
           ? "h-screen min-h-screen aspect-auto"
           : isFullscreen
             ? "h-full w-full min-h-0 aspect-auto"
+            // 手机舞台高度由自身 16:9 比例给出（width 确定，故容器化后仍能算出高度）；
+            // 外层 pages/player.tsx 的 16:9 容器负责把同样的高度"报"给页面布局。
             : "aspect-video w-full md:aspect-auto md:h-full",
         !showControls && "cursor-none",
       )}
@@ -1719,14 +1722,12 @@ function VideoPlayerComponent({
           >
             <PlayerSelectedGlassLayers />
             {channel.logo && (
-              <img
+              /* 手机（视频区最矮）也把台标缩小保留，绝不隐藏：台标是"这个台在播什么"的第一识别信息。
+                 失败可自愈（旧写法内联 display:none 会永久隐藏，需刷新页面，见 channel-logo.tsx）。 */
+              <ChannelLogo
                 src={channel.logo}
                 alt={channel.name}
-                referrerPolicy="no-referrer"
-                className="relative z-10 h-8 w-20 object-contain drop-shadow-[0_0_14px_rgba(var(--pg-rgb-light),0.2)] md:h-14 md:w-36 [@container_video_(max-height:_320px)]:h-6 [@container_video_(max-height:_320px)]:w-16 md:[@container_video_(max-height:_320px)]:h-6 md:[@container_video_(max-height:_320px)]:w-16 [@container_video_(max-height:_220px)]:hidden"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
+                imgClassName="relative z-10 h-8 w-20 object-contain drop-shadow-[0_0_14px_rgba(var(--pg-rgb-light),0.2)] md:h-14 md:w-36 [@container_video_(max-height:_320px)]:h-6 [@container_video_(max-height:_320px)]:w-16 md:[@container_video_(max-height:_320px)]:h-6 md:[@container_video_(max-height:_320px)]:w-16 [@container_video_(max-height:_220px)]:h-5 [@container_video_(max-height:_220px)]:w-12 md:[@container_video_(max-height:_220px)]:h-5 md:[@container_video_(max-height:_220px)]:w-12"
               />
             )}
             <div className="relative z-10 flex w-full min-w-0 items-center justify-center">

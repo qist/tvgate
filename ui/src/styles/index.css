@@ -1067,3 +1067,15 @@ html.dark[class*="panel-alpha-"] .player-performance-dock [class*="bg-white/"] {
 html[class*="panel-alpha-"] .player-performance-dock .player-performance-decoration {
   opacity: var(--panel-alpha);
 }
+
+/* ===== 矮视频区紧凑化（手机 / 小窗）=====
+ * 播放器里的 [@container_video_(max-height:_320px|220px)]:* 类依赖"视频舞台本身是尺寸容器"，
+ * 而舞台上的 @container-size/video 是 Tailwind v4 写法，v3 不产出任何 CSS —— 这批紧凑规则
+ * **从未生效**：手机视频区只有 ~220px 高，浮层/控制条却一直按桌面尺寸渲染（等于尺寸写死）。
+ * 这里补上容器声明，让既有规则按设计生效；旧 WebView / 低版本浏览器不认 container-type，
+ * 会整块忽略 @container 规则、退回原尺寸，因此无兼容风险。
+ */
+.player-performance-video-background {
+  container-type: size;
+  container-name: video;
+}
