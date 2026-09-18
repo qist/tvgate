@@ -66,20 +66,36 @@ describe("pickAudioRendition", () => {
 });
 
 describe("HlsSource.pollIntervalMs", () => {
-  /** 目标时长 target 的媒体播放列表。 */
-  const playlist = (target: number): string =>
-    `#EXTM3U\n#EXT-X-TARGETDURATION:${target}\n#EXT-X-MEDIA-SEQUENCE:1\n` +
-    `#EXTINF:${target},\nseg1.ts\n#EXTINF:${target},\nseg2.ts\n`;
+  /** 目标时长 target、起始序号 seq 的媒体播放列表（序号相同 = 没有新分片）。 */
+  const playlist = (target: number, seq = 1): string =>
+    `#EXTM3U\n#EXT-X-TARGETDURATION:${target}\n#EXT-X-MEDIA-SEQUENCE:${seq}\n` +
+    `#EXTINF:${target},\nseg${seq}.ts\n#EXTINF:${target},\nseg${seq + 1}.ts\n`;
 
-  it("空闲轮询 = 目标时长的一半，夹在 1~5 秒（避免把播放列表刷爆）", async () => {
+  it("刚拿到新分片 → 按目标时长整拍问（一拍一次，不再半拍两次）", async () => {
     for (const [target, want] of [
-      [10, 5000], // 江苏移动这类 10s 分片：5 秒一问
-      [4, 2000],
-      [2, 1000], // 短分片：不小于 1 秒
-      [30, 5000], // 超长分片：封顶 5 秒
+      [10, 10_000], // 江苏移动这类 10s 分片
+      [7, 7_000], // 广东联通内网 TARGETDURATION=7
+      [4, 4_000],
+      [2, 2_000],
+      [30, 10_000], // 超长分片：封顶 10 秒
+      [0.5, 1_000], // 极短分片：不小于 1 秒
+    ] as const) {
+      const source = new HlsSource("http://x/p.m3u8", {}, { fetcher: async () => playlist(target) });
+      await source.load(); // 首次入队 = 有新分片
+      expect(source.pollIntervalMs()).toBe(want);
+    }
+  });
+
+  it("这一问没有新分片 → 半拍后再问（既不空刷也不过晚）", async () => {
+    for (const [target, want] of [
+      [10, 5_000],
+      [4, 2_000],
+      [2, 1_000],
+      [30, 5_000], // 半拍同样封顶 5 秒
     ] as const) {
       const source = new HlsSource("http://x/p.m3u8", {}, { fetcher: async () => playlist(target) });
       await source.load();
+      await source.refresh(); // 同一份播放列表 → 无新分片
       expect(source.pollIntervalMs()).toBe(want);
     }
   });

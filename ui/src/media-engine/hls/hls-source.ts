@@ -58,6 +58,12 @@ export class HlsSource implements SegmentSource {
   private lastDelivered = -1;
   /** 是否已完成首次（直播 = live edge 切片）入队。 */
   private started = false;
+  /**
+   * 上一次刷新是否拿到了新分片。用来决定下一次空闲轮询的间隔（见 pollIntervalMs）：
+   * 刚把这一轮新分片全拿走，播放列表要过一整个分片周期才会再滚 —— 这时按"半拍"去问
+   * 只会白问一次（实测每个分片窗口打开两次 m3u8）。
+   */
+  private lastRefreshFoundNew = false;
   private playlistUrl = "";
   private refreshFailures = 0;
   /** 刷新失败是否已上报（成功刷新后复位）：避免整点/断流窗口内反复上报成 UI 错误风暴。 */
@@ -193,8 +199,11 @@ export class HlsSource implements SegmentSource {
       const seq = base + i;
       if (seq > this.lastQueued) fresh.push({ seq, uri: media.segments[i].uri });
     }
-    if (fresh.length === 0) return false;
-    this.enqueueSegments(fresh, true);
+    if (fresh.length === 0) {
+      this.lastRefreshFoundNew = false;
+      return false;
+    }
+    this.enqueueSegments(fresh, true); // 入队处会置 lastRefreshFoundNew = true
     return true;
   }
 
@@ -208,6 +217,7 @@ export class HlsSource implements SegmentSource {
     }
     if (batch.length === 0) return;
     this.started = true;
+    this.lastRefreshFoundNew = true; // 刚入队新分片：空闲轮询按整拍走（见 pollIntervalMs）
     this.pending.push(...batch);
     const maxSeq = batch[batch.length - 1].seq;
     if (maxSeq > this.lastQueued) this.lastQueued = maxSeq;
@@ -235,15 +245,22 @@ export class HlsSource implements SegmentSource {
   /**
    * 空闲轮询间隔（毫秒）：没有新分片时 pipeline 隔多久再问一次播放列表。
    *
-   * 播放列表本来就按目标时长滚动（本组江苏移动源 TARGETDURATION=10s / 一片 10 秒），
-   * 固定 1 秒轮询纯属浪费：每次都要穿一遍上游（实测同一分片间隔里刷出十几次 playlist
-   * 请求，服务端与上游都被无谓地打）。取目标时长的一半（HLS 客户端常见做法），
-   * 并夹在 1~5 秒：既不会错过新分片太久，也不会把上游刷爆。
+   * 播放列表按目标时长滚动（本机实测：广东联通内网 TARGETDURATION=7 一片约 6 秒、
+   * 江苏移动 TARGETDURATION=10 一片 10 秒），而 pipeline 只在**队列空**时才来问，
+   * 所以这个间隔直接决定"每个分片窗口打开几次 m3u8"：
+   *  - 上一问刚拿到新分片 → 播放列表要过一整个周期才滚，按 targetDuration 问（一拍一次）；
+   *  - 上一问什么都没拿到（问早了）→ 半拍后再问，别把上游刷爆，也不至于错过太久。
+   * 固定 1 秒轮询纯属浪费：每次都要穿一遍上游（实测同一分片间隔里刷出十几次请求）。
    */
   pollIntervalMs(): number {
     const target = this.info?.targetDuration ?? 0;
     if (!(target > 0)) return 1000;
-    return Math.min(5000, Math.max(1000, Math.round((target * 1000) / 2)));
+    const period = target * 1000;
+    // 刚拿走这一轮新分片：播放列表要过一个分片周期才滚，按目标时长问一次即可 ——
+    // 一拍一次（而不是半拍两次），这也是用户看到的"每个分片打开两次 m3u8"的来源。
+    if (this.lastRefreshFoundNew) return Math.min(10_000, Math.max(1000, Math.round(period)));
+    // 这一问什么都没有（问早了 / 源站分片迟发）：半拍后再问，既不空刷也不至于太晚。
+    return Math.min(5_000, Math.max(1000, Math.round(period / 2)));
   }
 
   /**
