@@ -38,7 +38,7 @@ import {
 import type { Locale } from "../lib/locale";
 import type { Channel, M3UMetadata, Source } from "../types/player";
 import { isLGWebOS } from "../lib/platform";
-import { findDeepLinkChannel, syncChannelDeepLink } from "../lib/player-deep-link";
+import { findDeepLinkTarget, syncChannelDeepLink } from "../lib/player-deep-link";
 import {
   getAudioChannelMode,
   getAutoDeinterlace,
@@ -64,6 +64,14 @@ import { PICTURE_IN_PICTURE_MODES, type PictureInPictureMode } from "../types/ui
 
 /** EPG 重试冷却：拉取失败或结果为空后，冷却到期才允许再试（一次失败不放弃整场）。 */
 const EPG_FETCH_COOLDOWN_MS = 60_000;
+/**
+ * EPG 失败重试上限（毫秒）：按失败次数指数退避，封顶到与周期刷新同量级。
+ *
+ * 原先"失败/空结果"恒定 1 分钟冷却 —— 对**本来就没覆盖**的频道（实测江苏移动那组在
+ * epg.cdn.loc.cc 上大多为空）等于每分钟重拉一次，可见区 12 个小预算频道就是每分钟 12 次
+ * 外网代拉、永不收敛。改成 1→2→4→8→15 分钟退避后，长期失败频道很快降到 15 分钟一次。
+ */
+const EPG_FETCH_RETRY_MAX_MS = 15 * 60 * 1000;
 /** EPG 周期刷新：与后端 EPG 源刷新节奏同量级，长时间挂机时"正在播出"不漂移、跨天能跟上。 */
 const EPG_PERIODIC_REFRESH_MS = 15 * 60 * 1000;
 /**
@@ -100,6 +108,8 @@ interface ServerChannelRecord {
   tvgName?: string;
   tvgLogo?: string;
   epgType?: string;
+  /** 服务端稳定频道 id（多线路聚合后不变）；深链兜底匹配用。 */
+  id?: string;
   /** 组内聚合的线路表（后端同分组内「名称完全一致」的频道产出）；缺失时按单线路（key）兜底。 */
   lines?: { key: string; tag?: string; scheme?: string }[];
 }
@@ -187,7 +197,8 @@ function buildCatalogFromServerPayload(records: ServerChannelRecord[]): { channe
     if (!record?.key || !record.name) continue;
     const lines = record.lines?.length ? record.lines : [{ key: record.key }];
     const sources = lines.map((line) => {
-      const source: Source = { url: withAccessToken(`/player/${line.key}`) };
+      // key 一并留着（深链 #<线路key> 要按它匹配；url 里带 token 不适合直接比对）
+      const source: Source = { url: withAccessToken(`/player/${line.key}`), key: line.key };
       if (CATCHUP_SERVER_SCHEMES.includes(line.scheme ?? record.scheme ?? "")) {
         // timeshift 与 timeshiftTemplate 必须成对赋值：回看能力探测以"二者同时存在"为准
         source.timeshift = "server";
@@ -198,6 +209,7 @@ function buildCatalogFromServerPayload(records: ServerChannelRecord[]): { channe
     if (record.group) groupNames.add(record.group);
     channels.push({
       id: record.key,
+      serverId: record.id,
       name: record.name,
       logo: record.tvgLogo || undefined,
       groups: record.group ? [record.group] : [],
@@ -329,19 +341,33 @@ const FAILURE_PAGE_INNER_CLASSES = "mx-auto flex min-h-full w-[calc(100%-2rem)] 
 const FAILURE_CARD_CLASSES =
   "player-performance-panel-background min-w-0 w-full overflow-hidden rounded-3xl border-violet-900/10 bg-white/72 shadow-[0_28px_80px_rgba(var(--pg-rgb),0.16),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-2xl dark:border-violet-100/12 dark:bg-[linear-gradient(145deg,rgba(2,6,23,0.9),rgba(15,23,42,0.82))] dark:shadow-[0_30px_90px_rgba(2,6,16,0.62),inset_0_1px_0_rgba(255,255,255,0.08)]";
 
+/** 失败次数 → 重试冷却时长（首次失败 1 分钟，之后指数退避，封顶 15 分钟）。 */
+function epgRetryDelayMs(failures: number): number {
+  if (failures <= 1) return EPG_FETCH_COOLDOWN_MS;
+  return Math.min(EPG_FETCH_COOLDOWN_MS * 2 ** (failures - 1), EPG_FETCH_RETRY_MAX_MS);
+}
+
+/** 该频道的 EPG 是否仍在冷却期内（没尝试过 = 不在冷却）。 */
+function epgCoolingDown(key: string, lastAttempts: Map<string, number>, failures: Map<string, number>): boolean {
+  const attemptedAt = lastAttempts.get(key);
+  if (attemptedAt === undefined) return false;
+  return Date.now() - attemptedAt < epgRetryDelayMs(failures.get(key) ?? 1);
+}
+
 /** 可见频道的节目单是否值得（重新）预取：从未成功、不在飞、且已过失败冷却。 */
 function shouldPrefetchSchedule(
   channel: Channel,
   readyKeys: Set<string>,
   busyKeys: Set<string>,
   lastAttempts: Map<string, number>,
+  failures: Map<string, number>,
 ): boolean {
   const key = epgKeyOfChannel(channel);
   return (
     !!key &&
     !readyKeys.has(key) &&
     !busyKeys.has(key) &&
-    Date.now() - (lastAttempts.get(key) ?? 0) >= EPG_FETCH_COOLDOWN_MS
+    !epgCoolingDown(key, lastAttempts, failures)
   );
 }
 
@@ -376,6 +402,8 @@ function PlayerScreen() {
   const epgBusyKeysRef = useRef<Set<string>>(new Set());
   /** 每个频道最近一次尝试时间戳，失败/空结果后的冷却依据。 */
   const epgLastAttemptRef = useRef<Map<string, number>>(new Map());
+  /** 每个频道连续失败次数：冷却按它指数退避（见 epgRetryDelayMs），成功即清零。 */
+  const epgFailureCountRef = useRef<Map<string, number>>(new Map());
   /** 后端下发的 EPG 源配置（kind/template/logo）：预取限流与"未配置"提示都看它。 */
   const [epgBackendConfig, setEpgBackendConfig] = useState<{ kind?: string; template?: string; logo?: string } | null>(null);
 
@@ -585,15 +613,19 @@ function PlayerScreen() {
     if (playingChannel) saveLastSourceIndex(playingChannel.id, sourceTrackIndex);
   }, [playingChannel, sourceTrackIndex]);
 
-  /** 进台：清时钟、作废旧回看代次、回直播边缘，再按上次记忆挑源。 */
+  /**
+   * 进台：清时钟、作废旧回看代次、回直播边缘，再按上次记忆挑源。
+   * sourceIndex 显式给出时优先（深链 `#<线路key>` 要落到指定线路），否则用记忆值。
+   */
   const tuneToChannel = useCallback(
-    (channel: Channel) => {
+    (channel: Channel, sourceIndex?: number) => {
       resetPlaybackClock();
       catchupEpochRef.current += 1;
       setCatchupStreamUrl(null);
       setPlayingChannel(channel);
       const rememberedIndex = getLastSourceIndex(channel.id);
-      setSourceTrackIndex(rememberedIndex < channel.sources.length ? rememberedIndex : 0);
+      const wanted = sourceIndex ?? rememberedIndex;
+      setSourceTrackIndex(wanted < channel.sources.length ? wanted : 0);
       setPinnedToLiveEdge(true);
       setStreamWallClockBase(new Date());
     },
@@ -624,12 +656,17 @@ function PlayerScreen() {
   useEffect(() => {
     if (!catalog) return;
     const onHashChange = () => {
-      const linked = findDeepLinkChannel(catalog.channels);
-      if (linked && linked.id !== playingChannel?.id) tuneToChannel(linked);
+      const linked = findDeepLinkTarget(catalog.channels);
+      if (!linked) return;
+      // 换台，或同一频道但深链指定了另一条线路（`#<线路key>`）→ 都要切
+      const sameChannel = linked.channel.id === playingChannel?.id;
+      if (!sameChannel || linked.sourceIndex !== sourceTrackIndex) {
+        tuneToChannel(linked.channel, linked.sourceIndex);
+      }
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
-  }, [catalog, playingChannel, tuneToChannel]);
+  }, [catalog, playingChannel, sourceTrackIndex, tuneToChannel]);
 
   // ---- EPG 拉取 ------------------------------------------------------------
   /**
@@ -640,7 +677,7 @@ function PlayerScreen() {
     const epgKey = epgKeyOfChannel(channel);
     const isBusy = epgBusyKeysRef.current.has(epgKey);
     const isReady = epgReadyKeysRef.current.has(epgKey);
-    const isCoolingDown = Date.now() - (epgLastAttemptRef.current.get(epgKey) ?? 0) < EPG_FETCH_COOLDOWN_MS;
+    const isCoolingDown = epgCoolingDown(epgKey, epgLastAttemptRef.current, epgFailureCountRef.current);
     if (!epgKey || isBusy) return;
     if (!opts?.force && (isReady || isCoolingDown)) return;
     // 尝试时间必须在发起请求前落账：并发触发（当前频道 + 预取）时靠它去重冷却
@@ -656,12 +693,15 @@ function PlayerScreen() {
         const programs = mapPrograms(payload.programs);
         if (!programs.length) throw new Error("epgEmpty");
         epgReadyKeysRef.current.add(epgKey);
+        epgFailureCountRef.current.delete(epgKey);
         startTransition(() => {
           setEpgSchedules((previous) => ({ ...previous, [epgKey]: programs }));
         });
       })
       .catch(() => {
-        // 失败/为空：不写"已加载"，冷却后可重试；界面上继续显示缝隙填充占位
+        // 失败/为空：不写"已加载"，按失败次数指数退避后再试；界面上继续显示缝隙填充占位。
+        // 连续失败要累计——该 EPG 源根本没覆盖的频道会被记到 15 分钟一次，不再每分钟空刷。
+        epgFailureCountRef.current.set(epgKey, (epgFailureCountRef.current.get(epgKey) ?? 0) + 1);
       })
       .finally(() => {
         epgBusyKeysRef.current.delete(epgKey);
@@ -693,7 +733,13 @@ function PlayerScreen() {
       visible
         .slice(0, budget)
         .filter((channel) =>
-          shouldPrefetchSchedule(channel, epgReadyKeysRef.current, epgBusyKeysRef.current, epgLastAttemptRef.current),
+          shouldPrefetchSchedule(
+            channel,
+            epgReadyKeysRef.current,
+            epgBusyKeysRef.current,
+            epgLastAttemptRef.current,
+            epgFailureCountRef.current,
+          ),
         )
         .forEach((channel, order) => {
           window.setTimeout(() => fetchChannelSchedule(channel), order * EPG_PREFETCH_GAP_MS);
@@ -710,6 +756,7 @@ function PlayerScreen() {
     const timer = window.setInterval(() => {
       epgReadyKeysRef.current = new Set();
       epgLastAttemptRef.current = new Map();
+      epgFailureCountRef.current = new Map();
       if (playingChannel) fetchChannelSchedule(playingChannel, { force: true });
       if (browsingChannel) fetchChannelSchedule(browsingChannel, { force: true });
     }, EPG_PERIODIC_REFRESH_MS);
@@ -784,6 +831,7 @@ function PlayerScreen() {
       setPageError(null);
       epgReadyKeysRef.current = new Set();
       epgLastAttemptRef.current = new Map();
+      epgFailureCountRef.current = new Map();
       epgBusyKeysRef.current = new Set();
 
       let built: { channels: Channel[]; groups: string[] };
@@ -802,11 +850,13 @@ function PlayerScreen() {
 
       const lastChannelId = getLastChannelId();
       // 深链 > 上次观看 > 第一个频道；独立直播入口永远锁定它唯一的频道
-      const deepLinked = directLiveEntry ? null : findDeepLinkChannel(built.channels);
+      const deepLinked = directLiveEntry ? null : findDeepLinkTarget(built.channels);
       const initialChannel = directLiveEntry
         ? built.channels[0]
-        : deepLinked ?? built.channels.find((channel) => channel.id === lastChannelId) ?? built.channels[0];
-      tuneToChannel(initialChannel);
+        : deepLinked?.channel ??
+          built.channels.find((channel) => channel.id === lastChannelId) ??
+          built.channels[0];
+      tuneToChannel(initialChannel, deepLinked?.sourceIndex);
 
       // 先铺一层缝隙填充数据，列表骨架立即可渲染，真实节目单到了再覆盖
       setEpgSchedules(fillEPGGaps({}, built.channels));

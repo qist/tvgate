@@ -463,6 +463,12 @@ function VideoPlayerShell({
   const activeBackend = () => backendRefOf(currentSlotId()).current;
 
   const [isLoadingStream, setIsLoadingStream] = useState(false);
+  /**
+   * 换流遮罩（切台 / 换线路）：见 streamSwitchMask 注释。
+   * 与 isLoadingStream 分开——后者会被"播放中偶发 waiting"点亮，拿它当遮罩会在每次
+   * 网络抖动时糊住正在播的画面；遮罩只在"屏上这张画面已经不能代表正在播的频道"时出现。
+   */
+  const [switchMaskVisible, setSwitchMaskVisible] = useState(false);
   const [showSpinner, setShowSpinner] = useState(false);
   const spinnerDelayRef = useRef<number>(0);
   const [failure, setFailure] = useState<PlaybackFailureView | null>(() =>
@@ -593,6 +599,8 @@ function VideoPlayerShell({
     } else {
       pausedByUserRef.current = true;
       backend.pause();
+      // 换流空窗里用户按了暂停：别再用"正在加载"的遮罩压在脸上——他要的是画面别动。
+      setSwitchMaskVisible(false);
     }
   });
 
@@ -739,6 +747,8 @@ function VideoPlayerShell({
     activeSlotRef.current = newSlot;
     setDisplayedSlot(newSlot);
     setIsLoadingStream(false);
+    // 新流已原子接管（此刻起屏上是新台的画面）：换流遮罩使命结束。
+    setSwitchMaskVisible(false);
 
     if (oldSlot !== newSlot && oldBackend) stopBackendIfStillMounted(oldSlot, oldBackend);
   });
@@ -877,6 +887,8 @@ function VideoPlayerShell({
     setFailure(failureView);
     onError?.(messageText);
     setIsLoadingStream(false);
+    // 弹错误面板：遮罩交还给面板（不再假装"还在切"）。
+    setSwitchMaskVisible(false);
   });
 
   /**
@@ -1181,6 +1193,13 @@ function VideoPlayerShell({
 
     if (channel) lastStreamIdentityRef.current = { channelId: channel.id, sourceIndex: activeSourceIndex };
 
+    // 换流瞬间立刻上遮罩（两条路都上）：旧管线的画面从这一刻起已经不能代表"正在播什么"，
+    // 与其把旧台最后一帧留在屏上（慢源上要挂到 15s，用户会以为切台没生效/还在放旧台），
+    // 不如明确告诉他"正在切"。遮罩一直盖到新流真正上屏（硬切：本槽 canplay/playing；
+    // 无缝换台：commitHandover 原子接管那一刻）。首次起播不上遮罩（isStreamSwitch=false），
+    // 那时屏上本来就没有画面；用户暂停时也不上（autoplayIntent=false，切完停在首帧更合适）。
+    if (isStreamSwitch && autoplayIntentRef.current) setSwitchMaskVisible(true);
+
     if (!canHandoverSeamlessly) {
       abortPendingHandover();
       reloadInPlace(activeBackendInstance, activeSlot, newSegments);
@@ -1205,10 +1224,10 @@ function VideoPlayerShell({
       pendingBackend.setVolume(activeState.volume);
       pendingBackend.setMuted(true);
     }
-    // 切台即断流：旧路立刻停 —— 停拉流（worker 作废）、拆软解音频链、暂停画面。旧频道/线路的
-    // 声音一个采样也不许跟进过渡期（这是"绝不放错台声音"的底线，也省掉"过渡期临时静音"
-    // 那套音量隔离）；画面停在最后一帧当过渡背景，新流在承接槽起播后原子接管，首帧直接顶掉
-    // 静帧 —— 比继续放旧台 live 画面更不容易让人误以为还在看旧台。
+    // 切台即断流：旧路立刻停 —— 停拉流（worker 作废）、拆软解音频链、拆掉元素上的 MediaSource。
+    // 旧频道/线路的声音一个采样也不许跟进过渡期（这是"绝不放错台声音"的底线，也省掉
+    // "过渡期临时静音"那套音量隔离）；屏上的黑/旧帧由上面的换流遮罩负责遮住，
+    // 新流在承接槽起播后原子接管。
     activeBackendInstance.stop();
 
     const handover: HandoverTicket = { generation, slotTag: pendingSlot, backend: pendingBackend, startedAt: performance.now() };
@@ -1299,6 +1318,10 @@ function VideoPlayerShell({
   const onSlotCanPlay = useEffectEvent((slot: SlotTag) => {
     if (slot !== currentSlotId() && pendingHandoverRef.current?.slotTag !== slot) return;
     setIsLoadingStream(false);
+    // 硬切路（同槽重灌）到 canplay 即撤遮罩：此时元素里已是新流的数据，露出来的是新台画面。
+    // 无缝换台路不能在这里撤 —— 承接槽的 canplay 早于 playing，此刻显示槽还是旧槽，
+    // 撤早了又会把旧台静帧露出来（那正是遮罩要挡的东西），故只认"当前显示槽"。
+    if (slot === currentSlotId()) setSwitchMaskVisible(false);
   });
 
   const onSlotWaiting = useEffectEvent((slot: SlotTag) => {
@@ -1317,6 +1340,7 @@ function VideoPlayerShell({
 
     everPlayedRef.current = true;
     setIsLoadingStream(false);
+    setSwitchMaskVisible(false);
     setPlaybackActive(true);
     onPlaybackStarted?.();
 
@@ -1884,6 +1908,26 @@ function VideoPlayerShell({
     <div aria-hidden="true" data-player-surface-hit="" className="absolute inset-0 z-[1] touch-none select-none" {...gestureHandlers} />
   );
 
+  /**
+   * 换流遮罩：切台/换线路期间盖住视频区，替掉"旧台最后一帧"当过渡背景的做法。
+   * 旧做法的假设是"新流很快就到"，但慢源上换台空窗能到 10s 以上，这期间观众盯着一张
+   * 不动的旧台画面（还带着旧台台标），很容易以为切台没生效 —— 遮罩把这层歧义消掉。
+   * z-[2]：盖住画面与手势层，但让开控件(z-10)/弹窗(z-10/20)；pointer-events-none
+   * 保证遮罩期间仍能点出控件、拖手势（命中层在下面照常收事件）。
+   */
+  const streamSwitchMask = switchMaskVisible && channel && !failure && !requiresGesture && (
+    <div
+      aria-live="polite"
+      className="player-performance-overlay-background player-performance-motion pointer-events-none absolute inset-0 z-[2] flex flex-col items-center justify-center gap-2 bg-[radial-gradient(circle_at_50%_40%,rgba(18,50,91,0.66),rgba(2,6,23,0.9)_70%)] backdrop-blur-[2px] md:gap-3"
+    >
+      <div className="relative h-9 w-9 md:h-11 md:w-11">
+        <div className="absolute inset-0 rounded-full border border-violet-100/20" />
+        <div className="player-performance-loading-spinner absolute inset-0 animate-spin rounded-full border-2 border-violet-200 border-t-transparent shadow-[0_0_14px_rgba(var(--pg-rgb),0.5)]" />
+      </div>
+      <div className="max-w-[80%] truncate text-violet-50/85 text-xs md:text-sm">{tr("loadingVideo")}</div>
+    </div>
+  );
+
   const topLeftStatusBadge = !requiresGesture && !failure && (
     <ClockAndLoadingBadge
       badgeVisible={controlsVisible || showSpinner}
@@ -2119,6 +2163,7 @@ function VideoPlayerShell({
       */}
       {videoStage}
       {gestureHitLayer}
+      {streamSwitchMask}
       {topLeftStatusBadge}
       {channelIdentityCard}
       {resumePlaybackGate}

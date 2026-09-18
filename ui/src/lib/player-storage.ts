@@ -73,8 +73,9 @@ export function getSidebarVisible(): boolean {
 
 // ---- 无缝换台 ----
 /**
- * 默认开启：切台即断流，屏上留旧台最后一帧当过渡背景，新流在承接槽起播后原子接管
- * （不黑屏、不放错台声音）。关掉则退化为原槽直接重灌（过渡期黑屏 + 加载态）。
+ * 默认开启：切台即断流，切台瞬间上 loading 遮罩（不再把旧台最后一帧留在屏上当过渡背景
+ * ——慢源上空窗可达十几秒，观众会以为切台没生效），新流在承接槽起播后原子接管，
+ * 全程不放错台声音。关掉则退化为原槽直接重灌（同样有遮罩）。
  */
 export function getSeamlessSwitch(): boolean {
   return readBool("seamless-switch", true);
