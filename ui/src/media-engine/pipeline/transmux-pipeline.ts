@@ -17,6 +17,7 @@ import {
 } from "../io/fetch-loader";
 import { FlvDemuxer } from "../demux/flv-demuxer";
 import { TsDemuxer, type TrackInfo, type TsDemuxerCallbacks } from "../demux/ts-demuxer";
+import { AdtsDemuxer, probeAdtsStream } from "../demux/adts-demuxer";
 import type { SegmentSource } from "../hls/segment-source";
 import {
   Fmp4Remuxer,
@@ -156,7 +157,7 @@ export class TransmuxPipeline {
    * 数据源解复用器：首块字节探测决定（FLV / MPEG-TS），两者输出协议同形。
    * 见 feedDemuxer()。HTTP-FLV（直播）与连续 TS 直链都走静态 URL 列表这条路径。
    */
-  private demuxer: TsDemuxer | FlvDemuxer | null = null;
+  private demuxer: TsDemuxer | FlvDemuxer | AdtsDemuxer | null = null;
   /** 探测期暂存（首块不足 3 字节时等更多数据再判）。 */
   private demuxProbeBuffer: Uint8Array | null = null;
   private readonly demuxerCallbacks: TsDemuxerCallbacks;
@@ -268,8 +269,10 @@ export class TransmuxPipeline {
   }
 
   /**
-   * 首块探测 FLV / MPEG-TS 并惰性创建解复用器。
-   * FLV 魔数 "FLV"（HTTP-FLV 直播）→ FlvDemuxer；其余一律按连续 MPEG-TS（TsDemuxer）。
+   * 首块探测 FLV / 裸 ADTS / MPEG-TS 并惰性创建解复用器。
+   * FLV 魔数 "FLV"（HTTP-FLV 直播）→ FlvDemuxer；连得上两个 ADTS 帧头（广播源的
+   * `.hls.ts` 其实是裸 AAC）→ AdtsDemuxer；其余一律按连续 MPEG-TS（TsDemuxer）。
+   * ADTS 判定必须早于 TS 兜底：否则裸 AAC 交给 TsDemuxer 会被当"不同步数据"静默丢弃。
    */
   private feedDemuxer(chunk: Uint8Array): void {
     if (this.demuxer) {
@@ -289,7 +292,13 @@ export class TransmuxPipeline {
       return;
     }
     this.demuxProbeBuffer = null;
-    this.demuxer = probe.match ? new FlvDemuxer(this.demuxerCallbacks) : new TsDemuxer(this.demuxerCallbacks);
+    if (probeAdtsStream(data)) {
+      this.demuxer = new AdtsDemuxer(this.demuxerCallbacks);
+    } else {
+      this.demuxer = probe.match
+        ? new FlvDemuxer(this.demuxerCallbacks)
+        : new TsDemuxer(this.demuxerCallbacks);
+    }
     this.demuxer.push(data);
   }
 
