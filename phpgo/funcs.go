@@ -296,10 +296,6 @@ func init() {
 	}
 	// file_get_contents（HTTP 走 proxy，本地文件直接读，php://input 读请求体）
 	builtins["file_get_contents"] = fileGetContents
-	// PCRE 正则（Go RE2 子集）
-	builtins["preg_match"] = phpPregMatch
-	builtins["preg_match_all"] = phpPregMatchAll
-	builtins["preg_replace"] = phpPregReplace
 }
 
 // unescapeUnicode 将 Go json.Marshal 产生的 \uXXXX 转义还原为 UTF-8 字符

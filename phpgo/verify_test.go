@@ -16,10 +16,11 @@ func TestParseLive4gtv(t *testing.T) {
 	}
 }
 
-// TestPregLookbehind 验证 fj.php 的 lookbehind 特例能被正确处理。
+// TestPregLookbehind 验证 lookbehind/lookahead 在新 regexp2 内核下原生可用
+// （原 RE2 内核时代靠字符串级 workaround，现改为 PCRE 真语义）。
 func TestPregLookbehind(t *testing.T) {
 	b := "http://x/abc.m3u8"
-	got, err := phpPregReplace(nil, []Value{
+	got, err := pregBuiltinReplace(nil, []Value{
 		NewString(`(?<=\/)[^\/.]+(?=\.m3u8)`),
 		NewString("replaced"),
 		NewString(b),

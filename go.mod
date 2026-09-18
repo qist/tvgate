@@ -29,6 +29,7 @@ require (
 	github.com/AdguardTeam/golibs v0.32.7 // indirect
 	github.com/ameshkov/dnsstamps v1.0.3 // indirect
 	github.com/asticode/go-astikit v0.30.0 // indirect
+	github.com/dlclark/regexp2 v1.12.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
