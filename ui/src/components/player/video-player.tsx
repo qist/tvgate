@@ -1928,6 +1928,32 @@ function VideoPlayerShell({
     </div>
   );
 
+  /**
+   * 纯音频（广播）频道：只有音轨没有视频轨。屏上本来就没有画面可放（广东移动那批广播的
+   * `.hls.ts` 实为裸 ADTS AAC，见 demux/adts-demuxer.ts），留一大片黑容易让人以为"没播出来"。
+   * 有音轨无视频轨时才显示，换流遮罩期间让位（那时该表达的是"正在切"）。
+   */
+  const audioOnlyStage = !!mediaInfoBySlot[displayedSlot]?.audio &&
+    !mediaInfoBySlot[displayedSlot]?.video &&
+    channel &&
+    !failure &&
+    !requiresGesture &&
+    !switchMaskVisible && (
+      <div className="player-performance-overlay-background pointer-events-none absolute inset-0 z-[2] flex flex-col items-center justify-center gap-3 text-center md:gap-4">
+        <div className="flex h-9 items-end gap-1.5 md:h-12">
+          {[0, 1, 2, 3].map((i) => (
+            <span
+              key={i}
+              className="player-performance-motion w-1.5 animate-pulse rounded-full bg-violet-200/85 md:w-2"
+              style={{ height: `${[14, 30, 22, 10][i]}px`, animationDelay: `${i * 160}ms` }}
+            />
+          ))}
+        </div>
+        <div className="max-w-[80%] truncate text-violet-50/90 text-sm md:text-base">{channel.name}</div>
+        <div className="text-violet-100/60 text-[11px] md:text-xs">{tr("audioOnlyChannel")}</div>
+      </div>
+    );
+
   const topLeftStatusBadge = !requiresGesture && !failure && (
     <ClockAndLoadingBadge
       badgeVisible={controlsVisible || showSpinner}
@@ -2163,6 +2189,7 @@ function VideoPlayerShell({
       */}
       {videoStage}
       {gestureHitLayer}
+      {audioOnlyStage}
       {streamSwitchMask}
       {topLeftStatusBadge}
       {channelIdentityCard}

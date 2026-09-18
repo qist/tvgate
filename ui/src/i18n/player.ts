@@ -35,6 +35,7 @@ const base: TranslationDict = {
   // 视频播放器
   selectChannelToWatch: "Pick a channel to start viewing",
   loadingVideo: "Loading...",
+  audioOnlyChannel: "Audio-only channel",
   playbackError: "Playback issue",
   clickToPlay: "Click here to play",
   autoplayBlocked: "The browser blocks autoplay until you interact with the page",
@@ -180,6 +181,7 @@ const zhHans: TranslationDict = {
   // 视频播放器
   selectChannelToWatch: "先挑一个频道，即可开始观看",
   loadingVideo: "加载中...",
+  audioOnlyChannel: "纯音频频道（广播）",
   playbackError: "播放出现问题",
   clickToPlay: "点击开始播放",
   autoplayBlocked: "浏览器限制了自动播放，请先与页面进行交互",
@@ -326,6 +328,7 @@ const zhHant: TranslationDict = {
   // 視訊播放器
   selectChannelToWatch: "先挑一個頻道，即可開始觀看",
   loadingVideo: "載入中...",
+  audioOnlyChannel: "純音訊頻道（廣播）",
   playbackError: "播放出現問題",
   clickToPlay: "點擊開始播放",
   autoplayBlocked: "瀏覽器限制了自動播放，請先與頁面互動",
