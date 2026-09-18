@@ -103,3 +103,62 @@ func TestResolveSub(t *testing.T) {
 		t.Fatal("scheme 注入应被拒")
 	}
 }
+
+func TestNormalizeChannelWithQuality(t *testing.T) {
+	cases := []struct{ in, wantNorm, wantTag string }{
+		{"CCTV5", "CCTV5", ""},
+		{"cctv-5", "CCTV5", ""},
+		{"CCTV5 4K", "CCTV5", "4K"},
+		{"CCTV-5-4k", "CCTV5", "4K"},
+		{"北京卫视 高清", "北京卫视", "高清"}, // 中文规格保留原样展示
+		{"CCTV5+", "CCTV5+", ""},  // 频道号语义 + 不剥，与 CCTV5 区分
+		{"4K影院", "4K影院", ""},      // 中间词不误伤
+		{"凤凰中文_60fps", "凤凰中文", "60FPS"},
+	}
+	for _, c := range cases {
+		norm, tag := normalizeChannelWithQuality(c.in)
+		if norm != c.wantNorm || tag != c.wantTag {
+			t.Fatalf("%q: got (%q,%q) want (%q,%q)", c.in, norm, tag, c.wantNorm, c.wantTag)
+		}
+	}
+}
+
+func TestAggregateIntraGroup(t *testing.T) {
+	mk := func(key, name, group, tvgID string) *Channel {
+		return &Channel{Key: key, Name: name, Group: group, TVGID: tvgID, EpgType: "m3u"}
+	}
+	order := []*Channel{
+		mk("k1", "CCTV5", "iptv", ""),
+		mk("k2", "CCTV5 4K", "iptv", "cctv5"),
+		mk("k3", "cctv-5", "iptv", ""),
+		mk("k4", "CCTV5", "移动", ""), // 不同组不合并
+		mk("k5", "CCTV6", "iptv", ""),
+	}
+	got := aggregateIntraGroup(order)
+	// 5 条输入 → 3 条输出：CCTV5(iptv,3线路)、CCTV5(移动,1线路)、CCTV6(iptv)
+	if len(got) != 3 {
+		t.Fatalf("聚合后应 3 条，实际 %d", len(got))
+	}
+	head := got[0]
+	if head.Key != "k1" || head.ID == "" || len(head.Lines) != 3 {
+		t.Fatalf("CCTV5 应聚合 3 线路: %+v", head)
+	}
+	// 线路顺序与画质 tag
+	if head.Lines[0].Key != "k1" || head.Lines[1].Tag != "4K" || head.Lines[2].Key != "k3" {
+		t.Fatalf("线路表不对: %+v", head.Lines)
+	}
+	// TVG 向首条非空补齐
+	if head.TVGID != "cctv5" {
+		t.Fatalf("TVGID 应补齐: %q", head.TVGID)
+	}
+	// 频道 ID 稳定性：同组同名不同输入顺序 → 同 ID
+	id2 := aggregateIntraGroup([]*Channel{mk("k3", "cctv-5", "iptv", ""), mk("k1", "CCTV5", "iptv", "")})[0].ID
+	if id2 != head.ID {
+		t.Fatalf("ID 不稳定: %q vs %q", id2, head.ID)
+	}
+	// 不同组 ID 必不同
+	mob := got[1]
+	if mob.ID == head.ID || mob.Group != "移动" || len(mob.Lines) != 1 {
+		t.Fatalf("跨组不应合并: %+v", mob)
+	}
+}

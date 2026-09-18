@@ -30,19 +30,32 @@ import (
 // 再无法刷新。这里用独立超时兜底。
 const subscriptionFetchTimeout = 30 * time.Second
 
+// LineInfo 是组内聚合后的一条线路：拉流仍走各线路自己的 opaque key，
+// 切线路 = 换 key 重 tune，白名单/重写/缓存链路不变。
+type LineInfo struct {
+	Key    string `json:"key"`
+	Tag    string `json:"tag,omitempty"`    // 画质/来源标记（从名称尾部提取，仅展示）
+	Scheme string `json:"scheme,omitempty"` // 该线路自身的协议，前端逐线路判定回看能力
+}
+
 // Channel 解析自订阅的单个频道。
 // RawURL 为真实源地址，仅存在于服务端；对外只暴露 Key。
+// 组内聚合后（Reload 时），同分组内归一化名相同的频道合并为首条频道
+// 的多线路：ID 为频道稳定 ID（不随线路增减变化），Lines 含全部线路
+// （首项即自身）。单线路频道 Lines 长度为 1。
 type Channel struct {
-	Key     string `json:"key"`
-	Name    string `json:"name"`
-	Group   string `json:"group"`
-	Scheme  string `json:"scheme"` // udp / rtp / rtsp / http / https
-	RawURL  string `json:"-"`      // 真实源，不外露
-	UA      string `json:"-"`      // 每条源的服务端 UA（如需要）
-	TVGID   string `json:"tvgId"`
-	TVGName string `json:"tvgName"`
-	TVGLogo string `json:"tvgLogo"`
-	EpgType string `json:"epgType"` // m3u / txt / none
+	Key     string      `json:"key"`
+	ID      string      `json:"id"` // hash(group|归一化名)，收藏/续播/线路记忆绑定它
+	Name    string      `json:"name"`
+	Group   string      `json:"group"`
+	Scheme  string      `json:"scheme"` // udp / rtp / rtsp / http / https
+	RawURL  string      `json:"-"`      // 真实源，不外露
+	UA      string      `json:"-"`      // 每条源的服务端 UA（如需要）
+	TVGID   string      `json:"tvgId"`
+	TVGName string      `json:"tvgName"`
+	TVGLogo string      `json:"tvgLogo"`
+	EpgType string      `json:"epgType"` // m3u / txt / none
+	Lines   []*LineInfo `json:"lines"`
 }
 
 // EPGSource 记录订阅携带的 EPG/台标定义（随 /api/player/channels 下发）。
@@ -367,6 +380,8 @@ func (m *Manager) Reload() {
 			newGroups = append(newGroups, c.Group)
 		}
 	}
+	// 组内聚合：同分组内归一化名相同 → 一个频道多线路（白名单保持全线路）
+	newOrder = aggregateIntraGroup(newOrder)
 	m.mu.Lock()
 	m.channels = newCh
 	m.byURL = newByURL

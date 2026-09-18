@@ -84,6 +84,8 @@ const REVEAL_HOLD_MS = 500;
 const CATCHUP_SERVER_SCHEMES: readonly string[] = ["http", "https", "php", "rtsp"];
 /** 从播放地址解析不出可读频道名时的兜底展示名。 */
 const FALLBACK_LIVE_CHANNEL_NAME = "直播";
+/** 自动切线路提示的驻留时长：盖住换流的加载窗口即可，不挡后续画面。 */
+const FAILOVER_HINT_MS = 3_500;
 
 // ---------------------------------------------------------------------------
 // 服务端数据模型：/api/player/channels 的原始载荷。
@@ -98,6 +100,8 @@ interface ServerChannelRecord {
   tvgName?: string;
   tvgLogo?: string;
   epgType?: string;
+  /** 组内聚合的线路表（后端归一化同名频道产出）；缺失时按单线路（key）兜底。 */
+  lines?: { key: string; tag?: string; scheme?: string }[];
 }
 
 interface ServerChannelsEnvelope {
@@ -171,19 +175,24 @@ function channelLabelFromStreamUrl(url: string): string {
 
 /**
  * 常规入口：/api/player/channels 载荷 → 频道列表 + 分组集合。
- * 每个频道只挂一个受控短地址源 /player/<key>；可代收回看的协议额外标记 server 时移。
+ * 每条记录按线路表装配受控短地址源（/player/<线路key>）；可代收回看的协议逐线路
+ * 标记 server 时移。频道 id 用首线路 key（后端的稳定身份 key，EPG/回看/深链按它查询）。
  */
 function buildCatalogFromServerPayload(records: ServerChannelRecord[]): { channels: Channel[]; groups: string[] } {
   const channels: Channel[] = [];
   const groupNames = new Set<string>();
   for (const record of records) {
     if (!record?.key || !record.name) continue;
-    const source: Source = { url: withAccessToken(`/player/${record.key}`), alias: record.scheme || undefined };
-    if (CATCHUP_SERVER_SCHEMES.includes(record.scheme ?? "")) {
-      // timeshift 与 timeshiftTemplate 必须成对赋值：回看能力探测以"二者同时存在"为准
-      source.timeshift = "server";
-      source.timeshiftTemplate = "server";
-    }
+    const lines = record.lines?.length ? record.lines : [{ key: record.key }];
+    const sources = lines.map((line) => {
+      const source: Source = { url: withAccessToken(`/player/${line.key}`), alias: line.tag || undefined };
+      if (CATCHUP_SERVER_SCHEMES.includes(line.scheme ?? record.scheme ?? "")) {
+        // timeshift 与 timeshiftTemplate 必须成对赋值：回看能力探测以"二者同时存在"为准
+        source.timeshift = "server";
+        source.timeshiftTemplate = "server";
+      }
+      return source;
+    });
     if (record.group) groupNames.add(record.group);
     channels.push({
       id: record.key,
@@ -194,7 +203,7 @@ function buildCatalogFromServerPayload(records: ServerChannelRecord[]): { channe
       number: channels.length + 1,
       epgId: record.tvgId || undefined,
       epgName: record.tvgName || undefined,
-      sources: [source],
+      sources,
     });
   }
   return { channels, groups: [...groupNames] };
@@ -822,6 +831,24 @@ function PlayerScreen() {
 
   const reportPlaybackError = useCallback((message: string) => setPageError(message), []);
 
+  // ---- 自动切线路（故障转移）-----------------------------------------------
+  // 组件内的 notice 会被新流的 ingest 立即清掉，瞬态提示只能在页层挂。
+  const [failoverHint, setFailoverHint] = useState<string | null>(null);
+  const failoverHintTimerRef = useRef(0);
+  const showFailoverHint = useCallback((text: string) => {
+    setFailoverHint(text);
+    if (failoverHintTimerRef.current) window.clearTimeout(failoverHintTimerRef.current);
+    failoverHintTimerRef.current = window.setTimeout(() => setFailoverHint(null), FAILOVER_HINT_MS);
+  }, []);
+  /** 播放器自动故障转移：提示一句，再按既有换源语义切换（live 重开 / 回看续播）。 */
+  const handleSourceFailover = useCallback(
+    (nextIndex: number) => {
+      showFailoverHint(t("sourceFallback"));
+      switchSourceTrack(nextIndex);
+    },
+    [showFailoverHint, switchSourceTrack, t],
+  );
+
   // ---- 全屏（真实全屏优先，方向锁/桌面环境退化成模拟全屏）--------------------
   const toggleImmersiveView = useCallback(async (): Promise<boolean> => {
     const stage = pageStageRef.current;
@@ -1019,9 +1046,18 @@ function PlayerScreen() {
                 pictureInPictureMode={pictureInPictureMode}
                 activeSourceIndex={sourceTrackIndex}
                 onSourceChange={switchSourceTrack}
+                onSourceFailover={handleSourceFailover}
                 onPlaybackStarted={rememberSourceOnStart}
               />
             </PlaybackTimeProvider>
+            {/* 自动切线路提示：绝对定位锚定视频舞台（sticky/absolute 均为定位上下文） */}
+            {failoverHint && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-14 z-30 flex justify-center md:bottom-16">
+                <div className="rounded-full bg-slate-950/85 px-4 py-1.5 text-xs font-medium text-violet-50 shadow-lg backdrop-blur md:text-sm">
+                  {failoverHint}
+                </div>
+              </div>
+            )}
           </div>
 
           <div

@@ -41,6 +41,8 @@ const ChannelRow = forwardRef<HTMLButtonElement, ChannelRowProps>(
 
     // 回看能力逐源探测：任一源同时声明时移类型与时移模板才亮标。
     const hasTimeshiftSource = channel.sources.some((source) => source.timeshift && source.timeshiftTemplate);
+    // 多线路（组内聚合同名频道产出）：行内给出 ×N 计数，详情进播放页换源菜单看。
+    const lineCount = channel.sources.length;
 
     return (
       <button
@@ -96,6 +98,15 @@ const ChannelRow = forwardRef<HTMLButtonElement, ChannelRowProps>(
               // 回看徽标只靠 title 提示、不占文字位：避免挤压频道名的可用宽度。
               <span title={t("catchupSupported")}>
                 <History className="h-3 w-3 shrink-0 text-slate-400 dark:text-slate-500 md:h-3.5 md:w-3.5" />
+              </span>
+            )}
+            {lineCount > 1 && (
+              // 线路数徽标：同样只靠 title 提示，进播放页后的换源菜单才是完整列表。
+              <span
+                title={`${t("source")} ×${lineCount}`}
+                className="shrink-0 rounded bg-slate-400/15 px-1 py-px text-[10px] font-medium leading-3.5 text-slate-500 tabular-nums dark:bg-slate-400/10 dark:text-slate-400"
+              >
+                ×{lineCount}
               </span>
             )}
           </div>

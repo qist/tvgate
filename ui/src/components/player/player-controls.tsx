@@ -557,7 +557,9 @@ function PlayerControlsView({
                   "max-w-14 cursor-pointer truncate px-1.5 py-0.5 text-[11px] font-medium min-[360px]:max-w-20 md:max-w-40 md:px-2.5 md:py-1.5 md:text-sm",
                 ].join(" ")}
               >
-                {channel.sources[activeSourceIndex]?.alias || `${t("source")} ${activeSourceIndex + 1}`}
+                {/* 触发钮带出线路位次（如"线路 2/3"），与下拉菜单里的逐条线路对应 */}
+                {channel.sources[activeSourceIndex]?.alias || t("source")} {activeSourceIndex + 1}/
+                {channel.sources.length}
               </button>
               <div
                 className={[

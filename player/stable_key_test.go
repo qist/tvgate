@@ -58,7 +58,8 @@ func TestStableKeyAcrossURLChange(t *testing.T) {
 	}
 }
 
-// 同名同组的多源条目：第一路身份 key，第二路 URL key，二者不同。
+// 同名同组的多源条目：组内聚合为 1 频道 2 线路。
+// 线路 key 仍互不相同（第一路身份 key，第二路 URL key），白名单含全部线路。
 func TestStableKeyDuplicateNameURLFallback(t *testing.T) {
 	b := false
 	config.Cfg.HTTP.InsecureSkipVerify = &b
@@ -80,10 +81,25 @@ func TestStableKeyDuplicateNameURLFallback(t *testing.T) {
 	mgr.Reload()
 
 	chans := mgr.Channels()
-	if len(chans) != 2 {
-		t.Fatalf("期望 2 频道, got %d", len(chans))
+	if len(chans) != 1 {
+		t.Fatalf("组内聚合后期望 1 频道, got %d", len(chans))
 	}
-	if chans[0].Key == chans[1].Key {
-		t.Fatalf("同名双源 key 不应相同: %s", chans[0].Key)
+	c := chans[0]
+	if len(c.Lines) != 2 {
+		t.Fatalf("期望 2 线路, got %d", len(c.Lines))
+	}
+	if c.Lines[0].Key == c.Lines[1].Key {
+		t.Fatalf("同名双源线路 key 不应相同: %s", c.Lines[0].Key)
+	}
+	if c.Lines[0].Key != c.Key {
+		t.Fatalf("首线路应为频道自身 key: %s vs %s", c.Lines[0].Key, c.Key)
+	}
+	// 白名单必须包含全部线路 key（拉流按线路 key 走）
+	mgr.mu.RLock()
+	defer mgr.mu.RUnlock()
+	for _, ln := range c.Lines {
+		if _, ok := mgr.channels[ln.Key]; !ok {
+			t.Fatalf("线路 %s 不在白名单", ln.Key)
+		}
 	}
 }

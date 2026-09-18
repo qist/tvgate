@@ -102,6 +102,8 @@ interface PlayerShellProps {
   pictureInPictureMode?: PictureInPictureMode;
   activeSourceIndex?: number;
   onSourceChange?: (index: number) => void;
+  /** 自动故障转移切线路（错误恢复预算耗尽 / 停摆看门狗），上层借此与手动换源区分并提示。 */
+  onSourceFailover?: (index: number) => void;
   onPlaybackStarted?: () => void;
 }
 
@@ -164,6 +166,8 @@ const SEEK_STEP_SECONDS = 5;
 const STALL_CLOCK_EPSILON_SECONDS = 0.25;
 /** 播放时钟停止推进多久判定为停摆（毫秒）；正常直播每 1~2s 必有推进。 */
 const STALL_THRESHOLD_MS = 12_000;
+/** 停摆看门狗换线路阈值：同一线路累计介入到第 N 次仍停摆 → 判定源坏，切下一条线路。 */
+const STALL_FAILOVER_STRIKES = 2;
 /** 看门狗轮询间隔（毫秒）。 */
 const STALL_PATROL_INTERVAL_MS = 2_000;
 /** 连续重建的退避基值与上限（毫秒）：30s 起步指数翻倍，封顶 180s。 */
@@ -394,6 +398,7 @@ function VideoPlayerShell({
   pictureInPictureMode = "document",
   activeSourceIndex = 0,
   onSourceChange,
+  onSourceFailover,
   onPlaybackStarted,
 }: PlayerShellProps) {
   const tr = usePlayerTranslation(locale);
@@ -866,8 +871,9 @@ function VideoPlayerShell({
       return;
     }
 
-    if (channel && onSourceChange && activeSourceIndex + 1 < channel.sources.length) {
-      onSourceChange(activeSourceIndex + 1);
+    // 自动故障转移：换下一条线路（onSourceFailover 缺省退回普通换源，不带提示）
+    if (channel && activeSourceIndex + 1 < channel.sources.length) {
+      (onSourceFailover ?? onSourceChange)?.(activeSourceIndex + 1);
       return;
     }
 
@@ -1455,8 +1461,17 @@ function VideoPlayerShell({
     stallStrikeRef.current += 1;
     console.warn(
       `Playback stalled ${Math.round(stalledFor)}ms with no usable buffer (readyState=${video.readyState}, ` +
-        `paused=${state.paused}, decodeStuck=${decodeStuck}); rebuilding the stream`,
+        `paused=${state.paused}, decodeStuck=${decodeStuck})`,
     );
+    // 同一线路重建一次仍停摆（第 2 次介入起）：多半是源本身坏了，换下一条线路
+    // （环形轮转，退避冷却仍生效）；新线路的停摆计数清零，给它完整的重建宽限。
+    if (stallStrikeRef.current >= STALL_FAILOVER_STRIKES && (channel?.sources.length ?? 0) > 1) {
+      stallStrikeRef.current = 0;
+      console.warn(`Stall failover: switching to next source after repeated stalls`);
+      autoplayIntentRef.current = true;
+      (onSourceFailover ?? onSourceChange)?.((activeSourceIndex + 1) % channel!.sources.length);
+      return;
+    }
     autoplayIntentRef.current = true;
     if (playMode === "live") {
       onSeek?.(new Date(), true);
