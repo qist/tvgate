@@ -94,6 +94,9 @@ export class MseBackend implements PlaybackBackend {
   private audioChannelMode: "stereo" | "mono";
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private destroyed = false;
+  /** 当前是否挂着一条流（stop() 后为 false）：断流后的实例不得再被 play() 复活——
+   *  换台过渡期若用户点了播放/页面回前台，会把已断流的旧台重新放出来（画面+声音）。 */
+  private streamLoaded = false;
   /** 因背压（MSE 缓冲真满）暂停过 worker：后台需抬掉，避免后台拉流/软解停摆。 */
   private backpressurePaused = false;
   /** visibilitychange 监听（后台抬掉背压暂停；回前台由背压回调重算）。 */
@@ -218,6 +221,7 @@ export class MseBackend implements PlaybackBackend {
 
   loadSegments(segments: PlayerSegment[]): void {
     if (this.destroyed) return;
+    this.streamLoaded = true;
     this.segments = segments;
     this.sbLimitHealed = false;
     this.audioExpectedForced = false;
@@ -499,6 +503,8 @@ export class MseBackend implements PlaybackBackend {
   // ---- 播放控制 ----
 
   async play(): Promise<void> {
+    // 已断流（换台过渡期的旧实例）：什么都不做，绝不让旧台被 play() 复活。
+    if (!this.streamLoaded) return;
     if (this.pcmPlayer) {
       try {
         await this.pcmPlayer.init();
@@ -670,14 +676,21 @@ export class MseBackend implements PlaybackBackend {
       clearTimeout(this.mseHoldTimer);
       this.mseHoldTimer = null;
     }
-    this.worker?.stop();
+    // 旧管线必须"作废"而不是"请假"：worker.stop() 只是发一条消息，不置 disposed 闸门，
+    // terminate 前已 post 的软解 PCM / init 仍会回到主线程 —— 切台空窗期会被重新灌进
+    // 播放器（源越慢越明显，表现为"切过去了还有旧音频"）。destroy() 会立刻 terminate
+    // 并丢弃全部在途消息；下一次 loadSegments/beginPipeline 按需重建 worker，无复用损失。
+    this.worker?.destroy();
+    this.worker = null;
     this.pcmPlayer?.flush();
     this.playback.reset();
     this.mediaElement.pause();
+    this.streamLoaded = false;
   }
 
   destroy(): void {
     this.destroyed = true;
+    this.streamLoaded = false;
     if (this.tickTimer !== null) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;

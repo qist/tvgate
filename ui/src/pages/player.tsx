@@ -100,7 +100,7 @@ interface ServerChannelRecord {
   tvgName?: string;
   tvgLogo?: string;
   epgType?: string;
-  /** 组内聚合的线路表（后端归一化同名频道产出）；缺失时按单线路（key）兜底。 */
+  /** 组内聚合的线路表（后端同分组内「名称完全一致」的频道产出）；缺失时按单线路（key）兜底。 */
   lines?: { key: string; tag?: string; scheme?: string }[];
 }
 
@@ -177,6 +177,8 @@ function channelLabelFromStreamUrl(url: string): string {
  * 常规入口：/api/player/channels 载荷 → 频道列表 + 分组集合。
  * 每条记录按线路表装配受控短地址源（/player/<线路key>）；可代收回看的协议逐线路
  * 标记 server 时移。频道 id 用首线路 key（后端的稳定身份 key，EPG/回看/深链按它查询）。
+ * 线路不做别名：同一频道的线路名称完全一致（后端只聚合同名频道），画质 tag 必然相同，
+ * 无法区分线路，界面统一按位次标注"线路 N"。
  */
 function buildCatalogFromServerPayload(records: ServerChannelRecord[]): { channels: Channel[]; groups: string[] } {
   const channels: Channel[] = [];
@@ -185,7 +187,7 @@ function buildCatalogFromServerPayload(records: ServerChannelRecord[]): { channe
     if (!record?.key || !record.name) continue;
     const lines = record.lines?.length ? record.lines : [{ key: record.key }];
     const sources = lines.map((line) => {
-      const source: Source = { url: withAccessToken(`/player/${line.key}`), alias: line.tag || undefined };
+      const source: Source = { url: withAccessToken(`/player/${line.key}`) };
       if (CATCHUP_SERVER_SCHEMES.includes(line.scheme ?? record.scheme ?? "")) {
         // timeshift 与 timeshiftTemplate 必须成对赋值：回看能力探测以"二者同时存在"为准
         source.timeshift = "server";

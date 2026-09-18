@@ -362,7 +362,7 @@ function ThreePaneChannelBrowser({
             icon={<Layers className="h-3.5 w-3.5 shrink-0 text-violet-600 dark:text-violet-300" />}
             label={t("channelGroups")}
           />
-          <div className="flex-1 overflow-y-auto py-1">
+          <div className="player-pane-scroll flex-1 overflow-y-auto py-1">
             <div className="flex flex-col">
               {[null, ...groups].map((group) => {
                 // null 代表"全部频道"；isPicked 同时驱动选中态与焦点预览。
@@ -399,7 +399,7 @@ function ThreePaneChannelBrowser({
             icon={<Tv className="h-3.5 w-3.5 shrink-0 text-violet-600 dark:text-violet-300" />}
             label={`${t("channels")}${visibleChannels.length ? ` (${visibleChannels.length})` : ""}`}
           />
-          <div className="flex-1 overflow-y-auto py-1">
+          <div className="player-pane-scroll flex-1 overflow-y-auto py-1">
             <div className="flex flex-col">
               {visibleChannels.map((channel) => (
                 <ChannelListItem

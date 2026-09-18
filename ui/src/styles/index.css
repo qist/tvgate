@@ -244,6 +244,108 @@ html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-li
   background-color: rgba(var(--pg-rgb), 0.24);
 }
 
+/* ===== 播放器面板滚动条（浮层细条） =====
+ * 分组 / 频道 / 节目单三栏并排，浏览器默认滚动条会在栏与栏之间拉出一根常显的粗条
+ * （带整条轨道、部分平台还画上下箭头），既抢视线又不像这套玻璃面板的一部分。
+ * 这里统一收成 6px 浮层细条：轨道透明、圆角拇指、无箭头按钮；默认更淡、悬停才明显 ——
+ * 保留"还能往下滚"的提示，但不让一根竖线一直杵在两栏中间。
+ * 若确认连滚动提示都不要：把本段换成
+ *   .player-pane-scroll { scrollbar-width: none; }
+ *   .player-pane-scroll::-webkit-scrollbar { display: none; }
+ */
+.player-pane-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(100 116 139 / 0.22) transparent;
+}
+.player-pane-scroll:hover {
+  scrollbar-color: rgb(100 116 139 / 0.42) transparent;
+}
+.player-pane-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.player-pane-scroll::-webkit-scrollbar-track,
+.player-pane-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.player-pane-scroll::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background-color: rgb(100 116 139 / 0.22);
+}
+.player-pane-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: rgb(100 116 139 / 0.42);
+}
+.player-pane-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+html.dark .player-pane-scroll {
+  scrollbar-color: rgb(148 163 184 / 0.26) transparent;
+}
+html.dark .player-pane-scroll:hover {
+  scrollbar-color: rgb(148 163 184 / 0.48) transparent;
+}
+html.dark .player-pane-scroll::-webkit-scrollbar-thumb {
+  background-color: rgb(148 163 184 / 0.26);
+}
+html.dark .player-pane-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: rgb(148 163 184 / 0.48);
+}
+
+/* ===== 频道卡片（移动端两列网格） =====
+ * 与列表行同一套配色语义：当前项 = 主色淡填充 + 左侧强调条，悬停 = 极淡 wash，
+ * 全部由 --pg-* 主题变量驱动（换「界面风格」即整体变色）。
+ * 与行的两处差异只在结构：允许圆角，且**不画行分隔线**（网格里每张卡下方一条线会碎成格子）；
+ * 卡片**不加自己的底色底盘**，基线仍是透明——面板底色不变。
+ */
+.player-performance-channel-card-default,
+.player-performance-channel-card-selected,
+.player-performance-channel-card-hover {
+  background-image: none;
+  box-shadow: none;
+  position: relative;
+  background-color: transparent;
+  /* 1px 细描边：网格里给每张卡一个边界。注意这只画线、不改底色——
+     卡面底色仍与面板一致（透明），不在卡片上另起底盘。 */
+  border: 1px solid rgb(15 23 42 / 0.08);
+}
+html.dark .player-performance-channel-card-default,
+html.dark .player-performance-channel-card-selected,
+html.dark .player-performance-channel-card-hover {
+  border-color: rgb(255 255 255 / 0.07);
+}
+.player-performance-channel-card-hover:hover {
+  background-color: rgb(15 23 42 / 0.035);
+}
+html.dark .player-performance-channel-card-hover:hover {
+  background-color: rgb(255 255 255 / 0.045);
+}
+.player-performance-channel-card-selected {
+  background-color: rgba(var(--pg-rgb), 0.16);
+  border-color: rgba(var(--pg-rgb), 0.38);
+}
+html.dark .player-performance-channel-card-selected {
+  background-color: rgba(var(--pg-rgb), 0.2);
+  border-color: rgba(var(--pg-rgb), 0.42);
+}
+.player-performance-channel-card-selected::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background-color: rgba(var(--pg-rgb), 0.95);
+  pointer-events: none;
+}
+.player-performance-dock
+  :is(.player-performance-channel-card-default, .player-performance-channel-card-selected, .player-performance-channel-card-hover):focus-visible {
+  outline: 1px solid rgba(var(--pg-rgb), 0.55);
+  outline-offset: -1px;
+}
+
 /* ===== 媒体信息徽标（固定高透明，不参与"面板透明度"档位） =====
  * 设计意图：徽标是画面上的信息注释，始终高透明 + 轻微模糊，不随面板透明度档位变化；
  * 列表自由换行、不裁切（列不设 max-height / overflow-hidden，见 player-media-badges.tsx）。

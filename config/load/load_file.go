@@ -8,6 +8,7 @@ import (
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/groupstats"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/player"
 	"gopkg.in/yaml.v3"
 )
 
@@ -61,5 +62,11 @@ func LoadConfig(configPath string) error {
 		MaxAgeDays: config.Cfg.Log.MaxAgeDays,
 		Compress:   config.Cfg.Log.Compress,
 	})
+
+	// 配置加载的**统一出口**通知播放器：player 段真的变了就立即重载订阅（台标/EPG/订阅源
+	// 等改动即时生效）。放在这里而不是各个保存/监听调用点，是因为加载路径有十几处
+	// （后台各配置页保存、备份恢复、文件监听…），漏掉任何一处都会让改动"要重启才生效"。
+	// 通知内部与"已生效的配置"对比，重复调用是空转。
+	player.NotifyPlayerConfigChanged(newCfg.Player)
 	return nil
 }

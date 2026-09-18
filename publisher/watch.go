@@ -9,7 +9,6 @@ import (
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/config/load"
 	"github.com/qist/tvgate/logger"
-	"github.com/qist/tvgate/player"
 )
 
 // WatchConfigFile 监控配置文件变化并重新加载publisher配置
@@ -85,12 +84,8 @@ func WatchConfigFile(configPath string) {
 					continue
 				}
 
-				// 本监听防抖更短（100ms），通常抢在 config/watch（默认 5s）之前把新配置读进内存；
-				// 后者随后比较的是同一份内存配置 → 判定"无变化"→ 不会通知播放器重载订阅。
-				// 因此这里必须补发通知，否则改 player.subscription(s)/epg 后要重启才生效。
-				player.NotifyConfigChanged()
-
-				// 更新publisher配置
+				// 更新publisher配置（player 段的重载通知由 config/load.LoadConfig 出口统一发出，
+				// 不再依赖"本监听抢在 config/watch 之前"这种时序假设）
 				UpdatePublisherConfig()
 			}
 			

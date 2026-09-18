@@ -176,57 +176,43 @@ func schemeOf(u string) string {
 	return ""
 }
 
-// reQualityTag 提取频道名尾部的画质/规格变体（仅展示用 Tag，不参与归一）。
+// reQualityTag 提取频道名尾部的画质/规格变体作为线路 Tag（仅展示用）。
 // 只认名称结尾的连续规格词（可带空格/横线/点分隔），避免误伤中间词
 // （如 "4K影院" 不算 4K 频道变体，"CCTV5 4K" 算）。
 var reQualityTag = regexp.MustCompile(`(?i)(?:[\s\-_.·]*(4K|8K|UHD|FHD|1080[IiP]?|720[Pp]?|576[Pp]?|HD|超清|高清|蓝光|极清|50FPS|60FPS))+$`)
 
-// normalizeChannelWithQuality 归一化频道名用于组内聚合（epg.go 的
-// normalizeChannelName 是 EPG 模糊匹配用途，行为约定不同，不共用）：
-// 先剥尾部画质后缀作为 Tag，剩余部分去空白与分隔符并转大写。
-// 返回 (归一名, 画质 Tag)。注意 "+"/"-" 等频道号语义字符保留在归一名中
-// （CCTV5+ 与 CCTV5 是不同频道；尾部 "-4K" 的 "-" 属分隔符被剥掉）。
-func normalizeChannelWithQuality(name string) (string, string) {
-	n := strings.TrimSpace(name)
-	tag := ""
-	if m := reQualityTag.FindStringSubmatch(n); m != nil {
-		if m[1] != "" {
-			tag = strings.ToUpper(m[1])
-		}
-		n = n[:len(n)-len(m[0])]
+// qualityTagOf 提取频道名尾部画质/规格词作为线路 Tag（仅展示，不参与聚合；
+// 组内聚合只认名称完全一致，见 aggregateIntraGroup。epg.go 的
+// normalizeChannelName 是 EPG 模糊匹配用途，行为约定不同，不共用）。
+func qualityTagOf(name string) string {
+	if m := reQualityTag.FindStringSubmatch(strings.TrimSpace(name)); m != nil && m[1] != "" {
+		return strings.ToUpper(m[1])
 	}
-	var b strings.Builder
-	for _, r := range n {
-		switch r {
-		case ' ', '\t', '-', '_', '·', '•', '　':
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return strings.ToUpper(b.String()), tag
+	return ""
 }
 
-// aggregateIntraGroup 组内聚合：同分组内归一化名相同的频道合并为首条
-// 频道的多线路。首条为代表（key/名称不变，TVG 字段向首条非空补齐），
-// ID 绑定 分组|归一名（稳定，不随线路增减变化）；Lines 首项即代表自身。
+// aggregateIntraGroup 组内聚合：同分组内**名称完全一致**（仅去首尾空白）的
+// 频道合并为首条频道的多线路——"北京卫视4K" 与 "北京卫视" 名称不同，是两个
+// 频道，绝不合并。首条为代表（key/名称不变，TVG 字段向首条非空补齐），
+// ID 绑定 分组|名称（稳定，不随线路增减变化）；Lines 首项即代表自身。
 // 仅影响列表展示与线路切换；白名单 channels 已含全部线路 key，不受影响。
 func aggregateIntraGroup(order []*Channel) []*Channel {
-	type aggKey struct{ group, norm string }
+	type aggKey struct{ group, name string }
 	idx := make(map[aggKey]*Channel, len(order))
 	out := make([]*Channel, 0, len(order))
 	for _, c := range order {
-		norm, tag := normalizeChannelWithQuality(c.Name)
-		k := aggKey{c.Group, norm}
+		name := strings.TrimSpace(c.Name)
+		k := aggKey{c.Group, name}
 		head, ok := idx[k]
 		if !ok {
 			idx[k] = c
-			c.ID = shortHash(c.Group + "|" + norm)
-			c.Lines = []*LineInfo{{Key: c.Key, Tag: tag, Scheme: c.Scheme}}
+			c.ID = shortHash(c.Group + "|" + name)
+			c.Lines = []*LineInfo{{Key: c.Key, Tag: qualityTagOf(c.Name), Scheme: c.Scheme}}
 			out = append(out, c)
 			continue
 		}
 		// 重复频道：并入首条线路表；TVG/EPG 字段向首条非空处补齐
-		head.Lines = append(head.Lines, &LineInfo{Key: c.Key, Tag: tag, Scheme: c.Scheme})
+		head.Lines = append(head.Lines, &LineInfo{Key: c.Key, Tag: qualityTagOf(c.Name), Scheme: c.Scheme})
 		if head.TVGID == "" {
 			head.TVGID = c.TVGID
 		}

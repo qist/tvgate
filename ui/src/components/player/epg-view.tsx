@@ -36,6 +36,20 @@ const SCROLL_RESET_DELAY_MS = 0;
 const MS_PER_MINUTE = 60_000;
 const MS_PER_DAY = 86_400_000;
 
+/**
+ * 行尾"集数/期数"后缀：`小巷人家(26)` / `大国医者（172）`。
+ * 单独摘成小字徽标，不让它跟着标题一起参与换行——窄栏里标题只有 ~6 个字宽，
+ * 跟着换行的结果是第二行孤零零一个 "(26)"（或把 "火锅" 拆成 "锅(4)"），整列参差不齐。
+ * 只认行尾 1~4 位数字的圆括号，避免误伤 "(直播)"、"(高清)" 这类真正的标题内容。
+ */
+const RE_TRAILING_EPISODE = /^(.*?)[\s]*[（(](\d{1,4})[)）]$/;
+
+function splitEpisodeSuffix(rawTitle: string): { title: string; episode: string } {
+  const matched = RE_TRAILING_EPISODE.exec(rawTitle);
+  if (!matched || !matched[1]) return { title: rawTitle, episode: "" };
+  return { title: matched[1], episode: `(${matched[2]})` };
+}
+
 /** 无节目单时的整面板占位样式：居中一行提示，占满容器高度，避免右侧留白显得像渲染故障。 */
 const EMPTY_EPG_HINT_CLASS =
   "flex h-full items-center justify-center bg-transparent px-6 text-center text-slate-500 text-sm leading-6 dark:text-slate-400";
@@ -142,6 +156,11 @@ const ProgramRow = memo(function ProgramRow({
     isNowPlaying && "text-violet-700 dark:text-violet-200",
   ].join(" ");
 
+  // 集数后缀摘出来单独排：标题因此少 4~5 个字宽，窄栏里绝大多数节目回到单行，
+  // 剩下的长标题才换行——整列高度差不再由 "(26)" 这种零碎内容制造。
+  const fullTitle = entry.title || t("excellentProgram");
+  const { title: mainTitle, episode } = splitEpisodeSuffix(fullTitle);
+
   return (
     <button
       type="button"
@@ -168,10 +187,19 @@ const ProgramRow = memo(function ProgramRow({
           </span>
         </div>
 
-        <div className="min-w-0 flex-1 overflow-hidden">
-          <div className="line-clamp-2 break-words font-semibold text-sm leading-tight tracking-[0.005em] md:text-base">
-            {entry.title || t("excellentProgram")}
-          </div>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          {/* title 属性兜住被截断的长标题（桌面端悬停可看全） */}
+          <span
+            title={fullTitle}
+            className="line-clamp-2 min-w-0 flex-1 break-words font-semibold text-sm leading-tight tracking-[0.005em] md:text-base"
+          >
+            {mainTitle}
+          </span>
+          {episode && (
+            <span className="shrink-0 text-[10px] text-slate-500 tabular-nums leading-none dark:text-slate-400 md:text-xs">
+              {episode}
+            </span>
+          )}
         </div>
 
         <div className="flex h-8 md:h-10 w-3 md:w-4 shrink-0 items-center justify-center">
@@ -317,7 +345,7 @@ function EpgPanel({ channelId, epgData, onProgramSelect, locale, supportsCatchup
   }
 
   return (
-    <div className="h-full overflow-y-auto pb-[env(safe-area-inset-bottom)]">
+    <div className="player-pane-scroll h-full overflow-y-auto pb-[env(safe-area-inset-bottom)]">
       {/* relative 包裹层：为 sticky 日期头提供包含块，滚动时日期头贴住列表可视区顶部 */}
       <div className="relative">
         <ProgramDayTimeline

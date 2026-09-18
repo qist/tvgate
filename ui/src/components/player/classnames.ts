@@ -47,6 +47,24 @@ export const PLAYER_LIST_SURFACE_BASE_CLASS =
 export const PLAYER_CHANNEL_LIST_ITEM_CLASS =
   "[content-visibility:auto] [contain-intrinsic-block-size:auto_2.25rem] md:[contain-intrinsic-block-size:auto_2.5rem]";
 
+/**
+ * 频道卡片（移动端两列网格）的块尺寸预估：卡片比行高得多（台标在上 + 两行文字），
+ * 沿用行高预估会让长列表的滚动条乱跳，所以另立一份。
+ */
+export const PLAYER_CHANNEL_CARD_ITEM_CLASS =
+  "[content-visibility:auto] [contain-intrinsic-block-size:auto_7rem]";
+
+/**
+ * 卡片三态挂钩：与列表行同一套配色语义（当前项 = 主色淡填充 + 左侧强调条，
+ * 悬停 = 极淡 wash），但卡片是独立块，允许圆角且不画行分隔线。
+ * 真正外观同样在 CSS 里（.player-performance-channel-card-*），风格只由 --pg-* 驱动。
+ */
+export const PLAYER_CHANNEL_CARD_SELECTED_CLASS = "player-performance-channel-card-selected";
+
+export const PLAYER_CHANNEL_CARD_DEFAULT_CLASS = "player-performance-channel-card-default";
+
+export const PLAYER_CHANNEL_CARD_HOVER_CLASS = "player-performance-channel-card-hover";
+
 export const PLAYER_EPG_LIST_ITEM_CLASS =
   "[content-visibility:auto] [contain-intrinsic-block-size:auto_3rem] md:[contain-intrinsic-block-size:auto_3.75rem]";
 

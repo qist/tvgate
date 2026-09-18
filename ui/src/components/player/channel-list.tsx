@@ -83,7 +83,8 @@ const ChannelRowsGrid = memo(function ChannelRowsGrid({
   locale,
 }: ChannelRowsGridProps) {
   return (
-    <div className="grid grid-cols-2 gap-1.5 md:grid-cols-1">
+    // gap-2：卡片是带圆角的独立块，太贴会糊成一片格子
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-1">
       {visibleChannels.map((channel, index) => (
         <ChannelListItem
           key={channel.id}
@@ -97,6 +98,9 @@ const ChannelRowsGrid = memo(function ChannelRowsGrid({
           handleChannelClick={onChannelActivate}
           locale={locale}
           currentProgram={nowPlayingTitleByChannelId[channel.id]}
+          // 移动端是两列网格，格子只有 ~170px：改用"台标在上、文字在下"的卡片式，
+          // 名字独占整行（行式会把名字挤到只剩 ~60px，截图里全是"凤凰…/北京卫…"）。
+          layout="card"
         />
       ))}
     </div>
@@ -313,7 +317,7 @@ function MobileChannelList({ channels, groups, currentChannel, onChannelSelect, 
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <div className="player-pane-scroll flex-1 overflow-y-auto px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <ChannelRowsGrid
           playingChannel={currentChannel}
           playingRowRef={playingRowRef}

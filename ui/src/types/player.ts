@@ -8,8 +8,6 @@ export interface Source {
   timeshift?: string;
   /** 自定义时移地址模板；占位符由播放侧在发起回看时替换。 */
   timeshiftTemplate?: string;
-  /** 源别名（换源菜单展示用），缺省时界面回退到"线路 N"序号文案。 */
-  alias?: string;
 }
 
 export interface Channel {

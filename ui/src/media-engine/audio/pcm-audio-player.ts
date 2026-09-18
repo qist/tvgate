@@ -84,6 +84,8 @@ const BACKGROUND_SCHEDULE_AHEAD = 6.0;
 const HARD_RESYNC_THRESHOLD = 1.5;
 /** 链重启时首块的淡入时长（秒），消除拼接处的爆音。 */
 const FADE_SEC = 0.005;
+/** 音量/静音切换的渐变时长（秒）：硬切（直接写 gain.value）在切台瞬时静音/恢复时会"啪"一声。 */
+const GAIN_RAMP_SEC = 0.04;
 /** 判定「视频时钟仍在推进」的静默窗口（毫秒）。本引擎按 CONTROL_INTERVAL_MS 采样，
  *  窗口必须大于采样间隔，否则正常推进的时钟会被误判为停住。 */
 const CLOCK_STALE_MS = 600;
@@ -1424,14 +1426,18 @@ export class PCMAudioPlayer {
     this.applyGain();
   }
 
-  /** 把音量/静音落到增益节点（用立刻生效的 value，不走 scheduled 值）。 */
+  /** 把音量/静音落到增益节点：极短线性渐变（切台的瞬时静音/恢复若硬切会有可闻爆音）。 */
   private applyGain(): void {
     if (!this.gain || !this.audioCtx) {
       return;
     }
     const gain = this.gain.gain;
-    gain.cancelScheduledValues(this.audioCtx.currentTime);
-    gain.value = this.muted ? 0 : this.volume;
+    const now = this.audioCtx.currentTime;
+    const target = this.muted ? 0 : this.volume;
+    gain.cancelScheduledValues(now);
+    // 从"当前实际值"出发渐变：直接写 value 是硬切，切台淡出/恢复都会"啪"一声。
+    gain.setValueAtTime(gain.value, now);
+    gain.linearRampToValueAtTime(target, now + GAIN_RAMP_SEC);
   }
 
   async destroy(): Promise<void> {

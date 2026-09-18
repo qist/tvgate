@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sync"
 	"time"
 
@@ -19,7 +18,6 @@ import (
 	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/php"
-	"github.com/qist/tvgate/player"
 	"github.com/qist/tvgate/server"
 	"github.com/qist/tvgate/stream"
 	tvsync "github.com/qist/tvgate/sync"
@@ -102,8 +100,6 @@ func WatchConfigFile(ctx context.Context, configPath string, upgrader *tableflip
 		}
 		lastModifiedTime = info.ModTime()
 		logger.LogPrintf("📦 检测到配置文件修改，准备重新加载...")
-		// 记录重载前的 player 段，用于判断是否需要通知播放器立即重载订阅
-		oldPlayerCfg := config.Cfg.Player
 
 		if err := load.LoadConfig(configPath); err != nil {
 			logger.LogPrintf("❌ 重新加载配置失败: %v", err)
@@ -131,11 +127,10 @@ func WatchConfigFile(ctx context.Context, configPath string, upgrader *tableflip
 		// 重启定时任务（tasks 配置变化时自动停止旧实例并按新配置重启调度）
 		tasks.Start(&config.Cfg)
 
-		// player 订阅/间隔等变化时立即重载并重置刷新计时
-		// （否则新 update_interval 要等当前周期计时器到期才生效）
-		if !reflect.DeepEqual(oldPlayerCfg, config.Cfg.Player) {
-			player.NotifyConfigChanged()
-		}
+		// 注意：player 段变化的重载通知**不在这里**判断。比较"加载前后的 config.Cfg.Player"
+		// 会在"别的路径已先把新配置读进内存"时判定为无变化，把通知静默吃掉（后台各配置页
+		// 保存、publisher 监听都有这种先手）。现在统一由 config/load.LoadConfig 出口通知，
+		// 且是与"管理器已应用的配置"对比 —— 谁先发现变化谁触发，重复调用空转。
 
 		muxMu.Lock()
 		defer muxMu.Unlock()

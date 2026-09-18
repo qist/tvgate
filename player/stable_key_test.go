@@ -58,6 +58,44 @@ func TestStableKeyAcrossURLChange(t *testing.T) {
 	}
 }
 
+// 回归：组内聚合只认「名称完全一致」——"北京卫视4K" 与 "北京卫视" 是两个频道，
+// 不能因尾部画质后缀被剥掉而并成同一频道的线路；同名多源仍正常聚合。
+func TestAggregateRequiresIdenticalName(t *testing.T) {
+	b := false
+	config.Cfg.HTTP.InsecureSkipVerify = &b
+	config.Cfg.HTTP.DisableKeepAlives = &b
+
+	content := "上海联通,#genre#\n" +
+		"北京卫视4K,http://src/a/index.m3u8\n" +
+		"北京卫视,http://src/b/index.m3u8\n" +
+		"北京卫视4K,http://src/c/index.m3u8\n"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte(content))
+	}))
+	defer srv.Close()
+
+	setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: srv.URL}, t)
+	mgr := NewManager(&config.Cfg.Player)
+	mgr.httpClient = srv.Client()
+	mgr.Reload()
+
+	chans := mgr.Channels()
+	if len(chans) != 2 {
+		t.Fatalf("期望 2 频道（北京卫视4K / 北京卫视）, got %d", len(chans))
+	}
+	if chans[0].Name != "北京卫视4K" || len(chans[0].Lines) != 2 {
+		t.Fatalf("北京卫视4K 应为 2 线路频道: %+v", chans[0])
+	}
+	if chans[1].Name != "北京卫视" || len(chans[1].Lines) != 1 {
+		t.Fatalf("北京卫视 应为独立单线路频道: %+v", chans[1])
+	}
+	if chans[0].ID == chans[1].ID || chans[0].Key == chans[1].Key {
+		t.Fatal("两个频道的 ID/key 不应相同")
+	}
+}
+
 // 同名同组的多源条目：组内聚合为 1 频道 2 线路。
 // 线路 key 仍互不相同（第一路身份 key，第二路 URL key），白名单含全部线路。
 func TestStableKeyDuplicateNameURLFallback(t *testing.T) {

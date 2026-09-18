@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -466,6 +467,72 @@ func TestHotReloadNotifyReloadsSubscription(t *testing.T) {
 	waitChans(2, "热加载追加订阅源后")
 }
 
+// 回归：配置已被别的路径（后台配置页保存 / publisher 监听）先读进内存时，通知不能因为
+// "加载前后 config.Cfg.Player 一样"而被判定为无变化丢掉 —— 实测现象是给配置加上
+// player.logo 后前台台标永远不出现、必须重启。NotifyPlayerConfigChanged 与"已应用的配置"
+// 对比，谁先谁后都能触发重载。
+func TestNotifyPlayerConfigChangedAfterExternalLoad(t *testing.T) {
+	b := false
+	config.Cfg.HTTP.InsecureSkipVerify = &b
+	config.Cfg.HTTP.DisableKeepAlives = &b
+
+	// 上游订阅被拉取的次数：用来验证"没变化的重复通知不会白拉一遍订阅"
+	var subFetches atomic.Int64
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		subFetches.Add(1)
+		w.Write([]byte("甲,#genre#\nA1,rtsp://10.0.0.1/a.smil\n"))
+	}))
+	defer up.Close()
+
+	setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: up.URL}, t)
+	mgr := NewManager(&config.Cfg.Player)
+	mgr.httpClient = up.Client()
+	prevHandler := globalHandler
+	globalHandler = NewHandler(mgr)
+	t.Cleanup(func() {
+		globalHandler = prevHandler
+		mgr.Stop()
+	})
+	mgr.Start()
+
+	waitLogo := func(want string, what string) {
+		deadline := time.Now().Add(3 * time.Second)
+		var got string
+		for time.Now().Before(deadline) {
+			chans := mgr.Channels()
+			if len(chans) == 1 {
+				got = chans[0].TVGLogo
+				if got == want {
+					return
+				}
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("%s：期望台标 %q，got %q", what, want, got)
+	}
+	waitLogo("", "首次加载（无 logo 模板）")
+
+	// 同一份配置重复通知（加载出口每次 load 都会调）：与已应用的相同 → 空转，不再拉一次订阅
+	fetchesBefore := subFetches.Load()
+	NotifyPlayerConfigChanged(config.Cfg.Player)
+	time.Sleep(200 * time.Millisecond)
+	if got := subFetches.Load(); got != fetchesBefore {
+		t.Fatalf("配置没变时不应重载订阅：拉取次数 %d → %d", fetchesBefore, got)
+	}
+
+	// 模拟后台保存配置：新配置（含 logo 模板）已被别的路径 load 进内存，但没通知过播放器
+	next := config.Cfg.Player
+	next.Logo = "https://logo.example.com/{name}.png"
+	config.Cfg.Player = next
+
+	// 加载出口的兜底通知：必须让播放器按新配置重载订阅（台标由此补上）
+	NotifyPlayerConfigChanged(next)
+	waitLogo("https://logo.example.com/A1.png", "配置加载通知后")
+	if got := subFetches.Load(); got <= fetchesBefore {
+		t.Fatalf("配置变化后应重载订阅：拉取次数仍为 %d", got)
+	}
+}
+
 func TestReloadPicksUpConfigChange(t *testing.T) {
 	b := false
 	config.Cfg.HTTP.InsecureSkipVerify = &b
@@ -636,6 +703,10 @@ func TestEPGNormalizedNameLookup(t *testing.T) {
 	if len(ps) != 1 || ps[0].Title != "北京新闻" {
 		t.Fatalf("4K 后缀变体未匹配: %+v", ps)
 	}
+	// 带分隔符的变体 "北京卫视-4K"（去 "-" 再剥 4k → 北京卫视）同样匹配
+	if psH := b.Programs("北京卫视-4K", "20260901"); len(psH) != 1 || psH[0].Title != "北京新闻" {
+		t.Fatalf("带分隔符的 4K 变体未匹配: %+v", psH)
+	}
 	// CCTV4K 精确匹配（EPG 里是独立频道），不被 4K 剥离逻辑破坏
 	ps2 := b.Programs("CCTV4K", "20260901")
 	if len(ps2) != 1 || ps2[0].Title != "4K 频道节目" {
@@ -645,6 +716,22 @@ func TestEPGNormalizedNameLookup(t *testing.T) {
 	// "CCTV4KHD" 归一到 "cctv"，应查空而非误匹配到 CCTV4K 或 CCTV。
 	if ps3 := b.Programs("CCTV4KHD", "20260901"); len(ps3) != 0 {
 		t.Fatalf("归一化冲突应宁缺毋滥: %+v", ps3)
+	}
+
+	// EPG 自身同时存在 "北京卫视" 与 "北京卫视4K"（归一键冲突）→ 归一化别名被删：
+	// "北京卫视-4K" 查空（不错配到其中一个），精确名 "北京卫视4K" 仍精确命中自己的节目。
+	bc := NewEPGBank()
+	bc.parse([]byte(`<tv>` +
+		`<channel id="bjws"><display-name lang="zh">北京卫视</display-name></channel>` +
+		`<channel id="bjws4k"><display-name lang="zh">北京卫视4K</display-name></channel>` +
+		`<programme channel="bjws" start="20260901120000 +0800" stop="20260901130000 +0800"><title>北京新闻</title></programme>` +
+		`<programme channel="bjws4k" start="20260901120000 +0800" stop="20260901130000 +0800"><title>4K 频道节目</title></programme>` +
+		`</tv>`))
+	if got := bc.Programs("北京卫视-4K", "20260901"); len(got) != 0 {
+		t.Fatalf("归一键冲突时应查空(宁缺毋滥): %+v", got)
+	}
+	if got := bc.Programs("北京卫视4K", "20260901"); len(got) != 1 || got[0].Title != "4K 频道节目" {
+		t.Fatalf("精确名应命中独立 4K 频道: %+v", got)
 	}
 }
 

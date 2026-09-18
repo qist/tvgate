@@ -152,6 +152,11 @@ const CONTROLS_IDLE_HIDE_DELAY_MS = 3_000;
 /** 持续播放多久视为"稳定"，把试错期重试计数固化为新基线（毫秒）。 */
 const PLAYBACK_STABILITY_WINDOW_MS = 30_000;
 
+/** 无缝换台起播超时（毫秒）：新流迟迟不到 playing 就放弃双槽，退回原槽硬加载。
+ *  旧路音频在切台瞬间已退场，没有它兜底时会一直停在"旧画面 + 静音 + 加载中"。
+ *  取值要盖住慢源的真实起播耗时（源分片间隔实测 3~11s），过短会在慢源上反复重来。 */
+const HANDOVER_START_TIMEOUT_MS = 15_000;
+
 /** 数字频道号输入的提交等待（毫秒）：超过即按已输号码跳台。 */
 const DIGIT_COMMIT_DELAY_MS = 1_000;
 
@@ -431,10 +436,8 @@ function VideoPlayerShell({
   const [mediaInfoBySlot, setMediaInfoBySlot] = useState<Record<SlotTag, PlayerMediaInfo | null>>({ a: null, b: null });
   const handoverGenerationRef = useRef(0);
   const pendingHandoverRef = useRef<HandoverTicket | null>(null);
-  // 无缝过渡期"临时静音"的隔离位：切台时对实例做的临时静音**不得**写回应用级音量状态，
-  // 否则会污染 mutedState（含持久化），并被 commitHandover 带给新实例 → 新台无声。
-  const handoverMutedSlotRef = useRef<SlotTag | null>(null);
-  const handoverMutedSnapshotRef = useRef<boolean | null>(null);
+  /** 无缝换台起播超时定时器（ms，0 = 无待定换台）。 */
+  const handoverTimerRef = useRef(0);
   const everPlayedRef = useRef(false);
   const lastStreamIdentityRef = useRef<{ channelId: string; sourceIndex: number } | null>(null);
   const suppressNextLoadRef = useRef(false);
@@ -680,18 +683,15 @@ function VideoPlayerShell({
   }, [portalHostElement]);
 
   /**
-   * 丢弃待定换台记录。若过渡期曾对实例临时静音，这里按**过渡前快照**恢复其声音
-   * （快照即当时的用户意图；组件 mutedState 可能已被其它路径更新），随后清隔离位，
-   * 让音量事件恢复正常写回。
+   * 丢弃待定换台记录（并撤掉起播超时）。旧路在换台发起时就已断流，
+   * 这里只清记账，不做任何"恢复旧路"的动作——回旧台由重新选台触发完整加载。
    */
   const discardPendingHandover = useEffectEvent(() => {
-    pendingHandoverRef.current = null;
-    const silencedSlot = handoverMutedSlotRef.current;
-    if (silencedSlot !== null) {
-      backendRefOf(silencedSlot).current?.setMuted(handoverMutedSnapshotRef.current ?? mutedState);
-      handoverMutedSlotRef.current = null;
-      handoverMutedSnapshotRef.current = null;
+    if (handoverTimerRef.current) {
+      window.clearTimeout(handoverTimerRef.current);
+      handoverTimerRef.current = 0;
     }
+    pendingHandoverRef.current = null;
   });
 
   /** 把编排层配置（直播追边、会话锚点）同步到指定实例。 */
@@ -720,14 +720,14 @@ function VideoPlayerShell({
     backend.stop();
   });
 
-  /** 提交接管：新槽转正并按过渡前快照接管音量，旧槽随后退出。 */
+  /** 提交接管：新槽转正并按应用级音量意图恢复声音，旧槽随后退出。 */
   const commitHandover = useEffectEvent((newSlot: SlotTag) => {
     const oldSlot = currentSlotId();
     const oldBackend = backendRefOf(oldSlot).current;
-    // 音量/静音取过渡前的**快照**（当时的用户意图）：既不能从旧实例 state 读、
-    // 也不能直接用可能已被其它路径改过的组件状态，否则新实例会被误静音（实测"新台静音"）。
+    // 音量/静音按应用级状态（用户意图）施加：不从旧实例 state 读（旧路已断流、状态无意义），
+    // 也不用过渡期快照（随"过渡期临时静音"一并取消），否则新实例可能被误静音。
     const savedVolume = volumeLevel;
-    const savedMuted = handoverMutedSnapshotRef.current ?? mutedState;
+    const savedMuted = mutedState;
 
     const newBackend = backendRefOf(newSlot).current;
     if (newBackend) {
@@ -735,9 +735,6 @@ function VideoPlayerShell({
       newBackend.setMuted(savedMuted);
       syncBackendRuntimeConfig(newBackend);
     }
-    // 过渡结束：旧实例即将 stop，清隔离位让音量事件恢复正常写回。
-    handoverMutedSlotRef.current = null;
-    handoverMutedSnapshotRef.current = null;
 
     activeSlotRef.current = newSlot;
     setDisplayedSlot(newSlot);
@@ -1006,9 +1003,6 @@ function VideoPlayerShell({
     });
     backend.on("gain-change", (nextVolume, nextMuted) => {
       if (backendRefOf(slot).current !== backend || slot !== currentSlotId()) return;
-      // 过渡期临时静音（内部过渡动作而非用户意图）产生的上报一律忽略：写回会污染
-      // mutedState 与持久化（下次打开仍静音），并被 commitHandover 带给新实例。
-      if (handoverMutedSlotRef.current === slot && nextMuted) return;
       setVolumeLevel(nextVolume);
       setMutedState(nextMuted);
       saveVolume(nextVolume);
@@ -1211,16 +1205,26 @@ function VideoPlayerShell({
       pendingBackend.setVolume(activeState.volume);
       pendingBackend.setMuted(true);
     }
-    // 无缝过渡期旧实例保持"画面+声音"正常播放：先静音旧实例会造成"还没切过去就哑了"
-    // 的断音（用户实测反馈）。声音的切换点交给 commitHandover —— 新实例 playing（新画面
-    // 出现）时同步 stop 旧实例，画面与声音一起切。过渡期偏长（旧声残留）的根因是新流
-    // 起播速度，而非静音时机。隔离位 handoverMutedSlotRef 保留：音量事件与恢复路径对
-    // "过渡期内部静音"已有防护，未来若再引入临时静音不会污染应用状态。
+    // 切台即断流：旧路立刻停 —— 停拉流（worker 作废）、拆软解音频链、暂停画面。旧频道/线路的
+    // 声音一个采样也不许跟进过渡期（这是"绝不放错台声音"的底线，也省掉"过渡期临时静音"
+    // 那套音量隔离）；画面停在最后一帧当过渡背景，新流在承接槽起播后原子接管，首帧直接顶掉
+    // 静帧 —— 比继续放旧台 live 画面更不容易让人误以为还在看旧台。
+    activeBackendInstance.stop();
 
     const handover: HandoverTicket = { generation, slotTag: pendingSlot, backend: pendingBackend, startedAt: performance.now() };
     pendingHandoverRef.current = handover;
     setMediaInfoBySlot((previous) => ({ ...previous, [pendingSlot]: null }));
     pendingBackend.loadSegments(newSegments);
+
+    // 起播超时兜底：新流迟迟不 playing 就放弃双槽、回原槽硬加载（loading 态如实呈现）。
+    // 只能对"仍是这一次"的待定换台生效：代数/实例不符说明已被后续操作替换。
+    if (handoverTimerRef.current) window.clearTimeout(handoverTimerRef.current);
+    handoverTimerRef.current = window.setTimeout(() => {
+      handoverTimerRef.current = 0;
+      const current = pendingHandoverRef.current;
+      if (!current || current.generation !== generation || current.backend !== pendingBackend) return;
+      demoteToHardReload(pendingSlot, undefined, current);
+    }, HANDOVER_START_TIMEOUT_MS);
 
     if (autoplayIntentRef.current) startPlaybackWithFallback(pendingSlot, handover);
     else setIsLoadingStream(false);
@@ -1254,9 +1258,12 @@ function VideoPlayerShell({
     backendBRef.current?.setAudioChannelMode(audioChannelMode);
   }, [audioChannelMode]);
 
-  // 无缝换台能力被关闭时，立刻终止任何进行中的换台。
+  // 无缝换台能力被关闭时，进行中的换台不再等原子接管：直接在原槽硬加载新流。
+  // （旧路在换台发起时已断流，不能"取消换台"——那只会留下一个已停的死流。）
   useEffect(() => {
-    if (!seamlessSwitch) abortPendingHandover();
+    if (seamlessSwitch) return;
+    const pending = pendingHandoverRef.current;
+    if (pending) demoteToHardReload(pending.slotTag, undefined, pending);
   }, [seamlessSwitch]);
 
   useEffect(() => {
@@ -1837,11 +1844,9 @@ function VideoPlayerShell({
 
   const isVideoWindowPip = inPip && !inDocumentPip;
 
-  // 左上角徽标文案：多源台标注当前源（显式别名优先，否则"源 N"）；重试中追加进度。
+  // 左上角徽标文案：多源台标注当前线路位次（"线路 N"，与换源菜单一致）；重试中追加进度。
   const sourceLabelPrefix =
-    channel && channel.sources.length > 1
-      ? `[${channel.sources[activeSourceIndex]?.alias || `${tr("source")} ${activeSourceIndex + 1}`}] `
-      : "";
+    channel && channel.sources.length > 1 ? `[${tr("source")} ${activeSourceIndex + 1}] ` : "";
   const retryProgressSuffix = attemptCount - attemptFloor > 0 ? ` (${attemptCount - attemptFloor}/${RETRY_BUDGET})` : "";
   const topLeftBadgeText = `${sourceLabelPrefix}${tr("loadingVideo")}${retryProgressSuffix}`;
 

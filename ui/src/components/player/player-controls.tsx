@@ -558,8 +558,7 @@ function PlayerControlsView({
                 ].join(" ")}
               >
                 {/* 触发钮带出线路位次（如"线路 2/3"），与下拉菜单里的逐条线路对应 */}
-                {channel.sources[activeSourceIndex]?.alias || t("source")} {activeSourceIndex + 1}/
-                {channel.sources.length}
+                {t("source")} {activeSourceIndex + 1}/{channel.sources.length}
               </button>
               <div
                 className={[
@@ -583,7 +582,7 @@ function PlayerControlsView({
                   >
                     <span className="flex items-center gap-2">
                       {!isLive ? <History className="h-3 w-3" /> : <Tv className="h-3 w-3" />}
-                      {source.alias || `${t("source")} ${index + 1}`}
+                      {`${t("source")} ${index + 1}`}
                     </span>
                   </button>
                 ))}

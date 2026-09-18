@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -40,12 +41,13 @@ type LineInfo struct {
 
 // Channel 解析自订阅的单个频道。
 // RawURL 为真实源地址，仅存在于服务端；对外只暴露 Key。
-// 组内聚合后（Reload 时），同分组内归一化名相同的频道合并为首条频道
-// 的多线路：ID 为频道稳定 ID（不随线路增减变化），Lines 含全部线路
-// （首项即自身）。单线路频道 Lines 长度为 1。
+// 组内聚合后（Reload 时），同分组内名称完全一致的频道合并为首条频道的
+// 多线路（"北京卫视4K" 与 "北京卫视" 名称不同，是两个频道）：
+// ID 为频道稳定 ID（不随线路增减变化），Lines 含全部线路（首项即自身）。
+// 单线路频道 Lines 长度为 1。
 type Channel struct {
 	Key     string      `json:"key"`
-	ID      string      `json:"id"` // hash(group|归一化名)，收藏/续播/线路记忆绑定它
+	ID      string      `json:"id"` // hash(group|名称)，收藏/续播/线路记忆绑定它
 	Name    string      `json:"name"`
 	Group   string      `json:"group"`
 	Scheme  string      `json:"scheme"` // udp / rtp / rtsp / http / https
@@ -91,6 +93,9 @@ type Manager struct {
 	// resetCh 配置热加载通知：收到后立即按新配置重载并重置刷新计时
 	// （否则新 update_interval 要等当前周期计时器到期才生效，最长延迟一个周期）。
 	resetCh chan struct{}
+	// appliedCfg 最近一次**真正应用**的 player 段，供 NotifyPlayerConfigChanged 判定"配置变了没"。
+	appliedMu  sync.Mutex
+	appliedCfg config.PlayerConfig
 }
 
 func NewManager(cfg *config.PlayerConfig) *Manager {
@@ -146,6 +151,30 @@ func (m *Manager) Start() {
 			}
 		}
 	}()
+}
+
+// NotifyPlayerConfigChanged 配置（重）加载完成后调用，next 为新读入的 player 段：
+// 仅当它与"管理器**已应用**的配置"不同才通知重载。可以在所有加载路径上重复调用。
+//
+// 为什么不交给调用方比较"加载前后"的 config.Cfg.Player：后台保存配置的路径会先把新配置
+// load 进内存，随后文件监听再 load 一次 —— 第二次比较时前后都是新值，被判定为"没变化"，
+// 通知被静默丢弃，播放器就一直用旧频道表（实测：给配置加上 player.logo 后前台台标永远
+// 不出现，重启才好）。改成与"实际生效的配置"对比后，谁先发现变化谁触发，重复调用空转。
+func NotifyPlayerConfigChanged(next config.PlayerConfig) {
+	if globalHandler == nil {
+		return
+	}
+	m := globalHandler.mgr
+	if m == nil {
+		return
+	}
+	m.appliedMu.Lock()
+	changed := !reflect.DeepEqual(m.appliedCfg, next)
+	m.appliedMu.Unlock()
+	if !changed {
+		return
+	}
+	NotifyConfigChanged()
 }
 
 // NotifyConfigChanged 配置热加载后通知 player 管理器：立即按新配置重载订阅
@@ -380,7 +409,7 @@ func (m *Manager) Reload() {
 			newGroups = append(newGroups, c.Group)
 		}
 	}
-	// 组内聚合：同分组内归一化名相同 → 一个频道多线路（白名单保持全线路）
+	// 组内聚合：同分组内名称完全一致 → 一个频道多线路（白名单保持全线路）
 	newOrder = aggregateIntraGroup(newOrder)
 	m.mu.Lock()
 	m.channels = newCh
@@ -391,6 +420,11 @@ func (m *Manager) Reload() {
 	m.epgURLs = xmlURLs
 	m.epgBak = bak
 	m.mu.Unlock()
+
+	// 记账：本次 player 段已真正应用（供 NotifyPlayerConfigChanged 判定"变了没"）
+	m.appliedMu.Lock()
+	m.appliedCfg = p
+	m.appliedMu.Unlock()
 
 	if len(sources) > 1 || len(files) > 1 {
 		logger.LogPrintf(

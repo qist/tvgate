@@ -86,7 +86,7 @@ export interface PlayerEventMap {
   "painter-state": (state: PlayerRenderState) => void;
   /** 传输层状态机（canplay/playing/paused/waiting）；时间戳供换台时序守卫使用。 */
   "transport-state": (state: "canplay" | "playing" | "paused" | "waiting", eventTimeStamp: number) => void;
-  /** 音量/静音变化（含实例内部的临时改动，如换台过渡期静音）。 */
+  /** 音量/静音变化（实例内部改动，如换台接管时新实例恢复用户音量）。 */
   "gain-change": (volume: number, muted: boolean) => void;
   /** 后端归一化后的播放位置（秒）。 */
   "clock-tick": (seconds: number) => void;
@@ -131,7 +131,7 @@ export interface PlaybackBackend {
   setAutoDeinterlace(enabled: boolean): void;
   /** 运行时开关 WebGL 画质增强；未配置 renderCanvas 时为空操作。 */
   setPictureEnhancement(enabled: boolean): void;
-  /** 停止当前流并重置 video 元素，但保留可复用资源。 */
+  /** 停止当前流：作废拉流/解码管线、拆掉音频链并暂停画面（保留元素与 MSE 供下次重灌）。 */
   stop(): void;
   destroy(): void;
   on<K extends keyof PlayerEventMap>(event: K, handler: PlayerEventMap[K]): void;

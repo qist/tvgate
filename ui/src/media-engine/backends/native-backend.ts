@@ -34,6 +34,8 @@ export class NativeBackend implements PlaybackBackend {
   private readonly options: NativeBackendOptions;
   private anchor: LiveSessionAnchor | null = null;
   private destroyed = false;
+  /** 当前是否挂着一条流（stop() 后为 false）：断流后的实例不得再被 play() 复活。 */
+  private streamLoaded = false;
 
   constructor(video: HTMLVideoElement, options: NativeBackendOptions = {}) {
     this.mediaElement = video;
@@ -65,6 +67,7 @@ export class NativeBackend implements PlaybackBackend {
 
   loadSegments(segments: PlayerSegment[]): void {
     if (this.destroyed || segments.length === 0) return;
+    this.streamLoaded = true;
     const v = this.mediaElement;
     // 原生后端只支持单 URL 直播；多分段时取首段
     const url = segments[0].url;
@@ -81,6 +84,9 @@ export class NativeBackend implements PlaybackBackend {
   }
 
   async play(): Promise<void> {
+    // 已断流（换台过渡期的旧实例）：什么都不做，绝不让旧台被 play() 复活，
+    // 也避免"无源 play()"抛 NotSupportedError 触发无谓的错误恢复。
+    if (!this.streamLoaded) return;
     // rejection（NotAllowedError/中断）冒泡给 UI，由 UI 决定硬切换兜底或提示用户交互
     await this.mediaElement.play();
   }
@@ -153,6 +159,7 @@ export class NativeBackend implements PlaybackBackend {
   }
 
   stop(): void {
+    this.streamLoaded = false;
     this.mediaElement.pause();
     this.mediaElement.removeAttribute("src");
     this.mediaElement.innerHTML = "";
