@@ -47,6 +47,26 @@ export function parseAdtsFrame(data: Uint8Array, offset: number): AdtsFrameInfo 
   };
 }
 
+/**
+ * 在缓冲中搜索下一个**可校验的** ADTS 帧头，返回相对偏移（找不到返回 -1）。
+ *
+ * TS 里 PES 边界与 ADTS 帧边界无关：PES 载荷可能自帧中间开始（上一帧的尾巴）、
+ * 也可能止于半帧。只看"载荷第 0 字节是不是 0xFFFx"会把整段丢掉（实测：江苏移动系
+ * 流就是这样，整条音轨 0 样本 → 有画面没声音），所以必须扫同步字再逐帧切。
+ * 只认同步字会被随机字节误判（概率约 1/2048），故连同采样率索引、声道、帧长一起校验。
+ */
+export function findAdtsSync(data: Uint8Array, from = 0): number {
+  for (let i = Math.max(0, from); i + 7 <= data.length; i++) {
+    if (data[i] !== 0xff || (data[i + 1] & 0xf0) !== 0xf0) continue;
+    const frame = parseAdtsFrame(data, i);
+    if (!frame) continue;
+    if (frame.samplingFrequencyIndex > 12) continue; // 13/14 保留、15 为显式频率（本实现不支持）
+    if (frame.channelConfig > 7) continue;
+    return i;
+  }
+  return -1;
+}
+
 function channelConfigToCount(cfg: number): number {
   switch (cfg) {
     case 0:

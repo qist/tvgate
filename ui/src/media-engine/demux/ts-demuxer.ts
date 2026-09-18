@@ -27,7 +27,7 @@ import {
 } from "../formats/avc";
 import { HevcAnnexBReader, buildHvcC, HevcNaluType, type HevcNalu } from "./h265";
 import { parseHevcSps } from "./h265-parser";
-import { parseAdtsFrame, buildAudioSpecificConfig, buildEsds, aacCodecMimeType } from "../formats/aac";
+import { parseAdtsFrame, buildAudioSpecificConfig, buildEsds, aacCodecMimeType, findAdtsSync } from "../formats/aac";
 import { AC3Parser, EAC3Parser } from "./ac3";
 import { MP3Parser, type MP3Frame } from "./mp3";
 
@@ -165,6 +165,9 @@ const VIDEO_TIMESCALE = 90000;
 const PTS_MODULUS = 2 ** 33;
 const AAC_SAMPLES_PER_FRAME = 1024;
 
+/** AAC 跨 PES 残帧上限（字节）：超过说明长时间找不到帧头（流不同步），丢弃避免无界增长。 */
+const AAC_PENDING_LIMIT = 32 * 1024;
+
 interface PesBuffer {
   chunks: Uint8Array[];
   bytes: number;
@@ -203,6 +206,8 @@ interface TrackState {
   ac3Incomplete?: Uint8Array;
   /** MP2/mp3 跨 PES 残帧（上一个 payload 的半帧）。 */
   mp2Incomplete?: Uint8Array;
+  /** AAC 跨 PES 残帧：PES 边界与 ADTS 帧边界无关，半帧要留到下一段拼。 */
+  aacPending?: Uint8Array;
   /** 上一完整 MPEG 音频帧的 PTS 与帧长（90kHz）：payload 头部被半帧占用时接续 PTS 基准。 */
   audioLastFramePts90?: number;
   audioLastFrameDur90?: number;
@@ -774,12 +779,23 @@ export class TsDemuxer {
   }
 
   private handleAacPes(track: TrackState, payload: Uint8Array, pts90: number): void {
-    // 一个 PES 可含多个 ADTS 帧；逐帧剥头产出裸 AAC 负载
+    // ADTS 帧边界与 PES 边界**无关**：PES 载荷可能自帧中间开始（上一帧的尾巴）或止于半帧。
+    // 因此与 AC3/MP2 一样接残尾 + 扫同步字后再逐帧切；只认"载荷第 0 字节是 ADTS 头"会在
+    // 载荷不从帧头开始时整段丢弃 → 整条音轨 0 样本（实测江苏移动系流：有画面没声音）。
+    const data = track.aacPending ? concatBytes(track.aacPending, payload) : payload;
+    track.aacPending = undefined;
+    if (data.length > AAC_PENDING_LIMIT) return; // 久等不到帧头（不同步）：丢弃，避免无界增长
+    let offset = findAdtsSync(data);
+    if (offset < 0) return;
     const samples: DemuxedSample[] = [];
-    let offset = 0;
-    while (offset + 7 <= payload.length) {
-      const frame = parseAdtsFrame(payload, offset);
+    while (offset + 7 <= data.length) {
+      const frame = parseAdtsFrame(data, offset);
       if (!frame || frame.frameLength < frame.headerLength) break;
+      if (offset + frame.frameLength > data.length) {
+        // 半帧（PES 载荷极少恰好整除帧长）：留到下一个 PES 拼接，否则每段都丢一帧
+        track.aacPending = data.slice(offset);
+        break;
+      }
 
       // 首帧确定采样率/声道，构造 esds
       if (track.sampleRate !== frame.sampleRate || !track.codecPrivate) {
@@ -797,7 +813,7 @@ export class TsDemuxer {
         track.audioNextDts = Math.round((pts90 * track.timescale) / VIDEO_TIMESCALE);
       }
 
-      const rawFrame = payload.subarray(frame.dataStart, offset + frame.frameLength);
+      const rawFrame = data.subarray(frame.dataStart, offset + frame.frameLength);
       const dts = track.audioNextDts;
       samples.push({
         trackId: track.id,

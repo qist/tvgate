@@ -149,6 +149,19 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
+ * "补一次 play() 把被 UA 暂停的 video 拉回来"的前提：元素上**还挂着一条流**。
+ *
+ * 后端 stop()（换台/换线路）会把元素上的流摘掉（MSE：removeAttribute("src") + load()；
+ * native：同样 removeAttribute + load），此刻 currentSrc 为空、networkState 回到
+ * NETWORK_EMPTY。若这时还去 play()，被唤醒的正是**已经作废的旧台管线**——旧 MediaSource
+ * 及其已缓冲的音视频照旧可播，于是"新台已经在加载，耳朵里还是上一个台的声音，几秒后才没"
+ * （旧台缓冲播完为止）。仅在元素仍有源时才允许补 play()。
+ */
+function mediaElementStillHasStream(video: HTMLVideoElement): boolean {
+  return video.currentSrc !== "" || video.networkState !== HTMLMediaElement.NETWORK_EMPTY;
+}
+
+/**
  * 由生命周期驱动的同步状态。漂移纠偏与硬重同步**只在 active 下运行**：
  * 页面隐藏或媒体管线重建期间，video.currentTime 不是可信时钟，拿它纠偏会把音频
  * 拖回去重播/跳过（iOS 上"切后台再回来、视频时钟冻结，纠偏环却在 1.5s 阈值上
@@ -407,7 +420,13 @@ export class PCMAudioPlayer {
     if (document.visibilityState === "hidden") {
       if (!this.backgroundResumeAttempted && this.video) {
         this.backgroundResumeAttempted = true;
-        void this.video.play().catch(() => {});
+        if (mediaElementStillHasStream(this.video)) {
+          void this.video.play().catch(() => {});
+        } else {
+          // 换台/换线路已把这个元素断流：这里若 play() 会把旧台缓冲重新放出来
+          // （"切过去了还有旧台声音"），故明确跳过。
+          Log.v("video 已断流（换台），跳过后台补 play()");
+        }
       }
       return;
     }
@@ -713,7 +732,11 @@ export class PCMAudioPlayer {
       this.backgroundResumeAttempted = false;
       const video = this.video;
       if (video && video.paused) {
-        void video.play().catch(() => {});
+        if (mediaElementStillHasStream(video)) {
+          void video.play().catch(() => {});
+        } else {
+          Log.v("video 已断流（换台），跳过后台补 play()");
+        }
       }
       this.setSyncState("background");
       return;

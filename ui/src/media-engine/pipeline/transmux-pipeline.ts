@@ -258,9 +258,11 @@ export class TransmuxPipeline {
         const mseAudio = this.suppressAudio
           ? false
           : layout.mseAudio || silentAudio || this.silentAudioRegistered;
-        // 通知下游（提前建缓冲/放行 hold）+ remuxer（纯视频立即放行起播门控）
+        // 通知下游（提前建缓冲/放行 hold）+ remuxer（纯视频立即放行起播门控、
+        // 以及"统一时间基只等视频"的判据：音频轨常先注册，别让它抢锁）
         this.callbacks.onStreamLayout?.({ video: layout.video, mseAudio });
         this.remuxer.setAudioExpected(mseAudio);
+        this.remuxer.setVideoExpected(layout.video);
       },
     };
   }
@@ -305,9 +307,11 @@ export class TransmuxPipeline {
         const url = await this.config.source.next();
         if (this.stopped) break;
         if (!url) {
-          // 直播没有新分段：分段间隔内轮询重试，而非结束（否则会触发 endOfStream/重载）
+          // 直播没有新分段：分段间隔内轮询重试，而非结束（否则会触发 endOfStream/重载）。
+          // 轮询节奏由源给出（HLS = 目标时长的一半）：固定 1 秒会把播放列表请求刷成
+          // 十几倍（实测同一分片间隔内刷十几次 /player/<key>，白白穿透上游）。
           if (this.config.source.live) {
-            await sleep(1000);
+            await sleep(this.config.source.pollIntervalMs?.() ?? 1000);
             continue;
           }
           break; // VOD 已播完

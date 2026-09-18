@@ -55,6 +55,26 @@ export interface MseBackendOptions {
 
 const TARGET_LATENCY = 6;
 
+/**
+ * 启动 hold 的兜底放行时长（毫秒）：某轨"声明了却迟迟不来"（数据损坏 / 极晚）时，
+ * 到点无条件放行 append，避免 hold 永久挂起、把起播卡死。
+ *
+ * 取值口径 = **正常源里两轨 init 应该在多久内到齐**。真实源同一批数据里就同时解析出
+ * 音视频 init，worker-client 还会把相邻 init 合并进同一个任务下发（见其注释），
+ * 所以正常在毫秒级就齐；等超过 2s 基本只可能是那一轨真的没有 —— 再等纯属把起播
+ * 往后拖（旧值 12s：慢源上用户要盯着空屏十几秒）。
+ * 超时放行的代价可控：后到轨若真晚于此刻，它的 addSourceBuffer 会撞 Chromium 的
+ * "引擎已初始化"限制，由 healSourceBufferLimit 自愈重建（更慢，但不会无画/无声）。
+ */
+const MSE_HOLD_FALLBACK_MS = 2_000;
+
+/**
+ * 自愈重建（healSourceBufferLimit）后的 hold 兜底（毫秒）：比常规值多等一会儿。
+ * 此时**已知**这条流有音频轨、且上一次正是音频 SB 没赶上才失败，多给一点时间
+ * 让它建齐，避免刚自愈完又原地撞一次上限（该路径只在异常流上走一次，宁可慢点也别再失败）。
+ */
+const MSE_HOLD_FALLBACK_FORCED_MS = 4_000;
+
 export class MseBackend implements PlaybackBackend {
   readonly kind: PlaybackBackendKind = "mse";
   readonly mediaElement: HTMLVideoElement;
@@ -413,14 +433,13 @@ export class MseBackend implements PlaybackBackend {
     this.expectsAudio = this.audioExpectedForced;
     this.mse.hold();
     if (this.mseHoldTimer) clearTimeout(this.mseHoldTimer);
-    // 兜底：某轨声明了却迟迟不来（损坏/极晚）也不永久卡死，超时放行
-    // （强制等音频时用更短的兜底，避免真·纯视频流白等 12 秒）
+    // 兜底：某轨声明了却迟迟不来（损坏/极晚）也不永久卡死，超时放行（见常量注释）
     this.mseHoldTimer = setTimeout(
       () => {
         this.mseHoldTimer = null;
         this.mse.release();
       },
-      this.audioExpectedForced ? 4000 : 12000,
+      this.audioExpectedForced ? MSE_HOLD_FALLBACK_FORCED_MS : MSE_HOLD_FALLBACK_MS,
     );
   }
 
@@ -685,6 +704,13 @@ export class MseBackend implements PlaybackBackend {
     this.pcmPlayer?.flush();
     this.playback.reset();
     this.mediaElement.pause();
+    // 连元素上的 MediaSource 一起拆掉：只 pause() 的话旧流仍挂在 video 上（旧 MediaSource
+    // 及其已缓冲的音视频照旧可播），任何一次迟到的 play()/元素级恢复都能把它重新推回
+    // 扬声器 —— 慢源上表现为"新台已经在加载、耳朵里还是上一个台的声音"。destroy() 里
+    // removeAttribute("src") + load() 会走完整资源选择算法，把旧管线连缓冲一并释放。
+    // 画面侧同样不再保留旧台静帧：切台的空窗改由上层 loading 遮罩表达（见 video-player）。
+    // 下一次 loadSegments 本就会重建 MediaSource，无额外开销。
+    this.mse.destroy();
     this.streamLoaded = false;
   }
 

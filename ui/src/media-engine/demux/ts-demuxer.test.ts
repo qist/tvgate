@@ -151,4 +151,76 @@ describe("TsDemuxer 扫描方式（scanType：徽标 1080p / 1080i）", () => {
   });
 });
 
+describe("TsDemuxer 音频（AAC）：PES 边界与 ADTS 帧边界无关", () => {
+  /** 28 字节 ADTS 帧：48kHz 立体声 AAC-LC，7 字节头 + 21 字节负载（负载填 fill 便于校验）。 */
+  function adtsFrame(fill: number): Uint8Array {
+    const f = new Uint8Array(28);
+    f.set([0xff, 0xf1, 0x4c, 0x80, 0x03, 0x80, 0x00]);
+    f.fill(fill, 7);
+    return f;
+  }
+
+  /** 造一段 TS：PMT 声明 AAC(0x0f) 在 PID 0x102，payloads 依次作为各音频 PES 的载荷。 */
+  function buildAacTs(payloads: Uint8Array[]): Uint8Array {
+    const parts: Uint8Array[] = [];
+    // PAT → PMT PID 0x100
+    parts.push(tsPacket(0x0000, new Uint8Array([0x00, 0x00, 0xb0, 0x09, 0x00, 0x01, 0xc1, 0x00, 0x00, 0x00, 0x01, 0xe1, 0x00]), true, 0));
+    // PMT：program 1, PCR PID 0x100, 流 0x0f(AAC) on PID 0x102
+    parts.push(
+      tsPacket(0x0100, new Uint8Array([0x00, 0x02, 0xb0, 0x0e, 0x00, 0x01, 0xc1, 0x00, 0x00, 0xe1, 0x00, 0xf0, 0x00, 0x0f, 0xe1, 0x02, 0xf0, 0x00]), true, 0),
+    );
+    payloads.forEach((payload, i) => {
+      const len = 3 + 5 + payload.length; // 标志(3) + PTS(5) + 负载
+      const head = new Uint8Array([
+        0x00, 0x00, 0x01, 0xc0, (len >> 8) & 0xff, len & 0xff, 0x80, 0x80, 0x05, ...encodePts(36000 + i * 2048),
+      ]);
+      parts.push(tsPacket(0x0102, concat([head, payload]), true, i & 0x0f));
+    });
+    return concat(parts);
+  }
+
+  it("PES 载荷自帧中间开始时仍能扫出帧头（回归：整条音轨 0 样本 → 没声音）", () => {
+    // 载荷开头是上一帧的尾巴（3 字节），随后两个完整帧；末位再发一帧用于冲刷前一段 PES
+    // （解复用器靠"下一个 PUS 起点"flush 上一段，最后一个 PES 要有后继才会被处理）
+    const samples: DemuxedSample[] = [];
+    const tracks: TrackInfo[] = [];
+    const demuxer = new TsDemuxer({ onTracks: (t) => tracks.push(...t), onSamples: (s) => samples.push(...s) });
+    demuxer.push(
+      buildAacTs([
+        concat([new Uint8Array([0xaa, 0xbb, 0xcc]), adtsFrame(0x11), adtsFrame(0x22)]),
+        adtsFrame(0x33),
+        adtsFrame(0x44), // 冲刷上一段（最后一个 PES 无后继不会被处理）
+      ]),
+    );
+
+    expect(tracks.some((t) => t.kind === "audio")).toBe(true);
+    const audio = samples.filter((s) => s.kind === "audio");
+    expect(audio).toHaveLength(3);
+    // 产出的是裸 AAC（已剥 ADTS 头），且顺序与填入一致
+    expect(Array.from(audio[0].data)).toEqual(new Array(21).fill(0x11));
+    expect(Array.from(audio[1].data)).toEqual(new Array(21).fill(0x22));
+    expect(Array.from(audio[2].data)).toEqual(new Array(21).fill(0x33));
+  });
+
+  it("半帧跨 PES：残尾要拼到下一段，不能丢帧", () => {
+    const second = adtsFrame(0x22);
+    const samples: DemuxedSample[] = [];
+    const demuxer = new TsDemuxer({ onSamples: (s) => samples.push(...s) });
+    demuxer.push(
+      buildAacTs([
+        concat([adtsFrame(0x11), second.subarray(0, 10)]), // 第二帧只发了一半
+        concat([second.subarray(10), adtsFrame(0x33)]), // 另一半 + 第三帧
+        adtsFrame(0x44), // 冲刷上一段
+      ]),
+    );
+    const audio = samples.filter((s) => s.kind === "audio");
+    expect(audio).toHaveLength(3);
+    expect(Array.from(audio[0].data)).toEqual(new Array(21).fill(0x11));
+    expect(Array.from(audio[1].data)).toEqual(new Array(21).fill(0x22)); // 跨 PES 拼回
+    expect(Array.from(audio[2].data)).toEqual(new Array(21).fill(0x33));
+    // 时间轴按名义帧长推进（48kHz 下 1024 样本/帧 → dts 间隔 1024）
+    expect(audio[1].dts - audio[0].dts).toBe(1024);
+  });
+});
+
 

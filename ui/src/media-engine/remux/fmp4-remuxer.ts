@@ -78,6 +78,8 @@ export class Fmp4Remuxer {
   private readonly lastDuration = new Map<number, number>();
   /** 每个 kind 首个样本的媒体时间（秒），用于确定统一时间基。 */
   private readonly firstSampleSec = new Map<string, number>();
+  /** 是否已发出过视频段：首个段必须关键帧开头，其后都是同一队列的顺序续切。 */
+  private videoStarted = false;
   /**
    * **统一**时间基（秒）：所有轨共用，优先取首个视频样本，无视频时取首个音频样本。
    * 视频锚点优先且音频共用同一锚点；若按 kind 各自归零，
@@ -91,6 +93,13 @@ export class Fmp4Remuxer {
   private readonly startupGraceMs: number;
   /** PMT 是否声明了进 MSE 的 AAC 音轨：null=未知；false=纯视频（首个 init 即可放行）；true=须等音轨 init。 */
   private audioExpected: boolean | null = null;
+  /**
+   * PMT 是否声明了视频轨（来自 onStreamLayout，早于任何样本）：
+   * 统一时间基**只认视频**，所以音频先到也不能抢锁（见 flush 的加锁段）。
+   * 音频轨的 init 常先于视频轨发出（音频首帧先解析出 esds），只按"是否已注册视频轨"判断，
+   * 会在视频轨注册之前让音频把基准锁成自己的首个样本 —— 实测视频时间轴因此整体后移 7.6s。
+   */
+  private videoExpected = true;
   /** 外部时间基准（见 setExternalBase）；null = 用本流水线首样本。 */
   private externalBaseSec: number | null = null;
   /** 基准待定模式（见 awaitExternalBase）：首个 media 段等外部基准（或超时放行）。 */
@@ -134,9 +143,12 @@ export class Fmp4Remuxer {
       this.queues.set(sample.trackId, q);
     }
     q.push(sample);
-    // 记录该 kind 首个样本的媒体时间（秒），供统一时间基择基准
+    // 记录该 kind 首个样本的媒体时间（秒），供统一时间基择基准。
+    // **只记音频**：视频的基准必须是「首个实际发得出去的视频样本」= 首个关键帧（见 flush 的视频分支）——
+    // 首个到达的视频样本可能落在第一个 IDR 之前、永远不会被成段，拿它当基准会让视频时间轴
+    // 凭空往后挪数秒（实测 7.8s），播放头停在空洞前，只能靠停摆看门狗跳进去才出画。
     const cfg = this.trackConfigs.get(sample.trackId);
-    if (cfg && !this.firstSampleSec.has(cfg.kind)) {
+    if (cfg && cfg.kind === "audio" && !this.firstSampleSec.has(cfg.kind)) {
       this.firstSampleSec.set(cfg.kind, sample.dts / (cfg.timescale || 1));
     }
     // 时长达标、或驱动轨出现「下个关键帧」（GOP 边界）时成段。后者确保视频段以关键帧开头。
@@ -159,6 +171,78 @@ export class Fmp4Remuxer {
     if (driver === undefined) return false;
     const q = this.queues.get(driver);
     return q ? firstKeyframeIndex(q) !== undefined : false;
+  }
+
+  /**
+   * 选本次要发出的视频段；undefined = 还不到切的时候（继续攒）。
+   *
+   * ① 首个视频段必须「以关键帧开头」：起播/换源/seek 的第一批数据常从 GOP 中间开始
+   *    （分片边界与 IDR 不对齐），这些样本缺参考帧、解不出来；更不能当"当前 GOP 前缀"
+   *    整段发出去 —— 那会造出一个非关键帧开头的首段（实测被浏览器拒收/花屏），并把视频
+   *    时间轴起点推到数秒之后（播放头卡在空洞前，只能等停摆看门狗跳进来才出画）。
+   *    故先丢掉前缀，等关键帧到位再切。
+   * ② 之后按目标时长/字节继续切（**不必等下一个关键帧**）：等 IDR 意味着 10s GOP 的源上
+   *    首帧要等到第二个分片（实测"下载完两个分片才开播"）、直播延迟也被 GOP 长度绑架。
+   *    续切段可以落在 GOP 中间 —— 解码器已经在跑，顺序续切即可（LL-HLS/CMAF 分片同理）。
+   * ③ 无周期 IDR 的流由安全上限兜底整发，避免队列无限堆积。
+   */
+  private selectVideoRun(
+    q: QueuedSample[],
+    ts: number,
+    force: boolean,
+  ): { runSamples: QueuedSample[]; consume: number } | undefined {
+    const totalDur = q[q.length - 1].dts - q[0].dts;
+    const safetyMax = this.targetDuration * ts * 50;
+    if (!this.videoStarted && !q[0].isKeyframe) {
+      const firstKey = keyframeIndexFrom(q, 0);
+      if (firstKey > 0) {
+        q.splice(0, firstKey); // 丢弃不可解码的前缀：后面从关键帧开头续切
+      } else if (firstKey < 0 && (force || totalDur >= safetyMax)) {
+        this.markVideoStarted(q[0], ts);
+        return { runSamples: q.slice(), consume: q.length };
+      } else {
+        return undefined; // 还没等到关键帧：继续攒
+      }
+    }
+    const cut = this.videoCutIndex(q, ts, force);
+    if (cut !== undefined) {
+      this.markVideoStarted(q[0], ts);
+      return { runSamples: q.slice(0, cut), consume: cut };
+    }
+    if (force || totalDur >= safetyMax) {
+      this.markVideoStarted(q[0], ts);
+      return { runSamples: q.slice(), consume: q.length };
+    }
+    return undefined;
+  }
+
+  /** 记录视频轨首个"发得出去"的样本时间：统一时间基（= 首个发出的视频样本）就用它。 */
+  private markVideoStarted(first: QueuedSample, ts: number): void {
+    this.videoStarted = true;
+    if (!this.firstSampleSec.has("video")) this.firstSampleSec.set("video", first.dts / (ts || 1));
+  }
+
+  /**
+   * 视频切点：返回本段应消耗的样本数（undefined = 还不到切的时候）。
+   * 关键帧边界优先（短 GOP 源的成段行为与旧实现一致：一段 = 一个 GOP）；没有关键帧可等时
+   * 按目标时长/字节切在任意样本边界 —— 首段以关键帧开头（解码入口）之后，后续段只是同一
+   * 队列的顺序续切：解码时间戳连续（buildRun 给末样本取上一段时长，下一段恰从该处接着），
+   * 浏览器按 moof 顺序续解码，不需要每个段都以 IDR 开头（LL-HLS/CMAF 分片同理）。
+   */
+  private videoCutIndex(q: QueuedSample[], ts: number, force: boolean): number | undefined {
+    const minDur = this.targetDuration * ts;
+    let bytes = 0;
+    for (let i = 1; i < q.length; i++) {
+      bytes += q[i - 1].data.length;
+      if (q[i].isKeyframe) return i; // GOP 边界：优先切
+      if (force || q[i - 1].dts - q[0].dts >= minDur || bytes >= this.maxBytes) return i;
+    }
+    return undefined;
+  }
+
+  /** PMT 是否声明了视频轨（早于任何样本）：统一时间基只等视频锚定（见 videoExpected）。 */
+  setVideoExpected(hasVideo: boolean): void {
+    this.videoExpected = hasVideo;
   }
 
   /** 队列成段条件：该轨累计时长达标，或全局累计字节超限。 */
@@ -233,6 +317,7 @@ export class Fmp4Remuxer {
 
   /** PMT 已声明无 AAC 音轨（纯视频）时，首个 video init 即可放行。 */
   setAudioExpected(hasMseAudio: boolean): void {
+
     this.audioExpected = hasMseAudio;
   }
 
@@ -319,36 +404,35 @@ export class Fmp4Remuxer {
         // 否则样本被永久丢弃造成缓冲空洞（播放头卡洞里 → 一直"加载中"）。
         continue;
       }
-      // 统一时间基尚未锁定（视频首样本未到）却存在视频轨：音频批次暂不发、保留队列，保 A/V 同步。
-      if (cfg.kind === "audio" && this.unifiedBaseSec === null && [...this.trackConfigs.values()].some((c) => c.kind === "video")) {
+      // 统一时间基尚未锁定（首个视频段还没发出）却声明了视频：音频批次暂不发、保留队列，保 A/V 同步。
+      // 判据用「PMT 声明了视频」而不只是「视频轨已注册」——音频轨常常先注册（音频首帧先出 esds），
+      // 只看已注册会让音频先抢锁（见 videoExpected）。
+      if (
+        cfg.kind === "audio" &&
+        this.unifiedBaseSec === null &&
+        (this.videoExpected || [...this.trackConfigs.values()].some((c) => c.kind === "video"))
+      ) {
         continue;
       }
       const ts = cfg.timescale || 1;
       let runSamples: QueuedSample[];
       let consume: number;
       if (cfg.kind === "video") {
-        // 关键修复：视频段必须「以关键帧开头」。非关键帧开头的段会与上一段末帧（B 帧）展示时间重叠，
-        // 被浏览器整段拒收 → 缓冲空洞（起播卡一下 / 图冻结等缓冲）。故只在遇到「下一个关键帧」时，
-        // 把前缀（当前 GOP，含起始 IDR）成段，关键帧及之后留给下一段续接。
-        const splitIdx = firstKeyframeIndex(q);
-        const prefixDur = splitIdx !== undefined ? q[splitIdx - 1].dts - q[0].dts : 0;
-        // 安全上限：极少数「无周期 IDR」的流若迟迟不出现关键帧，避免队列无限堆积卡死。
-        const totalDur = q[q.length - 1].dts - q[0].dts;
-        const safetyMax = this.targetDuration * ts * 50;
-        if (splitIdx !== undefined && (force || prefixDur >= this.targetDuration * ts)) {
-          runSamples = q.slice(0, splitIdx);
-          consume = splitIdx;
-        } else if (force || totalDur >= safetyMax) {
-          // 收尾/seek/强制，或超安全上限：把整段发出（避免丢样本），即使不以关键帧开头
-          runSamples = q.slice();
-          consume = q.length;
-        } else {
-          continue; // 还没到下个关键帧：继续攒，绝不切出非关键帧开头的段
-        }
+        const picked = this.selectVideoRun(q, ts, force);
+        if (!picked) continue;
+        runSamples = picked.runSamples;
+        consume = picked.consume;
       } else {
         if (force || this.batchReadyForQueue(q, ts)) {
           runSamples = q.slice();
           consume = q.length;
+          // 统一时间基（= 首个发出的视频样本）之前的音频整段丢掉：它们的归一化时间是负的，
+          // 浏览器会丢弃甚至拒收；声音从画面起点开始即可，A/V 仍同一坐标系。
+          if (this.unifiedBaseSec !== null) {
+            const baseDts = this.unifiedBaseSec * ts;
+            if (runSamples[runSamples.length - 1].dts < baseDts) continue;
+            while (runSamples.length > 1 && runSamples[0].dts < baseDts) runSamples.shift();
+          }
         } else {
           continue;
         }
@@ -369,10 +453,14 @@ export class Fmp4Remuxer {
     // 每轨独立成段并交付（video / audio 各写入自己的 SourceBuffer）。
     // 时间轴归一化：巨大 PTS（如直播源的 ~37000s）若不处理，缓冲区间远离 0，播放器永远起不来。
     // 首个片段把 buffer.timestampOffset 置为 -base 秒数，使时间轴从 0 开始；后续片段保持同一 offset。
-    // 统一时间基只锁定一次：必须以**视频首样本**为锚。若首个 flush 由音频驱动（音频轨先注册/先到样），
-    // 不能退回音频基址锁定——否则视频 media 时间被算成负/错位，后续所有视频分片被浏览器整体丢弃，
-    // 缓冲只剩首个关键帧那一段，播放头卡在洞前被 recoverFromStall 跳过 → 起播「第一帧后卡一下」。
-    // 故：有视频轨时音频先于视频到达不锁定（音频批次暂留队列，见下）；仅纯音频流才用首个音频样本。
+    // 统一时间基只锁定一次：必须以**首个实际发出的视频样本**（= 首个关键帧，见 markVideoStarted）
+    // 为锚。若首个 flush 由音频驱动（音频轨先注册/先到样），不能退回音频基址锁定——否则视频 media
+    // 时间被算成负/错位，后续所有视频分片被浏览器整体丢弃，缓冲只剩首个关键帧那一段，播放头卡在
+    // 洞前被 recoverFromStall 跳过 → 起播「第一帧后卡一下」。
+    // 同理也**不能**用「首个到达的视频样本」（可能落在第一个 IDR 之前、永远发不出去）：实测那条
+    // 流的视频时间轴因此比音频晚 7.8s，画面要等停摆看门狗把播放头跳进空洞才出来。
+    // 故：有视频轨时音频先于视频到达不锁定（音频批次暂留队列，且基准之前的音频整段丢弃，见上）；
+    // 仅纯音频流才用首个音频样本。
     if (this.unifiedBaseSec === null) {
       if (this.externalBaseSec !== null) {
         // 声画分流的音频流水线：锚到视频基准（见 setExternalBase），
@@ -382,7 +470,8 @@ export class Fmp4Remuxer {
         const videoBase = this.firstSampleSec.get("video");
         if (videoBase !== undefined) {
           this.unifiedBaseSec = videoBase;
-        } else if (![...this.trackConfigs.values()].some((c) => c.kind === "video")) {
+        } else if (!this.videoExpected && ![...this.trackConfigs.values()].some((c) => c.kind === "video")) {
+          // 只有"PMT 明确没有视频轨"时才允许音频自己锚定（纯音频流）
           const audioBase = this.firstSampleSec.get("audio");
           if (audioBase !== undefined) this.unifiedBaseSec = audioBase;
         }
@@ -474,6 +563,7 @@ export class Fmp4Remuxer {
     this.lastDuration.clear();
     this.firstSampleSec.clear();
     this.unifiedBaseSec = null;
+    this.videoStarted = false;
     this.emittedInit.clear();
     this.firstInitAt = null;
   }
@@ -487,10 +577,23 @@ function firstKeyframeIndex(q: QueuedSample[]): number | undefined {
   return undefined;
 }
 
+/** 从 from 开始找关键帧下标；找不到返回 -1（首个视频段/换源时用来丢掉不可解码的前缀）。 */
+function keyframeIndexFrom(q: QueuedSample[], from: number): number {
+  for (let i = Math.max(0, from); i < q.length; i++) {
+    if (q[i].isKeyframe) return i;
+  }
+  return -1;
+}
+
 function buildRun(trackId: number, q: QueuedSample[], fallbackDuration?: number) {
+  // 末样本时长：先用"上一段留下的时距"，再退到本段最后一个时距，最后才给 1 tick。
+  // 直接给 1 tick（旧行为）会在段尾留约一帧的空洞（下一段从"末样本 + 一帧"开始），
+  // 浏览器把这 40ms 缺口当不连续，实测会让紧跟其后的续切段被整段丢弃（缓冲停在首段）。
+  const lastDelta = q.length > 1 ? q[q.length - 1].dts - q[q.length - 2].dts : undefined;
+  const tailDuration = fallbackDuration ?? lastDelta ?? 1;
   const samples = q.map((s, i) => {
     const next = q[i + 1];
-    const duration = next ? next.dts - s.dts : fallbackDuration ?? 1;
+    const duration = next ? next.dts - s.dts : tailDuration;
     return {
       duration: Math.max(0, duration),
       data: s.data,
