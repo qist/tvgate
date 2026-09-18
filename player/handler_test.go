@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -108,8 +109,8 @@ func TestTxtEpgTemplateConfig(t *testing.T) {
 }
 
 // TestM3UEmbeddedEpgConfigFallback M3U 内嵌 x-tvg-url（xml）存在时，配置 player.epg
-// 的固定 XMLTV 自动并入回退链（epgURLs = [内嵌, 配置]），内嵌失效后由 EPGBank 切换；
-// 内嵌为 template 时则配置固定 XMLTV 作为跨类型 epgBak。
+// 的固定 XMLTV 自动并入 xml 来源集（epgURLs = [内嵌, 配置]），两份数据由 EPGBank 合并；
+// 内嵌为 template 时进 epgTpls，配置固定 XMLTV 进 epgURLs（互为补齐）。
 func TestM3UEmbeddedEpgConfigFallback(t *testing.T) {
 	b := false
 	config.Cfg.HTTP.InsecureSkipVerify = &b
@@ -138,16 +139,16 @@ func TestM3UEmbeddedEpgConfigFallback(t *testing.T) {
 	}
 	mgr.mu.RLock()
 	urls := append([]string(nil), mgr.epgURLs...)
-	bak := mgr.epgBak
+	tpls := append([]string(nil), mgr.epgTpls...)
 	mgr.mu.RUnlock()
 	if len(urls) != 2 || urls[0] != inner || urls[1] != "https://example.com/e.xml.gz" {
-		t.Fatalf("xml 源链组装不对: %v", urls)
+		t.Fatalf("xml 来源集组装不对: %v", urls)
 	}
-	if bak.Type != "none" {
-		t.Fatalf("同型回退不应设置 epgBak: %+v", bak)
+	if len(tpls) != 0 {
+		t.Fatalf("同型来源不应进模板集: %v", tpls)
 	}
 
-	// 内嵌为 template、配置固定 XMLTV → epgBak 跨类型回退
+	// 内嵌为 template、配置固定 XMLTV → 模板进 epgTpls，XMLTV 进 epgURLs（互补）
 	up2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("央视,#genre#\nepg=https://tpl.example.com/?ch={name}&date={date}\nCCTV1,rtsp://10.0.0.2/c1\n"))
 	}))
@@ -162,14 +163,57 @@ func TestM3UEmbeddedEpgConfigFallback(t *testing.T) {
 	mgr2.httpClient = up2.Client()
 	mgr2.Reload()
 	mgr2.mu.RLock()
-	bak2 := mgr2.epgBak
+	tpls2 := append([]string(nil), mgr2.epgTpls...)
 	urls2 := append([]string(nil), mgr2.epgURLs...)
 	mgr2.mu.RUnlock()
-	if bak2.Type != "xml" || bak2.URL != "https://example.com/e.xml.gz" {
-		t.Fatalf("template 主源 + 配置固定 XMLTV 应设 epgBak: %+v", bak2)
+	if len(tpls2) != 1 || tpls2[0] != "https://tpl.example.com/?ch={name}&date={date}" {
+		t.Fatalf("内嵌模板应进 epgTpls: %v", tpls2)
 	}
-	if len(urls2) != 0 {
-		t.Fatalf("主为 template 时不应有 xml 源链: %v", urls2)
+	if len(urls2) != 1 || urls2[0] != "https://example.com/e.xml.gz" {
+		t.Fatalf("配置固定 XMLTV 应进 epgURLs: %v", urls2)
+	}
+}
+
+// TestSubscriptionFollowsRedirect 订阅源 301/302 跟随：
+// http → https 升级、域名/CDN 搬迁很常见（源站把 http 跳 https），不跟随就等于订阅拉不到。
+// 这里让 http 源 301 到一个 **https** 源，验证跨协议跳转后仍能正常解析出频道表。
+func TestSubscriptionFollowsRedirect(t *testing.T) {
+	no := false
+	config.Cfg.HTTP.InsecureSkipVerify = &no
+	config.Cfg.HTTP.DisableKeepAlives = &no
+
+	// 最终订阅（https，自签证书由 httptest 的 client 信任）
+	final := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("央视,#genre#\nCCTV1,http://192.0.2.1/live/1.m3u8\n"))
+	}))
+	defer final.Close()
+	// 入口（http）301 到 https 订阅
+	entry := httptest.NewServer(http.RedirectHandler(final.URL, http.StatusMovedPermanently))
+	defer entry.Close()
+
+	setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: entry.URL}, t)
+	mgr := NewManager(&config.Cfg.Player)
+	mgr.httpClient = final.Client()
+	mgr.Reload()
+
+	chans := mgr.Channels()
+	if len(chans) != 1 || chans[0].Name != "CCTV1" {
+		t.Fatalf("重定向后的订阅未解析: %+v", chans)
+	}
+
+	// 重定向到不支持协议（file://）必须拒绝，不能当成本地文件去读
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "file:///etc/passwd")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer bad.Close()
+	setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: bad.URL}, t)
+	mgr2 := NewManager(&config.Cfg.Player)
+	mgr2.httpClient = bad.Client()
+	mgr2.Reload()
+	if len(mgr2.Channels()) != 0 {
+		t.Fatalf("不应把 file:// 重定向当订阅解析: %+v", mgr2.Channels())
 	}
 }
 
@@ -672,7 +716,7 @@ func TestEPGBankNameLookup(t *testing.T) {
 	b := NewEPGBank()
 	xm := `<tv><channel id="CCTV10"><display-name lang="zh">CCTV10</display-name></channel>` +
 		`<programme channel="CCTV10" start="20260901120000 +0800" stop="20260901130000 +0800"><title>午间新闻</title></programme></tv>`
-	b.parse([]byte(xm))
+	installXMLTV(t, b, xm)
 	// 按 display-name（频道名）查
 	ps := b.Programs("CCTV10", "20260901")
 	if len(ps) != 1 || ps[0].Title != "午间新闻" {
@@ -696,7 +740,7 @@ func TestEPGNormalizedNameLookup(t *testing.T) {
 		`<programme channel="bjws" start="20260901120000 +0800" stop="20260901130000 +0800"><title>北京新闻</title></programme>` +
 		`<programme channel="cctv4k" start="20260901120000 +0800" stop="20260901130000 +0800"><title>4K 频道节目</title></programme>` +
 		`</tv>`
-	b.parse([]byte(xm))
+	installXMLTV(t, b, xm)
 
 	// 北京卫视4K（订阅带后缀）→ 匹配 EPG "北京卫视"
 	ps := b.Programs("北京卫视4K", "20260901")
@@ -721,12 +765,12 @@ func TestEPGNormalizedNameLookup(t *testing.T) {
 	// EPG 自身同时存在 "北京卫视" 与 "北京卫视4K"（归一键冲突）→ 归一化别名被删：
 	// "北京卫视-4K" 查空（不错配到其中一个），精确名 "北京卫视4K" 仍精确命中自己的节目。
 	bc := NewEPGBank()
-	bc.parse([]byte(`<tv>` +
-		`<channel id="bjws"><display-name lang="zh">北京卫视</display-name></channel>` +
-		`<channel id="bjws4k"><display-name lang="zh">北京卫视4K</display-name></channel>` +
-		`<programme channel="bjws" start="20260901120000 +0800" stop="20260901130000 +0800"><title>北京新闻</title></programme>` +
-		`<programme channel="bjws4k" start="20260901120000 +0800" stop="20260901130000 +0800"><title>4K 频道节目</title></programme>` +
-		`</tv>`))
+	installXMLTV(t, bc, `<tv>`+
+		`<channel id="bjws"><display-name lang="zh">北京卫视</display-name></channel>`+
+		`<channel id="bjws4k"><display-name lang="zh">北京卫视4K</display-name></channel>`+
+		`<programme channel="bjws" start="20260901120000 +0800" stop="20260901130000 +0800"><title>北京新闻</title></programme>`+
+		`<programme channel="bjws4k" start="20260901120000 +0800" stop="20260901130000 +0800"><title>4K 频道节目</title></programme>`+
+		`</tv>`)
 	if got := bc.Programs("北京卫视-4K", "20260901"); len(got) != 0 {
 		t.Fatalf("归一键冲突时应查空(宁缺毋滥): %+v", got)
 	}
@@ -774,8 +818,8 @@ func TestEPGSourcChainFallback(t *testing.T) {
 	}
 }
 
-// TestEPGFallbackTemplate 查询级回退：template 主来源查询失败（空）时，用配置的
-// 固定 XMLTV（xml）兜底查询 EPGBank。
+// TestEPGFallbackTemplate 跨类型补齐：template 主来源查询失败（空）时，用配置的
+// 整份 XMLTV（xml）补齐该频道节目。
 func TestEPGFallbackTemplate(t *testing.T) {
 	no := false
 	config.Cfg.HTTP.InsecureSkipVerify = &no
@@ -786,29 +830,23 @@ func TestEPGFallbackTemplate(t *testing.T) {
 		w.Write([]byte("not epg"))
 	}))
 	defer tpl.Close()
-	// xml 回退源：有效
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<tv><channel id="c1"><display-name lang="zh">CCTV1</display-name></channel>` +
-			`<programme channel="c1" start="20260901080000 +0800" stop="20260901090000 +0800"><title>朝闻天下</title></programme></tv>`))
-	}))
-	defer up.Close()
 
 	m := &Manager{
 		epgSource: EPGSource{Type: "template", URL: tpl.URL},
-		epgBak:    EPGSource{Type: "xml", URL: up.URL},
+		epgTpls:   []string{tpl.URL},
 		epg:       NewEPGBank(),
 	}
-	m.epg.parse([]byte(`<tv><channel id="c1"><display-name lang="zh">CCTV1</display-name></channel>` +
-		`<programme channel="c1" start="20260901080000 +0800" stop="20260901090000 +0800"><title>朝闻天下</title></programme></tv>`))
+	installXMLTV(t, m.epg, `<tv><channel id="c1"><display-name lang="zh">CCTV1</display-name></channel>`+
+		`<programme channel="c1" start="20260901080000 +0800" stop="20260901090000 +0800"><title>朝闻天下</title></programme></tv>`)
 	h := &Handler{mgr: m, stream: tpl.Client()}
 	progs := h.serveEPGQuery(context.Background(), "", "CCTV1", "20260901")
 	if len(progs) != 1 || progs[0].Title != "朝闻天下" {
-		t.Fatalf("template 主源失效应回退 xml 兜底: %+v", progs)
+		t.Fatalf("template 主源为空时应由 xml 补齐: %+v", progs)
 	}
 }
 
-// TestEPGXmlFallbackTemplate xml 主来源整份失效（HaveData=false）时，用配置的
-// template 兜底逐频道拉取。
+// TestEPGXmlFallbackTemplate xml 主来源没有该频道节目（整份失效或频道缺失）时，
+// 用配置的 template 补齐逐频道拉取。
 func TestEPGXmlFallbackTemplate(t *testing.T) {
 	no := false
 	config.Cfg.HTTP.InsecureSkipVerify = &no
@@ -820,13 +858,38 @@ func TestEPGXmlFallbackTemplate(t *testing.T) {
 	}))
 	defer tpl.Close()
 
-	m := &Manager{epgSource: EPGSource{Type: "xml", URL: "http://127.0.0.1:1/dead.xml"}, epg: NewEPGBank()}
-	// 主 xml 从未加载成功：epgBak 为 template
-	m.epgBak = EPGSource{Type: "template", URL: tpl.URL}
+	// 主 xml 从未加载成功：epgTpls 里有模板来源可补齐
+	m := &Manager{
+		epgSource: EPGSource{Type: "xml", URL: "http://127.0.0.1:1/dead.xml"},
+		epgTpls:   []string{tpl.URL},
+		epg:       NewEPGBank(),
+	}
 	h := &Handler{mgr: m, stream: tpl.Client()}
 	progs := h.serveEPGQuery(context.Background(), "", "CCTV1", "20260901")
 	if len(progs) != 1 || progs[0].Title != "新闻 30 分" {
-		t.Fatalf("xml 主源失效应回退 template 兜底: %+v", progs)
+		t.Fatalf("xml 主源无数据时应由 template 补齐: %+v", progs)
+	}
+
+	// 反向：xml 主源已有该频道节目 → 不再打模板接口（省一次上游请求）
+	var hits int32
+	tpl2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Write([]byte(`<tv><programme start="20260901080000 +0800" stop="20260901090000 +0800" channel="1"><title>模板节目</title></programme></tv>`))
+	}))
+	defer tpl2.Close()
+	m2 := &Manager{
+		epgSource: EPGSource{Type: "xml", URL: "https://e.example.com/e.xml.gz"},
+		epgTpls:   []string{tpl2.URL},
+		epg:       NewEPGBank(),
+	}
+	installXMLTV(t, m2.epg, `<tv><channel id="c1"><display-name lang="zh">CCTV1</display-name></channel>`+
+		`<programme channel="c1" start="20260901080000 +0800" stop="20260901090000 +0800"><title>朝闻天下</title></programme></tv>`)
+	h2 := &Handler{mgr: m2, stream: tpl2.Client()}
+	if progs := h2.serveEPGQuery(context.Background(), "", "CCTV1", "20260901"); len(progs) != 1 || progs[0].Title != "朝闻天下" {
+		t.Fatalf("xml 有数据时应直接用 xml: %+v", progs)
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("xml 命中时不应再请求模板源, 实际 %d 次", n)
 	}
 }
 
@@ -1057,8 +1120,8 @@ func TestServeHTTPRedirectCache(t *testing.T) {
 	}
 }
 
-// TestServeEPGKeyOnly：/api/player/epg 只认不透明 key——key 缺失 400、未登记 403、
-// 合法 key 200（无 EPG 源时返回空节目单）；date 归一仍容忍三种写法、空则今天。
+// TestServeEPGKeyOnly：/api/player/epg 的 key 分支——key/ch 都缺 400、未登记 key 403、
+// 合法 key 200（无 EPG 源时返回空节目单，含 name/date 回显）；date 归一容忍三种写法、空则今天。
 func TestServeEPGKeyOnly(t *testing.T) {
 	b := false
 	config.Cfg.HTTP.InsecureSkipVerify = &b
@@ -1085,24 +1148,29 @@ func TestServeEPGKeyOnly(t *testing.T) {
 		return rr.Code, rr.Body.String()
 	}
 
-	// 缺 key → 400
+	// key / ch 都缺 → 400
 	if code, body := doEPG("?date=20260918"); code != http.StatusBadRequest {
-		t.Fatalf("缺 key 应 400, got %d: %s", code, body)
+		t.Fatalf("缺 key/ch 应 400, got %d: %s", code, body)
 	}
 	// 未登记 key → 403
 	if code, body := doEPG("?key=deadbeef"); code != http.StatusForbidden {
 		t.Fatalf("未知 key 应 403, got %d: %s", code, body)
 	}
-	// 合法 key → 200 空节目单
-	code, body := doEPG("?key=" + key)
+	// 合法 key → 200 空节目单（回显 name/date）
+	code, body := doEPG("?key=" + key + "&date=2026-09-18")
 	if code != http.StatusOK {
 		t.Fatalf("合法 key 应 200, got %d: %s", code, body)
 	}
 	var resp struct {
 		Programs []Program `json:"programs"`
+		Name     string    `json:"name"`
+		Date     string    `json:"date"`
 	}
 	if err := json.Unmarshal([]byte(body), &resp); err != nil || resp.Programs == nil {
 		t.Fatalf("epg 响应异常: %s", body)
+	}
+	if resp.Name != "CCTV1" || resp.Date != "20260918" {
+		t.Fatalf("响应应回显 name/date: %s", body)
 	}
 	for _, c := range []struct{ in, want string }{
 		{"2026-09-18", "20260918"},
@@ -1113,5 +1181,65 @@ func TestServeEPGKeyOnly(t *testing.T) {
 		if got := normalizeEPGDate(c.in); got != c.want {
 			t.Fatalf("normalizeEPGDate(%q)=%q，期望 %q", c.in, got, c.want)
 		}
+	}
+}
+
+// TestServeEPGByNameStandard 对外标准查询：/api/player/epg?ch=<频道名>&date=<日期>
+// 不要求频道在本机订阅白名单里（第三方把本机当 EPG 源用），name= 为同义参数。
+func TestServeEPGByNameStandard(t *testing.T) {
+	no := false
+	config.Cfg.HTTP.InsecureSkipVerify = &no
+	config.Cfg.HTTP.DisableKeepAlives = &no
+
+	// 两个模板来源：A 只有 08:00 一条，B 有 08:00（重复，应被 A 压制）与 10:00 一条
+	tplA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("ch"); got != "北京卫视" {
+			t.Errorf("模板 A {name} 填充不对: %q", got)
+		}
+		w.Write([]byte(`<tv><programme start="20260901080000 +0800" stop="20260901090000 +0800" channel="1"><title>A 台节目</title></programme></tv>`))
+	}))
+	defer tplA.Close()
+	tplB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<tv>` +
+			`<programme start="20260901080000 +0800" stop="20260901090000 +0800" channel="1"><title>B 台同档节目</title></programme>` +
+			`<programme start="20260901100000 +0800" stop="20260901110000 +0800" channel="1"><title>B 台独有节目</title></programme></tv>`))
+	}))
+	defer tplB.Close()
+
+	tpl := "{srv}?ch={name}&date={date}"
+	m := &Manager{
+		epgSource: EPGSource{Type: "template", URL: strings.Replace(tpl, "{srv}", tplA.URL, 1)},
+		epgTpls: []string{
+			strings.Replace(tpl, "{srv}", tplA.URL, 1),
+			strings.Replace(tpl, "{srv}", tplB.URL, 1),
+		},
+		epg: NewEPGBank(),
+	}
+	h := NewHandler(m)
+	rr := httptest.NewRecorder()
+	h.ServeEPG(rr, httptest.NewRequest("GET", "/api/player/epg?ch="+url.QueryEscape("北京卫视")+"&date=20260901", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("按名查询应 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Programs []Program `json:"programs"`
+		Name     string    `json:"name"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("epg 响应异常: %s", rr.Body.String())
+	}
+	if resp.Name != "北京卫视" {
+		t.Fatalf("name 回显不对: %q", resp.Name)
+	}
+	// 两个模板来源合并：08:00 取靠前来源(A)，10:00 来自 B；按时间排序
+	if len(resp.Programs) != 2 || resp.Programs[0].Title != "A 台节目" || resp.Programs[1].Title != "B 台独有节目" {
+		t.Fatalf("模板多来源合并不对: %+v", resp.Programs)
+	}
+
+	// name= 同义：同上能查到（改查整份 XMLTV 分支需另配来源，这里只验证参数等效）
+	rr2 := httptest.NewRecorder()
+	h.ServeEPG(rr2, httptest.NewRequest("GET", "/api/player/epg?name="+url.QueryEscape("北京卫视")+"&date=20260901", nil))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("name= 应同义, got %d: %s", rr2.Code, rr2.Body.String())
 	}
 }

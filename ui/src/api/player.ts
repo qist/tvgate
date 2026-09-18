@@ -6,7 +6,10 @@ export interface PlayerConfig {
   subscription: string;
   /** 多订阅源：追加在主订阅源之后，逐项解析合并（同源去重；单个源失败只跳过自身） */
   subscriptions: string[];
+  /** EPG 来源：模板（含 {name}/{date}）或固定 XMLTV 地址；也支持换行/分号/逗号分隔的多个 */
   epg: string;
+  /** 多 EPG 来源：追加在 epg 之后，按序合并（同类型来源节目单合并，不同类型互补补齐） */
+  epgs: string[];
   logo: string;
   logo_dir: string;
   /** Go time.Duration 字符串（如 2h / 30m），空串表示默认 2h */
@@ -26,6 +29,9 @@ export async function getPlayer(): Promise<PlayerConfig> {
       ? data.subscriptions.filter((s): s is string => typeof s === "string" && s.trim() !== "")
       : [],
     epg: data.epg || "",
+    epgs: Array.isArray(data.epgs)
+      ? data.epgs.filter((s): s is string => typeof s === "string" && s.trim() !== "")
+      : [],
     logo: data.logo || "",
     logo_dir: data.logo_dir || "",
     // 默认 2h 时后端返回 "2h0m0s"，按旧版行为显示为空（代表默认）

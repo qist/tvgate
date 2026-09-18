@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qist/tvgate/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -87,6 +88,54 @@ func TestBuildPlayerNodeSubscriptions(t *testing.T) {
 	}
 	if strings.Contains(string(emptied), "subscriptions") {
 		t.Fatalf("空数组不该写出 subscriptions: %s", emptied)
+	}
+}
+
+// TestBuildPlayerNodeEpgs 保存 player 段时写出 epgs 序列（多 EPG 来源，含 {name} 模板值）；
+// 未提交该键 / 提交空数组时不写（页面清空要真的生效，不能被旧值回填）。
+func TestBuildPlayerNodeEpgs(t *testing.T) {
+	want := []string{"http://epg.51zmt.top:8000/e1.xml.gz", "https://epg.example.com/?ch={name}&date={date}"}
+	node := buildPlayerNode(map[string]interface{}{
+		"enabled": true,
+		"epg":     "https://epg.cdn.loc.cc/?ch={name}&date={date}",
+		"epgs":    []interface{}{want[0], " " + want[1] + " "},
+	})
+	out, err := yaml.Marshal(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Player config.PlayerConfig `yaml:"player"`
+	}
+	if err := yaml.Unmarshal([]byte("player:\n"+indentLines(out)), &parsed); err != nil {
+		t.Fatalf("解析产物失败: %v", err)
+	}
+	if parsed.Player.Epg != "https://epg.cdn.loc.cc/?ch={name}&date={date}" {
+		t.Fatalf("epg 不符: %q", parsed.Player.Epg)
+	}
+	if len(parsed.Player.Epgs) != len(want) {
+		t.Fatalf("epgs 不符: %v", parsed.Player.Epgs)
+	}
+	for i := range want {
+		if parsed.Player.Epgs[i] != want[i] {
+			t.Fatalf("epgs[%d] 不符: %q", i, parsed.Player.Epgs[i])
+		}
+	}
+
+	for _, c := range []struct {
+		name string
+		body map[string]interface{}
+	}{
+		{"未提交 epgs", map[string]interface{}{"enabled": true}},
+		{"提交空数组", map[string]interface{}{"enabled": true, "epgs": []interface{}{}}},
+	} {
+		plain, err := yaml.Marshal(buildPlayerNode(c.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(plain), "epgs") {
+			t.Fatalf("[%s] 不该写出 epgs: %s", c.name, plain)
+		}
 	}
 }
 

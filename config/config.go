@@ -145,7 +145,10 @@ type PlayerConfig struct {
 	// Subscriptions 多订阅源：追加在 Subscription 之后的 URL/本地路径/目录列表。
 	// 与 Subscription 合并解析（先 Subscription，再本列表），同源去重；单个源失败只跳过该源。
 	Subscriptions  []string      `yaml:"subscriptions,omitempty"`
-	Epg            string        `yaml:"epg"`             // 逗号TXT 订阅的 EPG 模板（含 {name}/{date} 占位符）；也可填固定 XMLTV URL（xml.gz，整份节目单按频道名匹配，gzip 自动识别）
+	Epg            string        `yaml:"epg"`             // 逗号TXT 订阅的 EPG 模板（含 {name}/{date} 占位符）；也可填固定 XMLTV URL（xml.gz，整份节目单按频道名匹配，gzip 自动识别）。支持换行/分号/逗号分隔的多个来源（同类型合并，见 Epgs）
+	// Epgs 多 EPG 来源：追加在 Epg 之后，按序编号越靠前优先级越高。
+	// 同类型来源（xml 全部 / template 全部）节目单合并；另一类型在首选无结果时补齐。
+	Epgs []string `yaml:"epgs,omitempty"`
 	Logo           string        `yaml:"logo"`            // 逗号TXT 订阅的台标模板（含 {name} 占位符），如 https://logo.<your-domain>/{name}.png
 	LogoDir        string        `yaml:"logo_dir"`        // 本地台标目录（如 /opt/TVLogo），频道 logo 用该目录下 <频道名>.png，经 /player/logo/ 服务
 	UpdateInterval time.Duration `yaml:"update_interval"` // 订阅定时刷新间隔，默认 2h；整份 XMLTV EPG（epg 填固定 xml/xml.gz URL）的刷新与订阅共用同一时钟，每周期随 Reload 一起重拉

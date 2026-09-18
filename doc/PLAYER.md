@@ -2,7 +2,7 @@
 
 TVGate 内置 H5 播放器模块：服务端解析 IPTV 订阅（M3U 或逗号 TXT），为每个频道生成**不透明 key**（源地址哈希）对外发布，真实源地址与抓流 UA 全程只存在于服务器侧，浏览器/前端不可见。支持直播、EPG 节目单、回看（源具备 catchup 时）、换台与画中画等能力，自研播放引擎（MSE + wasm 转封装）随 SPA 构建，单二进制即可提供服务。
 
-模块支持配置热加载：修改 `player` 段后由配置重载自动生效，挂载/摘除路由无需重启；改 `subscription` / `subscriptions` / `epg` 会连带重新拉取订阅与 EPG（无需重启）。Web 后台「播放器」页提供可视化配置（订阅源与多订阅源、EPG/台标模板、刷新间隔、默认 UA）。
+模块支持配置热加载：修改 `player` 段后由配置重载自动生效，挂载/摘除路由无需重启；改 `subscription` / `subscriptions` / `epg` / `epgs` 会连带重新拉取订阅与 EPG（无需重启）。Web 后台「播放器」页提供可视化配置（订阅源与多订阅源、EPG 来源与多 EPG 来源、台标模板、刷新间隔、默认 UA，并展示可对外提供的标准 EPG 接口地址）。
 
 ## 配置段
 
@@ -11,7 +11,8 @@ player:
   enabled: true                    # 是否启用播放器模块（热加载，挂载/摘除路由无需重启）
   subscription: tv.txt             # 订阅源：HTTP(S) URL 或本地文件/目录（写法见下文）；也可写多个源（换行/逗号/分号分隔）
   subscriptions: []                # 追加订阅源（可选，按序在 subscription 之后合并解析，同源去重）
-  epg: ""                          # EPG 模板或固定 XMLTV 地址（xml/xml.gz）；兼作订阅内嵌 EPG 失效时的回退（见「EPG 节目单」）
+  epg: ""                          # EPG 模板或固定 XMLTV 地址（xml/xml.gz）；也可写多个来源（换行/分号/逗号分隔）
+  epgs: []                         # 追加 EPG 来源（可选，按序在 epg 之后参与合并，同址去重）
   logo: ""                         # TXT 订阅的台标模板，含 {name} 占位符；M3U 自带 tvg-logo 时优先
   logo_dir: ""                     # 本地台标目录（如 /opt/TVLogo）：取 <频道名>.png，优先于上方模板
   update_interval: 2h              # 订阅定时刷新间隔
@@ -24,9 +25,10 @@ player:
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `enabled` | bool | `false` | 是否启用播放器模块，热加载生效 |
-| `subscription` | string | `""` | 订阅源：HTTP(S) URL 或本地路径；可指向单个文件或目录（目录=递归收集 `.txt` / `.m3u` / `.m3u8` 合并解析，跳过隐藏文件，按路径排序保证合并顺序稳定，单文件上限 64MB）。可写**多个源**（换行 / 逗号 / 分号分隔，等价于 `subscriptions`） |
+| `subscription` | string | `""` | 订阅源：HTTP(S) URL 或本地路径；可指向单个文件或目录（目录=递归收集 `.txt` / `.m3u` / `.m3u8` 合并解析，跳过隐藏文件，按路径排序保证合并顺序稳定，单文件上限 64MB）。可写**多个源**（换行 / 逗号 / 分号分隔，等价于 `subscriptions`）。HTTP(S) 源自动跟随 301/302（http → https 升级、域名搬迁等） |
 | `subscriptions` | list | `[]` | **追加订阅源**（多源合并）：在 `subscription` 之后按序解析，同一地址只解析一次；单个源失败只跳过该源，全部失败时保留上一次的频道表。元素写法与 `subscription` 完全相同（URL / 本地路径 / 目录 / `file://` / `php://`） |
-| `epg` | string | `""` | 频道 EPG 来源。两种形态：**模板**（含 `{name}` / `{date}` 占位符，按频道逐条请求）或 **固定 XMLTV 地址**（`http(s)` 开头且不含 `{`，如 `https://xxx/epg.xml.gz`，整份节目单，`.gz` 自动解压、按频道名匹配）。固定 XMLTV 兼作订阅内嵌 EPG 失效时的**回退源**（见「EPG 节目单」） |
+| `epg` | string | `""` | 频道 EPG 来源。两种形态：**模板**（含 `{name}` / `{date}` 占位符，按频道逐条请求）或 **固定 XMLTV 地址**（`http(s)` 开头且不含 `{`，如 `https://xxx/epg.xml.gz`，整份节目单，`.gz` 自动解压、按频道名匹配，301/302 自动跟随）。可写**多个来源**（换行 / 分号分隔；逗号也支持，但仅当每段都像来源时才算分隔符，避免误切 URL 查询串） |
+| `epgs` | list | `[]` | **追加 EPG 来源**（多源合并）：在 `epg` 之后按序参与合并，同一地址只算一次。元素写法与 `epg` 完全相同。合并规则见「EPG 节目单 → 多来源合并」 |
 | `logo` | string | `""` | 逗号 TXT 订阅的台标模板，含 `{name}` 占位符；M3U 自带 `tvg-logo` 时优先生效 |
 | `logo_dir` | string | `""` | 本地台标目录（如 `/opt/TVLogo`），频道台标取该目录下 `<频道名>.png`，经 `/player/logo/` 服务；优先于 `logo` 模板 |
 | `update_interval` | duration | `2h` | 订阅定时刷新间隔（如 `30m` / `2h`） |
@@ -39,7 +41,7 @@ player:
 
 | 写法 | 说明 |
 |---|---|
-| `https://...` / `http://...` | 远程订阅 URL（固定浏览器 UA 抓取） |
+| `https://...` / `http://...` | 远程订阅 URL（固定浏览器 UA 抓取）；**301/302 自动跟随**（最多 5 跳，含 http → https 升级、域名/CDN 搬迁；仅接受 http/https，不会跟到 `file://`） |
 | `/opt/tvgate/tv.txt` | 本地绝对路径 |
 | `file:///opt/tvgate/tv.txt` | `file://` 前缀本地路径 |
 | `php://sub/tv.txt` | 相对 docroot（php 模块脚本目录）；也可写目录如 `php://sub` |
@@ -106,7 +108,8 @@ logo=https://logo.example.com/{name}.png
 | `/web/player` | SPA 播放页（频道列表 / EPG / 回看 / 设置） |
 | `/pp`、`/pp/<key>` | 独立播放页入口（旧版地址保留）：直接服务播放页，**不跳转后台路径**，`/pp/<key>` 转为 `/pp#<key>` 深链 |
 | `/api/player/channels` | 频道列表 API：`{"list":[{key,name,group,scheme,tvgId,tvgName,tvgLogo,epgType}],"epgSource":{kind,template,logo}}` |
-| `/api/player/epg?key=<key>&date=YYYYMMDD` | EPG 节目单 API：频道只能用不透明 `key`（与 `/player/<key>` 同源）定位，服务端内部换算 tvg-id/频道名查源；`{"programs":[{from,to,title}]}`（`from`/`to` 为 XMLTV 原样时间串）。`date` 可省略（默认今天）且容忍 `YYYY-MM-DD` / `YYYY/MM/DD` / `YYYYMMDD`；key 未登记返回 `403` |
+| `/api/player/epg?key=<key>&date=YYYYMMDD` | EPG 节目单 API（播放器内部用法）：频道用不透明 `key`（与 `/player/<key>` 同源）定位，服务端内部换算 tvg-id/频道名查源；`{"programs":[{from,to,title}],"name":..,"date":..}`（`from`/`to` 为 XMLTV 原样时间串）。`date` 可省略（默认今天）且容忍 `YYYY-MM-DD` / `YYYY/MM/DD` / `YYYYMMDD`；key 未登记返回 `403`，`key`/`ch` 都缺返回 `400` |
+| `/api/player/epg?ch=<频道名或tvg-id>&date=YYYYMMDD` | EPG 节目单 API（**对外标准用法**）：按频道名（或 XMLTV channel id）查询，**不要求**是本机订阅里的频道，因此可把本机当 EPG 源提供给其它播放器/系统（`name=` 为同义参数）。受全局 token 保护（同其它 `/api`） |
 | `/api/player/catchup?key=<key>&from=<unix秒>&to=<unix秒>` | 回看 API（基于 EPG 节目单起止时间）：时间参数用 Unix 秒，服务端换算为源侧 `playseek` 的 `YmdHis` 串，返回 `{"play":"/player/<key>/<token>"}` |
 | `/player/<key>` | 播放流入口；HLS 分片走 `/player/<key>/<token>` 短路径 |
 | `/player/logo/` | 台标服务（`logo_dir` 本地台标经此输出） |
@@ -128,32 +131,33 @@ logo=https://logo.example.com/{name}.png
 - **M3U 订阅**：EPG 走头行 `x-tvg-url=` / `url-tvg=` 指定的 XMLTV 地址，服务端定时下载解析，`.gz` 自动解压；频道按 `tvg-id`（缺省回落 `tvg-name`）匹配节目。
 - **TXT 订阅**：EPG 走 `player.epg` 模板或订阅内 `epg=` 行，按 `{name}` / `{date}` 占位符逐频道请求；`http` 开头且不含 `{` 时视为整份 XMLTV 地址。
 
-查询接口：`/api/player/epg?key=<频道key>&date=YYYY-MM-DD`。
+查询接口：
 
-### EPG 回退（主源失效自动接管）
+| 用法 | 地址 | 说明 |
+|---|---|---|
+| 播放器内部 | `/api/player/epg?key=<频道key>&date=YYYY-MM-DD` | 不透明 key 定位，服务端换算 tvg-id/频道名 |
+| **对外标准** | `/api/player/epg?ch=<频道名>&date=YYYYMMDD` | 按频道名（或 XMLTV channel id）查，不要求是本机订阅频道；`name=` 同义。可原样给别的播放器当 EPG 源：`epg=http://<本机>/api/player/epg?ch={name}&date={date}` |
 
-配置 `player.epg` 后，它会作为订阅内嵌 EPG 的**回退源**，主源失效时自动接管，无需人工干预：
+响应 `{"programs":[{from,to,title}],"name":<查询名>,"date":<YYYYMMDD>}`。
 
-**① 整份 XMLTV 回退链（xml → xml）**
+### 多来源合并
 
-M3U 头行 `x-tvg-url`（或 TXT `epg=` 固定地址）为主源时，`player.epg` 填写的固定 XMLTV 地址会自动并入**源链**（内嵌优先、配置在后）。主源拉取失败、解析失败或内容为空时，自动切换到链内下一个可用源；主源恢复后重新优先。刷新周期内与订阅共用同一时钟逐次重试。
+EPG 来源可配多个（订阅内嵌来源 → `player.epg` → `player.epgs`，**按书写顺序即优先级**）：
+
+- **整份 XMLTV（xml 型）**：全部拉到服务端解析并存多份数据，查询时逐个来源解析该频道后**按开始时间并集**，同一时段（`start` 相同）取靠前来源那条；某个来源拉取/解析失败或内容为空只少它那份数据，其余来源照常生效，全部失败才保留上一次成功的数据。来源 301/302 跳转自动跟随（如 `http://epg.51zmt.top:8000/e1.xml.gz` → CDN 域名）。
+- **模板（template 型）**：按序逐个请求（填 `{name}` / `{date}`）后同样按时间并集。
+- **跨类型互补**：主类型查不到该频道节目时，用另一类型补齐——整份 XMLTV 里没有的频道会用模板源补，模板源查空则回落整份 XMLTV。不同服务商覆盖的频道不同，这比"整体切换"更实用；同一频道在两个来源里 channel id 不同、但 display-name 一致时照样能对上并合并。
 
 ```yaml
 player:
-  subscription: tv.m3u            # M3U 头行 x-tvg-url 已失效（如源挂掉）
-  epg: https://e.erw.cc/e.xml.gz  # 固定 XMLTV/xml.gz：主源失效后自动接管
+  subscription: tv.m3u
+  epg: https://a.example.com/?ch={name}&date={date}   # 模板源（首选）
+  epgs:
+    - http://epg.51zmt.top:8000/e1.xml.gz             # 整份 XMLTV：与模板源互补
+    - https://b.example.com/e2.xml.gz                 # 再叠加一份，优先级更低
 ```
 
-**② 跨类型回退（template ↔ xml）**
-
-主源与配置来源类型不同时（如 M3U 内嵌模板、`player.epg` 填固定 XMLTV，或反之），主来源失效时 `/api/player/epg` 自动改用备用来源查询：
-
-- 主源为**模板**且逐频道请求失败（拉取/解析失败返回空）→ 改用配置的固定 XMLTV 查本地缓存（或另一模板 URL）；
-- 主源为**整份 XMLTV** 且从未加载成功（`HaveData=false`）→ 改用配置的模板 URL 逐频道兜底查询。
-
-判定细节：整份 XMLTV 已成功加载时，某频道查询为空仅代表该频道无节目，**不会**误触发回退。
-
-> 日志佐证：服务启动/刷新后打印 `✅ [player] EPG 解析完成: <N> 频道, 源: <生效URL>`，生效 URL 即当前实际使用的 EPG 源。
+> 日志佐证：服务启动/刷新后打印 `✅ [player] EPG 解析完成: <N> 频道(<M> 份来源合并), 源: <生效URL列表>`；某来源无可用节目会打印 `⚠️ [player] EPG 来源无可用节目(已跳过): <URL>`。
 
 ## 回看（catchup）
 
@@ -226,7 +230,9 @@ player:
   subscriptions:                                    # 可选：追加订阅源（多源合并，同源去重）
     - /opt/tvgate/tv2.txt
     - php://sub
-  epg: https://epg.example.com/?ch={name}&date={date}
+  epg: https://epg.example.com/?ch={name}&date={date} # 模板源；也可写整份 XMLTV 地址或多个来源
+  epgs:                                             # 可选：追加 EPG 来源（多源合并，同址去重）
+    - http://epg.51zmt.top:8000/e1.xml.gz
   logo: https://logo.example.com/{name}.png
   logo_dir: /opt/TVLogo                             # 本地台标目录：<频道名>.png，优先于 logo 模板
   update_interval: 30m
@@ -238,10 +244,11 @@ player:
 
 - 订阅按内容自动识别 M3U / TXT，文件扩展名仅作参考；目录订阅会合并全部 `.txt` / `.m3u` / `.m3u8`，单文件上限 64MB。
 - 多订阅源（`subscription` 内分隔多个 / `subscriptions`）按序合并、同源去重；单源失败只跳过它自己，**全部失败时保留上一次的频道表**，不会把频道清空。
-- 整份 XMLTV（`epg` 填固定 `xml` / `xml.gz` 地址）与订阅共用同一刷新时钟，每个刷新周期随订阅一起重拉；改 `player` 段后热加载即重新拉取，无需重启。
+- 订阅源与 EPG 来源的 HTTP(S) 拉取都**跟随 301/302**（最多 5 跳，相对 `Location` 按当前地址解析；只接受 http/https）。源站把 `http` 升级到 `https`、换 CDN 域名都不用改配置；每次跟随会打印 `↪️ [player] 重定向跟随: <原地址> → <新地址>`。
+- 整份 XMLTV 来源（`epg` / `epgs` 填固定 `xml` / `xml.gz` 地址）与订阅共用同一刷新时钟，每个刷新周期随订阅一起重拉全部来源并合并；改 `player` 段后热加载即重新拉取，无需重启。
 - 界面风格是**浏览器本地设置**（`localStorage`），与服务器配置无关；换设备/换浏览器需重新选择。
 - TXT 订阅的组级 `ua=` 作用于其后的所有频道，注意书写顺序；`ua=`（空值）可恢复 `player.ua` 默认。
-- `epg` 模板仅对逗号 TXT 订阅生效；M3U 订阅的 EPG 以头行 `x-tvg-url` 为准。`player.epg` 填**固定 XMLTV 地址**时对两种订阅都生效：TXT 直接作为节目源，M3U 则作为内嵌 EPG 失效时的回退源（见「EPG 回退」）。
+- `epg` 模板仅对逗号 TXT 订阅生效；M3U 订阅的 EPG 以头行 `x-tvg-url` 为准。`player.epg` / `player.epgs` 填**固定 XMLTV 地址**时对两种订阅都生效：与订阅内嵌 XMLTV 一起拉取、按频道合并，任一来源失效不影响其它来源（见「EPG 节目单 → 多来源合并」）。
 - `logo` 模板仅对逗号 TXT 订阅生效；M3U 订阅的台标以 `tvg-logo` 属性为准。
 - 回看依赖源站支持 `playseek` 参数；非 `http/https` 源（udp/rtp/rtsp/php）不支持 catchup，请求会返回 `400`。
 - EPG 起止时间来自节目单，EPG 数据缺失或频道 `tvg-id` 不匹配时无法发起回看。

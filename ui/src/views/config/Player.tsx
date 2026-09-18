@@ -29,11 +29,15 @@ export function PlayerPage() {
   const [cfg, setCfg] = useState<PlayerConfig | null>(null);
   /** 多订阅源用多行文本框编辑（一行一个），保存时转成数组提交 */
   const [subsText, setSubsText] = useState("");
+  /** 多 EPG 来源同上（一行一个） */
+  const [epgsText, setEpgsText] = useState("");
   const [notice, setNotice] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [copied, setCopied] = useState(false);
   // 独立播放入口外链（跟随当前访问的 host:port）。只展示 /pp——
   // 它是不暴露后台路径的公开地址，可直接分享给电视/手机/其他播放器。
   const externalLink = `${window.location.origin}/pp`;
+  // 对外 EPG 接口地址：可原样填到别的播放器当 EPG 源（{name} 由对方按频道名填充）
+  const epgEndpoint = `${window.location.origin}/api/player/epg?ch={name}&date={date}`;
 
   const copyExternal = async () => {
     // HTTP 局域网环境无 navigator.clipboard（非安全上下文），退化为 execCommand
@@ -62,6 +66,7 @@ export function PlayerPage() {
     const next = await getPlayer();
     setCfg(next);
     setSubsText(next.subscriptions.join("\n"));
+    setEpgsText(next.epgs.join("\n"));
   }, []);
   useEffect(() => {
     refresh();
@@ -77,7 +82,7 @@ export function PlayerPage() {
       return;
     }
     try {
-      await savePlayer({ ...cfg, subscriptions, subscription: cfg.subscription.trim(), epg: cfg.epg.trim(), logo: cfg.logo.trim(), logo_dir: cfg.logo_dir.trim(), update_interval: cfg.update_interval.trim(), ua: cfg.ua.trim() });
+      await savePlayer({ ...cfg, subscriptions, epgs: parseSources(epgsText), subscription: cfg.subscription.trim(), epg: cfg.epg.trim(), logo: cfg.logo.trim(), logo_dir: cfg.logo_dir.trim(), update_interval: cfg.update_interval.trim(), ua: cfg.ua.trim() });
       setNotice({ type: "ok", msg: "配置保存成功，热加载将自动刷新" });
       setTimeout(refresh, 6500);
     } catch (e) {
@@ -180,13 +185,31 @@ export function PlayerPage() {
               placeholder={"php://xxx.php?id=all\n/opt/tvgate/tv2.txt\n/www/tv/"}
             />
           </Field>
-          <Field label="txt 订阅的 EPG 模板（可选）" hint="含 {name}=频道名、{date}=日期；也可填固定 XMLTV URL（如 xxx.xml.gz，整份节目单按频道名匹配，gzip 自动识别）；M3U 订阅用 x-tvg-url 的 XMLTV，无需填此项">
+          <Field label="txt 订阅的 EPG 模板（可选）" hint="含 {name}=频道名、{date}=日期；也可填固定 XMLTV URL（如 xxx.xml.gz，整份节目单按频道名匹配、gzip 自动识别、301/302 自动跟随）；多项用换行/分号/逗号分隔或填下方「多 EPG 来源」；M3U 订阅用 x-tvg-url 的 XMLTV，无需填此项">
             <Input
               className="font-mono"
               value={cfg.epg}
               onChange={(e) => setCfg({ ...cfg, epg: e.target.value })}
               placeholder="https://epg.&lt;your-domain&gt;/?ch={name}&date={date}"
             />
+          </Field>
+          <Field
+            label="多 EPG 来源（可选，一行一个）"
+            hint="与上方 EPG 来源合并使用：整份 XMLTV（xml/xml.gz）全部下载解析后按频道合并节目单，模板（含 {name}/{date}）按序逐频道请求后合并；同档节目取靠前来源，某来源失效只少它那份数据。两类来源互补——xml 里没有的频道会用模板源补，反之亦然。保存后热加载自动生效（订阅刷新时一并重拉）。"
+          >
+            <textarea
+              className="flex min-h-[5.5rem] w-full rounded-[var(--radius)] border border-input bg-background px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={epgsText}
+              onChange={(e) => setEpgsText(e.target.value)}
+              spellCheck={false}
+              placeholder={"http://epg.51zmt.top:8000/e1.xml.gz\nhttps://epg.example.com/e.xml.gz\nhttps://epg.example.com/?ch={name}&date={date}"}
+            />
+          </Field>
+          <Field
+            label="对外 EPG 接口（可填到其它播放器当 EPG 源）"
+            hint={`本机同时提供标准查询接口：${epgEndpoint}（key= 为播放器内部用法；ch= 可填频道名或 tvg-id，第三方无需知道订阅格式）。接口受全局 token 保护（与其它 /api 一致）。`}
+          >
+            <Input className="font-mono" readOnly value={epgEndpoint} onFocus={(e) => e.currentTarget.select()} />
           </Field>
           <Field label="台标模板（可选，M3U/txt 无 tvg-logo 时兜底）" hint="含 {name}=频道名；M3U 自带 tvg-logo 优先">
             <Input

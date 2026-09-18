@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -154,37 +155,52 @@ func (h *Handler) ServeChannels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ServeEPG GET /api/player/epg?key=<频道key>&date=YYYYMMDD → 节目单。
-// 频道只能用不透明 key（与 /player/<key> 同源）定位；服务端内部换算出 tvg-id 与
-// 显示名再查 EPG，前端/第三方无需知道订阅格式。date 可省略（默认今天），服务端
-// 容忍 YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD 三种写法。key 未登记 → 403。
-// M3U/固定（x-tvg-url XMLTV）：由服务端解析的 EPGBank 查；txt（模板）：服务端填
-// {name}/{date} 后拉取，规避前端跨域 CORS。
-// 主来源失效时回退：
-//   - template 主来源查询失败（返回空）→ 用配置的备用来源（固定 XMLTV 查 EPGBank，或另一模板拉取）；
-//   - xml 主来源整份从未加载成功（HaveData()==false）→ 用配置的模板来源逐频道拉取。
-//     （xml 型配置固定 XMLTV 已并入 EPGBank 源链，由 EPGBank 内部自动切换，不走这里。）
+// ServeEPG GET /api/player/epg → 节目单。两种定位方式：
+//
+//	key=<不透明频道key>  播放器内部用法：与 /player/<key> 同源，服务端内部换算出
+//	                     tvg-id 与显示名再查 EPG，前端/第三方无需知道订阅格式；未登记 → 403。
+//	ch=<频道名或tvg-id>  对外标准用法（如其它播放器把本机当 EPG 源：
+//	                     epg=http://<本机>/api/player/epg?ch={name}&date={date}）；
+//	                     name= 为同义参数。按名字查，**不要求**是本机订阅里的频道。
+//
+// date 可省略（默认今天），容忍 YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD 三种写法。
+// 响应 {"programs":[{from,to,title}],"name":<查询名>,"date":<YYYYMMDD>}。
+//
+// 数据来源见 serveEPGQuery：xml 型来源合并查询本地 EPGBank；template 型来源由服务端
+// 填 {name}/{date} 后拉取（规避前端跨域 CORS）；两类互为补齐。
 func (h *Handler) ServeEPG(w http.ResponseWriter, r *http.Request) {
 	if !h.requireToken(w, r) {
 		return
 	}
-	key := strings.TrimSpace(r.URL.Query().Get("key"))
-	if key == "" {
-		http.Error(w, "key required", http.StatusBadRequest)
+	q := r.URL.Query()
+	key := strings.TrimSpace(q.Get("key"))
+	name := strings.TrimSpace(q.Get("ch"))
+	if name == "" {
+		name = strings.TrimSpace(q.Get("name"))
+	}
+	if key == "" && name == "" {
+		http.Error(w, "key or ch required", http.StatusBadRequest)
 		return
 	}
-	ch := h.mgr.GetByKey(key)
-	if ch == nil {
-		http.Error(w, "channel not found", http.StatusForbidden)
-		return
+	// key 优先：能被 /player/<key> 播放的频道，其 tvg-id/名称由服务端换算
+	var tvgID, chanName string
+	if key != "" {
+		ch := h.mgr.GetByKey(key)
+		if ch == nil {
+			http.Error(w, "channel not found", http.StatusForbidden)
+			return
+		}
+		tvgID, chanName = ch.TVGID, ch.Name
+	} else {
+		chanName = name
 	}
-	date := normalizeEPGDate(r.URL.Query().Get("date"))
-	progs := h.serveEPGQuery(r.Context(), ch.TVGID, ch.Name, date)
+	date := normalizeEPGDate(q.Get("date"))
+	progs := h.serveEPGQuery(r.Context(), tvgID, chanName, date)
 	if progs == nil {
 		progs = []Program{}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	writeJSON(w, map[string]interface{}{"programs": progs})
+	writeJSON(w, map[string]interface{}{"programs": progs, "name": chanName, "date": date})
 }
 
 // normalizeEPGDate 归一日期：容忍 YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD，空则取今天（本地时区）。
@@ -201,45 +217,61 @@ func normalizeEPGDate(date string) string {
 	return time.Now().Format("20060102")
 }
 
+// serveEPGQuery 查某频道某天的节目单（多来源合并）：
+// 主来源类型决定首选路径，另一类型（若配了）在首选**没查到该频道节目**时补齐——
+// 不同 EPG 服务覆盖的频道往往不同，互补比"整体切换"实用。
+//
+//   - 主来源为 template：先把全部模板来源按序请求合并（{name}/{date} 填充），
+//     全部为空再用整份 XMLTV 库（EPGBank）补齐；
+//   - 主来源为 xml：先查 EPGBank（内部已合并全部 xml 来源），该频道为空时再用
+//     模板来源补齐（xml 从未加载成功 / 该频道不在 xml 里，都走这条）。
 func (h *Handler) serveEPGQuery(ctx context.Context, ch, name, date string) []Program {
 	es := h.mgr.EPGSource()
-	if es.Type == "template" && es.URL != "" && name != "" {
-		progs := h.fetchTemplateEPG(ctx, fillEpgURL(es.URL, name, date))
-		if len(progs) > 0 {
+	tpls := h.mgr.EPGTemplates()
+	if es.Type == "template" && len(tpls) > 0 && name != "" {
+		if progs := h.mergeTemplateEPGs(ctx, tpls, name, date); len(progs) > 0 {
 			return progs
 		}
-		return h.fetchEPGFallback(ctx, ch, name, date)
+		return h.bankPrograms(ch, name, date)
 	}
-	q := ch
-	if q == "" {
-		q = name
-	}
-	progs := h.mgr.EPG().Programs(q, date)
-	if len(progs) == 0 && !h.mgr.EPG().HaveData() {
-		if fb := h.fetchEPGFallback(ctx, ch, name, date); len(fb) > 0 {
-			return fb
-		}
+	progs := h.bankPrograms(ch, name, date)
+	if len(progs) == 0 && name != "" && len(tpls) > 0 {
+		progs = h.mergeTemplateEPGs(ctx, tpls, name, date)
 	}
 	return progs
 }
 
-// fetchEPGFallback 用配置的备用来源（epgBak）兜底查询，无可用备用或查询失败返回 nil。
-func (h *Handler) fetchEPGFallback(ctx context.Context, ch, name, date string) []Program {
-	fb := h.mgr.EPGFallback()
-	switch fb.Type {
-	case "template":
-		if name == "" {
-			return nil
-		}
-		return h.fetchTemplateEPG(ctx, fillEpgURL(fb.URL, name, date))
-	case "xml":
-		q := ch
-		if q == "" {
-			q = name
-		}
-		return h.mgr.EPG().Programs(q, date)
+// bankPrograms 查本地 EPGBank（整份 XMLTV 来源，已按频道合并多份数据）。
+func (h *Handler) bankPrograms(ch, name, date string) []Program {
+	q := ch
+	if q == "" {
+		q = name
 	}
-	return nil
+	if q == "" {
+		return nil
+	}
+	return h.mgr.EPG().Programs(q, date)
+}
+
+// mergeTemplateEPGs 按优先级逐个查询模板来源并合并结果：同一开始时间（from）已由
+// 靠前来源提供则忽略后面的（避免同一时段重影），不同时间追加；最终按开始时间排序。
+// 单个来源失败（拉取/解析失败返回空）只跳过自身，其余来源照常。
+func (h *Handler) mergeTemplateEPGs(ctx context.Context, tpls []string, name, date string) []Program {
+	var out []Program
+	seen := make(map[string]bool, 16)
+	for _, tpl := range tpls {
+		for _, p := range h.fetchTemplateEPG(ctx, fillEpgURL(tpl, name, date)) {
+			if seen[p.Start] {
+				continue
+			}
+			seen[p.Start] = true
+			out = append(out, p)
+		}
+	}
+	if len(out) > 1 {
+		sort.SliceStable(out, func(i, j int) bool { return out[i].Start < out[j].Start })
+	}
+	return out
 }
 
 // fillEpgURL 把 EPG 模板里的 {name}/{date} 占位符填充为实际值（name 用 URL 转义，date 原样）。
@@ -249,16 +281,12 @@ func fillEpgURL(tpl, name, date string) string {
 }
 
 // fetchTemplateEPG 服务端拉取 txt 模板 EPG（规避 CORS），尽量解析 XMLTV <programme> 或 JSON。
-// 绑定请求 context + 超时：客户端断开或源半挂时不会无限阻塞（否则每次查询泄漏一个挂死 goroutine）。
+// 跟随 3xx 重定向（getEPG）；绑定请求 context + 超时：客户端断开或源半挂时不会无限阻塞
+// （否则每次查询泄漏一个挂死 goroutine）。
 func (h *Handler) fetchTemplateEPG(ctx context.Context, u string) []Program {
 	ctx, cancel := context.WithTimeout(ctx, subscriptionFetchTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 Chrome/91")
-	resp, err := h.stream.Do(req)
+	resp, err := getFollowRedirects(ctx, h.stream, u)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
 			resp.Body.Close()

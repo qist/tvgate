@@ -23,6 +23,7 @@ func (h *ConfigHandler) handlePlayerConfig(w http.ResponseWriter, r *http.Reques
 		"subscription":     p.Subscription,
 		"subscriptions":    p.Subscriptions, // 多订阅源（追加在 subscription 之后）
 		"epg":              p.Epg,
+		"epgs":             p.Epgs, // 多 EPG 来源（追加在 epg 之后，按序合并）
 		"logo":             p.Logo,
 		"logo_dir":         p.LogoDir,
 		"update_interval":  p.UpdateInterval.String(),
@@ -73,10 +74,10 @@ func (h *ConfigHandler) handlePlayerConfigSave(w http.ResponseWriter, r *http.Re
 					oldNode := doc.Content[i+1]
 					newNode := buildPlayerNode(cfg)
 					// 保留后台 UI 不编辑的键：android_autoplay（安卓客户端读取的标记位）与
-					// subscriptions（多订阅源，只有手改 YAML 时才存在）。重建 player 节点时
-					// 原样带过去，避免后台保存把 YAML 里的这些键抹掉；仅当提交里没有该键时才回填，
-					// 防止写入重复键。
-					preservePlayerKeys := []string{"android_autoplay", "subscriptions"}
+					// subscriptions/epgs（多订阅源、多 EPG 来源，老版本后台不提交这些键）。
+					// 重建 player 节点时原样带过去，避免后台保存把 YAML 里的这些键抹掉；
+					// 仅当提交里没有该键时才回填，防止写入重复键。
+					preservePlayerKeys := []string{"android_autoplay", "subscriptions", "epgs"}
 					for _, key := range preservePlayerKeys {
 						// 判定"提交里有没有这个键"，而不是"新节点里写没写"：
 						// subscriptions 提交空数组时 buildPlayerNode 不写该键（等价于删除），
@@ -144,6 +145,17 @@ func buildPlayerNode(cfg map[string]interface{}) *yaml.Node {
 			node.Content = append(node.Content,
 				&yaml.Node{Kind: yaml.ScalarNode, Value: "epg"},
 				&yaml.Node{Kind: yaml.ScalarNode, Value: s})
+		}
+	}
+	// epgs：多 EPG 来源（一条一个源）。与 subscriptions 同款归一化，写成 YAML 序列。
+	if v, ok := cfg["epgs"]; ok {
+		if items := playerSourceList(v); len(items) > 0 {
+			seq := &yaml.Node{Kind: yaml.SequenceNode}
+			for _, s := range items {
+				seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: s})
+			}
+			node.Content = append(node.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "epgs"}, seq)
 		}
 	}
 	if v, ok := cfg["logo"]; ok {
