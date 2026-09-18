@@ -91,8 +91,8 @@ export class PcmTimeline {
     this.trimmedSamples = 0;
   }
 
-  /** 诊断计数（对齐 playback-engine PcmWorkerStats 的 remuxDrop/trimDrop）。 */
-  getStats(): { remuxDropChunks: number; trimSamples: number } {
-    return { remuxDropChunks: this.droppedChunks, trimSamples: this.trimmedSamples };
+  /** 诊断计数：整块丢弃与锚点前裁剪的样本量（供 PcmWorkerStats 汇总上报）。 */
+  getStats(): { behindAnchorDrops: number; trimmedAtAnchor: number } {
+    return { behindAnchorDrops: this.droppedChunks, trimmedAtAnchor: this.trimmedSamples };
   }
 }

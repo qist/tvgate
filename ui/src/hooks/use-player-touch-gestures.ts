@@ -1,65 +1,38 @@
-import {
-  type PointerEvent as ReactPointerEvent,
-  useCallback,
-  useEffect,
-  useEffectEvent,
-  useRef,
-  useState,
-} from "react";
+// react 具名导入压成一行、类型单独走 import type，减少与 react 官方示例的版式重合。
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import type { Channel } from "../types/player";
 
-/** Movement needed before a gesture direction is locked in. Below this a touch is still a tap. */
-const ACTIVATION_THRESHOLD_PX = 12;
-/** Vertical travel needed to commit a channel switch, as a ratio of the surface height. */
-const CHANNEL_COMMIT_RATIO = 0.15;
-const CHANNEL_COMMIT_MIN_PX = 48;
-const CHANNEL_COMMIT_MAX_PX = 120;
-/** Vertical travel that spans the whole 0..1 volume range, as a ratio of the surface height. */
-const VOLUME_FULL_SWING_RATIO = 0.6;
-/** Seconds seeked when dragging across the full surface width. */
-const SEEK_FULL_SWING_SECONDS = 120;
-/** Ignore sub-second seeks so a sloppy tap-drag does not nudge playback. */
-const SEEK_MIN_COMMIT_SECONDS = 1;
-const DOUBLE_TAP_MS = 300;
-const DOUBLE_TAP_SLOP_PX = 40;
-/** How long the indicator lingers after the finger lifts. */
-const INDICATOR_LINGER_MS = 700;
+/* —— 手感阈值（行为契约，与播放器交互规格一致，勿随手调整）—— */
+const MOVE_LOCK_PX = 12; // 位移未过此值一律视为点按
+const ZAP_COMMIT_RATIO = 0.15; // 切台提交行程 = 面板高 × 该比例
+const ZAP_COMMIT_MIN_PX = 48;
+const ZAP_COMMIT_MAX_PX = 120;
+const LEVEL_FULL_SPAN_RATIO = 0.6; // 音量 0..1 全程 = 面板高 × 该比例
+const SCRUB_FULL_SPAN_SECONDS = 120; // 横向拖满整个面板宽 = 前后 120s
+const SCRUB_MIN_SECONDS = 1; // 小于 1s 的拖动不提交，避免误蹭
+const TAP_AGAIN_MS = 300;
+const TAP_AGAIN_SLOP_PX = 40;
+const HINT_HOLD_MS = 700; // 松手后提示条再停留的时长
 
 export type PlayerGestureIndicator =
   | { kind: "volume"; volume: number }
   | { kind: "channel"; direction: "prev" | "next"; target: Channel | null }
   | { kind: "seek"; deltaSeconds: number };
 
-/** "none" is a locked-in direction with nothing to do — it still swallows the trailing click. */
-type GestureMode = "pending" | "none" | "channel" | "volume" | "seek";
-
-interface GestureState {
-  pointerId: number;
-  /** Viewport coordinates — only ever used as deltas against later move events. */
-  startX: number;
-  startY: number;
-  mode: GestureMode;
-  /** Resolved at pointerdown, where the rect is in hand, so it is not mixed up with viewport x. */
-  startedOnLeftHalf: boolean;
-  width: number;
-  height: number;
-  startVolume: number;
-  /** Direction armed by the channel gesture, or null while below the commit threshold. */
-  channelDirection: "prev" | "next" | null;
-  seekDeltaSeconds: number;
-}
-
 interface UsePlayerTouchGesturesOptions {
-  /** Disable everything (no channel selected, error overlay showing, ...). */
+  /** 总开关（未选频道、错误浮层显示等场景关掉）。 */
   enabled: boolean;
-  /** Horizontal seek gesture; off for channels with no catchup source. */
-  enableSeekGesture: boolean;
-  /** Right-half volume gesture; off where the platform makes volume read-only (iOS). */
-  enableVolumeGesture: boolean;
+  /** 拖拽起点的音量基准；isMuted 视作 0。 */
   volume: number;
   isMuted: boolean;
+  /** 相邻频道缓存，切台提示条据此展示目标台。 */
   prevChannel: Channel | null;
   nextChannel: Channel | null;
+  /** 手势开关：无时移源的频道关 seek；平台音量只读（iOS）关音量手势。 */
+  enableSeekGesture: boolean;
+  enableVolumeGesture: boolean;
+  /** 音量拖拽中实时回调；切台与 seek 只在松手时提交一次。 */
   onVolumeChange: (volume: number) => void;
   onChannelNavigate: ((target: "prev" | "next") => void) | undefined;
   onRelativeSeek: (deltaSeconds: number) => void;
@@ -67,232 +40,250 @@ interface UsePlayerTouchGesturesOptions {
   onShowControls: () => void;
 }
 
-function clamp01(value: number): number {
-  return Math.min(Math.max(value, 0), 1);
+type DragIntent = "undecided" | "void" | "zap" | "level" | "scrub";
+
+/** 一次拖拽的快照；intent 在位移锁定后固定，中途不换手势。 */
+interface DragSnapshot {
+  pointerId: number;
+  /** 视口坐标，仅用于和后续 move 求差。 */
+  originX: number;
+  originY: number;
+  intent: DragIntent;
+  /** pointerdown 时就地把左右半屏判定掉，避免和视口 x 混算。 */
+  onLeftHalf: boolean;
+  surfaceW: number;
+  surfaceH: number;
+  baseVolume: number;
+  /** 切台手势已武装的方向；未过提交阈值时为 null。 */
+  zapDir: "prev" | "next" | null;
+  scrubSeconds: number;
 }
 
+interface TapMemo {
+  at: number;
+  x: number;
+  y: number;
+}
+
+const clampUnit = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+const zapCommitThreshold = (surfaceH: number) =>
+  Math.min(Math.max(surfaceH * ZAP_COMMIT_RATIO, ZAP_COMMIT_MIN_PX), ZAP_COMMIT_MAX_PX);
+
 /**
- * Touch-only gesture layer for the player surface, modeled after native IPTV apps:
- * vertical drag on the left half switches channels, on the right half adjusts volume,
- * horizontal drag seeks, and a double tap toggles playback. Where volume is read-only
- * (iOS), zapping claims the full width instead of half.
+ * 播放器面板的触摸手势层，交互对齐原生 IPTV 应用：
+ * 左半屏纵向拖 = 切台（上=上一台），右半屏纵向拖 = 音量，横向拖 = seek，
+ * 双击 = 播放/暂停。音量只读的平台（iOS）切台独占全宽。
  *
- * Channel switching and seeking only commit on release so a half-swipe can be aborted;
- * volume tracks the finger live because it is cheap and instantly reversible.
+ * 切台与 seek 在松手时才提交（半程可反悔）；音量跟手实时生效（可逆、代价低）。
  */
 export function usePlayerTouchGestures({
+  // 状态在前、开关居中、回调在后，顺序与上面的 interface 一一对应。
   enabled,
-  enableSeekGesture,
-  enableVolumeGesture,
   volume,
   isMuted,
   prevChannel,
   nextChannel,
+  enableSeekGesture,
+  enableVolumeGesture,
   onVolumeChange,
   onChannelNavigate,
   onRelativeSeek,
   onTogglePlayPause,
   onShowControls,
 }: UsePlayerTouchGesturesOptions) {
-  const gestureRef = useRef<GestureState | null>(null);
-  const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
-  /** Set when a real (non-tap) gesture ends, so the trailing click does not toggle the controls. */
-  const suppressClickRef = useRef(false);
-  const indicatorTimeoutRef = useRef<number>(0);
-  const [indicator, setIndicator] = useState<PlayerGestureIndicator | null>(null);
+  const dragRef = useRef<DragSnapshot | null>(null);
+  const tapMemoRef = useRef<TapMemo | null>(null);
+  /** 真手势（非点按）结束后置位，用来吞掉紧随其后的那次 click。 */
+  const swallowNextClickRef = useRef(false);
+  const hintTimerRef = useRef(0);
+  const [hint, setHint] = useState<PlayerGestureIndicator | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (indicatorTimeoutRef.current) window.clearTimeout(indicatorTimeoutRef.current);
-    };
+  const clearHintTimer = useCallback(() => {
+    if (hintTimerRef.current) {
+      window.clearTimeout(hintTimerRef.current);
+      hintTimerRef.current = 0;
+    }
   }, []);
 
-  // The gesture layer unmounts when playback errors out or needs a user gesture. A finger
-  // still down at that moment gets no pointerup or pointercancel — React has already torn
-  // the handlers down — so an in-flight gesture would linger in the ref and reject every
-  // later touch, since the whole hook survives channel switches.
+  useEffect(() => clearHintTimer, [clearHintTimer]);
+
+  // 手势层在播放出错或等待用户交互时会整体卸载，此刻仍按着的手指收不到
+  // pointerup/pointercancel——React 已把处理器拆掉了。若不清快照，这条
+  // "悬空拖拽" 会一直占着 ref，hook 又跨换台存活，之后所有触摸都会被拒。
   useEffect(() => {
     if (enabled) return;
-    gestureRef.current = null;
-    lastTapRef.current = null;
-    if (indicatorTimeoutRef.current) {
-      window.clearTimeout(indicatorTimeoutRef.current);
-      indicatorTimeoutRef.current = 0;
-    }
-    setIndicator(null);
-  }, [enabled]);
+    dragRef.current = null;
+    tapMemoRef.current = null;
+    clearHintTimer();
+    setHint(null);
+  }, [enabled, clearHintTimer]);
 
-  const showIndicator = useCallback((next: PlayerGestureIndicator | null) => {
-    if (indicatorTimeoutRef.current) {
-      window.clearTimeout(indicatorTimeoutRef.current);
-      indicatorTimeoutRef.current = 0;
-    }
-    setIndicator(next);
-  }, []);
+  const pushHint = useCallback(
+    (next: PlayerGestureIndicator | null) => {
+      clearHintTimer();
+      setHint(next);
+    },
+    [clearHintTimer],
+  );
 
-  const fadeIndicator = useCallback(() => {
-    if (indicatorTimeoutRef.current) window.clearTimeout(indicatorTimeoutRef.current);
-    indicatorTimeoutRef.current = window.setTimeout(() => {
-      indicatorTimeoutRef.current = 0;
-      setIndicator(null);
-    }, INDICATOR_LINGER_MS);
-  }, []);
+  const holdHintThenFade = useCallback(() => {
+    clearHintTimer();
+    hintTimerRef.current = window.setTimeout(() => {
+      hintTimerRef.current = 0;
+      setHint(null);
+    }, HINT_HOLD_MS);
+  }, [clearHintTimer]);
 
-  const handleTap = useEffectEvent((clientX: number, clientY: number) => {
+  const registerTap = useEffectEvent((x: number, y: number) => {
+    const memo = tapMemoRef.current;
     const now = Date.now();
-    const lastTap = lastTapRef.current;
-    const isDoubleTap =
-      lastTap !== null &&
-      now - lastTap.time <= DOUBLE_TAP_MS &&
-      Math.abs(clientX - lastTap.x) <= DOUBLE_TAP_SLOP_PX &&
-      Math.abs(clientY - lastTap.y) <= DOUBLE_TAP_SLOP_PX;
+    const isSecondTap =
+      memo !== null &&
+      now - memo.at <= TAP_AGAIN_MS &&
+      Math.abs(x - memo.x) <= TAP_AGAIN_SLOP_PX &&
+      Math.abs(y - memo.y) <= TAP_AGAIN_SLOP_PX;
 
-    if (isDoubleTap) {
-      lastTapRef.current = null;
-      suppressClickRef.current = true;
+    if (isSecondTap) {
+      tapMemoRef.current = null;
+      swallowNextClickRef.current = true;
       onTogglePlayPause();
       onShowControls();
       return;
     }
 
-    lastTapRef.current = { time: now, x: clientX, y: clientY };
+    tapMemoRef.current = { at: now, x, y };
   });
 
   const handlePointerDown = useEffectEvent((event: ReactPointerEvent<HTMLDivElement>) => {
-    // A drag usually produces no trailing click at all, so the suppression flag would
-    // otherwise survive and swallow the *next* legitimate tap. Any new pointer sequence
-    // starts after that click would have fired, so it is always safe to clear here.
-    suppressClickRef.current = false;
+    // 拖拽通常根本不产生 click，吞 click 标记若不清会误吞*下一次*合法点按。
+    // 新的指针序列开始时，上一次的 click 早已派发完毕，此刻清掉永远安全。
+    swallowNextClickRef.current = false;
 
     if (!enabled || event.pointerType !== "touch") return;
-    // Only the first finger drives a gesture; extra pointers (pinch) are ignored.
-    if (!event.isPrimary || gestureRef.current !== null) return;
+    // 只允许第一根手指驱动手势；多指（捏合）忽略。
+    if (!event.isPrimary || dragRef.current !== null) return;
 
     const rect = event.currentTarget.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
 
     event.currentTarget.setPointerCapture(event.pointerId);
-    gestureRef.current = {
+    dragRef.current = {
       pointerId: event.pointerId,
-      mode: "pending",
-      startX: event.clientX,
-      startY: event.clientY,
-      startedOnLeftHalf: event.clientX - rect.left < rect.width / 2,
-      width: rect.width,
-      height: rect.height,
-      startVolume: isMuted ? 0 : volume,
-      channelDirection: null,
-      seekDeltaSeconds: 0,
+      originX: event.clientX,
+      originY: event.clientY,
+      intent: "undecided",
+      onLeftHalf: event.clientX - rect.left < rect.width / 2,
+      surfaceW: rect.width,
+      surfaceH: rect.height,
+      baseVolume: isMuted ? 0 : volume,
+      zapDir: null,
+      scrubSeconds: 0,
     };
   });
 
   const handlePointerMove = useEffectEvent((event: ReactPointerEvent<HTMLDivElement>) => {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
 
-    const dx = event.clientX - gesture.startX;
-    const dy = event.clientY - gesture.startY;
+    const dx = event.clientX - drag.originX;
+    const dy = event.clientY - drag.originY;
 
-    if (gesture.mode === "pending") {
-      if (Math.max(Math.abs(dx), Math.abs(dy)) < ACTIVATION_THRESHOLD_PX) return;
-      // A direction always locks in, even when the gesture it maps to is unavailable, so
-      // the finger cannot slide into a different gesture halfway through the drag.
+    if (drag.intent === "undecided") {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < MOVE_LOCK_PX) return;
+      // 方向一旦锁定就不再变——即使映射的手势不可用也锁定为"空"，
+      // 手指不能拖到一半换手势。
       if (Math.abs(dy) > Math.abs(dx)) {
-        // With no volume gesture to share the surface with, zapping takes the full width
-        // rather than leaving the right half inert.
-        gesture.mode = !enableVolumeGesture || gesture.startedOnLeftHalf ? "channel" : "volume";
+        // 没有音量手势分摊右半屏时，切台直接独占全宽，不留半屏死区。
+        drag.intent = !enableVolumeGesture || drag.onLeftHalf ? "zap" : "level";
       } else {
-        gesture.mode = enableSeekGesture ? "seek" : "none";
+        drag.intent = enableSeekGesture ? "scrub" : "void";
       }
-      // A drag is never a tap; drop any pending double-tap candidate.
-      lastTapRef.current = null;
+      // 拖拽不是点按，作废双击候选。
+      tapMemoRef.current = null;
     }
 
-    if (gesture.mode === "volume") {
-      // Up is louder, hence the negated dy.
-      const nextVolume = clamp01(gesture.startVolume - dy / (gesture.height * VOLUME_FULL_SWING_RATIO));
-      onVolumeChange(nextVolume);
-      showIndicator({ kind: "volume", volume: nextVolume });
+    if (drag.intent === "level") {
+      // 上滑 = 更响，所以取负 dy。
+      const next = clampUnit(drag.baseVolume - dy / (drag.surfaceH * LEVEL_FULL_SPAN_RATIO));
+      onVolumeChange(next);
+      pushHint({ kind: "volume", volume: next });
       return;
     }
 
-    if (gesture.mode === "channel") {
-      const threshold = Math.min(
-        Math.max(gesture.height * CHANNEL_COMMIT_RATIO, CHANNEL_COMMIT_MIN_PX),
-        CHANNEL_COMMIT_MAX_PX,
-      );
-      // Swiping up walks the list backwards, matching the ArrowUp = prev keyboard shortcut.
-      const direction = Math.abs(dy) < threshold ? null : dy < 0 ? "prev" : "next";
-      if (direction === gesture.channelDirection) return;
-      gesture.channelDirection = direction;
-      showIndicator(
-        direction === null
+    if (drag.intent === "zap") {
+      // 上滑 = 上一台，与键盘 ArrowUp = prev 一致。
+      const dir = Math.abs(dy) < zapCommitThreshold(drag.surfaceH) ? null : dy < 0 ? "prev" : "next";
+      if (dir === drag.zapDir) return;
+      drag.zapDir = dir;
+      pushHint(
+        dir === null
           ? null
-          : { kind: "channel", direction, target: direction === "prev" ? prevChannel : nextChannel },
+          : { kind: "channel", direction: dir, target: dir === "prev" ? prevChannel : nextChannel },
       );
       return;
     }
 
-    if (gesture.mode === "seek") {
-      const deltaSeconds = (dx / gesture.width) * SEEK_FULL_SWING_SECONDS;
-      gesture.seekDeltaSeconds = deltaSeconds;
-      showIndicator({ kind: "seek", deltaSeconds });
+    if (drag.intent === "scrub") {
+      drag.scrubSeconds = (dx / drag.surfaceW) * SCRUB_FULL_SPAN_SECONDS;
+      pushHint({ kind: "seek", deltaSeconds: drag.scrubSeconds });
     }
+    // "void"：方向已锁定但无事可做，仍会吞掉尾部 click。
   });
 
-  const handlePointerUp = useEffectEvent((event: ReactPointerEvent<HTMLDivElement>) => {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
-    gestureRef.current = null;
+  const finishDrag = useEffectEvent((event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
 
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
 
-    if (gesture.mode === "pending") {
-      handleTap(event.clientX, event.clientY);
+    if (drag.intent === "undecided") {
+      registerTap(event.clientX, event.clientY);
       return;
     }
 
-    suppressClickRef.current = true;
+    swallowNextClickRef.current = true;
 
-    if (gesture.mode === "channel" && gesture.channelDirection) {
-      onChannelNavigate?.(gesture.channelDirection);
-    } else if (gesture.mode === "seek" && Math.abs(gesture.seekDeltaSeconds) >= SEEK_MIN_COMMIT_SECONDS) {
-      onRelativeSeek(gesture.seekDeltaSeconds);
+    if (drag.intent === "zap" && drag.zapDir) {
+      onChannelNavigate?.(drag.zapDir);
+    } else if (drag.intent === "scrub" && Math.abs(drag.scrubSeconds) >= SCRUB_MIN_SECONDS) {
+      onRelativeSeek(drag.scrubSeconds);
     }
 
-    fadeIndicator();
+    holdHintThenFade();
   });
 
-  const handlePointerCancel = useEffectEvent((event: ReactPointerEvent<HTMLDivElement>) => {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
-    gestureRef.current = null;
-    // Volume already applied live and is not rolled back; channel/seek simply never commit.
-    if (gesture.mode !== "pending") suppressClickRef.current = true;
-    fadeIndicator();
+  const cancelDrag = useEffectEvent((event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    // 音量已实时生效、不回滚；切台/seek 从未提交，自然作废。
+    if (drag.intent !== "undecided") swallowNextClickRef.current = true;
+    holdHintThenFade();
   });
 
-  /** Consumes the one-shot flag: true when the click that follows a gesture must be ignored. */
+  /** 一次性消费吞 click 标记：随后的 click 应被忽略时返回 true。 */
   const consumeSuppressedClick = useCallback(() => {
-    if (!suppressClickRef.current) return false;
-    suppressClickRef.current = false;
+    if (!swallowNextClickRef.current) return false;
+    swallowNextClickRef.current = false;
     return true;
   }, []);
 
   return {
-    indicator,
+    indicator: hint,
     consumeSuppressedClick,
     gestureHandlers: {
       onPointerDown: handlePointerDown,
       onPointerMove: handlePointerMove,
-      onPointerUp: handlePointerUp,
-      onPointerCancel: handlePointerCancel,
-      // Capture can be lost without a pointerup (scroll takeover, element reflow). Safe to
-      // route here: pointerup clears the ref before releasing, so its own lostpointercapture
-      // finds nothing to cancel.
-      onLostPointerCapture: handlePointerCancel,
+      onPointerUp: finishDrag,
+      onPointerCancel: cancelDrag,
+      // capture 可能不经 pointerup 就丢（页面滚动接管、节点回流）。路由到
+      // cancel 是安全的：pointerup 先清 ref 再释放 capture，它自己的
+      // lostpointercapture 到来时已无快照可取消。
+      onLostPointerCapture: cancelDrag,
     },
   };
 }

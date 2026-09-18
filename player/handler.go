@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -148,16 +149,17 @@ func (h *Handler) ServeChannels(w http.ResponseWriter, r *http.Request) {
 		chans = []*Channel{}
 	}
 	writeJSON(w, map[string]interface{}{
-		"channels": chans,
-		"epg":      h.mgr.EPGSource(),
+		"list":      chans,
+		"epgSource": h.mgr.EPGSource(),
 	})
 }
 
-// ServeEPG GET /api/player/epg?ch=<tvg-id|频道名|key>&name=<频道名>&date=YYYYMMDD → 节目单。
-// 对外是**统一入口**：ch 三种写法都认（tvg-id、频道显示名、播放页用的不透明 key），name 作为
-// 兼容别名（M3U 有 tvg-id 时前端发 ch，逗号 TXT 没有 tvg-id 时前端发 name）；date 可省略
-// （默认今天），并容忍 YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD 三种写法。第三方无需知道订阅格式。
-// M3U/固定（x-tvg-url XMLTV）：由服务端解析的 EPGBank 查；txt（模板）：服务端填 {name}/{date} 后拉取，规避前端跨域 CORS。
+// ServeEPG GET /api/player/epg?key=<频道key>&date=YYYYMMDD → 节目单。
+// 频道只能用不透明 key（与 /player/<key> 同源）定位；服务端内部换算出 tvg-id 与
+// 显示名再查 EPG，前端/第三方无需知道订阅格式。date 可省略（默认今天），服务端
+// 容忍 YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD 三种写法。key 未登记 → 403。
+// M3U/固定（x-tvg-url XMLTV）：由服务端解析的 EPGBank 查；txt（模板）：服务端填
+// {name}/{date} 后拉取，规避前端跨域 CORS。
 // 主来源失效时回退：
 //   - template 主来源查询失败（返回空）→ 用配置的备用来源（固定 XMLTV 查 EPGBank，或另一模板拉取）；
 //   - xml 主来源整份从未加载成功（HaveData()==false）→ 用配置的模板来源逐频道拉取。
@@ -166,41 +168,23 @@ func (h *Handler) ServeEPG(w http.ResponseWriter, r *http.Request) {
 	if !h.requireToken(w, r) {
 		return
 	}
-	ch, name := h.normalizeEPGQuery(r.URL.Query().Get("ch"), r.URL.Query().Get("name"))
+	key := strings.TrimSpace(r.URL.Query().Get("key"))
+	if key == "" {
+		http.Error(w, "key required", http.StatusBadRequest)
+		return
+	}
+	ch := h.mgr.GetByKey(key)
+	if ch == nil {
+		http.Error(w, "channel not found", http.StatusForbidden)
+		return
+	}
 	date := normalizeEPGDate(r.URL.Query().Get("date"))
-	progs := h.serveEPGQuery(r.Context(), ch, name, date)
+	progs := h.serveEPGQuery(r.Context(), ch.TVGID, ch.Name, date)
 	if progs == nil {
 		progs = []Program{}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writeJSON(w, map[string]interface{}{"programs": progs})
-}
-
-// normalizeEPGQuery 把 ch/name 归一到 (tvg-id, 频道名)：第三方调用给哪种写法都能查到节目单。
-//   - 不透明 key（与 /player/<key> 同一个 key）→ 换成该频道的 tvg-id + 显示名；
-//   - 只给 ch，且值其实是频道显示名 / tvg-name → 回频道表补出规范显示名与 tvg-id
-//     （模板型 EPG 只认频道名，XMLTV 优先 tvg-id）；
-//   - 都没匹配上 → 原样透传（XMLTV 按该值查、模板按该值当名字填）。
-func (h *Handler) normalizeEPGQuery(ch, name string) (string, string) {
-	id, nm := strings.TrimSpace(ch), strings.TrimSpace(name)
-	if id == "" && nm == "" {
-		return "", ""
-	}
-	if c := h.mgr.GetByKey(id); c != nil {
-		return c.TVGID, c.Name
-	}
-	if nm == "" {
-		for _, c := range h.mgr.Channels() {
-			if c.TVGID == id || c.TVGName == id || c.Name == id {
-				return c.TVGID, c.Name
-			}
-		}
-		return id, id
-	}
-	if id == "" {
-		id = nm
-	}
-	return id, nm
 }
 
 // normalizeEPGDate 归一日期：容忍 YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD，空则取今天（本地时区）。
@@ -353,17 +337,19 @@ func parseEPGContent(body []byte) []Program {
 	return nil
 }
 
-// ServeCatchup GET /api/player/catchup?key=<key>&start=<YmdHis>&end=<YmdHis>
-// 基于 EPG 回看：在频道源地址拼 playseek=<start>-<end>（源侧减8h转UTC），登记短 token 返回 /player/<key>/<token>。
+// ServeCatchup GET /api/player/catchup?key=<频道key>&from=<unix秒>&to=<unix秒>
+// 基于 EPG 回看：时间参数用 Unix 秒（无时区歧义），服务端换算成源侧 playseek 所需的
+// YmdHis 本地时间串（源侧减8h转UTC），在频道源地址拼 playseek=<start>-<end>，
+// 登记短 token 返回 /player/<key>/<token>。
 func (h *Handler) ServeCatchup(w http.ResponseWriter, r *http.Request) {
 	if !h.requireToken(w, r) {
 		return
 	}
 	key := r.URL.Query().Get("key")
-	start := r.URL.Query().Get("start")
-	end := r.URL.Query().Get("end")
-	if key == "" || start == "" || end == "" {
-		http.Error(w, "key/start/end required", http.StatusBadRequest)
+	fromN, errFrom := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
+	toN, errTo := strconv.ParseInt(r.URL.Query().Get("to"), 10, 64)
+	if key == "" || errFrom != nil || errTo != nil || toN <= fromN {
+		http.Error(w, "key/from/to required (unix seconds, to > from)", http.StatusBadRequest)
 		return
 	}
 	ch := h.mgr.GetByKey(key)
@@ -382,11 +368,13 @@ func (h *Handler) ServeCatchup(w http.ResponseWriter, r *http.Request) {
 	// 回看启动即失效该频道的直播解析缓存（会话切换，返回直播时重新解析）
 	h.clearRedirect(key)
 
+	start := time.Unix(fromN, 0).Format("20060102150405")
+	end := time.Unix(toN, 0).Format("20060102150405")
 	u := catchupURL(ch.RawURL, start, end)
 	tok := shortHash(u)
 	h.storeResources(key, map[string]string{tok: u})
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	writeJSON(w, map[string]interface{}{"url": "/player/" + key + "/" + tok})
+	writeJSON(w, map[string]interface{}{"play": "/player/" + key + "/" + tok})
 }
 
 // catchupURL 在源地址上拼 playseek=<start>-<end>（回看参数，源侧处理时差）。

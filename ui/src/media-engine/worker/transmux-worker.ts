@@ -357,21 +357,21 @@ class WorkerSoftDecoder {
     this.state.clear();
   }
 
-  /** 汇总所有 codec 的软解诊断计数（对齐 playback-engine PcmWorkerStats）。 */
+  /** 汇总所有 codec 的软解诊断计数（PcmWorkerStats 形状，主线程再合并自身计数）。 */
   getStats(): PcmWorkerStats {
     const acc: PcmWorkerStats = {
-      remuxDropChunks: 0,
-      trimSamples: 0,
-      decodeInitFailed: 0,
-      decodeErrors: 0,
-      pendingOverflowDrops: 0,
+      behindAnchorDrops: 0,
+      trimmedAtAnchor: 0,
+      decoderCreateFailures: 0,
+      decoderWorkFailures: 0,
+      audioGateDrops: 0,
     };
     for (const st of this.state.values()) {
       const t = st.pcm.getStats();
-      acc.remuxDropChunks += t.remuxDropChunks;
-      acc.trimSamples += t.trimSamples;
-      acc.decodeInitFailed += st.decodeInitFailed;
-      acc.decodeErrors += st.decodeErrors;
+      acc.behindAnchorDrops += t.behindAnchorDrops;
+      acc.trimmedAtAnchor += t.trimmedAtAnchor;
+      acc.decoderCreateFailures += st.decodeInitFailed;
+      acc.decoderWorkFailures += st.decodeErrors;
     }
     return acc;
   }

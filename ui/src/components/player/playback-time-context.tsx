@@ -1,10 +1,16 @@
 /**
- * 播放位置时间上下文。
- * 让深层子组件能读取当前播放时间（秒，相对媒体原点），无需逐层透传 prop。
+ * 播放位置上下文。
+ *
+ * 为什么用 Context 而不是逐层透传：播放时间随帧推进频繁变化，用 prop 链传递会
+ * 迫使整条中间组件链跟着重渲染；Context 让时间直达真正显示它的叶子组件，
+ * 中间层保持稳定。单位为秒，相对媒体原点（0 即开头，可能大于时钟墙值，如时移场景）。
  */
 import { createContext, useContext, type ReactNode } from "react";
 
-const PlaybackTimeContext = createContext(0);
+/** Provider 缺席（单测、预览页等）时的回退值：从媒体原点起算的 0 秒，消费方不会崩。 */
+const OUTSIDE_PROVIDER_POSITION_SECONDS = 0;
+
+const PositionContext = createContext(OUTSIDE_PROVIDER_POSITION_SECONDS);
 
 interface PlaybackTimeProviderProps {
   children: ReactNode;
@@ -12,9 +18,9 @@ interface PlaybackTimeProviderProps {
 }
 
 export function PlaybackTimeProvider({ children, value }: PlaybackTimeProviderProps) {
-  return <PlaybackTimeContext value={value}>{children}</PlaybackTimeContext>;
+  return <PositionContext value={value}>{children}</PositionContext>;
 }
 
 export function usePlaybackTime(): number {
-  return useContext(PlaybackTimeContext);
+  return useContext(PositionContext);
 }

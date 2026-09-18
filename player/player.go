@@ -39,15 +39,15 @@ type Channel struct {
 	Scheme  string `json:"scheme"` // udp / rtp / rtsp / http / https
 	RawURL  string `json:"-"`      // 真实源，不外露
 	UA      string `json:"-"`      // 每条源的服务端 UA（如需要）
-	TVGID   string `json:"tvg_id"`
-	TVGName string `json:"tvg_name"`
-	TVGLogo string `json:"tvg_logo"`
-	EpgType string `json:"epg_type"` // m3u / txt / none
+	TVGID   string `json:"tvgId"`
+	TVGName string `json:"tvgName"`
+	TVGLogo string `json:"tvgLogo"`
+	EpgType string `json:"epgType"` // m3u / txt / none
 }
 
 // EPGSource 记录订阅携带的 EPG/台标定义（随 /api/player/channels 下发）。
 type EPGSource struct {
-	Type string `json:"type"`     // "xml"（M3U x-tvg-url XMLTV）或 "template"（TXT 模板）
+	Type string `json:"kind"`     // "xml"（M3U x-tvg-url XMLTV）或 "template"（TXT 模板）
 	URL  string `json:"template"` // xml 时：XMLTV 地址；template 时：EPG 模板（{name}/{date}）
 	Logo string `json:"logo"`     // TXT 台标模板（{name}）
 }

@@ -105,9 +105,9 @@ logo=https://logo.example.com/{name}.png
 |---|---|
 | `/web/player` | SPA 播放页（频道列表 / EPG / 回看 / 设置） |
 | `/pp`、`/pp/<key>` | 独立播放页入口（旧版地址保留）：直接服务播放页，**不跳转后台路径**，`/pp/<key>` 转为 `/pp#<key>` 深链 |
-| `/api/player/channels` | 频道列表 API（含不透明 key、分组、台标） |
-| `/api/player/epg?ch=<tvg-id|频道名|key>&date=YYYYMMDD` | EPG 节目单 API（**统一入口**）：`ch` 三种写法都认——M3U `tvg-id`、频道显示名、播放页的不透明 `key`；`name` 为兼容别名（逗号 TXT 订阅没有 `tvg-id`，前端发 `name`）；`date` 可省略（默认今天）且容忍 `YYYY-MM-DD` / `YYYY/MM/DD` / `YYYYMMDD` |
-| `/api/player/catchup?key=<key>&start=<YmdHis>&end=<YmdHis>` | 回看 API（基于 EPG 节目单起止时间） |
+| `/api/player/channels` | 频道列表 API：`{"list":[{key,name,group,scheme,tvgId,tvgName,tvgLogo,epgType}],"epgSource":{kind,template,logo}}` |
+| `/api/player/epg?key=<key>&date=YYYYMMDD` | EPG 节目单 API：频道只能用不透明 `key`（与 `/player/<key>` 同源）定位，服务端内部换算 tvg-id/频道名查源；`{"programs":[{from,to,title}]}`（`from`/`to` 为 XMLTV 原样时间串）。`date` 可省略（默认今天）且容忍 `YYYY-MM-DD` / `YYYY/MM/DD` / `YYYYMMDD`；key 未登记返回 `403` |
+| `/api/player/catchup?key=<key>&from=<unix秒>&to=<unix秒>` | 回看 API（基于 EPG 节目单起止时间）：时间参数用 Unix 秒，服务端换算为源侧 `playseek` 的 `YmdHis` 串，返回 `{"play":"/player/<key>/<token>"}` |
 | `/player/<key>` | 播放流入口；HLS 分片走 `/player/<key>/<token>` 短路径 |
 | `/player/logo/` | 台标服务（`logo_dir` 本地台标经此输出） |
 
@@ -128,7 +128,7 @@ logo=https://logo.example.com/{name}.png
 - **M3U 订阅**：EPG 走头行 `x-tvg-url=` / `url-tvg=` 指定的 XMLTV 地址，服务端定时下载解析，`.gz` 自动解压；频道按 `tvg-id`（缺省回落 `tvg-name`）匹配节目。
 - **TXT 订阅**：EPG 走 `player.epg` 模板或订阅内 `epg=` 行，按 `{name}` / `{date}` 占位符逐频道请求；`http` 开头且不含 `{` 时视为整份 XMLTV 地址。
 
-查询接口：`/api/player/epg?ch=<tvg-id>&date=YYYY-MM-DD`。
+查询接口：`/api/player/epg?key=<频道key>&date=YYYY-MM-DD`。
 
 ### EPG 回退（主源失效自动接管）
 
@@ -157,7 +157,7 @@ player:
 
 ## 回看（catchup）
 
-`http/https` 源自动支持回看，订阅内无需额外声明。流程：播放页依据 EPG 节目单选择节目 → 请求 `/api/player/catchup?key=<key>&start=<YmdHis>&end=<YmdHis>` → 服务端在频道源地址上拼接 `playseek=<start>-<end>`（起止时间格式 `YYYYmmddHHMMSS`，时差由源侧处理）→ 登记短 token 后返回 `/player/<key>/<token>` 播放地址。
+`http/https` 源自动支持回看，订阅内无需额外声明。流程：播放页依据 EPG 节目单选择节目 → 请求 `/api/player/catchup?key=<key>&from=<unix秒>&to=<unix秒>` → 服务端把 Unix 秒换算为 `YmdHis` 本地时间串，在频道源地址上拼接 `playseek=<start>-<end>`（时差由源侧处理）→ 登记短 token 后返回 `{"play":"/player/<key>/<token>"}` 播放地址。
 
 对含 `/PLTV/` 段的中国移动 OTT 源，回看自动将 `PLTV` 替换为 `TVOD`（时移服务器路径），如 `ott.example.com/PLTV/.../index.m3u8` → `ott.example.com/TVOD/.../index.m3u8`；源地址已含 `?` 时以 `&` 追加 `playseek` 参数。
 

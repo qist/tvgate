@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -793,7 +794,7 @@ func TestServeCatchupPhpRtsp(t *testing.T) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write([]byte("爱看咪咕,#genre#\n" +
 			"CCTV1,php://xxx.php?id=cctv1\n" +
-			"CCTV2,rtsp://115.153.245.70/PLTV/88888888/224/3221225699/iptv8040.smil\n" +
+			"CCTV2,rtsp://192.0.2.70/PLTV/88888888/224/3221225699/iptv8040.smil\n" +
 			"CCTV3,udp://239.3.1.1:8001\n"))
 	}))
 	defer up.Close()
@@ -809,10 +810,13 @@ func TestServeCatchupPhpRtsp(t *testing.T) {
 	}
 
 	h := NewHandler(mgr)
+	// from/to 用 Unix 秒（服务端本地时区换算 playseek 的 YmdHis）
+	t0 := time.Date(2026, 9, 4, 12, 0, 0, 0, time.Local).Unix()
+	t1 := time.Date(2026, 9, 4, 13, 0, 0, 0, time.Local).Unix()
 	doCatchup := func(name string) (int, string) {
 		rr := httptest.NewRecorder()
 		h.ServeCatchup(rr, httptest.NewRequest("GET",
-			"/api/player/catchup?key="+keys[name]+"&start=20260904120000&end=20260904130000", nil))
+			"/api/player/catchup?key="+keys[name]+"&from="+strconv.FormatInt(t0, 10)+"&to="+strconv.FormatInt(t1, 10), nil))
 		return rr.Code, rr.Body.String()
 	}
 
@@ -822,12 +826,12 @@ func TestServeCatchupPhpRtsp(t *testing.T) {
 		t.Fatalf("php 源 catchup 应 200, got %d: %s", code, body)
 	}
 	var resp struct {
-		URL string `json:"url"`
+		Play string `json:"play"`
 	}
-	if err := json.Unmarshal([]byte(body), &resp); err != nil || resp.URL == "" {
+	if err := json.Unmarshal([]byte(body), &resp); err != nil || resp.Play == "" {
 		t.Fatalf("php catchup 响应异常: %s", body)
 	}
-	parts := strings.SplitN(strings.TrimPrefix(resp.URL, "/player/"), "/", 2)
+	parts := strings.SplitN(strings.TrimPrefix(resp.Play, "/player/"), "/", 2)
 	if got := h.resolveToken(keys["CCTV1"], parts[1]); got != "php://xxx.php?id=cctv1&playseek=20260904120000-20260904130000" {
 		t.Fatalf("php 回看地址不对: %q", got)
 	}
@@ -837,11 +841,11 @@ func TestServeCatchupPhpRtsp(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("rtsp 源 catchup 应 200, got %d: %s", code, body)
 	}
-	if err := json.Unmarshal([]byte(body), &resp); err != nil || resp.URL == "" {
+	if err := json.Unmarshal([]byte(body), &resp); err != nil || resp.Play == "" {
 		t.Fatalf("rtsp catchup 响应异常: %s", body)
 	}
-	parts = strings.SplitN(strings.TrimPrefix(resp.URL, "/player/"), "/", 2)
-	if got := h.resolveToken(keys["CCTV2"], parts[1]); got != "rtsp://115.153.245.70/TVOD/88888888/224/3221225699/iptv8040.smil?playseek=20260904120000-20260904130000" {
+	parts = strings.SplitN(strings.TrimPrefix(resp.Play, "/player/"), "/", 2)
+	if got := h.resolveToken(keys["CCTV2"], parts[1]); got != "rtsp://192.0.2.70/TVOD/88888888/224/3221225699/iptv8040.smil?playseek=20260904120000-20260904130000" {
 		t.Fatalf("rtsp 回看地址不对: %q", got)
 	}
 
@@ -966,9 +970,9 @@ func TestServeHTTPRedirectCache(t *testing.T) {
 	}
 }
 
-// TestNormalizeEPGQuery：/api/player/epg 统一入口——ch 接受 tvg-id / tvg-name / 频道名 /
-// 播放页不透明 key，name 作为兼容别名（TXT 无 tvg-id 时前端发 name），date 容忍三种写法、空则今天。
-func TestNormalizeEPGQuery(t *testing.T) {
+// TestServeEPGKeyOnly：/api/player/epg 只认不透明 key——key 缺失 400、未登记 403、
+// 合法 key 200（无 EPG 源时返回空节目单）；date 归一仍容忍三种写法、空则今天。
+func TestServeEPGKeyOnly(t *testing.T) {
 	b := false
 	config.Cfg.HTTP.InsecureSkipVerify = &b
 	config.Cfg.HTTP.DisableKeepAlives = &b
@@ -988,18 +992,30 @@ func TestNormalizeEPGQuery(t *testing.T) {
 	}
 	key := mgr.Channels()[0].Key
 
-	cases := []struct{ ch, name, wantCh, wantName string }{
-		{key, "", "1", "CCTV1"},         // 播放页不透明 key
-		{"CCTV1", "", "1", "CCTV1"},     // 频道显示名 → 补出 tvg-id
-		{"1", "", "1", "CCTV1"},         // tvg-id → 补出显示名（模板 EPG 需要名字）
-		{"", "CCTV1", "CCTV1", "CCTV1"}, // 兼容别名：只有 name
-		{"无名台", "", "无名台", "无名台"},       // 都不匹配 → 原样透传
+	doEPG := func(query string) (int, string) {
+		rr := httptest.NewRecorder()
+		h.ServeEPG(rr, httptest.NewRequest("GET", "/api/player/epg"+query, nil))
+		return rr.Code, rr.Body.String()
 	}
-	for _, c := range cases {
-		gotCh, gotName := h.normalizeEPGQuery(c.ch, c.name)
-		if gotCh != c.wantCh || gotName != c.wantName {
-			t.Fatalf("normalizeEPGQuery(%q,%q)=%q,%q，期望 %q,%q", c.ch, c.name, gotCh, gotName, c.wantCh, c.wantName)
-		}
+
+	// 缺 key → 400
+	if code, body := doEPG("?date=20260918"); code != http.StatusBadRequest {
+		t.Fatalf("缺 key 应 400, got %d: %s", code, body)
+	}
+	// 未登记 key → 403
+	if code, body := doEPG("?key=deadbeef"); code != http.StatusForbidden {
+		t.Fatalf("未知 key 应 403, got %d: %s", code, body)
+	}
+	// 合法 key → 200 空节目单
+	code, body := doEPG("?key=" + key)
+	if code != http.StatusOK {
+		t.Fatalf("合法 key 应 200, got %d: %s", code, body)
+	}
+	var resp struct {
+		Programs []Program `json:"programs"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil || resp.Programs == nil {
+		t.Fatalf("epg 响应异常: %s", body)
 	}
 	for _, c := range []struct{ in, want string }{
 		{"2026-09-18", "20260918"},

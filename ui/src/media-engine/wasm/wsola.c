@@ -30,10 +30,12 @@
 #define WSOLA_API
 #endif
 
-#include <math.h>
+/* 仅依赖这三类标准库：数学常数、动态内存、字符串/内存操作。 */
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
+/* MSVC 等实现不保证提供 M_PI（POSIX 扩展而非 C 标准），兜底定义一份。 */
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif

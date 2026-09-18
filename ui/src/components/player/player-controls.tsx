@@ -1,18 +1,25 @@
 /**
- * 播放器控制条。
- * 时间轴（可拖动 seek，仅回看/有节目时可用）+ 播放/暂停 + 音量 + 媒体徽章 +
- * 直播/回看指示与 "回到直播" + 源切换 + 全屏 + 画中画 + 侧栏开关。
+ * 播放器底部控制条：左侧是时间读数与媒体徽章，中间为节目时间轴（可拖拽 seek），
+ * 右侧依次排布播放/静音/音量、直播态指示（或"回到直播"）、换源菜单、全屏与画中画。
+ *
+ * 实现约定：
+ * - 时间轴几何统一出自 useTimelineWindow：有节目单时沿 EPG 时间轴取值；无节目单时
+ *   退化为"终点=当下、跨度 3 小时"的滚动窗口；流时钟完全缺失时给零宽窗口兜底——
+ *   保证任何数据状态下进度条都能拿到合法的几何值。
+ * - 拖拽走 Pointer Events + setPointerCapture：同一时刻只认一个活跃指针；触屏不做
+ *   悬停预览（手指滑动会反复弹出 tooltip，体验差）。
+ * - 松手才提交 seek，拖动全程只刷新预览：拖动途中不打断解码管线。
  */
 import {
-  History,
   Maximize,
   Minimize,
   Pause,
   PictureInPicture,
   Play,
+  History,
   Tv,
-  Volume1,
   Volume2,
+  Volume1,
   VolumeX,
 } from "lucide-react";
 import { memo, useCallback, useMemo, useRef, useState } from "react";
@@ -27,7 +34,7 @@ import { usePlaybackTime } from "./playback-time-context";
 import { PlayerMediaBadges } from "./player-media-badges";
 import { PlayerSelectedGlassLayers } from "./player-selected-glass-layers";
 
-interface PlayerControlsProps {
+interface ControlsProps {
   channel: Channel;
   currentProgram: EPGProgram | null;
   isLive: boolean;
@@ -56,76 +63,122 @@ interface PlayerControlsProps {
   onSourceChange?: (index: number) => void;
 }
 
-const COMPACT_BUTTON_CLASS = "[@container_video_(max-height:_320px)]:p-1 md:[@container_video_(max-height:_320px)]:p-1";
-const COMPACT_ICON_CLASS =
+/** 矮容器（容器高度 ≤320px）下的按钮/图标压缩尺寸，避免控制条挤压时间轴。 */
+const DENSE_LAYOUT_BUTTON_CLASS = "[@container_video_(max-height:_320px)]:p-1 md:[@container_video_(max-height:_320px)]:p-1";
+const DENSE_LAYOUT_ICON_CLASS =
   "[@container_video_(max-height:_320px)]:h-4 [@container_video_(max-height:_320px)]:w-4 md:[@container_video_(max-height:_320px)]:h-4 md:[@container_video_(max-height:_320px)]:w-4";
 
-function formatTime(date: Date, withSeconds = false) {
+/** 圆形操作按钮（播放/静音/全屏/画中画）共用的完整类串。 */
+const ROUND_ACTION_BUTTON_CLASS = [PLAYER_CONTROL_BUTTON_CLASS, "cursor-pointer p-1 md:p-2", DENSE_LAYOUT_BUTTON_CLASS].join(" ");
+/** 播放/静音一档用的图标尺寸（桌面端更大）。 */
+const PLAYBACK_ICON_CLASS = [DENSE_LAYOUT_ICON_CLASS, "h-4 w-4 md:h-7 md:w-7"].join(" ");
+/** 全屏/画中画一档用的图标尺寸（略小，视觉重量更轻）。 */
+const PANEL_TOGGLE_ICON_CLASS = [DENSE_LAYOUT_ICON_CLASS, "h-4 w-4 md:h-6 md:w-6"].join(" ");
+
+/** 无节目单时的兜底时间窗长度：3 小时（毫秒 / 秒两种单位各一份，供不同换算使用）。 */
+const FALLBACK_WINDOW_MS = 3 * 60 * 60 * 1000;
+const FALLBACK_WINDOW_SECONDS = 3 * 60 * 60;
+
+/** 墙钟时刻 → 本地 "HH:MM"（可选带秒）。 */
+function formatWallClock(date: Date, withSeconds = false) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: withSeconds ? "2-digit" : undefined });
 }
 
-function formatDuration(seconds: number) {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-  if (hours > 0) return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-  return `${minutes}:${secs.toString().padStart(2, "0")}`;
+/** 秒数 → "H:MM:SS"（超一小时）或 "M:SS"。 */
+function formatSecondCount(totalSeconds: number) {
+  const wholeHours = Math.floor(totalSeconds / 3600);
+  const wholeMinutes = Math.floor((totalSeconds % 3600) / 60);
+  const wholeSeconds = Math.floor(totalSeconds % 60);
+  if (wholeHours > 0) {
+    return `${wholeHours}:${wholeMinutes.toString().padStart(2, "0")}:${wholeSeconds.toString().padStart(2, "0")}`;
+  }
+  return `${wholeMinutes}:${wholeSeconds.toString().padStart(2, "0")}`;
 }
 
-interface TimelineState {
-  startTime: Date;
-  endTime: Date;
-  duration: number;
-  elapsedTime: number;
-  progress: number;
-  programTimeline: ReturnType<typeof createProgramTimeline> | null;
+/**
+ * 按静音/音量档位挑选音量图标：
+ * 静音（含音量归零）→ VolumeX；音量低于一半 → Volume1；否则 Volume2。
+ */
+function pickVolumeGlyph(isEffectivelyMuted: boolean, volume: number) {
+  if (isEffectivelyMuted) return VolumeX;
+  if (volume < 0.5) return Volume1;
+  return Volume2;
 }
 
-function usePlaybackTimelineState(currentProgram: EPGProgram | null, seekStartTime: Date, currentTime: number): TimelineState {
-  const programTimeline = useMemo(
-    () => (currentProgram ? createProgramTimeline(currentProgram, seekStartTime, currentTime) : null),
-    [currentProgram, seekStartTime, currentTime],
+/**
+ * 换源菜单里可点的源列表：直播态下全部可见，
+ * 回看态下只保留声明了时移能力的源（否则点了也无法回看）。
+ */
+function collectSwitchableSources(sources: Channel["sources"], isLive: boolean) {
+  const selectable: { source: Channel["sources"][number]; index: number }[] = [];
+  sources.forEach((source, index) => {
+    if (isLive || (source.timeshift && source.timeshiftTemplate)) selectable.push({ source, index });
+  });
+  return selectable;
+}
+
+interface TimelineWindow {
+  windowStart: Date;
+  windowEnd: Date;
+  windowDurationSeconds: number;
+  elapsedSeconds: number;
+  progressPercent: number;
+  timeline: ReturnType<typeof createProgramTimeline> | null;
+}
+
+/**
+ * 时间轴窗口换算 hook。三条数据路径互斥：
+ * 1) EPG 节目单可用：直接映射 createProgramTimeline 的结果（进度放大为百分比）；
+ * 2) 无节目单：以"现在"为窗口终点往回推 3 小时，播放头由 MSE 时钟换算成墙钟后定位，
+ *    进度夹取到 [0, 100] 防止时钟漂移把播放头画出窗外；
+ * 3) 有节目单但时间轴构造失败（时长非法/时钟未就绪）：退回零宽窗口，
+ *    起止点落在节目起止（缺失时退到 seekStartTime），渲染出静止的空进度条。
+ */
+function useTimelineWindow(program: EPGProgram | null, anchorTime: Date, mediaSeconds: number): TimelineWindow {
+  const timeline = useMemo(
+    () => (program ? createProgramTimeline(program, anchorTime, mediaSeconds) : null),
+    [program, anchorTime, mediaSeconds],
   );
 
   const fallbackRange = useMemo(() => {
-    if (currentProgram) return null;
-    const endTime = new Date();
-    return { startTime: new Date(endTime.getTime() - 3 * 60 * 60 * 1000), endTime, duration: 3 * 60 * 60 };
-  }, [currentProgram]);
+    if (program) return null;
+    const windowEnd = new Date();
+    return { windowStart: new Date(windowEnd.getTime() - FALLBACK_WINDOW_MS), windowEnd, windowDurationSeconds: FALLBACK_WINDOW_SECONDS };
+  }, [program]);
 
   return useMemo(() => {
-    if (programTimeline) {
+    if (timeline) {
       return {
-        startTime: programTimeline.startTime,
-        endTime: programTimeline.endTime,
-        duration: programTimeline.durationSeconds,
-        elapsedTime: programTimeline.positionSeconds,
-        progress: programTimeline.progress * 100,
-        programTimeline,
+        windowStart: timeline.startTime,
+        windowEnd: timeline.endTime,
+        windowDurationSeconds: timeline.durationSeconds,
+        elapsedSeconds: timeline.positionSeconds,
+        progressPercent: timeline.progress * 100,
+        timeline,
       };
     }
     if (fallbackRange) {
-      const playheadTime = mseToWallClock(currentTime, seekStartTime);
-      const elapsedTime = (playheadTime.getTime() - fallbackRange.startTime.getTime()) / 1000;
+      const playheadTime = mseToWallClock(mediaSeconds, anchorTime);
+      const elapsedSeconds = (playheadTime.getTime() - fallbackRange.windowStart.getTime()) / 1000;
       return {
         ...fallbackRange,
-        elapsedTime,
-        progress: Math.min(100, Math.max(0, (elapsedTime / fallbackRange.duration) * 100)),
-        programTimeline: null,
+        elapsedSeconds,
+        progressPercent: Math.min(100, Math.max(0, (elapsedSeconds / fallbackRange.windowDurationSeconds) * 100)),
+        timeline: null,
       };
     }
     return {
-      startTime: currentProgram?.start ?? seekStartTime,
-      endTime: currentProgram?.end ?? seekStartTime,
-      duration: 0,
-      elapsedTime: 0,
-      progress: 0,
-      programTimeline: null,
+      windowStart: program?.beginsAt ?? anchorTime,
+      windowEnd: program?.endsAt ?? anchorTime,
+      windowDurationSeconds: 0,
+      elapsedSeconds: 0,
+      progressPercent: 0,
+      timeline: null,
     };
-  }, [currentProgram, currentTime, fallbackRange, programTimeline, seekStartTime]);
+  }, [anchorTime, fallbackRange, mediaSeconds, program, timeline]);
 }
 
-interface PlayerTimelineProps {
+interface TimelineScrubberProps {
   channel: Channel;
   currentProgram: EPGProgram | null;
   liveSessionAnchor: LiveSessionAnchor | null;
@@ -135,7 +188,8 @@ interface PlayerTimelineProps {
   seekStartTime: Date;
 }
 
-const PlayerTimeline = memo(function PlayerTimeline({
+/** 时间轴拖拽条：节目信息行 + 进度轨道 + 悬停/拖拽预览。 */
+const TimelineScrubber = memo(function TimelineScrubber({
   channel,
   currentProgram,
   liveSessionAnchor,
@@ -143,152 +197,169 @@ const PlayerTimeline = memo(function PlayerTimeline({
   onScrubbingChange,
   onSeek,
   seekStartTime,
-}: PlayerTimelineProps) {
+}: TimelineScrubberProps) {
   const t = usePlayerTranslation(locale);
-  const currentTime = usePlaybackTime();
-  const isCatchupSupported = channel.sources.some((source) => source.catchup && source.catchupSource);
-  const { startTime, endTime, duration, progress, programTimeline } = usePlaybackTimelineState(currentProgram, seekStartTime, currentTime);
-  const progressBarRef = useRef<HTMLDivElement>(null);
-  const activePointerIdRef = useRef<number | null>(null);
-  const [scrubPosition, setScrubPosition] = useState<number | null>(null);
-  const [hoverPosition, setHoverPosition] = useState<number | null>(null);
+  const mediaSeconds = usePlaybackTime();
+  const supportsSeeking = channel.sources.some((source) => source.timeshift && source.timeshiftTemplate);
+  const { windowStart, windowEnd, windowDurationSeconds, progressPercent, timeline } = useTimelineWindow(
+    currentProgram,
+    seekStartTime,
+    mediaSeconds,
+  );
+  const trackRef = useRef<HTMLDivElement>(null);
+  const capturedPointerIdRef = useRef<number | null>(null);
+  const [scrubPercent, setScrubPercent] = useState<number | null>(null);
+  const [hoverPercent, setHoverPercent] = useState<number | null>(null);
 
-  const getTimeAtPosition = useCallback(
-    (percentage: number): Date => {
-      if (programTimeline) return programProgressToWallClock(programTimeline, percentage / 100);
-      return new Date(startTime.getTime() + (duration * 1000 * percentage) / 100);
+  // 轨道百分比 → 墙钟时刻：EPG 路径走节目时间轴换算（自动夹取到节目范围内），
+  // 兜底路径按窗口长度做线性插值。
+  const resolveTimeAtPercent = useCallback(
+    (percent: number): Date => {
+      if (timeline) return programProgressToWallClock(timeline, percent / 100);
+      return new Date(windowStart.getTime() + (windowDurationSeconds * 1000 * percent) / 100);
     },
-    [duration, programTimeline, startTime],
+    [timeline, windowDurationSeconds, windowStart],
   );
 
-  const getPositionFromClientX = useCallback((clientX: number): number | null => {
-    const progressBar = progressBarRef.current;
-    if (!progressBar) return null;
-    const rect = progressBar.getBoundingClientRect();
-    if (rect.width === 0) return null;
-    return Math.min(Math.max(((clientX - rect.left) / rect.width) * 100, 0), 100);
+  // 指针横坐标 → 轨道百分比（夹取到 [0, 100]）；轨道未挂载或宽度为 0 时放弃。
+  const readPercentFromClientX = useCallback((clientX: number): number | null => {
+    const track = trackRef.current;
+    if (!track) return null;
+    const bounds = track.getBoundingClientRect();
+    if (bounds.width === 0) return null;
+    return Math.min(Math.max(((clientX - bounds.left) / bounds.width) * 100, 0), 100);
   }, []);
 
-  const handlePointerDown = useCallback(
+  const beginScrubbing = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!isCatchupSupported || !event.isPrimary || activePointerIdRef.current !== null) return;
+      // 不支持回看、非主指针、已有指针在拖拽中、或鼠标非左键：一律忽略，
+      // 避免多指/右键把拖拽状态写坏。
+      if (!supportsSeeking || !event.isPrimary || capturedPointerIdRef.current !== null) return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
-      const position = getPositionFromClientX(event.clientX);
-      if (position === null) return;
+      const percent = readPercentFromClientX(event.clientX);
+      if (percent === null) return;
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
-      activePointerIdRef.current = event.pointerId;
-      setHoverPosition(null);
-      setScrubPosition(position);
+      capturedPointerIdRef.current = event.pointerId;
+      setHoverPercent(null);
+      setScrubPercent(percent);
       onScrubbingChange(true);
     },
-    [getPositionFromClientX, isCatchupSupported, onScrubbingChange],
+    [onScrubbingChange, readPercentFromClientX, supportsSeeking],
   );
 
-  const handlePointerMove = useCallback(
+  const trackPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!isCatchupSupported) return;
-      const position = getPositionFromClientX(event.clientX);
-      if (position === null) return;
-      if (activePointerIdRef.current === event.pointerId) {
+      if (!supportsSeeking) return;
+      const percent = readPercentFromClientX(event.clientX);
+      if (percent === null) return;
+      if (capturedPointerIdRef.current === event.pointerId) {
         event.preventDefault();
-        setScrubPosition(position);
-      } else if (activePointerIdRef.current === null && event.pointerType !== "touch") {
-        setHoverPosition(position);
+        setScrubPercent(percent);
+        return;
+      }
+      // 拖拽中的触屏指针不算悬停；悬停预览只在空闲且非触屏时出现。
+      if (capturedPointerIdRef.current === null && event.pointerType !== "touch") {
+        setHoverPercent(percent);
       }
     },
-    [getPositionFromClientX, isCatchupSupported],
+    [readPercentFromClientX, supportsSeeking],
   );
 
-  const handlePointerUp = useCallback(
+  // 复位拖拽状态并同步"非拖拽中"信号；pointerup / pointercancel 共用。
+  const resetScrub = useCallback(() => {
+    capturedPointerIdRef.current = null;
+    setScrubPercent(null);
+    onScrubbingChange(false);
+  }, [onScrubbingChange]);
+
+  const endScrubbing = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (activePointerIdRef.current !== event.pointerId) return;
+      if (capturedPointerIdRef.current !== event.pointerId) return;
       event.preventDefault();
-      const position = getPositionFromClientX(event.clientX);
-      activePointerIdRef.current = null;
-      setScrubPosition(null);
-      onScrubbingChange(false);
+      const percent = readPercentFromClientX(event.clientX);
+      resetScrub();
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
-      if (position !== null) onSeek(getTimeAtPosition(position));
+      if (percent !== null) onSeek(resolveTimeAtPercent(percent));
     },
-    [getPositionFromClientX, getTimeAtPosition, onScrubbingChange, onSeek],
+    [onSeek, readPercentFromClientX, resetScrub, resolveTimeAtPercent],
   );
 
-  const handlePointerCancel = useCallback(
+  const abortScrubbing = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (activePointerIdRef.current !== event.pointerId) return;
-      activePointerIdRef.current = null;
-      setScrubPosition(null);
-      onScrubbingChange(false);
+      if (capturedPointerIdRef.current !== event.pointerId) return;
+      resetScrub();
     },
-    [onScrubbingChange],
+    [resetScrub],
   );
 
-  const handlePointerLeave = useCallback(() => {
-    if (activePointerIdRef.current === null) setHoverPosition(null);
+  const clearHoverPreview = useCallback(() => {
+    if (capturedPointerIdRef.current === null) setHoverPercent(null);
   }, []);
 
-  const displayPosition = scrubPosition ?? progress;
-  const previewPosition = scrubPosition ?? hoverPosition;
+  const shownPercent = scrubPercent ?? progressPercent;
+  const previewPercent = scrubPercent ?? hoverPercent;
   const previewTime = useMemo(
-    () => (previewPosition === null ? null : getTimeAtPosition(previewPosition)),
-    [getTimeAtPosition, previewPosition],
+    () => (previewPercent === null ? null : resolveTimeAtPercent(previewPercent)),
+    [previewPercent, resolveTimeAtPercent],
   );
-  const previewGoesLive = previewTime ? isNearLiveWallClock(previewTime, liveSessionAnchor, seekStartTime) : false;
-  const isScrubbing = scrubPosition !== null;
+  const previewIsLiveEdge = previewTime ? isNearLiveWallClock(previewTime, liveSessionAnchor, seekStartTime) : false;
+  const isScrubbing = scrubPercent !== null;
+  // 拖拽中且预览点已贴近直播边时，读数直接提示"回到直播"，其余给精确到秒的时刻。
+  const trackValueText = isScrubbing && previewIsLiveEdge ? t("goLive") : formatWallClock(resolveTimeAtPercent(shownPercent), true);
 
   return (
     <>
       {currentProgram && (
         <div className="flex min-w-0 items-center justify-between gap-1 text-xs leading-tight tracking-[0.01em] text-violet-50/80 md:gap-2 md:text-sm md:leading-normal md:[@container_video_(max-height:_320px)]:text-xs md:[@container_video_(max-height:_320px)]:leading-tight [@container_video_(max-height:_220px)]:hidden">
           <div className="min-w-0 flex-1 truncate">
-            <span className="font-medium text-violet-100">{formatTime(startTime)}</span>
+            <span className="font-medium text-violet-100">{formatWallClock(windowStart)}</span>
             <span className="mx-1 text-violet-100/30 md:mx-2">|</span>
             <span className="text-white/90">{currentProgram.title || t("excellentProgram")}</span>
           </div>
-          <span className="shrink-0 font-medium tabular-nums">{formatTime(endTime)}</span>
+          <span className="shrink-0 font-medium tabular-nums">{formatWallClock(windowEnd)}</span>
         </div>
       )}
 
       <div
-        ref={progressBarRef}
+        ref={trackRef}
         role="slider"
-        tabIndex={isCatchupSupported ? 0 : -1}
+        tabIndex={supportsSeeking ? 0 : -1}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={Math.round(displayPosition)}
-        aria-valuetext={isScrubbing && previewGoesLive ? t("goLive") : formatTime(getTimeAtPosition(displayPosition), true)}
+        aria-valuenow={Math.round(shownPercent)}
+        aria-valuetext={trackValueText}
         aria-label={t("seekTo")}
         className={[
           "player-performance-progress-track group relative h-1.5 touch-none select-none rounded-full bg-violet-50/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.45)] ring-1 ring-white/10 transition-[height,box-shadow] duration-150 before:absolute before:-inset-y-3 before:inset-x-0 before:content-[''] md:h-2",
           "[@container_video_(max-height:_320px)]:h-1 md:[@container_video_(max-height:_320px)]:h-1",
-          isCatchupSupported
+          supportsSeeking
             ? "cursor-pointer hover:h-2 hover:shadow-[0_0_20px_rgba(var(--pg-rgb),0.16),inset_0_1px_3px_rgba(0,0,0,0.45)] md:hover:h-3"
             : "cursor-default",
           isScrubbing && "h-2 [@container_video_(max-height:_320px)]:h-2 md:h-3 md:[@container_video_(max-height:_320px)]:h-2",
         ].join(" ")}
-        onPointerDown={isCatchupSupported ? handlePointerDown : undefined}
-        onPointerMove={isCatchupSupported ? handlePointerMove : undefined}
-        onPointerUp={isCatchupSupported ? handlePointerUp : undefined}
-        onPointerCancel={isCatchupSupported ? handlePointerCancel : undefined}
-        onLostPointerCapture={isCatchupSupported ? handlePointerCancel : undefined}
-        onPointerLeave={isCatchupSupported ? handlePointerLeave : undefined}
+        onPointerDown={supportsSeeking ? beginScrubbing : undefined}
+        onPointerMove={supportsSeeking ? trackPointerMove : undefined}
+        onPointerUp={supportsSeeking ? endScrubbing : undefined}
+        onPointerCancel={supportsSeeking ? abortScrubbing : undefined}
+        onLostPointerCapture={supportsSeeking ? abortScrubbing : undefined}
+        onPointerLeave={supportsSeeking ? clearHoverPreview : undefined}
       >
         <div
           className={[
             "player-performance-progress-fill absolute top-0 left-0 h-full rounded-full bg-[linear-gradient(90deg,var(--pg-grad-a)_0%,var(--pg-grad-b)_52%,var(--pg-grad-c)_100%)] shadow-[0_0_18px_rgba(var(--pg-rgb),0.4)]",
             !isScrubbing && "transition-[width] duration-150",
           ].join(" ")}
-          style={{ width: `${displayPosition}%` }}
+          style={{ width: `${shownPercent}%` }}
         />
 
-        {isCatchupSupported && previewPosition !== null && (
+        {supportsSeeking && previewPercent !== null && (
           <>
             <div
               className="absolute top-0 h-full w-0.5 bg-violet-50/80 shadow-[0_0_8px_rgba(var(--pg-rgb-light),0.7)]"
-              style={{ left: `${previewPosition}%` }}
+              style={{ left: `${previewPercent}%` }}
             />
             {previewTime && (
               <div
@@ -296,10 +367,10 @@ const PlayerTimeline = memo(function PlayerTimeline({
                   PLAYER_OVERLAY_SURFACE_CLASS,
                   "absolute bottom-full mb-4 -translate-x-1/2 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-medium text-violet-50 md:mb-2",
                 ].join(" ")}
-                style={{ left: `clamp(2.5rem, ${previewPosition}%, calc(100% - 2.5rem))` }}
+                style={{ left: `clamp(2.5rem, ${previewPercent}%, calc(100% - 2.5rem))` }}
               >
                 <PlayerSelectedGlassLayers />
-                <span className="relative z-10">{previewGoesLive ? t("goLive") : formatTime(previewTime, true)}</span>
+                <span className="relative z-10">{previewIsLiveEdge ? t("goLive") : formatWallClock(previewTime, true)}</span>
               </div>
             )}
           </>
@@ -309,52 +380,55 @@ const PlayerTimeline = memo(function PlayerTimeline({
           className={[
             "absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-violet-300 shadow-[0_0_16px_rgba(var(--pg-rgb-light),0.75)]",
             isScrubbing ? "h-4 w-4" : "h-2.5 w-2.5 transition-[left,width,height] duration-150 md:h-3 md:w-3",
-            isCatchupSupported && !isScrubbing && "group-hover:h-3 group-hover:w-3 md:group-hover:h-4 md:group-hover:w-4",
+            supportsSeeking && !isScrubbing && "group-hover:h-3 group-hover:w-3 md:group-hover:h-4 md:group-hover:w-4",
           ].join(" ")}
-          style={{ left: `${displayPosition}%` }}
+          style={{ left: `${shownPercent}%` }}
         />
       </div>
     </>
   );
 });
 
-const PlayerTimeDisplay = memo(function PlayerTimeDisplay({
+/** 控制条左侧的时间读数：有节目单显示"已播/总时长"，无节目单显示当前墙钟（带秒）。 */
+const PlaybackClock = memo(function PlaybackClock({
   currentProgram,
   seekStartTime,
-}: Pick<PlayerControlsProps, "currentProgram" | "seekStartTime">) {
-  const currentTime = usePlaybackTime();
-  const { duration, elapsedTime, startTime } = usePlaybackTimelineState(currentProgram, seekStartTime, currentTime);
+}: Pick<ControlsProps, "currentProgram" | "seekStartTime">) {
+  const mediaSeconds = usePlaybackTime();
+  const { windowStart, windowDurationSeconds, elapsedSeconds } = useTimelineWindow(currentProgram, seekStartTime, mediaSeconds);
   return (
     <div className="hidden whitespace-nowrap text-[11px] leading-none text-violet-50/75 tabular-nums min-[360px]:block md:text-sm md:leading-normal">
       {currentProgram ? (
         <span>
-          {formatDuration(elapsedTime)} / {formatDuration(duration)}
+          {formatSecondCount(elapsedSeconds)} / {formatSecondCount(windowDurationSeconds)}
         </span>
       ) : (
-        <span className="font-medium">{formatTime(new Date(startTime.getTime() + elapsedTime * 1000), true)}</span>
+        <span className="font-medium">{formatWallClock(new Date(windowStart.getTime() + elapsedSeconds * 1000), true)}</span>
       )}
     </div>
   );
 });
 
-function PlayerControlsComponent({
+// 解构顺序按"数据 → 时间轴 → 播放/音量 → seek → 全屏/PiP → 展示开关 → 线路"分组，仅表意；
+// 与 ControlsProps 一一对应，顺序不影响行为。
+function PlayerControlsView({
   channel,
   currentProgram,
-  isLive,
-  onSeek,
-  onScrubbingChange,
   locale,
+  isLive,
+  isPlaying,
+  liveSessionAnchor,
+  seekStartTime,
   mediaInfo,
   renderState,
-  seekStartTime,
-  liveSessionAnchor,
-  isPlaying,
   onPlayPause,
   volume,
-  onVolumeChange,
-  canControlVolume,
   isMuted,
   onMuteToggle,
+  onVolumeChange,
+  canControlVolume,
+  onSeek,
+  onScrubbingChange,
   onFullscreen,
   isFullscreen,
   isPiP = false,
@@ -364,11 +438,16 @@ function PlayerControlsComponent({
   showSidebar = true,
   activeSourceIndex = 0,
   onSourceChange,
-}: PlayerControlsProps) {
+}: ControlsProps) {
   const t = usePlayerTranslation(locale);
+  const supportsSeeking = channel.sources.some((source) => source.timeshift && source.timeshiftTemplate);
+  // 静音按钮的判定含"音量为 0"：此时静音图标更符合听感。
   const isEffectivelyMuted = isMuted || volume <= 0;
-  const isCatchupSupported = channel.sources.some((source) => source.catchup && source.catchupSource);
-  const hasTimeline = isCatchupSupported || Boolean(currentProgram);
+  const hasTimeline = supportsSeeking || Boolean(currentProgram);
+  const VolumeGlyph = pickVolumeGlyph(isEffectivelyMuted, volume);
+  // 滑杆与渐变填充用的是原始 isMuted（而非"等效静音"）：音量为 0 但未静音时，
+  // 滑杆仍显示真实音量位置，拖动即可恢复出声。
+  const volumeSliderLevel = isMuted ? 0 : volume;
 
   return (
     <div
@@ -380,14 +459,14 @@ function PlayerControlsComponent({
       ].join(" ")}
     >
       {hasTimeline && (
-        <PlayerTimeline
+        <TimelineScrubber
           channel={channel}
           currentProgram={currentProgram}
-          liveSessionAnchor={liveSessionAnchor}
           locale={locale}
-          onScrubbingChange={onScrubbingChange}
-          onSeek={onSeek}
+          liveSessionAnchor={liveSessionAnchor}
           seekStartTime={seekStartTime}
+          onSeek={onSeek}
+          onScrubbingChange={onScrubbingChange}
         />
       )}
 
@@ -401,26 +480,20 @@ function PlayerControlsComponent({
           <button
             type="button"
             onClick={onPlayPause}
-            className={[PLAYER_CONTROL_BUTTON_CLASS, "cursor-pointer p-1 md:p-2", COMPACT_BUTTON_CLASS].join(" ")}
+            className={ROUND_ACTION_BUTTON_CLASS}
             title={isPlaying ? t("pause") : t("play")}
           >
-            {isPlaying ? <Pause className={[COMPACT_ICON_CLASS, "h-4 w-4 md:h-7 md:w-7"].join(" ")} /> : <Play className={[COMPACT_ICON_CLASS, "h-4 w-4 md:h-7 md:w-7"].join(" ")} />}
+            {isPlaying ? <Pause className={PLAYBACK_ICON_CLASS} /> : <Play className={PLAYBACK_ICON_CLASS} />}
           </button>
 
           <div className="group/volume relative flex items-center">
             <button
               type="button"
               onClick={onMuteToggle}
-              className={[PLAYER_CONTROL_BUTTON_CLASS, "cursor-pointer p-1 md:p-2", COMPACT_BUTTON_CLASS].join(" ")}
+              className={ROUND_ACTION_BUTTON_CLASS}
               title={isEffectivelyMuted ? t("unmute") : t("mute")}
             >
-              {isEffectivelyMuted ? (
-                <VolumeX className={[COMPACT_ICON_CLASS, "h-4 w-4 md:h-7 md:w-7"].join(" ")} />
-              ) : volume < 0.5 ? (
-                <Volume1 className={[COMPACT_ICON_CLASS, "h-4 w-4 md:h-7 md:w-7"].join(" ")} />
-              ) : (
-                <Volume2 className={[COMPACT_ICON_CLASS, "h-4 w-4 md:h-7 md:w-7"].join(" ")} />
-              )}
+              <VolumeGlyph className={PLAYBACK_ICON_CLASS} />
             </button>
 
             {canControlVolume && (
@@ -436,18 +509,18 @@ function PlayerControlsComponent({
                   min="0"
                   max="1"
                   step="0.01"
-                  value={isMuted ? 0 : volume}
+                  value={volumeSliderLevel}
                   onChange={(event) => onVolumeChange(parseFloat(event.target.value))}
                   className="relative z-10 m-0 block h-16 w-1 cursor-pointer appearance-none bg-transparent [writing-mode:vertical-lr] [direction:rtl] md:h-20"
                   style={{
-                    background: `linear-gradient(to top, var(--pg-grad-a) 0%, var(--pg-grad-c) ${(isMuted ? 0 : volume) * 100}%, rgba(var(--pg-rgb),0.18) ${(isMuted ? 0 : volume) * 100}%, rgba(var(--pg-rgb),0.18) 100%)`,
+                    background: `linear-gradient(to top, var(--pg-grad-a) 0%, var(--pg-grad-c) ${volumeSliderLevel * 100}%, rgba(var(--pg-rgb),0.18) ${volumeSliderLevel * 100}%, rgba(var(--pg-rgb),0.18) 100%)`,
                   }}
                 />
               </div>
             )}
           </div>
 
-          <PlayerTimeDisplay currentProgram={currentProgram} seekStartTime={seekStartTime} />
+          <PlaybackClock currentProgram={currentProgram} seekStartTime={seekStartTime} />
 
           {showMediaBadges && (
             <div className="ml-1 mr-1 flex min-w-0 basis-0 flex-1 items-center md:ml-2 md:mr-2">
@@ -475,7 +548,7 @@ function PlayerControlsComponent({
             </button>
           )}
 
-          {channel.sources.length > 1 && onSourceChange && (
+          {onSourceChange && channel.sources.length > 1 && (
             <div className="group/source relative flex items-center focus-within:z-10" tabIndex={-1}>
               <button
                 type="button"
@@ -484,7 +557,7 @@ function PlayerControlsComponent({
                   "max-w-14 cursor-pointer truncate px-1.5 py-0.5 text-[11px] font-medium min-[360px]:max-w-20 md:max-w-40 md:px-2.5 md:py-1.5 md:text-sm",
                 ].join(" ")}
               >
-                {channel.sources[activeSourceIndex]?.label || `${t("source")} ${activeSourceIndex + 1}`}
+                {channel.sources[activeSourceIndex]?.alias || `${t("source")} ${activeSourceIndex + 1}`}
               </button>
               <div
                 className={[
@@ -493,28 +566,25 @@ function PlayerControlsComponent({
                 ].join(" ")}
               >
                 <PlayerSelectedGlassLayers />
-                {channel.sources
-                  .map((source, index) => ({ source, index }))
-                  .filter(({ source }) => isLive || (source.catchup && source.catchupSource))
-                  .map(({ source, index }) => (
-                    <button
-                      type="button"
-                      key={source.url}
-                      onClick={(event) => {
-                        onSourceChange(index);
-                        event.currentTarget.blur();
-                      }}
-                      className={[
-                        "player-performance-motion relative z-10 block w-full cursor-pointer whitespace-nowrap px-3 py-1.5 text-left text-xs transition-colors md:text-sm",
-                        index === activeSourceIndex ? "bg-violet-300/10 font-medium text-violet-200" : "text-white/75 hover:bg-violet-200/10 hover:text-violet-50",
-                      ].join(" ")}
-                    >
-                      <span className="flex items-center gap-2">
-                        {!isLive ? <History className="h-3 w-3" /> : <Tv className="h-3 w-3" />}
-                        {source.label || `${t("source")} ${index + 1}`}
-                      </span>
-                    </button>
-                  ))}
+                {collectSwitchableSources(channel.sources, isLive).map(({ source, index }) => (
+                  <button
+                    type="button"
+                    key={source.url}
+                    onClick={(event) => {
+                      onSourceChange(index);
+                      event.currentTarget.blur();
+                    }}
+                    className={[
+                      "player-performance-motion relative z-10 block w-full cursor-pointer whitespace-nowrap px-3 py-1.5 text-left text-xs transition-colors md:text-sm",
+                      index === activeSourceIndex ? "bg-violet-300/10 font-medium text-violet-200" : "text-white/75 hover:bg-violet-200/10 hover:text-violet-50",
+                    ].join(" ")}
+                  >
+                    <span className="flex items-center gap-2">
+                      {!isLive ? <History className="h-3 w-3" /> : <Tv className="h-3 w-3" />}
+                      {source.alias || `${t("source")} ${index + 1}`}
+                    </span>
+                  </button>
+                ))}
               </div>
             </div>
           )}
@@ -522,20 +592,20 @@ function PlayerControlsComponent({
           <button
             type="button"
             onClick={onFullscreen}
-            className={[PLAYER_CONTROL_BUTTON_CLASS, "cursor-pointer p-1 md:p-2", COMPACT_BUTTON_CLASS].join(" ")}
+            className={ROUND_ACTION_BUTTON_CLASS}
             title={isFullscreen ? t("exitFullscreen") : t("fullscreen")}
           >
-            {isFullscreen ? <Minimize className={[COMPACT_ICON_CLASS, "h-4 w-4 md:h-6 md:w-6"].join(" ")} /> : <Maximize className={[COMPACT_ICON_CLASS, "h-4 w-4 md:h-6 md:w-6"].join(" ")} />}
+            {isFullscreen ? <Minimize className={PANEL_TOGGLE_ICON_CLASS} /> : <Maximize className={PANEL_TOGGLE_ICON_CLASS} />}
           </button>
 
           {onPiPToggle && isPiPSupported && !isPiP && (
             <button
               type="button"
               onClick={onPiPToggle}
-              className={[PLAYER_CONTROL_BUTTON_CLASS, "cursor-pointer p-1 md:p-2", COMPACT_BUTTON_CLASS].join(" ")}
+              className={ROUND_ACTION_BUTTON_CLASS}
               title={t("pictureInPicture")}
             >
-              <PictureInPicture className={[COMPACT_ICON_CLASS, "h-4 w-4 md:h-6 md:w-6"].join(" ")} />
+              <PictureInPicture className={PANEL_TOGGLE_ICON_CLASS} />
             </button>
           )}
         </div>
@@ -544,4 +614,4 @@ function PlayerControlsComponent({
   );
 }
 
-export const PlayerControls = memo(PlayerControlsComponent);
+export const PlayerControls = memo(PlayerControlsView);

@@ -58,28 +58,30 @@ export default class ExpGolomb {
       return (this.window >>> this.bitsHeld) & ((1 << n) - 1);
     }
 
-    // 跨越窗口边界：先取窗口内剩余位，再补读剩余部分。
-    const highBits = this.bitsHeld;
-    const high = highBits > 0 ? this.window & ((1 << highBits) - 1) : 0;
+    // 跨越窗口边界：先把窗口内剩下的高位吃掉，再 refill 后补齐不足的低位。
+    const headWidth = this.bitsHeld;
+    const head = headWidth > 0 ? this.window & ((1 << headWidth) - 1) : 0;
     this.bitsHeld = 0;
     this.refill();
 
-    const lowBits = n - highBits;
-    if (lowBits > this.bitsHeld) {
+    const tailWidth = n - headWidth;
+    if (tailWidth > this.bitsHeld) {
       throw new EngineError("bitstream", "ExpGolomb: 位流提前结束");
     }
-    this.bitsHeld -= lowBits;
-    const low = lowBits > 0 ? (this.window >>> this.bitsHeld) & ((1 << lowBits) - 1) : 0;
+    this.bitsHeld -= tailWidth;
+    const tail = tailWidth > 0 ? (this.window >>> this.bitsHeld) & ((1 << tailWidth) - 1) : 0;
     // 用乘加而非 << ：32 位结果在 JS 里会变成负数。
-    return (high * 2 ** lowBits + low) >>> 0;
+    return (head * 2 ** tailWidth + tail) >>> 0;
   }
 
-  readBool(): boolean {
-    return this.readBits(1) === 1;
-  }
-
+  /** 字节对齐读取：NAL 头、slice 头等整字节字段走这里。 */
   readByte(): number {
     return this.readBits(8);
+  }
+
+  /** 单位读取：NAL 头 forbidden_zero_bit、各类标志位走这里。 */
+  readBool(): boolean {
+    return this.readBits(1) === 1;
   }
 
   /** ue(v)：先数前导零，再读等长后缀。 */

@@ -22,16 +22,16 @@ export function createMSEPlaybackBackend(
 ): PlaybackBackend {
   const c = { ...createDefaultConfig(), ...config };
   // 未显式配置软解 URL 时，缺省用内置统一模块（自持，不依赖旧目录资产）
-  const wasmDecoders = Object.keys(c.wasmDecoders).length > 0 ? c.wasmDecoders : builtinWasmDecoders;
+  const wasmDecoders = Object.keys(c.softDecoderUrls).length > 0 ? c.softDecoderUrls : builtinWasmDecoders;
   return new MseBackend(video, {
-    liveSync: c.liveSync,
-    targetLatencySec: c.liveSyncTargetLatency,
+    liveSync: c.chaseLiveEdge,
+    targetLatencySec: c.chaseTargetLagSeconds,
     softDecodeAudio: true,
-    audioChannelMode: c.audioChannelMode,
+    audioChannelMode: c.pcmChannelMix,
     wasmDecoders,
-    renderCanvas: c.renderCanvas,
-    autoDeinterlace: c.autoDeinterlace,
-    pictureEnhancement: c.pictureEnhancement,
+    renderCanvas: c.paintCanvas,
+    autoDeinterlace: c.deinterlaceAuto,
+    pictureEnhancement: c.enhancePicture,
   });
 }
 
@@ -40,7 +40,7 @@ export function createNativePlaybackBackend(
   config: Partial<PlayerConfig> = {},
 ): PlaybackBackend {
   const c = { ...createDefaultConfig(), ...config };
-  return new NativeBackend(video, { targetLatencySec: c.liveSyncTargetLatency });
+  return new NativeBackend(video, { targetLatencySec: c.chaseTargetLagSeconds });
 }
 
 /** 按能力自动选择后端（UI 唯一入口）。 */

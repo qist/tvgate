@@ -254,8 +254,8 @@ export class PCMAudioPlayer {
    */
   private autoplaySuspendedNotified = false;
 
-  /** 主线程诊断计数：AudioContext 未就绪时 feed 丢弃的块（对应 PcmWorkerStats.pendingOverflowDrops）。 */
-  private pendingOverflowDrops = 0;
+  /** 主线程诊断计数：AudioContext 未就绪时 feed 丢弃的块（对应 PcmWorkerStats.audioGateDrops）。 */
+  private audioGateDrops = 0;
 
   /** 声道输出模式：mono = 左右声道合成 (L+R)/2（见 PcmPlayerConfig.audioChannelMode）。 */
   private channelMode: "stereo" | "mono";
@@ -444,7 +444,7 @@ export class PCMAudioPlayer {
   /** 喂入交错 PCM；`time` 为该块起始的媒体时间（MSE 时间轴，与 video.currentTime 同域）。 */
   feed(samples: Float32Array, channels: number, sampleRate: number, time: number): void {
     if (!this.audioCtx || !this.gain) {
-      this.pendingOverflowDrops++;
+      this.audioGateDrops++;
       Log.w("AudioContext 尚未就绪，丢弃音频块");
       return;
     }
@@ -479,13 +479,13 @@ export class PCMAudioPlayer {
 
   /**
    * 接收 worker 上报的软解丢弃计数，与本地主线程计数合并后上抛 onAudioStats。
-   * worker 不计 pendingOverflowDrops（主线程侧），此处用本地值覆盖。
+   * worker 不计 audioGateDrops（主线程侧），此处用本地值覆盖。
    */
   setPipelineStats(workerStats: PcmWorkerStats): void {
     this.workerStats = workerStats;
     this.onAudioStats?.({
       ...workerStats,
-      pendingOverflowDrops: this.pendingOverflowDrops,
+      audioGateDrops: this.audioGateDrops,
     });
   }
 
@@ -1158,10 +1158,10 @@ export class PCMAudioPlayer {
       if (stats) {
         const prev = this.prevWorkerStats;
         const delta = (get: (s: PcmWorkerStats) => number): number => (prev ? get(stats) - get(prev) : 0);
-        const remux = delta((s) => s.remuxDropChunks);
-        const trim = delta((s) => s.trimSamples);
-        const decodeErr = delta((s) => s.decodeErrors);
-        const ovf = delta((s) => s.pendingOverflowDrops);
+        const remux = delta((s) => s.behindAnchorDrops);
+        const trim = delta((s) => s.trimmedAtAnchor);
+        const decodeErr = delta((s) => s.decoderWorkFailures);
+        const ovf = delta((s) => s.audioGateDrops);
         if (remux + trim + decodeErr + ovf > 0) {
           Log.w(
             `近 ~60s 音频丢弃：worker[remux=${remux} trim=${trim} decodeErr=${decodeErr} ovf=${ovf}] ` +

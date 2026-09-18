@@ -43,12 +43,12 @@ export class NativeBackend implements PlaybackBackend {
 
   private attachMediaEvents(): void {
     const v = this.mediaElement;
-    v.addEventListener("timeupdate", () => this.emitter.emit("time-update", v.currentTime));
+    v.addEventListener("timeupdate", () => this.emitter.emit("clock-tick", v.currentTime));
     // 换台接管依赖 playing 事件的 eventTimeStamp 时序守卫，必须传真实值（同 mse-backend）
-    v.addEventListener("canplay", (e) => this.emitter.emit("playback-state-change", "canplay", e.timeStamp));
-    v.addEventListener("playing", (e) => this.emitter.emit("playback-state-change", "playing", e.timeStamp));
-    v.addEventListener("waiting", (e) => this.emitter.emit("playback-state-change", "waiting", e.timeStamp));
-    v.addEventListener("pause", (e) => this.emitter.emit("playback-state-change", "paused", e.timeStamp));
+    v.addEventListener("canplay", (e) => this.emitter.emit("transport-state", "canplay", e.timeStamp));
+    v.addEventListener("playing", (e) => this.emitter.emit("transport-state", "playing", e.timeStamp));
+    v.addEventListener("waiting", (e) => this.emitter.emit("transport-state", "waiting", e.timeStamp));
+    v.addEventListener("pause", (e) => this.emitter.emit("transport-state", "paused", e.timeStamp));
     v.addEventListener("ended", () => this.emitter.emit("ended"));
     v.addEventListener("error", () =>
       this.emitter.emit("error", { category: "media", info: "原生播放失败" }),
@@ -91,12 +91,12 @@ export class NativeBackend implements PlaybackBackend {
 
   setVolume(volume: number): void {
     this.mediaElement.volume = Math.max(0, Math.min(1, volume));
-    this.emitter.emit("volume-change", this.mediaElement.volume, this.mediaElement.muted);
+    this.emitter.emit("gain-change", this.mediaElement.volume, this.mediaElement.muted);
   }
 
   setMuted(muted: boolean): void {
     this.mediaElement.muted = muted;
-    this.emitter.emit("volume-change", this.mediaElement.volume, muted);
+    this.emitter.emit("gain-change", this.mediaElement.volume, muted);
   }
 
   getState(): PlaybackBackendState {
@@ -145,11 +145,11 @@ export class NativeBackend implements PlaybackBackend {
   }
 
   setAutoDeinterlace(_enabled: boolean): void {
-    this.emitter.emit("render-state-change", { active: false, deinterlacing: false } as PlayerRenderState);
+    this.emitter.emit("painter-state", { active: false, deinterlacing: false } as PlayerRenderState);
   }
 
   setPictureEnhancement(_enabled: boolean): void {
-    this.emitter.emit("render-state-change", { active: false, deinterlacing: false } as PlayerRenderState);
+    this.emitter.emit("painter-state", { active: false, deinterlacing: false } as PlayerRenderState);
   }
 
   stop(): void {

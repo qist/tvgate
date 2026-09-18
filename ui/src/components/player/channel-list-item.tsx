@@ -1,7 +1,8 @@
 /**
- * 频道列表单项。
- * 平面行（TV 播放器风格）：频道号 / 台标 / 名称（+ 当前节目）/ 回看徽标；行底盘与选中强调
- * 全部由 CSS（.player-performance-list-surface-*）给出，组件里不再叠卡片与光层。
+ * 频道列表的单行条目（TV 播放器扁平风格）。
+ * 行底色 / 分隔线 / 选中强调全部交给全局 CSS（.player-performance-list-surface-*）统一给出，
+ * 这里只负责内容排布：频道号、台标、频道名（+ 当前节目）与回看标识。
+ * 被频道浏览与频道列表两个面板复用；ref 指向"正在播放"的行，供滚动定位。
  */
 import { History } from "lucide-react";
 import { forwardRef, memo, useCallback } from "react";
@@ -17,7 +18,7 @@ import {
   PLAYER_LIST_SURFACE_SELECTED_CLASS,
 } from "./classnames";
 
-interface ChannelListItemProps {
+interface ChannelRowProps {
   channel: Channel;
   isCurrentChannel: boolean;
   handleChannelClick: (channel: Channel) => void;
@@ -27,30 +28,35 @@ interface ChannelListItemProps {
   currentProgram?: string;
 }
 
-const ChannelListItemComponent = forwardRef<HTMLButtonElement, ChannelListItemProps>(
+const ChannelRow = forwardRef<HTMLButtonElement, ChannelRowProps>(
   ({ channel, isCurrentChannel, handleChannelClick, onProgramClick, locale, currentProgram }, ref) => {
     const t = usePlayerTranslation(locale);
-    const groupLabel = channel.groups.join(" / ");
+    // 第二行的分组摘要：直接以 " / " 连接，不改写 Channel 数据本身。
+    const groupSummary = channel.groups.join(" / ");
 
-    const handleClick = useCallback(() => {
+    // 行点击转交给父层；依赖 channel 是为了让换台后的新行拿到最新条目。
+    const handleRowClick = useCallback(() => {
       handleChannelClick(channel);
     }, [handleChannelClick, channel]);
 
-    const supportsCatchup = channel.sources.some((source) => source.catchup && source.catchupSource);
+    // 回看能力逐源探测：任一源同时声明时移类型与时移模板才亮标。
+    const hasTimeshiftSource = channel.sources.some((source) => source.timeshift && source.timeshiftTemplate);
 
     return (
       <button
         type="button"
         ref={ref}
         data-id={channel.id}
+        onClick={handleRowClick}
         className={[
           PLAYER_LIST_SURFACE_BASE_CLASS,
           PLAYER_CHANNEL_LIST_ITEM_CLASS,
           "group flex cursor-pointer touch-manipulation items-center gap-2.5 py-1.5 pr-2 pl-3.5 focus-visible:outline-none md:gap-3",
           isCurrentChannel ? PLAYER_LIST_SURFACE_SELECTED_CLASS : PLAYER_LIST_SURFACE_DEFAULT_CLASS,
+          // 保持原数组 join 形态：条件为假时 false 会以字面量落入类串，这里刻意不清洗，
+          // 以保证最终 className 字符串与重写前逐字符一致。
           !isCurrentChannel && PLAYER_LIST_SURFACE_HOVER_CLASS,
         ].join(" ")}
-        onClick={handleClick}
       >
         <span
           className={[
@@ -61,9 +67,10 @@ const ChannelListItemComponent = forwardRef<HTMLButtonElement, ChannelListItemPr
           {channel.number ?? ""}
         </span>
         {channel.logo && (
-          /* 台标用一块极简深色底（无边框/投影）：台标多为白色透明 PNG，浅色面板上否则看不见。
-             lazy：手机端一行上千个频道，只在可视区附近真正取图（否则首屏上千个请求挤占连接，
-             瞬时失败还会被当成加载失败），失败态由组件自愈，见 channel-logo.tsx。 */
+          /* 台标垫一块近黑底色（无边框/投影）：台标资源多为白色透明 PNG，
+             直接放在浅色面板上会"隐形"。lazy 是因为手机端一行上千个频道，
+             只在可视区附近才真正取图（否则首屏上千个请求挤占连接池，排队失败还会被
+             误判成加载失败）；单图失败由 ChannelLogo 内部自愈，见 channel-logo.tsx。 */
           <ChannelLogo
             src={channel.logo}
             alt={channel.name}
@@ -75,28 +82,31 @@ const ChannelListItemComponent = forwardRef<HTMLButtonElement, ChannelListItemPr
         <div className="relative z-10 min-w-0 flex-1 overflow-hidden">
           <div className="flex items-center gap-1.5">
             <div
+              title={channel.name}
               className={[
                 "min-w-0 flex-1 truncate leading-tight",
                 isCurrentChannel
                   ? "font-semibold text-[15px] text-slate-900 md:text-base dark:text-violet-50"
                   : "font-medium text-sm text-slate-700 md:text-[15px] dark:text-slate-200",
               ].join(" ")}
-              title={channel.name}
             >
               {channel.name}
             </div>
-            {supportsCatchup && (
+            {hasTimeshiftSource && (
+              // 回看徽标只靠 title 提示、不占文字位：避免挤压频道名的可用宽度。
               <span title={t("catchupSupported")}>
                 <History className="h-3 w-3 shrink-0 text-slate-400 dark:text-slate-500 md:h-3.5 md:w-3.5" />
               </span>
             )}
           </div>
           <div className="mt-0.5 truncate text-[10px] leading-4 text-slate-500 dark:text-slate-400/80 md:text-[11px]">
-            {groupLabel}
+            {groupSummary}
             {currentProgram && (
               <>
-                {groupLabel && <span className="mx-1 opacity-60">·</span>}
+                {groupSummary && <span className="mx-1 opacity-60">·</span>}
                 {onProgramClick ? (
+                  // stopPropagation：这里只做"预览 + 展开节目单"，不能触发行点击换台；
+                  // tabIndex=-1 让它退出 Tab / 遥控器焦点序，避免打断方向键导航。
                   <span
                     role="button"
                     tabIndex={-1}
@@ -121,4 +131,4 @@ const ChannelListItemComponent = forwardRef<HTMLButtonElement, ChannelListItemPr
   },
 );
 
-export const ChannelListItem = memo(ChannelListItemComponent);
+export const ChannelListItem = memo(ChannelRow);

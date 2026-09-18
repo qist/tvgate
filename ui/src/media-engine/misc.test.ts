@@ -56,7 +56,7 @@ describe("errors / config", () => {
   it("defaultConfig 字段齐全且 createDefaultConfig 返回副本", () => {
     const c = createDefaultConfig();
     expect(c).toEqual(defaultConfig);
-    c.liveSync = false;
-    expect(defaultConfig.liveSync).toBe(true);
+    c.chaseLiveEdge = false;
+    expect(defaultConfig.chaseLiveEdge).toBe(true);
   });
 });

@@ -145,7 +145,7 @@ export class MseBackend implements PlaybackBackend {
     this.playback = new PlaybackController(
       video,
       {
-        onLiveStateChange: (isLive) => this.emit("live-state-change", isLive),
+        onLiveStateChange: (isLive) => this.emit("live-edge-state", isLive),
       },
       {
         sourceMode: options.sourceMode ?? "continuous-live-ts",
@@ -186,13 +186,13 @@ export class MseBackend implements PlaybackBackend {
 
   private attachMediaEvents(): void {
     const v = this.mediaElement;
-    v.addEventListener("timeupdate", () => this.emit("time-update", v.currentTime));
+    v.addEventListener("timeupdate", () => this.emit("clock-tick", v.currentTime));
     // 无缝换台靠 playing 的 eventTimeStamp 与 UI 侧 pending.startedAt 比较来提交接管；
     // 传 0 会让守卫恒不过 → 新路在后台起播却永不接管、旧路一直占屏（卡住）。
-    v.addEventListener("canplay", (e) => this.emit("playback-state-change", "canplay", e.timeStamp));
-    v.addEventListener("playing", (e) => this.emit("playback-state-change", "playing", e.timeStamp));
-    v.addEventListener("waiting", (e) => this.emit("playback-state-change", "waiting", e.timeStamp));
-    v.addEventListener("pause", (e) => this.emit("playback-state-change", "paused", e.timeStamp));
+    v.addEventListener("canplay", (e) => this.emit("transport-state", "canplay", e.timeStamp));
+    v.addEventListener("playing", (e) => this.emit("transport-state", "playing", e.timeStamp));
+    v.addEventListener("waiting", (e) => this.emit("transport-state", "waiting", e.timeStamp));
+    v.addEventListener("pause", (e) => this.emit("transport-state", "paused", e.timeStamp));
     v.addEventListener("ended", () => this.emit("ended"));
     // 直播同步会调 video.playbackRate（追速 1.2x）；软解音频必须同步调速，
     // 否则音频恒 1.0x 而视频 1.2x → 每秒漂移 0.2s → 反复硬重同步 → 断音/无声。
@@ -284,7 +284,7 @@ export class MseBackend implements PlaybackBackend {
           this.renderer?.setDeinterlace(false);
           this.renderer?.setEnhancement(false);
         }
-        this.emit("media-info", info);
+        this.emit("track-metadata", info);
       },
       onPCMAudioData: (pcm, channels, sampleRate, time) => {
         const per = deinterleave(pcm, channels, Math.floor(pcm.length / channels));
@@ -312,8 +312,8 @@ export class MseBackend implements PlaybackBackend {
       this.pcmPlayer.setMuted(this.mediaElement.muted);
       // 绑定 video：waiting/stalled 宽限内冻结纠漂，避免对冻结时钟反复变速/重同步
       this.pcmPlayer.attachVideo(this.mediaElement);
-      this.pcmPlayer.onAudioStats = (stats) => this.emit("audio-stats", stats);
-      void this.pcmPlayer.init().catch(() => this.emit("audio-suspended"));
+      this.pcmPlayer.onAudioStats = (stats) => this.emit("pcm-pipeline-stats", stats);
+      void this.pcmPlayer.init().catch(() => this.emit("audio-gate-blocked"));
     }
 
     if (this.tickTimer === null) {
@@ -504,7 +504,7 @@ export class MseBackend implements PlaybackBackend {
         await this.pcmPlayer.init();
         this.pcmPlayer.resume();
       } catch {
-        this.emit("audio-suspended");
+        this.emit("audio-gate-blocked");
       }
     }
     // play() 的 rejection（NotAllowedError / 中断）必须冒泡给 UI：
@@ -528,7 +528,7 @@ export class MseBackend implements PlaybackBackend {
       this.pcmPlayer.setVolume(this.mediaElement.volume);
       this.pcmPlayer.setMuted(this.mediaElement.muted);
     }
-    this.emit("volume-change", this.mediaElement.volume, this.mediaElement.muted);
+    this.emit("gain-change", this.mediaElement.volume, this.mediaElement.muted);
   }
 
   setMuted(muted: boolean): void {
@@ -537,7 +537,7 @@ export class MseBackend implements PlaybackBackend {
       this.pcmPlayer.setVolume(this.mediaElement.volume);
       this.pcmPlayer.setMuted(muted);
     }
-    this.emit("volume-change", this.mediaElement.volume, muted);
+    this.emit("gain-change", this.mediaElement.volume, muted);
   }
 
   getState(): PlaybackBackendState {
@@ -643,13 +643,13 @@ export class MseBackend implements PlaybackBackend {
   private emitRenderState(): void {
     if (this.renderer) {
       const s = this.renderer.state;
-      this.emit("render-state-change", {
+      this.emit("painter-state", {
         active: s.active && s.supported,
         deinterlacing: s.deinterlacing,
       });
       return;
     }
-    this.emit("render-state-change", { active: false, deinterlacing: false });
+    this.emit("painter-state", { active: false, deinterlacing: false });
   }
 
   get currentMediaInfo(): PlayerMediaInfo | null {

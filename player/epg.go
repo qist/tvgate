@@ -17,10 +17,10 @@ import (
 	httpclient "github.com/qist/tvgate/utils/http"
 )
 
-// Program 单条节目（start/stop 为 XMLTV 原样时间串，如 20260901080000 +0800）。
+// Program 单条节目（from/to 为 XMLTV 原样时间串，如 20260901080000 +0800）。
 type Program struct {
-	Start string `json:"start"`
-	Stop  string `json:"stop"`
+	Start string `json:"from"`
+	Stop  string `json:"to"`
 	Title string `json:"title"`
 }
 

@@ -45,44 +45,44 @@ describe("parseEpgTime", () => {
 describe("mapPrograms", () => {
   it("XMLTV 串逐条解析成功（回归：整批被丢弃 → 前端 EPG 完全没数据）", () => {
     const out = mapPrograms([
-      { start: "20260916120000 +0800", stop: "20260916123000 +0800", title: "新闻30分" },
-      { start: "20260916123000 +0800", stop: "20260916130000 +0800", title: "戏曲" },
+      { from: "20260916120000 +0800", to: "20260916123000 +0800", title: "新闻30分" },
+      { from: "20260916123000 +0800", to: "20260916130000 +0800", title: "戏曲" },
     ]);
     expect(out).toHaveLength(2);
     expect(out[0].title).toBe("新闻30分");
-    expect(out[0].start.getTime()).toBe(at(2026, 9, 16, 12));
-    expect(out[0].end.getTime()).toBe(at(2026, 9, 16, 12, 30));
+    expect(out[0].beginsAt.getTime()).toBe(at(2026, 9, 16, 12));
+    expect(out[0].endsAt.getTime()).toBe(at(2026, 9, 16, 12, 30));
   });
 
   it("丢弃时间非法或区间倒置的条目", () => {
-    expect(mapPrograms([{ start: "", stop: "", title: "x" }])).toHaveLength(0);
-    expect(mapPrograms([{ start: "20260916120000 +0800", stop: "20260916110000 +0800", title: "x" }])).toHaveLength(0);
+    expect(mapPrograms([{ from: "", to: "", title: "x" }])).toHaveLength(0);
+    expect(mapPrograms([{ from: "20260916120000 +0800", to: "20260916110000 +0800", title: "x" }])).toHaveLength(0);
     expect(mapPrograms(undefined)).toHaveLength(0);
   });
 });
 
 describe("getEPGChannelId / getCurrentProgram / fillEPGGaps", () => {
-  it("频道键按 tvgId → tvgName → name 回退", () => {
-    expect(getEPGChannelId(channel({ id: "k", name: "CCTV1", tvgId: "cctv1.example" }))).toBe("cctv1.example");
+  it("频道键按 epgId → epgName → name 回退", () => {
+    expect(getEPGChannelId(channel({ id: "k", name: "CCTV1", epgId: "cctv1.example" }))).toBe("cctv1.example");
     expect(getEPGChannelId(channel({ id: "k", name: "CCTV1" }))).toBe("CCTV1");
   });
 
   it("取给定时刻正在播出的节目", () => {
     const epg: EPGData = {
-      k: [{ id: "a", title: "A", start: new Date(at(2026, 9, 16, 12)), end: new Date(at(2026, 9, 16, 13)) }],
+      k: [{ id: "a", title: "A", beginsAt: new Date(at(2026, 9, 16, 12)), endsAt: new Date(at(2026, 9, 16, 13)) }],
     };
     expect(getCurrentProgram("k", epg, new Date(at(2026, 9, 16, 12, 30)))?.title).toBe("A");
     expect(getCurrentProgram("k", epg, new Date(at(2026, 9, 16, 13, 30)))).toBeNull();
   });
 
   it("缝隙填充：只补支持回看且无数据的频道，标题为空串（展示层翻译兜底）", () => {
-    const withCatchup = channel({
+    const withTimeshift = channel({
       id: "a",
       name: "A",
-      sources: [{ url: "/x", catchup: "server", catchupSource: "server" }],
+      sources: [{ url: "/x", timeshift: "server", timeshiftTemplate: "server" }],
     });
-    const withoutCatchup = channel({ id: "b", name: "B", sources: [{ url: "/y" }] });
-    const filled = fillEPGGaps({}, [withCatchup, withoutCatchup]);
+    const withoutTimeshift = channel({ id: "b", name: "B", sources: [{ url: "/y" }] });
+    const filled = fillEPGGaps({}, [withTimeshift, withoutTimeshift]);
     expect(filled.A).toHaveLength(1);
     expect(filled.A[0].title).toBe("");
     expect(filled.B).toBeUndefined();

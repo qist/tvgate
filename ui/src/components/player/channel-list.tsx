@@ -1,6 +1,8 @@
 /**
- * 频道列表。
- * 搜索（按名称/频道号，结果按匹配强度排序）+ 分组筛选（记忆上次选择）+ 当前节目映射 + 自动滚动居中。
+ * 频道列表面板（紧凑 / 移动端布局）。
+ * 名称与频道号搜索（命中结果按匹配强度排序）+ 分组筛选（跨会话记忆上次选择）
+ * + 当前节目名映射 + "正在播放"行自动滚动居中。
+ * 自动滚动由模块级 nextScrollBehaviorRef 与播放页协同：点击选台后跳过一次滚动。
  */
 import { ChevronDown, Layers, Search } from "lucide-react";
 import { memo, type RefObject, startTransition, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -11,33 +13,41 @@ import { getSelectedGroup, saveSelectedGroup } from "../../lib/player-storage";
 import type { Channel } from "../../types/player";
 import { ChannelListItem } from "./channel-list-item";
 
+/**
+ * 模块级滚动指令，供播放页等外部模块直接读写：
+ * "instant" = 首次定位用瞬时滚动；"smooth" = 常规换台平滑居中；"skip" = 点击选台后跳过自动滚动。
+ */
 export const nextScrollBehaviorRef: RefObject<"smooth" | "instant" | "skip"> = { current: "instant" };
 
-function filterChannels(channels: Channel[] | undefined, searchQuery: string, selectedGroup: string | null) {
+/**
+ * 搜索命中的强度分级：号位 / ID 完全相等最优（0），其后依次是 ID 前缀（1）、
+ * ID 包含（2）、其余（3，含仅名称命中）。值越小排得越靠前。
+ */
+function channelMatchRank(channel: Channel, searchQuery: string) {
+  if (String(channel.number ?? "") === searchQuery) return 0;
+  if (channel.id === searchQuery) return 0;
+  if (channel.id.startsWith(searchQuery)) return 1;
+  if (channel.id.includes(searchQuery)) return 2;
+  return 3;
+}
+
+/** 按分组 + 关键词筛出可见频道；有关键词时再按匹配强度稳定排序。 */
+function pickMatchingChannels(channels: Channel[] | undefined, searchQuery: string, selectedGroup: string | null) {
   if (!channels) return [];
-  const result = channels.filter((channel) => {
+  const matches = channels.filter((channel) => {
     if (selectedGroup && !channel.groups.includes(selectedGroup)) return false;
     if (!searchQuery) return true;
     const normalized = searchQuery.toLowerCase();
     return (
       channel.name.toLowerCase().includes(normalized) ||
       channel.id.includes(searchQuery) ||
-      // 频道行显示的是频道号（订阅序位），按号搜索要能命中
+      // 频道行展示的是频道号（订阅序位），按号搜索必须能命中
       String(channel.number ?? "").startsWith(searchQuery)
     );
   });
 
-  if (!searchQuery) return result;
-  return result.sort((a, b) => {
-    const score = (channel: Channel) => {
-      if (String(channel.number ?? "") === searchQuery) return 0;
-      if (channel.id === searchQuery) return 0;
-      if (channel.id.startsWith(searchQuery)) return 1;
-      if (channel.id.includes(searchQuery)) return 2;
-      return 3;
-    };
-    return score(a) - score(b);
-  });
+  if (!searchQuery) return matches;
+  return matches.sort((a, b) => channelMatchRank(a, searchQuery) - channelMatchRank(b, searchQuery));
 }
 
 interface ChannelListProps {
@@ -52,98 +62,104 @@ interface ChannelListProps {
   panelVisible?: boolean;
 }
 
-interface ChannelListResultsProps {
-  currentChannel: Channel | null;
-  currentChannelRef: RefObject<HTMLButtonElement | null>;
-  currentProgramMap: Record<string, string>;
-  filteredChannels: Channel[];
-  filteredChannelsHasCurrentChannel: boolean;
-  handleChannelClick: (channel: Channel) => void;
+/** 结果网格：拆成独立 memo 组件，让搜索输入等高频更新停在父层、不重刷整列行。 */
+interface ChannelRowsGridProps {
+  playingChannel: Channel | null;
+  playingRowRef: RefObject<HTMLButtonElement | null>;
+  nowPlayingTitleByChannelId: Record<string, string>;
+  visibleChannels: Channel[];
+  visibleListContainsPlayingChannel: boolean;
+  onChannelActivate: (channel: Channel) => void;
   locale: Locale;
 }
 
-const ChannelListResults = memo(function ChannelListResults({
-  currentChannel,
-  currentChannelRef,
-  currentProgramMap,
-  filteredChannels,
-  filteredChannelsHasCurrentChannel,
-  handleChannelClick,
+const ChannelRowsGrid = memo(function ChannelRowsGrid({
+  playingChannel,
+  playingRowRef,
+  nowPlayingTitleByChannelId,
+  visibleChannels,
+  visibleListContainsPlayingChannel,
+  onChannelActivate,
   locale,
-}: ChannelListResultsProps) {
+}: ChannelRowsGridProps) {
   return (
     <div className="grid grid-cols-2 gap-1.5 md:grid-cols-1">
-      {filteredChannels.map((channel, index) => (
+      {visibleChannels.map((channel, index) => (
         <ChannelListItem
           key={channel.id}
           ref={
-            (filteredChannelsHasCurrentChannel ? currentChannel?.id === channel.id : index === 0)
-              ? currentChannelRef
+            (visibleListContainsPlayingChannel ? playingChannel?.id === channel.id : index === 0)
+              ? playingRowRef
               : null
           }
           channel={channel}
-          isCurrentChannel={channel.id === currentChannel?.id}
-          handleChannelClick={handleChannelClick}
+          isCurrentChannel={channel.id === playingChannel?.id}
+          handleChannelClick={onChannelActivate}
           locale={locale}
-          currentProgram={currentProgramMap[channel.id]}
+          currentProgram={nowPlayingTitleByChannelId[channel.id]}
         />
       ))}
     </div>
   );
 });
 
-function ChannelListComponent({ channels, groups, currentChannel, onChannelSelect, locale, settingsSlot, epgData, panelVisible }: ChannelListProps) {
+function MobileChannelList({ channels, groups, currentChannel, onChannelSelect, locale, settingsSlot, epgData, panelVisible }: ChannelListProps) {
   const t = usePlayerTranslation(locale);
 
-  const [searchQuery, setSearchQuery] = useState("");
-  // 选中的分组跨会话记忆：初始化只读记忆值，组是否存在等分组列表到位后再校验（见下方 effect）。
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(() => getSelectedGroup());
-  /** 分组网格默认折叠（手机更省空间，也更适配遥控器导航）。 */
-  const [groupsOpen, setGroupsOpen] = useState(false);
-  const currentChannelRef = useRef<HTMLButtonElement>(null);
+  const [searchText, setSearchText] = useState("");
+  // 分组选择跨会话记忆：初始化只读记忆值，组是否仍存在等分组列表到位后再校验（见下方 effect）。
+  const [activeGroup, setActiveGroup] = useState<string | null>(() => getSelectedGroup());
+  // 分组网格默认折叠：手机上省纵向空间，遥控器导航的层级也更浅。
+  const [groupGridExpanded, setGroupGridExpanded] = useState(false);
+  // 指向"正在播放"的行（列表里没有该行则指到第一行），自动滚动以它为锚点。
+  const playingRowRef = useRef<HTMLButtonElement>(null);
 
   /**
    * 分组列表到位后校验记忆值：列表为空（元数据未到 / 订阅为空）时不动选择；
    * 组确实不存在时本次回落"全部"但保留记忆值（订阅短暂缺组不该毁掉偏好）。
    */
   useEffect(() => {
-    if (!selectedGroup || !groups || groups.length === 0) return;
-    if (!groups.includes(selectedGroup)) setSelectedGroup(null);
-  }, [groups, selectedGroup]);
+    if (!activeGroup || !groups || groups.length === 0) return;
+    if (!groups.includes(activeGroup)) setActiveGroup(null);
+  }, [groups, activeGroup]);
 
-  const deferredSearchQuery = useDeferredValue(searchQuery);
-  const deferredSelectedGroup = useDeferredValue(selectedGroup);
+  // 搜索与分组都走 deferred 值：输入即时回显，重活的过滤稍微让路。
+  const deferredSearchText = useDeferredValue(searchText);
+  const deferredActiveGroup = useDeferredValue(activeGroup);
 
-  const [now, setNow] = useState(() => new Date());
+  // "现在"每分钟走一格（transition 包裹降低优先级），驱动当前节目映射随时间翻页。
+  const [currentMoment, setCurrentMoment] = useState(() => new Date());
   useEffect(() => {
-    const timer = setInterval(() => startTransition(() => setNow(new Date())), 60_000);
+    const timer = setInterval(() => startTransition(() => setCurrentMoment(new Date())), 60_000);
     return () => clearInterval(timer);
   }, []);
 
+  // EPG 数据可能很大，同样用 deferred 值，避免节目名映射阻塞搜索 / 筛选的即时反馈。
   const deferredEpgData = useDeferredValue(epgData);
 
-  const currentProgramMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    if (!channels || !deferredEpgData) return map;
+  const nowPlayingTitleByChannelId = useMemo(() => {
+    const titles: Record<string, string> = {};
+    if (!channels || !deferredEpgData) return titles;
     for (const channel of channels) {
       const epgId = getEPGChannelId(channel, deferredEpgData);
       if (!epgId) continue;
-      const program = getCurrentProgram(epgId, deferredEpgData, now);
-      if (program?.title) map[channel.id] = program.title;
+      const program = getCurrentProgram(epgId, deferredEpgData, currentMoment);
+      if (program?.title) titles[channel.id] = program.title;
     }
-    return map;
-  }, [channels, deferredEpgData, now]);
+    return titles;
+  }, [channels, deferredEpgData, currentMoment]);
 
-  const filteredChannels = useMemo(
-    () => filterChannels(channels, deferredSearchQuery, deferredSelectedGroup),
-    [channels, deferredSearchQuery, deferredSelectedGroup],
+  const visibleChannels = useMemo(
+    () => pickMatchingChannels(channels, deferredSearchText, deferredActiveGroup),
+    [channels, deferredSearchText, deferredActiveGroup],
   );
 
-  const filteredChannelsHasCurrentChannel = useMemo(
-    () => Boolean(currentChannel && filteredChannels.some((channel) => channel.id === currentChannel.id)),
-    [filteredChannels, currentChannel],
+  const visibleListContainsPlayingChannel = useMemo(
+    () => Boolean(currentChannel && visibleChannels.some((channel) => channel.id === currentChannel.id)),
+    [visibleChannels, currentChannel],
   );
 
+  // 换台后的滚动：先把下一轮指令恢复为"smooth"，再按本次指令执行（"skip" 由点击选台写入）。
   useLayoutEffect(() => {
     window.setTimeout(() => {
       nextScrollBehaviorRef.current = "smooth";
@@ -152,15 +168,17 @@ function ChannelListComponent({ channels, groups, currentChannel, onChannelSelec
     const requested = nextScrollBehaviorRef.current;
     if (requested === "skip") return;
     const behavior = requested === "smooth" && window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : requested;
-    currentChannelRef.current?.scrollIntoView({ behavior, block: "center" });
+    playingRowRef.current?.scrollIntoView({ behavior, block: "center" });
   }, [currentChannel]);
 
+  // 过滤结果变化（搜索 / 切分组）后重新定位：必须瞬时滚动，否则视觉上像"漂移"。
   useLayoutEffect(() => {
-    if (!filteredChannels.length) return;
-    currentChannelRef.current?.scrollIntoView({ behavior: "instant", block: "center" });
-  }, [filteredChannels]);
+    if (!visibleChannels.length) return;
+    playingRowRef.current?.scrollIntoView({ behavior: "instant", block: "center" });
+  }, [visibleChannels]);
 
-  const handleChannelClick = useCallback(
+  // 点击选台后跳过随后的自动滚动：用户在主动操作，列表通常会随之收起。
+  const handleChannelPicked = useCallback(
     (channel: Channel) => {
       nextScrollBehaviorRef.current = "skip";
       onChannelSelect(channel);
@@ -168,63 +186,65 @@ function ChannelListComponent({ channels, groups, currentChannel, onChannelSelec
     [onChannelSelect],
   );
 
+  // 回车即选首个命中：用未 deferred 的即时值重算，保证结果与输入框当前内容一致。
   const handleSearchKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
       if (event.key === "Enter") {
-        const immediateResults = filterChannels(channels, searchQuery, selectedGroup);
-        if (immediateResults.length > 0) {
-          onChannelSelect(immediateResults[0]);
-          setSearchQuery("");
+        const immediateMatches = pickMatchingChannels(channels, searchText, activeGroup);
+        if (immediateMatches.length > 0) {
+          onChannelSelect(immediateMatches[0]);
+          setSearchText("");
           (document.activeElement as HTMLElement)?.blur();
         }
       } else if (event.key === "Escape") {
         (document.activeElement as HTMLElement | null)?.blur();
-        setSearchQuery("");
+        setSearchText("");
       }
     },
-    [channels, onChannelSelect, searchQuery, selectedGroup],
+    [channels, onChannelSelect, searchText, activeGroup],
   );
 
-  const handleSearchInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchQuery(event.target.value);
+  const handleSearchTextChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchText(event.target.value);
   }, []);
 
   /**
    * 点分组只改本次会话的筛选，**不写记忆**：记忆以"正在播放的频道所在分组"为准。
    * 否则"只点过分组、没选台"会把列表钉在那个分组（用户实测反馈：再打开时没跳到播放台所在组）。
    */
-  const handleGroupSelect = useCallback((group: string | null) => {
-    setSelectedGroup(group);
+  const applyGroupFilter = useCallback((group: string | null) => {
+    setActiveGroup(group);
   }, []);
 
   /**
    * 换台（含首次进入）后，分组跟随**正在播放的频道**：下次打开列表即落在该台所在分组。
    * 只认 currentChannel 变化（不认点分组），所以点分组不会立刻被弹回去。
    */
-  const syncGroupToPlayingChannel = useCallback(() => {
+  const alignGroupWithPlayingChannel = useCallback(() => {
     if (!currentChannel) return;
     const group = currentChannel.groups.find((g) => groups?.includes(g)) ?? currentChannel.groups[0] ?? null;
     if (!group) return;
-    setSelectedGroup(group);
+    setActiveGroup(group);
     saveSelectedGroup(group);
   }, [currentChannel, groups]);
 
-  const syncedChannelRef = useRef<string | null>(null);
+  // 已同步过分组的频道 id：同一频道不重复触发，避免把用户刚点的分组顶掉。
+  const groupSyncedChannelIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!currentChannel) return;
-    if (syncedChannelRef.current === currentChannel.id) return;
-    syncedChannelRef.current = currentChannel.id;
-    syncGroupToPlayingChannel();
-  }, [currentChannel, syncGroupToPlayingChannel]);
+    if (groupSyncedChannelIdRef.current === currentChannel.id) return;
+    groupSyncedChannelIdRef.current = currentChannel.id;
+    alignGroupWithPlayingChannel();
+  }, [currentChannel, alignGroupWithPlayingChannel]);
 
   /** 浮层重新出现（退出全屏 / 再次打开）时同样拉回正在播放的频道所在分组。 */
-  const wasPanelVisibleRef = useRef(false);
+  const prevPanelVisibleRef = useRef(false);
   useEffect(() => {
     const visible = Boolean(panelVisible);
-    const justOpened = visible && !wasPanelVisibleRef.current;
-    wasPanelVisibleRef.current = visible;
-    if (justOpened) syncGroupToPlayingChannel();
-  }, [panelVisible, syncGroupToPlayingChannel]);
+    const justReopened = visible && !prevPanelVisibleRef.current;
+    prevPanelVisibleRef.current = visible;
+    if (justReopened) alignGroupWithPlayingChannel();
+  }, [panelVisible, alignGroupWithPlayingChannel]);
 
   return (
     <div className="flex h-full flex-col bg-transparent">
@@ -234,8 +254,8 @@ function ChannelListComponent({ channels, groups, currentChannel, onChannelSelec
             <input
               type="text"
               placeholder={t("searchChannels")}
-              value={searchQuery}
-              onChange={handleSearchInputChange}
+              value={searchText}
+              onChange={handleSearchTextChange}
               onKeyDown={handleSearchKeyDown}
               className="player-performance-input-background player-performance-motion h-8 w-full rounded-xl border border-violet-900/20 bg-white/90 px-3 py-0 pl-8 text-slate-800 text-xs shadow-none transition placeholder:text-slate-500 focus:border-violet-400/70 focus:bg-white/95 focus:outline-none dark:border-violet-100/20 dark:bg-slate-900/90 dark:text-violet-50 dark:placeholder:text-slate-400 md:h-9 md:pl-9 md:text-sm"
             />
@@ -249,37 +269,38 @@ function ChannelListComponent({ channels, groups, currentChannel, onChannelSelec
         <div className="player-performance-channel-groups mt-2 border-violet-950/10 border-y bg-[linear-gradient(90deg,rgba(255,255,255,0.5),rgba(255,255,255,0.62))] px-2 py-1.5 backdrop-blur-xl dark:border-violet-100/10 dark:bg-[linear-gradient(90deg,rgba(2,6,23,0.6),rgba(2,6,23,0.5))]">
           <button
             type="button"
-            onClick={() => setGroupsOpen((open) => !open)}
-            aria-expanded={groupsOpen}
+            onClick={() => setGroupGridExpanded((open) => !open)}
+            aria-expanded={groupGridExpanded}
             className="flex h-8 w-full cursor-pointer items-center justify-between rounded-lg px-1.5 text-left font-medium text-slate-600 text-xs transition-colors hover:text-violet-800 focus-visible:border-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 dark:text-slate-300 dark:hover:text-violet-100 md:text-[13px]"
           >
             <span className="flex min-w-0 items-center gap-1.5">
               <Layers className="h-3.5 w-3.5 shrink-0 text-violet-600 dark:text-violet-300" />
               <span className="shrink-0">{t("channelGroups")}</span>
-              <span className="min-w-0 truncate text-slate-400 dark:text-slate-500">· {selectedGroup ?? t("allChannels")}</span>
+              <span className="min-w-0 truncate text-slate-400 dark:text-slate-500">· {activeGroup ?? t("allChannels")}</span>
             </span>
+            {/* 保持原数组 join 形态：折叠时 false 以字面量落入类串，刻意不清洗以保最终串一致。 */}
             <ChevronDown
               className={[
                 "h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 dark:text-slate-500",
-                groupsOpen && "rotate-180",
+                groupGridExpanded && "rotate-180",
               ].join(" ")}
             />
           </button>
-          {groupsOpen && (
+          {groupGridExpanded && (
             <div className="mt-1.5 grid max-h-44 grid-cols-3 gap-1.5 overflow-y-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {[null, ...groups].map((group) => (
                 <button
                   type="button"
                   key={group ?? "all"}
+                  title={group ?? t("allChannels")}
                   onClick={() => {
-                    handleGroupSelect(group);
-                    setGroupsOpen(false);
+                    applyGroupFilter(group);
+                    setGroupGridExpanded(false);
                   }}
                   onFocus={(event) => event.currentTarget.scrollIntoView({ block: "nearest" })}
-                  title={group ?? t("allChannels")}
                   className={[
                     "player-performance-motion h-8 min-w-0 touch-manipulation overflow-hidden text-ellipsis whitespace-nowrap rounded-full border px-2 text-center font-medium text-xs leading-none transition-[color,background-color,border-color,box-shadow] focus-visible:border-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 md:h-7",
-                    selectedGroup === group
+                    activeGroup === group
                       ? "border-violet-400/30 bg-violet-500/10 text-violet-700 dark:border-violet-300/20 dark:bg-violet-400/14 dark:text-violet-200"
                       : "cursor-pointer border-violet-900/8 bg-white/55 text-slate-500 hover:border-violet-400/30 hover:bg-violet-50/80 hover:text-violet-800 dark:border-violet-100/10 dark:bg-slate-950/35 dark:text-slate-400 dark:hover:bg-violet-300/10 dark:hover:text-violet-100",
                   ].join(" ")}
@@ -293,13 +314,13 @@ function ChannelListComponent({ channels, groups, currentChannel, onChannelSelec
       )}
 
       <div className="flex-1 overflow-y-auto px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        <ChannelListResults
-          currentChannel={currentChannel}
-          currentChannelRef={currentChannelRef}
-          currentProgramMap={currentProgramMap}
-          filteredChannels={filteredChannels}
-          filteredChannelsHasCurrentChannel={filteredChannelsHasCurrentChannel}
-          handleChannelClick={handleChannelClick}
+        <ChannelRowsGrid
+          playingChannel={currentChannel}
+          playingRowRef={playingRowRef}
+          nowPlayingTitleByChannelId={nowPlayingTitleByChannelId}
+          visibleChannels={visibleChannels}
+          visibleListContainsPlayingChannel={visibleListContainsPlayingChannel}
+          onChannelActivate={handleChannelPicked}
           locale={locale}
         />
       </div>
@@ -307,4 +328,4 @@ function ChannelListComponent({ channels, groups, currentChannel, onChannelSelec
   );
 }
 
-export const ChannelList = memo(ChannelListComponent);
+export const ChannelList = memo(MobileChannelList);

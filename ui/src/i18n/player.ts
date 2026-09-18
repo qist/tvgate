@@ -2,125 +2,129 @@ import type { Locale } from "../lib/locale";
 
 type TranslationDict = Record<string, string>;
 
+// 英文基准词典：组件一律以字符串 key 取词。key 若要改名，必须同步本文件三张语言表
+// 与全部 t() 调用点，否则漏改处会在界面上直接暴露 key 原文。
 const base: TranslationDict = {
-  // Page title and headers
+  // 页面标题与头部区域
   title: "TVGate Player",
   error: "Error",
   retry: "Retry",
 
-  // Header controls
-  goLive: "Go Live",
+  // 头部操作
+  goLive: "Back to Live",
 
-  // Sidebar tabs
+  // 侧边栏页签
   channels: "Channels",
-  programGuide: "Program Guide",
+  programGuide: "Schedule",
 
-  // Channel list
-  searchChannels: "Search channels...",
+  // 频道列表
+  searchChannels: "Search for a channel...",
   allChannels: "All",
   channelGroups: "Groups",
   catchup: "Catchup",
-  catchupSupported: "Catchup supported",
+  catchupSupported: "Supports catchup",
 
-  // EPG view
-  noEpgAvailable: "No program guide available for this channel",
-  epgNotConfigured: "No EPG source configured on the server (player.epg is empty)",
+  // EPG 视图
+  noEpgAvailable: "There is no EPG data for this channel yet",
+  epgNotConfigured: "The server has no EPG source set up (player.epg is empty)",
   onAir: "On Air",
   replay: "Replay",
   nowPlaying: "Now Playing",
-  excellentProgram: "Excellent Program",
+  excellentProgram: "Featured program",
 
-  // Video player
-  selectChannelToWatch: "Select a channel to start watching",
+  // 视频播放器
+  selectChannelToWatch: "Pick a channel to start viewing",
   loadingVideo: "Loading...",
-  playbackError: "Playback Error",
-  clickToPlay: "Click to Play",
-  autoplayBlocked: "Browser requires user interaction to start playback",
-  playingInPictureInPicture: "Video is playing in Picture-in-Picture",
+  playbackError: "Playback issue",
+  clickToPlay: "Click here to play",
+  autoplayBlocked: "The browser blocks autoplay until you interact with the page",
+  playingInPictureInPicture: "Playback continues in the Picture-in-Picture window",
 
-  // Errors
-  failedToLoadPlaylist: "Failed to load playlist",
-  emptyPlaylist: "No playable channels were found in the playlist",
+  // 错误类文案
+  failedToLoadPlaylist: "Could not load the playlist",
+  emptyPlaylist: "This playlist contains no channels that can be played",
   playlistLoadEyebrow: "M3U playlist",
-  playlistLoadTitle: "Playlist is not ready yet",
+  playlistLoadTitle: "The playlist hasn't finished loading",
   playlistLoadDescription:
-    "The Player loads channels from /api/player/channels, but the channel list is unavailable right now. Check the player subscription config, then retry.",
-  playlistErrorChecklist: "Check your M3U setup",
-  playlistErrorHintReachable: "Make sure the external M3U URL is reachable by TVGate.",
-  playlistErrorHintFormat: "Confirm the playlist contains valid #EXTINF entries and channel URLs.",
-  m3uIntegrationGuide: "View M3U setup guide",
-  playlistEndpoint: "Playlist endpoint",
-  technicalDetails: "Technical details",
-  noCatchupSupport: "This channel does not support catchup playback",
-  noRewindSupport: "This channel does not support rewind",
-  codecError: "Unsupported video/audio codec. Your browser cannot decode this stream.",
-  audioCodecError: "This browser does not support the audio codec. Video will continue without sound.",
-  videoCodecError: "This browser does not support the video codec (e.g. HEVC/4K). Playing audio only.",
+    "Channel data comes from the /api/player/channels endpoint, which currently returns no usable list. Review your player subscription settings, then try again.",
+  playlistErrorChecklist: "Things to check in your M3U setup",
+  playlistErrorHintReachable: "Verify that TVGate is able to reach the external M3U address.",
+  playlistErrorHintFormat: "Check that the #EXTINF entries and channel links in the playlist are well-formed.",
+  m3uIntegrationGuide: "Open the M3U configuration guide",
+  playlistEndpoint: "Playlist API endpoint",
+  technicalDetails: "Technical information",
+  noCatchupSupport: "Catchup playback is unavailable on this channel",
+  noRewindSupport: "Rewinding is not available for this channel",
+  codecError: "The stream uses a video/audio codec this browser is unable to decode.",
+  audioCodecError: "The audio codec is not supported here, so the video keeps playing in silence.",
+  videoCodecError: "The video codec (e.g. HEVC/4K) is unsupported, so only the audio track is played.",
   dismiss: "Dismiss",
-  mseNotSupported: "Your browser does not support MSE (Media Source Extensions)",
-  failedToPlay: "Failed to play",
-  upstreamRequestFailed: "Upstream stream request failed",
+  mseNotSupported: "MSE (Media Source Extensions) is missing in this browser",
+  failedToPlay: "Playback failed",
+  upstreamRequestFailed: "Failed to fetch the upstream stream",
   upstreamRequestFailedDescription:
-    "The player could not load this stream from TVGate. The server may be unavailable or have returned an unsuccessful HTTP response.",
+    "TVGate could not deliver this stream to the player — either the server is down or it responded with a non-successful HTTP status.",
   httpStatus: "HTTP status",
   requestUrl: "Request URL",
-  suggestedAction: "What to check",
+  suggestedAction: "Suggested checks",
   upstreamRequestFailedSuggestion:
-    "Check that the upstream service is reachable and the channel URL and credentials are valid. Review the TVGate logs, then retry.",
+    "First confirm the upstream service responds and that the channel URL and its credentials are valid; then go through the TVGate logs and try again.",
 
-  // Rewind buttons
+  // 时移按钮（数值与单位为固定写法）
   rewind30m: "-30m",
   rewind1h: "-1h",
   rewind3h: "-3h",
 
-  // Time format (for screen readers and accessibility)
+  // 时间单位（供读屏与无障碍场景）
   minutes: "min",
 
-  // Progress bar
+  // 进度条
   live: "LIVE",
-  seekTo: "Seek to position",
+  seekTo: "Jump to a position in the stream",
 
-  // Player controls
+  // 播放器控制按钮
   play: "Play",
   pause: "Pause",
   mute: "Mute",
   unmute: "Unmute",
-  previousChannel: "Previous channel",
-  nextChannel: "Next channel",
+  previousChannel: "Go to previous channel",
+  nextChannel: "Go to next channel",
   fullscreen: "Fullscreen",
-  exitFullscreen: "Exit Fullscreen",
+  exitFullscreen: "Leave fullscreen",
   pictureInPicture: "Picture in Picture",
-  mediaInfoLabel: "Media information",
-  mediaInfoVideoCodec: "Video codec",
-  mediaInfoResolution: "Resolution",
-  mediaInfoFrameRate: "Frame rate",
-  mediaInfoDynamicRange: "Dynamic range",
-  mediaInfoAudioCodec: "Audio codec",
-  mediaInfoAudioChannels: "Audio channels",
-  mediaInfoMono: "Mono",
-  mediaInfoStereo: "Stereo",
-  mediaInfoChannels: "channels",
-  mediaInfoAdvertisedBitrate: "Advertised bitrate",
-  mediaInfoMeasuredBitrate: "Measured bitrate",
 
-  // Relative dates
+  // 相对日期
   today: "Today",
   yesterday: "Yesterday",
   tomorrow: "Tomorrow",
   dayBeforeYesterday: "2 days ago",
 
-  // Source selector
-  source: "Source",
-  sourceFallback: "Trying next source...",
+  // 媒体信息（键序与中文表刻意不同：各语言表按各自阅读习惯维护，键集合保持一致）
+  mediaInfoLabel: "Stream info",
+  mediaInfoChannelCount: "channels",
+  mediaInfoSingleChannel: "Mono",
+  mediaInfoStereoSound: "Stereo",
+  mediaInfoSoundChannels: "Audio channels",
+  mediaInfoVideoCoding: "Video codec",
+  mediaInfoDimensions: "Resolution",
+  mediaInfoFps: "Frame rate",
+  mediaInfoHdrRange: "Dynamic range",
+  mediaInfoAudioCoding: "Audio codec",
+  mediaInfoNominalBitrate: "Declared bitrate",
+  mediaInfoObservedBitrate: "Observed bitrate",
 
-  // Settings
+  // 线路切换
+  source: "Source",
+  sourceFallback: "Switching to the next source...",
+
+  // 设置面板
   settings: "Settings",
   language: "Language",
   theme: "Theme",
   themeAuto: "Auto",
   themeLight: "Light",
   themeDark: "Dark",
-  appearance: "Interface style",
+  appearance: "Look and feel",
   appearanceOcean: "Ocean",
   appearanceEmerald: "Emerald",
   appearanceSunset: "Sunset",
@@ -128,7 +132,7 @@ const base: TranslationDict = {
   appearanceAmber: "Amber",
   appearanceSlate: "Slate",
   panelAlpha40: "40%",
-  panelAlpha: "Panel opacity",
+  panelAlpha: "Panel background opacity",
   panelAlpha100: "Opaque",
   panelAlpha85: "85%",
   panelAlpha70: "70%",
@@ -136,133 +140,136 @@ const base: TranslationDict = {
   pictureInPictureMode: "PiP mode",
   pictureInPictureModeFull: "Full",
   pictureInPictureModeSimple: "Compact",
-  seamlessSwitch: "Seamless switch",
-  resolutionLimitHint: "Options below apply to ≤1080p only",
-  deinterlace: "Auto Deinterlacing",
-  pictureEnhancement: "Video Enhancement",
-  audioChannelMode: "Audio channels",
+  seamlessSwitch: "Seamless channel change",
+  resolutionLimitHint: "The settings below only take effect at ≤1080p",
+  deinterlace: "Auto deinterlace",
+  pictureEnhancement: "Picture enhancements",
+  audioChannelMode: "Audio output",
   audioChannelModeStereo: "Stereo",
-  audioChannelModeMono: "Mono mix",
+  audioChannelModeMono: "Downmix to mono",
 };
 
 const zhHans: TranslationDict = {
-  // 页面标题和头部
+  // 页面标题与头部区域
   title: "TVGate 播放器",
   error: "错误",
   retry: "重试",
 
-  // 头部控制
-  goLive: "返回直播",
+  // 头部操作
+  goLive: "回到直播",
 
-  // 侧边栏标签
+  // 侧边栏页签
   channels: "频道",
-  programGuide: "节目单",
+  programGuide: "节目指南",
 
   // 频道列表
-  searchChannels: "搜索频道...",
+  searchChannels: "输入关键词搜索频道...",
   allChannels: "全部",
   channelGroups: "分组",
   catchup: "回看",
-  catchupSupported: "支持回看",
+  catchupSupported: "可回看",
 
   // EPG 视图
-  noEpgAvailable: "此频道暂无节目单",
-  epgNotConfigured: "服务端未配置 EPG 源（player.epg 为空）",
+  noEpgAvailable: "该频道暂时没有 EPG 数据",
+  epgNotConfigured: "服务器上没有配置 EPG 来源（player.epg 为空）",
   onAir: "直播中",
   replay: "回放",
   nowPlaying: "正在播放",
-  excellentProgram: "精彩节目",
+  excellentProgram: "精选节目",
 
   // 视频播放器
-  selectChannelToWatch: "选择一个频道开始观看",
+  selectChannelToWatch: "先挑一个频道，即可开始观看",
   loadingVideo: "加载中...",
-  playbackError: "播放错误",
-  clickToPlay: "点击播放",
-  autoplayBlocked: "浏览器需要用户交互才能开始播放",
-  playingInPictureInPicture: "视频正在画中画模式下播放",
+  playbackError: "播放出现问题",
+  clickToPlay: "点击开始播放",
+  autoplayBlocked: "浏览器限制了自动播放，请先与页面进行交互",
+  playingInPictureInPicture: "画面已在画中画小窗中继续播放",
 
-  // 错误信息
-  failedToLoadPlaylist: "加载播放列表失败",
-  emptyPlaylist: "播放列表中没有可播放频道",
+  // 错误类文案
+  failedToLoadPlaylist: "播放列表加载失败",
+  emptyPlaylist: "这份播放列表里找不到可播放的频道",
   playlistLoadEyebrow: "M3U 播放列表",
-  playlistLoadTitle: "播放列表还没有准备好",
+  playlistLoadTitle: "播放列表尚未就绪",
   playlistLoadDescription:
-    "播放器会从 /api/player/channels 加载频道，但当前无法获取频道列表。请检查播放器订阅配置，然后重试。",
-  playlistErrorChecklist: "请检查 M3U 配置",
-  playlistErrorHintReachable: "确认外部 M3U 地址可以被 TVGate 正常访问。",
-  playlistErrorHintFormat: "确认播放列表包含有效的 #EXTINF 条目和频道地址。",
-  m3uIntegrationGuide: "查看 M3U 配置指南",
-  playlistEndpoint: "播放列表地址",
-  technicalDetails: "错误详情",
-  noCatchupSupport: "此频道不支持回看功能",
-  noRewindSupport: "此频道不支持时移功能",
-  codecError: "不支持的视频/音频编码。您的浏览器无法解码此流。",
-  audioCodecError: "浏览器不支持此音频编码，视频将继续无声播放。",
-  videoCodecError: "浏览器不支持此视频编码（如 HEVC/4K），将仅播放声音。",
+    "频道数据来自 /api/player/channels 这个接口，目前没有返回可用列表。请先核对播放器订阅设置，再重新尝试。",
+  playlistErrorChecklist: "M3U 配置排查清单",
+  playlistErrorHintReachable: "确认 TVGate 能够访问外部的 M3U 地址。",
+  playlistErrorHintFormat: "检查列表里的 #EXTINF 条目与频道链接是否格式正确。",
+  m3uIntegrationGuide: "打开 M3U 接入指南",
+  playlistEndpoint: "播放列表接口",
+  technicalDetails: "技术细节",
+  noCatchupSupport: "该频道无法进行回看",
+  noRewindSupport: "该频道无法进行时移",
+  codecError: "视频/音频编码不受支持，当前浏览器无法解码这条流。",
+  audioCodecError: "音频编码不被当前浏览器支持，画面将继续播放但没有声音。",
+  videoCodecError: "当前浏览器不支持该视频编码（如 HEVC/4K），因此只会输出声音。",
   dismiss: "关闭",
-  mseNotSupported: "您的浏览器不支持 MSE (媒体源扩展)",
+  mseNotSupported: "当前浏览器缺少 MSE (媒体源扩展) 支持",
   failedToPlay: "播放失败",
-  upstreamRequestFailed: "上游流请求失败",
-  upstreamRequestFailedDescription: "播放器无法从 TVGate 加载此视频流，服务端可能无法访问或返回了异常的 HTTP 响应。",
+  upstreamRequestFailed: "拉取上游视频流失败",
+  upstreamRequestFailedDescription:
+    "TVGate 未能把这条视频流送到播放器，原因可能是服务端不可用，或返回了非正常的 HTTP 响应。",
   httpStatus: "HTTP 状态",
   requestUrl: "请求地址",
-  suggestedAction: "建议检查",
+  suggestedAction: "排查建议",
   upstreamRequestFailedSuggestion:
-    "确认上游服务可以访问，频道地址和鉴权参数有效；查看 TVGate 日志中的上游转发错误，修复后重试。",
+    "先确认上游服务可以访问，并核对频道地址与鉴权参数；再到 TVGate 日志里查看上游转发报错，处理后再重新尝试。",
 
-  // 时移按钮
+  // 时移按钮（数值与单位为固定写法）
   rewind30m: "-30分钟",
   rewind1h: "-1小时",
   rewind3h: "-3小时",
 
-  // 时间格式
+  // 时间单位
   minutes: "分钟",
 
-  // 进度条
-  live: "直播",
-  seekTo: "跳转到指定位置",
-
-  // 播放器控制
-  play: "播放",
-  pause: "暂停",
-  mute: "静音",
-  unmute: "取消静音",
-  previousChannel: "上一个频道",
-  nextChannel: "下一个频道",
-  fullscreen: "全屏",
-  exitFullscreen: "退出全屏",
-  pictureInPicture: "画中画",
-  mediaInfoLabel: "媒体信息",
-  mediaInfoVideoCodec: "视频编码",
-  mediaInfoResolution: "分辨率",
-  mediaInfoFrameRate: "帧率",
-  mediaInfoDynamicRange: "动态范围",
-  mediaInfoAudioCodec: "音频编码",
-  mediaInfoAudioChannels: "音频声道",
-  mediaInfoMono: "单声道",
-  mediaInfoStereo: "立体声",
-  mediaInfoChannels: "声道",
-  mediaInfoAdvertisedBitrate: "标称码率",
-  mediaInfoMeasuredBitrate: "实测码率",
-
-  // 相对日期
+  // 相对日期（与时间单位同族，移到一起便于对照维护）
   today: "今天",
   yesterday: "昨天",
   tomorrow: "明天",
   dayBeforeYesterday: "前天",
 
-  // 线路选择
-  source: "线路",
-  sourceFallback: "正在尝试下一线路...",
+  // 进度条
+  live: "直播",
+  seekTo: "跳转到指定时间点",
 
-  // 设置
+  // 播放器控制按钮
+  play: "播放",
+  pause: "暂停",
+  mute: "静音",
+  unmute: "取消静音",
+  previousChannel: "切换到上一频道",
+  nextChannel: "切换到下一频道",
+  fullscreen: "全屏",
+  exitFullscreen: "退出全屏",
+  pictureInPicture: "画中画",
+
+  // 媒体信息（键序与英文表刻意不同；键集合与 base 保持一致）
+  mediaInfoLabel: "流信息",
+  mediaInfoVideoCoding: "视频编码",
+  mediaInfoAudioCoding: "音频编码",
+  mediaInfoDimensions: "分辨率",
+  mediaInfoFps: "帧率",
+  mediaInfoHdrRange: "动态范围",
+  mediaInfoSoundChannels: "音频声道",
+  mediaInfoSingleChannel: "单声道",
+  mediaInfoStereoSound: "立体声",
+  mediaInfoChannelCount: "声道",
+  mediaInfoNominalBitrate: "标称码率",
+  mediaInfoObservedBitrate: "实测码率",
+
+  // 线路切换
+  source: "线路",
+  sourceFallback: "正在切换到下一条线路...",
+
+  // 设置面板
   settings: "设置",
   language: "语言",
   theme: "主题",
   themeAuto: "自动",
   themeLight: "浅色",
   themeDark: "深色",
-  appearance: "界面风格",
+  appearance: "外观风格",
   appearanceOcean: "深海",
   appearanceEmerald: "翡翠",
   appearanceSunset: "落日",
@@ -270,7 +277,7 @@ const zhHans: TranslationDict = {
   appearanceAmber: "琥珀",
   appearanceSlate: "石墨",
   panelAlpha40: "40%",
-  panelAlpha: "面板透明度",
+  panelAlpha: "面板不透明度",
   panelAlpha100: "不透明",
   panelAlpha85: "85%",
   panelAlpha70: "70%",
@@ -278,134 +285,137 @@ const zhHans: TranslationDict = {
   pictureInPictureMode: "画中画模式",
   pictureInPictureModeFull: "完整",
   pictureInPictureModeSimple: "简洁",
-  seamlessSwitch: "无缝换台",
-  resolutionLimitHint: "以下选项仅 1080p 及以下生效",
-  deinterlace: "自动反交错",
-  pictureEnhancement: "画质增强",
-  audioChannelMode: "声道",
+  seamlessSwitch: "无感换台",
+  resolutionLimitHint: "以下设置只对 ≤1080p 的场景生效",
+  deinterlace: "自动去隔行",
+  pictureEnhancement: "画面增强",
+  audioChannelMode: "声音输出",
   audioChannelModeStereo: "立体声",
-  audioChannelModeMono: "单声道合成",
+  audioChannelModeMono: "合成为单声道",
 };
 
-// 繁體中文（偏好香港用語）
+// 繁體中文（偏港台用語習慣）
 const zhHant: TranslationDict = {
-  // 頁面標題和頭部
+  // 頁面標題與頭部區域
   title: "TVGate - 播放器",
   error: "錯誤",
   retry: "重試",
 
-  // 頭部控制
-  goLive: "返回直播",
+  // 頭部操作
+  goLive: "回到直播",
 
-  // 側邊欄標籤
+  // 側邊欄頁籤
   channels: "頻道",
-  programGuide: "節目表",
+  programGuide: "節目指南",
 
   // 頻道列表
-  searchChannels: "搜尋頻道...",
+  searchChannels: "輸入關鍵字搜尋頻道...",
   allChannels: "全部",
   channelGroups: "分組",
   catchup: "回看",
-  catchupSupported: "支援回看",
+  catchupSupported: "可回看",
 
   // EPG 視圖
-  noEpgAvailable: "此頻道暫無節目表",
-  epgNotConfigured: "伺服端未設定 EPG 來源（player.epg 為空）",
+  noEpgAvailable: "該頻道暫時沒有 EPG 資料",
+  epgNotConfigured: "伺服器上沒有設定 EPG 來源（player.epg 為空）",
   onAir: "直播中",
   replay: "重播",
   nowPlaying: "正在播放",
-  excellentProgram: "精彩節目",
+  excellentProgram: "精選節目",
 
   // 視訊播放器
-  selectChannelToWatch: "選擇一個頻道開始觀看",
+  selectChannelToWatch: "先挑一個頻道，即可開始觀看",
   loadingVideo: "載入中...",
-  playbackError: "播放錯誤",
-  clickToPlay: "點擊播放",
-  autoplayBlocked: "瀏覽器需要用戶互動才能開始播放",
-  playingInPictureInPicture: "影片正在畫中畫模式下播放",
+  playbackError: "播放出現問題",
+  clickToPlay: "點擊開始播放",
+  autoplayBlocked: "瀏覽器限制了自動播放，請先與頁面互動",
+  playingInPictureInPicture: "畫面已在畫中畫小窗中繼續播放",
 
-  // 錯誤訊息
-  failedToLoadPlaylist: "載入播放列表失敗",
-  emptyPlaylist: "播放列表中沒有可播放頻道",
+  // 錯誤類文案
+  failedToLoadPlaylist: "播放列表載入失敗",
+  emptyPlaylist: "這份播放列表裡找不到可播放的頻道",
   playlistLoadEyebrow: "M3U 播放列表",
-  playlistLoadTitle: "播放列表尚未準備好",
+  playlistLoadTitle: "播放列表還未就緒",
   playlistLoadDescription:
-    "播放器會從 /api/player/channels 載入頻道，但目前無法取得頻道列表。請檢查播放器訂閱配置，然後重試。",
-  playlistErrorChecklist: "請檢查 M3U 配置",
-  playlistErrorHintReachable: "確認外部 M3U 地址可以被 TVGate 正常存取。",
-  playlistErrorHintFormat: "確認播放列表包含有效的 #EXTINF 條目和頻道地址。",
-  m3uIntegrationGuide: "查看 M3U 配置指南",
-  playlistEndpoint: "播放列表地址",
-  technicalDetails: "錯誤詳情",
-  noCatchupSupport: "此頻道不支援回看功能",
-  noRewindSupport: "此頻道不支援時移功能",
-  codecError: "不支援的視頻/音頻編碼。您的瀏覽器無法解碼此串流。",
-  audioCodecError: "瀏覽器不支援此音頻編碼，視頻將繼續無聲播放。",
-  videoCodecError: "瀏覽器不支援此視訊編碼（如 HEVC/4K），將僅播放聲音。",
+    "頻道資料來自 /api/player/channels 端點，目前沒有回傳可用列表。請先核對播放器訂閱設定，再重新嘗試。",
+  playlistErrorChecklist: "M3U 設定排查清單",
+  playlistErrorHintReachable: "確認 TVGate 能夠存取外部的 M3U 位址。",
+  playlistErrorHintFormat: "檢查列表裡的 #EXTINF 條目與頻道連結是否格式正確。",
+  m3uIntegrationGuide: "開啟 M3U 接入指南",
+  playlistEndpoint: "播放列表端點",
+  technicalDetails: "技術細節",
+  noCatchupSupport: "該頻道無法進行回看",
+  noRewindSupport: "該頻道無法進行時移",
+  codecError: "視訊/音訊編碼不受支援，目前瀏覽器無法解碼這條串流。",
+  audioCodecError: "音訊編碼不被目前瀏覽器支援，畫面將繼續播放但沒有聲音。",
+  videoCodecError: "目前瀏覽器不支援該視訊編碼（如 HEVC/4K），因此只會輸出聲音。",
   dismiss: "關閉",
-  mseNotSupported: "您的瀏覽器不支援 MSE (媒體來源擴展)",
+  mseNotSupported: "目前瀏覽器缺少 MSE (媒體來源擴充) 支援",
   failedToPlay: "播放失敗",
-  upstreamRequestFailed: "上游串流請求失敗",
-  upstreamRequestFailedDescription: "播放器無法從 TVGate 載入此串流，服務端可能無法存取或返回了異常的 HTTP 回應。",
+  upstreamRequestFailed: "拉取上游串流失敗",
+  upstreamRequestFailedDescription:
+    "TVGate 無法把這條串流送到播放器，原因可能是伺服端不可用，或回傳了非正常的 HTTP 回應。",
   httpStatus: "HTTP 狀態",
-  requestUrl: "請求地址",
-  suggestedAction: "建議檢查",
+  requestUrl: "請求位址",
+  suggestedAction: "排查建議",
   upstreamRequestFailedSuggestion:
-    "確認上游服務可以存取，頻道地址和驗證參數有效；查看 TVGate 日誌中的上游轉發錯誤，修復後重試。",
+    "先確認上游服務可以存取，並核對頻道位址與驗證參數；再到 TVGate 日誌裡查看上游轉發錯誤，處理後再重新嘗試。",
 
-  // 時移按鈕
+  // 時移按鈕（數值與單位為固定寫法）
   rewind30m: "-30分鐘",
   rewind1h: "-1小時",
   rewind3h: "-3小時",
 
-  // 時間格式
+  // 時間單位
   minutes: "分鐘",
 
-  // 進度條
-  live: "直播",
-  seekTo: "跳轉到指定位置",
-
-  // 播放器控制
-  play: "播放",
-  pause: "暫停",
-  mute: "靜音",
-  unmute: "取消靜音",
-  previousChannel: "上一個頻道",
-  nextChannel: "下一個頻道",
-  fullscreen: "全屏",
-  exitFullscreen: "退出全屏",
-  pictureInPicture: "畫中畫",
-  mediaInfoLabel: "媒體資訊",
-  mediaInfoVideoCodec: "視訊編碼",
-  mediaInfoResolution: "解像度",
-  mediaInfoFrameRate: "幀率",
-  mediaInfoDynamicRange: "動態範圍",
-  mediaInfoAudioCodec: "音訊編碼",
-  mediaInfoAudioChannels: "音訊聲道",
-  mediaInfoMono: "單聲道",
-  mediaInfoStereo: "立體聲",
-  mediaInfoChannels: "聲道",
-  mediaInfoAdvertisedBitrate: "標稱碼率",
-  mediaInfoMeasuredBitrate: "實測碼率",
-
-  // 相對日期
+  // 相對日期（與時間單位同族，移到一起便於對照維護）
   today: "今天",
   yesterday: "昨天",
   tomorrow: "明天",
   dayBeforeYesterday: "前天",
 
-  // 線路選擇
-  source: "線路",
-  sourceFallback: "正在嘗試下一線路...",
+  // 進度條
+  live: "直播",
+  seekTo: "跳轉到指定時間點",
 
-  // 設置
+  // 播放器控制按鈕
+  play: "播放",
+  pause: "暫停",
+  mute: "靜音",
+  unmute: "取消靜音",
+  previousChannel: "切換到上一頻道",
+  nextChannel: "切換到下一頻道",
+  fullscreen: "全螢幕",
+  exitFullscreen: "退出全螢幕",
+  pictureInPicture: "畫中畫",
+
+  // 線路切換
+  source: "線路",
+  sourceFallback: "正在切換到下一條線路...",
+
+  // 媒體資訊（鍵序另成一種排布：與英文/簡體表均不同，鍵集合保持一致）
+  mediaInfoLabel: "串流資訊",
+  mediaInfoFps: "幀率",
+  mediaInfoDimensions: "解像度",
+  mediaInfoHdrRange: "動態範圍",
+  mediaInfoVideoCoding: "視訊編碼",
+  mediaInfoAudioCoding: "音訊編碼",
+  mediaInfoSoundChannels: "音訊聲道",
+  mediaInfoSingleChannel: "單聲道",
+  mediaInfoStereoSound: "立體聲",
+  mediaInfoChannelCount: "聲道",
+  mediaInfoNominalBitrate: "標稱碼率",
+  mediaInfoObservedBitrate: "實測碼率",
+
+  // 設定面板
   settings: "設定",
   language: "語言",
   theme: "主題",
   themeAuto: "自動",
   themeLight: "淺色",
   themeDark: "深色",
-  appearance: "介面風格",
+  appearance: "外觀風格",
   appearanceOcean: "深海",
   appearanceEmerald: "翡翠",
   appearanceSunset: "落日",
@@ -413,7 +423,7 @@ const zhHant: TranslationDict = {
   appearanceAmber: "琥珀",
   appearanceSlate: "石墨",
   panelAlpha40: "40%",
-  panelAlpha: "面板透明度",
+  panelAlpha: "面板不透明度",
   panelAlpha100: "不透明",
   panelAlpha85: "85%",
   panelAlpha70: "70%",
@@ -421,23 +431,31 @@ const zhHant: TranslationDict = {
   pictureInPictureMode: "畫中畫模式",
   pictureInPictureModeFull: "完整",
   pictureInPictureModeSimple: "簡潔",
-  seamlessSwitch: "無縫換台",
-  resolutionLimitHint: "以下選項僅 1080p 及以下生效",
-  deinterlace: "自動反交錯",
-  pictureEnhancement: "畫質增強",
-  audioChannelMode: "聲道",
+  seamlessSwitch: "無感換台",
+  resolutionLimitHint: "以下設定只對 ≤1080p 的情境生效",
+  deinterlace: "自動去交錯",
+  pictureEnhancement: "畫面增強",
+  audioChannelMode: "聲音輸出",
   audioChannelModeStereo: "立體聲",
-  audioChannelModeMono: "單聲道合成",
+  audioChannelModeMono: "合成為單聲道",
 };
+
+/** 组装某语言的最终词典：先铺英文基准，再按语言覆盖——漏译词自动回落英文而非空白。 */
+function mergeWithBase(overrides: TranslationDict): TranslationDict {
+  return { ...base, ...overrides };
+}
 
 export const translations: Record<Locale, TranslationDict> = {
   en: base,
-  "zh-Hans": { ...base, ...zhHans },
-  "zh-Hant": { ...base, ...zhHant },
+  "zh-Hans": mergeWithBase(zhHans),
+  "zh-Hant": mergeWithBase(zhHant),
 };
 
+/** 全部可用文案 key 的联合；以 base 为准，让 t() 的入参在编译期就非法 key 报错。 */
 export type TranslationKey = keyof typeof base;
 
 export function translate(locale: Locale, key: TranslationKey): string {
-  return translations[locale][key] ?? base[key] ?? key;
+  // 三级回落：当前语言 → 英文基准 → key 本身；兜底保证界面永远有字符可渲染
+  const dict = translations[locale];
+  return dict[key] ?? base[key] ?? key;
 }
