@@ -40,6 +40,8 @@ interface ChannelBrowserProps {
   onVisibleChannelsChange?: (channels: Channel[]) => void;
   /** 后端是否配置了 EPG 源（false 时节目单栏直接提示，而不是一片"精彩节目"占位）。 */
   epgConfigured?: boolean;
+  /** 浮层（侧栏）当前是否可见：再次打开时把分组拉回"正在播放的频道所在分组"。 */
+  panelVisible?: boolean;
 }
 
 function filterChannels(channels: Channel[], selectedGroup: string | null) {
@@ -81,6 +83,7 @@ const ChannelBrowserComponent = function ChannelBrowserComponent({
   onEpgOpenChange,
   onVisibleChannelsChange,
   epgConfigured,
+  panelVisible,
 }: ChannelBrowserProps) {
   const t = usePlayerTranslation(locale);
   // 选中的分组跨会话记忆：初始化只读记忆值，**不在这里校验组是否存在**——
@@ -152,11 +155,46 @@ const ChannelBrowserComponent = function ChannelBrowserComponent({
     return getCurrentProgram(previewEpgId, epgData, now);
   }, [previewChannel, previewEpgId, epgData, now]);
 
-  /** 选中分组（点击/遥控器 OK）：立刻生效并写入跨会话记忆。 */
+  /**
+   * 选中分组（点击/遥控器 OK）：立刻生效，但**不写记忆**——记忆以"正在播放的频道所在分组"为准，
+   * 否则"只点过分组、没选台"会把列表钉在那个分组（用户实测反馈：再打开时没跳到播放台所在组）。
+   */
   const handleGroupSelect = useCallback((group: string | null) => {
     setSelectedGroup(group);
-    saveSelectedGroup(group);
   }, []);
+
+  /**
+   * 换台（含首次进入）后分组跟随**正在播放的频道**；只认 currentChannel 变化，
+   * 所以上一步点分组不会被立刻弹回去（列表键位/焦点也不会被抢）。
+   */
+  const syncGroupToPlayingChannel = useCallback(() => {
+    if (!currentChannel) return;
+    const group = currentChannel.groups.find((g) => groups.includes(g)) ?? currentChannel.groups[0] ?? null;
+    if (!group) return;
+    setSelectedGroup(group);
+    saveSelectedGroup(group);
+  }, [currentChannel, groups]);
+
+  const syncedChannelRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!currentChannel) return;
+    if (syncedChannelRef.current === currentChannel.id) return;
+    syncedChannelRef.current = currentChannel.id;
+    syncGroupToPlayingChannel();
+  }, [currentChannel, syncGroupToPlayingChannel]);
+
+  /**
+   * 再次打开浮层（侧栏）时同样拉回正在播放的频道所在分组：在浮层里点分组浏览、没选台就
+   * 收起来，再打开时应看到"正在播的台"所在分组，而不是上次点过的分组（用户实测反馈：
+   * 百视通 CCTV4K 在播，收起再打开却停在蜀小果）。
+   */
+  const wasPanelVisibleRef = useRef(false);
+  useEffect(() => {
+    const visible = Boolean(panelVisible);
+    const justOpened = visible && !wasPanelVisibleRef.current;
+    wasPanelVisibleRef.current = visible;
+    if (justOpened) syncGroupToPlayingChannel();
+  }, [panelVisible, syncGroupToPlayingChannel]);
 
   const handleChannelActivate = useCallback(
     (channel: Channel) => {

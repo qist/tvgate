@@ -48,6 +48,8 @@ interface ChannelListProps {
   locale: Locale;
   settingsSlot?: ReactNode;
   epgData?: EPGData;
+  /** 浮层当前是否可见（手机全屏时隐藏）：重新出现时把分组拉回正在播放的频道所在分组。 */
+  panelVisible?: boolean;
 }
 
 interface ChannelListResultsProps {
@@ -90,7 +92,7 @@ const ChannelListResults = memo(function ChannelListResults({
   );
 });
 
-function ChannelListComponent({ channels, groups, currentChannel, onChannelSelect, locale, settingsSlot, epgData }: ChannelListProps) {
+function ChannelListComponent({ channels, groups, currentChannel, onChannelSelect, locale, settingsSlot, epgData, panelVisible }: ChannelListProps) {
   const t = usePlayerTranslation(locale);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -187,10 +189,42 @@ function ChannelListComponent({ channels, groups, currentChannel, onChannelSelec
     setSearchQuery(event.target.value);
   }, []);
 
-  /** 记住选中的分组（null = 全部）。 */
-  const rememberGroup = useCallback((group: string | null) => {
-    saveSelectedGroup(group);
+  /**
+   * 点分组只改本次会话的筛选，**不写记忆**：记忆以"正在播放的频道所在分组"为准。
+   * 否则"只点过分组、没选台"会把列表钉在那个分组（用户实测反馈：再打开时没跳到播放台所在组）。
+   */
+  const handleGroupSelect = useCallback((group: string | null) => {
+    setSelectedGroup(group);
   }, []);
+
+  /**
+   * 换台（含首次进入）后，分组跟随**正在播放的频道**：下次打开列表即落在该台所在分组。
+   * 只认 currentChannel 变化（不认点分组），所以点分组不会立刻被弹回去。
+   */
+  const syncGroupToPlayingChannel = useCallback(() => {
+    if (!currentChannel) return;
+    const group = currentChannel.groups.find((g) => groups?.includes(g)) ?? currentChannel.groups[0] ?? null;
+    if (!group) return;
+    setSelectedGroup(group);
+    saveSelectedGroup(group);
+  }, [currentChannel, groups]);
+
+  const syncedChannelRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!currentChannel) return;
+    if (syncedChannelRef.current === currentChannel.id) return;
+    syncedChannelRef.current = currentChannel.id;
+    syncGroupToPlayingChannel();
+  }, [currentChannel, syncGroupToPlayingChannel]);
+
+  /** 浮层重新出现（退出全屏 / 再次打开）时同样拉回正在播放的频道所在分组。 */
+  const wasPanelVisibleRef = useRef(false);
+  useEffect(() => {
+    const visible = Boolean(panelVisible);
+    const justOpened = visible && !wasPanelVisibleRef.current;
+    wasPanelVisibleRef.current = visible;
+    if (justOpened) syncGroupToPlayingChannel();
+  }, [panelVisible, syncGroupToPlayingChannel]);
 
   return (
     <div className="flex h-full flex-col bg-transparent">
@@ -238,8 +272,7 @@ function ChannelListComponent({ channels, groups, currentChannel, onChannelSelec
                   type="button"
                   key={group ?? "all"}
                   onClick={() => {
-                    setSelectedGroup(group);
-                    rememberGroup(group);
+                    handleGroupSelect(group);
                     setGroupsOpen(false);
                   }}
                   onFocus={(event) => event.currentTarget.scrollIntoView({ block: "nearest" })}

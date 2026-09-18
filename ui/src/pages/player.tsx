@@ -889,6 +889,7 @@ function PlayerPage() {
                 onEpgOpenChange={setDockEpgOpen}
                 onVisibleChannelsChange={handleVisibleChannelsChange}
                 epgConfigured={epgConfigured}
+                panelVisible={(showSidebar || isMobile) && !(isFullscreen && isMobile)}
               />
             ) : (
               <>
@@ -920,6 +921,7 @@ function PlayerPage() {
                       locale={locale}
                       settingsSlot={settingsSlot}
                       epgData={epgData}
+                      panelVisible={!isFullscreen}
                     />
                   </Activity>
                   <Activity mode={renderedSidebarView === "epg" ? "visible" : "hidden"}>
