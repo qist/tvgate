@@ -103,6 +103,30 @@ func TestEPGSourcesParse(t *testing.T) {
 	}
 }
 
+// 回归：全局配置处在"默认值未补齐"的窗口（config.Cfg.HTTP 的 *bool 为 nil）时，
+// 重载触发的 EPG 整份 XMLTV 拉取不能空指针 panic（实测事故：后台保存配置 → config/load
+// 发布 nil 配置 → 出口通知播放器重载 → 本路径 NewHTTPClient 解引用 nil，进程被带走）。
+func TestEPGLoadWithNilHTTPConfig(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<tv><channel id="1"><display-name lang="zh">CCTV1</display-name></channel>` +
+			`<programme channel="1" start="20260901080000 +0800" stop="20260901090000 +0800"><title>朝闻天下</title></programme></tv>`))
+	}))
+	defer up.Close()
+
+	// 模拟刚 Unmarshal 出来、尚未 SetDefaults 的配置（这两个 *bool 为 nil）
+	oldInsecure, oldKeepAlive := config.Cfg.HTTP.InsecureSkipVerify, config.Cfg.HTTP.DisableKeepAlives
+	config.Cfg.HTTP.InsecureSkipVerify, config.Cfg.HTTP.DisableKeepAlives = nil, nil
+	t.Cleanup(func() {
+		config.Cfg.HTTP.InsecureSkipVerify, config.Cfg.HTTP.DisableKeepAlives = oldInsecure, oldKeepAlive
+	})
+
+	b := NewEPGBank()
+	b.Load(up.URL)
+	if ps := b.Programs("CCTV1", "20260901"); len(ps) != 1 || ps[0].Title != "朝闻天下" {
+		t.Fatalf("nil 指针窗口期内 EPG 拉取异常: %+v", ps)
+	}
+}
+
 // 回归：startRefresh 被 Reload 反复调用必须幂等。
 // 泄漏一个「周期拉取+解析 XMLTV」goroutine 会在 update_interval 很短时
 // 并发吃满 CPU（armv7 设备实测 360%）。

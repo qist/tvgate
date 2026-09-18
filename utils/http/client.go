@@ -73,15 +73,25 @@ func newTransport(c *config.Config) *http.Transport {
 		},
 
 		ResponseHeaderTimeout: c.HTTP.ResponseHeaderTimeout,
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: *c.HTTP.InsecureSkipVerify},
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: boolOr(c.HTTP.InsecureSkipVerify, false)},
 		IdleConnTimeout:       c.HTTP.IdleConnTimeout,
 		TLSHandshakeTimeout:   c.HTTP.TLSHandshakeTimeout,
 		ExpectContinueTimeout: c.HTTP.ExpectContinueTimeout,
 		MaxIdleConns:          c.HTTP.MaxIdleConns,
 		MaxIdleConnsPerHost:   c.HTTP.MaxIdleConnsPerHost,
 		MaxConnsPerHost:       c.HTTP.MaxConnsPerHost,
-		DisableKeepAlives:     *c.HTTP.DisableKeepAlives,
+		DisableKeepAlives:     boolOr(c.HTTP.DisableKeepAlives, false),
 	}
+}
+
+// boolOr 解引用配置里的 *bool；nil（YAML 未写该键且默认值尚未补齐）时取 fallback。
+// 这些字段被新建 client / DNS 解析等路径并发读取，nil 直接解引用会 panic 带走进程，
+// 这里兜一层（正常路径下 config/load 已保证发布前补齐默认值）。
+func boolOr(p *bool, fallback bool) bool {
+	if p == nil {
+		return fallback
+	}
+	return *p
 }
 
 func NewHTTPClient(c *config.Config, transport *http.Transport) *http.Client {

@@ -43,6 +43,15 @@ func LoadConfig(configPath string) error {
 
 	// 合并原有运行状态（比如代理测速结果）
 	groupstats.MergeProxyStats(config.Cfg.ProxyGroups, newCfg.ProxyGroups)
+
+	// 必须先补齐默认值再发布全局配置：HTTP 等子结构含 *bool 字段（insecure_skip_verify /
+	// disable_keepalives …），YAML 没写这些键时 Unmarshal 出来就是 nil。若先发布后补默认值，
+	// 发布瞬间到调用方 SetDefaults 之间任何并发读取（新建 HTTP client、DNS 解析等）都会空指针
+	// panic 直接带走进程 —— 实测：后台保存配置 → 本函数发布 nil 配置 → 出口通知让播放器
+	// 重载 → 其 EPG 拉取 goroutine 走 NewHTTPClient 解引用 nil 后进程崩溃。
+	// 而 web 各保存路径（saveAndResponse）之后并**不会**再调 SetDefaults，nil 会一直留着，
+	// 后续任何一次 HTTP client 创建 / DNS 解析都会再崩一次。SetDefaults 幂等，这里提前调用安全。
+	newCfg.SetDefaults()
 	config.Cfg = newCfg
 
 	// 初始化统计结构
