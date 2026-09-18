@@ -249,13 +249,19 @@ export class HlsSource implements SegmentSource {
    * 江苏移动 TARGETDURATION=10 一片 10 秒），而 pipeline 只在**队列空**时才来问，
    * 所以这个间隔直接决定"每个分片窗口打开几次 m3u8"：
    *  - 上一问刚拿到新分片 → 播放列表要过一整个周期才滚，按 targetDuration 问（一拍一次）；
-   *  - 上一问什么都没拿到（问早了）→ 半拍后再问，别把上游刷爆，也不至于错过太久。
+   *  - 上一问什么都没拿到（问早了）→ 半拍后再问，别把上游刷爆，也不至于错过太久；
+   *  - 缓冲已见底（< 半个分片，调用方经 bufferLeadMs 告知）→ 1 秒一问：此时卡顿就在眼前，
+   *    省请求不再有意义，越早拿到新分片越好。
    * 固定 1 秒轮询纯属浪费：每次都要穿一遍上游（实测同一分片间隔里刷出十几次请求）。
    */
-  pollIntervalMs(): number {
+  pollIntervalMs(bufferLeadMs?: number): number {
     const target = this.info?.targetDuration ?? 0;
     if (!(target > 0)) return 1000;
     const period = target * 1000;
+    // 缓冲见底（不足半个分片，实测本机某源领先一度低到 1.0s）：这时候"省请求"没有意义，
+    // 分片一发布就必须立刻抓走 —— 早半秒拿到就是少一次缓冲耗尽。密集 1 秒轮询只在
+    // 这种临界状态下出现，缓冲一旦恢复正常立刻回到下面的节流节奏。
+    if (bufferLeadMs !== undefined && bufferLeadMs < period / 2) return 1000;
     // 刚拿走这一轮新分片：播放列表要过一个分片周期才滚，按目标时长问一次即可 ——
     // 一拍一次（而不是半拍两次），这也是用户看到的"每个分片打开两次 m3u8"的来源。
     if (this.lastRefreshFoundNew) return Math.min(10_000, Math.max(1000, Math.round(period)));

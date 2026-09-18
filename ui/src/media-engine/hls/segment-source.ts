@@ -23,8 +23,12 @@ export interface SegmentSource {
   /**
    * 空闲轮询间隔（毫秒，可选实现）：next() 返回 null（暂无新分片）后，调用方隔多久再来问一次。
    * 未实现 / 返回 0 表示用调用方默认值。HLS 源按播放列表的目标时长给出（见 HlsSource）。
+   *
+   * @param bufferLeadMs 缓冲领先播放头多少毫秒（调用方从播放头/缓冲末端算得；未知传 undefined）。
+   *   源可据此在**缓冲见底**时改回密集轮询：此时"早半秒拿到新分片"直接等于"少一次卡顿"，
+   *   与稳态下省请求的目标并不冲突（见 HlsSource.pollIntervalMs）。
    */
-  pollIntervalMs?(): number;
+  pollIntervalMs?(bufferLeadMs?: number): number;
 }
 
 /** 静态分段列表（点播/回看）。 */

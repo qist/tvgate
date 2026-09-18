@@ -308,10 +308,11 @@ export class TransmuxPipeline {
         if (this.stopped) break;
         if (!url) {
           // 直播没有新分段：分段间隔内轮询重试，而非结束（否则会触发 endOfStream/重载）。
-          // 轮询节奏由源给出（HLS = 目标时长的一半）：固定 1 秒会把播放列表请求刷成
+          // 轮询节奏由源给出（HLS = 目标时长整拍/半拍）：固定 1 秒会把播放列表请求刷成
           // 十几倍（实测同一分片间隔内刷十几次 /player/<key>，白白穿透上游）。
+          // 同时把当前缓冲领先量告诉源：缓冲见底时它会改回 1 秒密集问（见 HlsSource）。
           if (this.config.source.live) {
-            await sleep(this.config.source.pollIntervalMs?.() ?? 1000);
+            await sleep(this.config.source.pollIntervalMs?.(this.bufferLeadMs()) ?? 1000);
             continue;
           }
           break; // VOD 已播完
@@ -679,6 +680,18 @@ export class TransmuxPipeline {
   /** 是否直播播放：仅直播应用缓冲领先门（点播/回看按位置拉取，无领先概念）。 */
   private isLivePlayback(): boolean {
     return this.config.sourceMode === "continuous-live-ts" || this.config.source?.live === true;
+  }
+
+  /**
+   * 当前缓冲领先量（ms）= 缓冲末端 - 播放头；**不知道播放头在哪时返回 Infinity**
+   * （时基过期 / 页面隐藏 / 未收到过 clock）：语义是"不急着拉"—— 没有可靠信息时
+   * 不拿它当理由去密集敲上游播放列表，与领先门"绝不死锁"的取舍一致。
+   */
+  private bufferLeadMs(): number {
+    if (this.pageHidden) return Number.POSITIVE_INFINITY;
+    if (this.playheadCurrentMs < 0 || this.playheadBufferedEndMs < 0) return Number.POSITIVE_INFINITY;
+    if (performance.now() - this.lastClockArrivalMs > CLOCK_STALE_MS) return Number.POSITIVE_INFINITY;
+    return this.playheadBufferedEndMs - this.playheadCurrentMs;
   }
 
   /**

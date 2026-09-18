@@ -100,6 +100,16 @@ describe("HlsSource.pollIntervalMs", () => {
     }
   });
 
+  it("缓冲见底（< 半个分片）→ 1 秒密集问；未知/健康 → 稳态节流", async () => {
+    const source = new HlsSource("http://x/p.m3u8", {}, { fetcher: async () => playlist(7) });
+    await source.load();
+    expect(source.pollIntervalMs(2000)).toBe(1000); // 缓冲只剩 2s：卡顿在眼前，越早抓越好
+    expect(source.pollIntervalMs(3499)).toBe(1000);
+    expect(source.pollIntervalMs(3500)).toBe(7000); // 恰好半个分片：不算见底，按整拍
+    expect(source.pollIntervalMs(20000)).toBe(7000); // 缓冲很深：不空刷
+    expect(source.pollIntervalMs(undefined)).toBe(7000); // 不知道播放头 → 不猛敲上游
+  });
+
   it("未解析出目标时长时退回 1 秒", async () => {
     const source = new HlsSource("http://x/p.m3u8", {}, { fetcher: async () => "#EXTM3U\n" });
     await source.load();
