@@ -76,6 +76,19 @@ async function sniffHls(url: string): Promise<{ hls: boolean; text: string | nul
         const c = await reader.read();
         if (c.done) break;
         if (c.value) acc += dec.decode(c.value, { stream: true });
+        // 播放列表必以 #EXTM3U 开头：首个非空白字节不是 # 就绝不是 HLS。
+        // 直连流（TS/FLV/ADTS 直播）是无限流，等 done/2MB 只会白烧 4s 超时并多拉一路数据
+        // （单会话中继源上还会把真正管线那一路饿死），然后被上层当"探测失败"重试——
+        // 实测 FLV 直播每次源初始化都这么超时重试一次，起播平白多等 4s+。
+        const head = acc.replace(/^\uFEFF/, "").trimStart();
+        if (head.length > 0 && head[0] !== "#") {
+          try {
+            await reader.cancel();
+          } catch {
+            /* ignore */
+          }
+          return { hls: false, text: null };
+        }
         // 播放列表防护上限：直播窗口只有几 KB，2MB 足够容纳任何合规播放列表
         if (acc.length > 2 * 1024 * 1024) {
           try {

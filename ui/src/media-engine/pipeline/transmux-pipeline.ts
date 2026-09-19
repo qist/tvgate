@@ -120,6 +120,25 @@ const MAX_LIVE_RELOADS = 5;
 const RETRY_BASE_DELAY_MS = 500;
 const RETRY_MAX_DELAY_MS = 8000;
 /**
+ * 直播 EOF 重连：单会话中继/上游踢线会把连接"正常"关闭（EOF），这是此类源的常态而非故障，
+ * 必须快速重连接续播（本地播放器同款行为）。固定短延迟、不占错误重试预算；单独设上限，
+ * 超限上报一次 onIOError 让上层会话重建（重建后预算自然刷新）。
+ */
+const MAX_LIVE_EOF_RECONNECTS = 1000;
+/** 正常吐了数据的连接 EOF 后立即重连（CDN 定时踢连接是常态，退避会制造可见卡顿）。 */
+const LIVE_EOF_RECONNECT_DELAY_MS = 150;
+/** 判"这次连接有产出"的最小字节数：低于它按空连接退避，避免对着坏源空转。 */
+const LIVE_EOF_MIN_FRUITFUL_BYTES = 16 * 1024;
+/** 空连接重连的退避基值与上限（毫秒）。 */
+const LIVE_EOF_BARREN_BASE_DELAY_MS = 500;
+const LIVE_EOF_RECONNECT_MAX_DELAY_MS = 8_000;
+/**
+ * 重连续接时允许领先播放头的时间（秒）：CDN 每次连接会一次性灌回它的整段缓冲，
+ * 若一路按"已发末端"接下去，缓冲会越攒越长、直播延迟无限增长（实测 1 分钟落后 45s）。
+ * 贴着播放头续接（最多领先这么多）让延迟有界，代价是丢掉一小段已缓冲未播的内容。
+ */
+const LIVE_REANCHOR_AHEAD_SEC = 2;
+/**
  * 分段源（HLS）分片加载的短重试次数：分片是「可替换」的——失败即由 start() 丢弃整批旧分段
  * 并刷新播放列表，改用新序列续播（原生 HLS 播放器的标准行为）。绝不在此长退避：
  * 否则整点切换（旧序列分片 404、新分片未就绪）时会逐个啃完旧分片、耗尽重试预算并上报播放错误。
@@ -224,6 +243,10 @@ export class TransmuxPipeline {
   private silentAudioRegistered = false;
   /** 最近一次加载器错误（直播场景先抑制上报，等重试预算耗尽或确定性失败再上报）。 */
   private lastIoError: LoaderErrorInfo | null = null;
+  /** 本轮 loadUrl 内的直播 EOF 重连次数（见 MAX_LIVE_EOF_RECONNECTS）。 */
+  private eofReconnects = 0;
+  /** 连续"空连接"EOF 次数（见 LIVE_EOF_MIN_FRUITFUL_BYTES）。 */
+  private eofBarrenStreak = 0;
 
   constructor(
     private readonly config: PipelineConfig,
@@ -361,6 +384,8 @@ export class TransmuxPipeline {
 
   /** 拉取一个 URL（分片或连续流）。返回是否成功拉到内容（false 表示该 URL 不可用/被掐断）。 */
   private async loadUrl(url: string): Promise<boolean> {
+    this.eofReconnects = 0;
+    this.eofBarrenStreak = 0;
     let attempt = 0;
     let range: { from: number; to?: number } | undefined;
     // 分段源（HLS）：分片是「可替换」的——失败即由 start() 丢弃整批旧分段并刷新播放列表
@@ -396,7 +421,16 @@ export class TransmuxPipeline {
         if (this.stopped) return false; // 停止导致的异常直接忽略
       }
 
-      if (loader.isCompleted) return true;
+      if (loader.isCompleted) {
+        // 直播连续流：连接被上游"正常"关闭（EOF）≠ 播放结束。单会话中继/上游踢线/
+        // 强制断开都会这样——本地播放器（PotPlayer 等）对此的行为就是重连接续播。
+        // 若当成完成，start() 会收尾并不再拉流，画面永久停在断开时刻（实测斗鱼 FLV
+        // 中继每条连接只送一段就 EOF）。按可重试错误落入下方同一条退避重连路径；
+        // 点播/回看维持原语义（EOF = 真的播完了）。
+        // 仅连续流（直连 TS/FLV）适用；分段源（HLS）的分片"完成"是常态，走原语义。
+        if (live && !segmented) this.lastIoError = { code: -1, msg: "上游断开连接（EOF）", url };
+        else return true;
+      }
       if (this.stopped) return false;
 
       // 缓冲满被暂停：等待恢复后从续传起点继续。
@@ -417,6 +451,52 @@ export class TransmuxPipeline {
 
       // 直播重连：源 PTS 纪元不可预知 → 按需重钉软解 PCM 轴（C9c）
       this.reanchorPcmIfNeeded();
+
+      // 直播 EOF 重连：上游主动断开是这类源的**常态**而非故障（单会话中继踢旧连接），
+      // 用固定短延迟快速重连、不占错误重试预算（PotPlayer 等本地播放器同款行为）；
+      // 单独设上限，超限仍走一次 onIOError 让上层会话重建，避免对着死源无限空转。
+      if (this.lastIoError?.msg.includes("EOF")) {
+        this.eofReconnects += 1;
+        if (this.eofReconnects > MAX_LIVE_EOF_RECONNECTS) {
+          this.callbacks.onIOError?.(this.lastIoError);
+          return false;
+        }
+        // 时间轴重锚：新连接是**全新 PTS 纪元**，必须接到"当前位置"之后——否则新内容按旧基准
+        // 归一化会落回已播区间，浏览器不会把播放头往回走（表现为"重连成功但画面不动"）。
+        // 起点取「已发内容末端」与「当前播放头」的较大者：既续上时间轴，也不覆盖缓冲里
+        // 还没播完的部分。
+        const playheadSec = this.playheadCurrentMs > 0 ? this.playheadCurrentMs / 1000 : 0;
+        // 接续点：不早于播放头（否则新内容落在已播区间、画面不动），也不比播放头领先太多
+        // （否则每次连接灌回的整段缓冲会一路堆起来，直播延迟越来越长）。
+        const continueAtSec = Math.max(
+          playheadSec,
+          Math.min(this.remuxer.emittedEndSec, playheadSec + LIVE_REANCHOR_AHEAD_SEC),
+        );
+        this.remuxer.reanchorTo(continueAtSec);
+        // 有产出的 EOF（CDN 定时踢连接）立即重连；空连接才退避，避免对着坏源空转。
+        const fruitful = loader.bytesReceived >= LIVE_EOF_MIN_FRUITFUL_BYTES;
+        this.eofBarrenStreak = fruitful ? 0 : this.eofBarrenStreak + 1;
+        const delay = fruitful
+          ? LIVE_EOF_RECONNECT_DELAY_MS
+          : Math.min(LIVE_EOF_BARREN_BASE_DELAY_MS * 2 ** (this.eofBarrenStreak - 1), LIVE_EOF_RECONNECT_MAX_DELAY_MS);
+        // EOF 后的新连接是一条全新的流：必须从字节 0 重来（restart），续传 Range 对中继源无意义。
+        this.ioController.reset();
+        range = undefined;
+        // 解复用器必须一并重建：新连接带来新的容器头（FLV/TS）与全新 PTS 纪元，沿用旧状态
+        // 会把新流的头当成旧流的续片，从此不再产出样本（实测"重连成功但画面不动"）。
+        this.demuxer?.reset();
+        this.demuxer = null;
+        this.demuxProbeBuffer = null;
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[PIPELINE] 直播连接 EOF（本次 ${(loader.bytesReceived / 1024).toFixed(0)}KB）→ ` +
+            `重锚到 ${continueAtSec.toFixed(1)}s（已发末端 ` +
+            `${this.remuxer.emittedEndSec.toFixed(1)}s / 播放头 ${playheadSec.toFixed(1)}s）→ ${delay}ms 后重连`,
+        );
+        await sleep(delay);
+        if (this.stopped) return false;
+        continue;
+      }
 
       // 可重试性判定：4xx（除 429）是确定性失败，重试只会拖慢上层按位置重建
       const code = this.lastIoError?.code ?? -1;

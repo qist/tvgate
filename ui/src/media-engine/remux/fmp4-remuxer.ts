@@ -92,6 +92,10 @@ export class Fmp4Remuxer {
    * 会抹掉 (audioFirstPts − videoFirstPts) 的固定偏移 → 音画恒定错位。
    */
   private unifiedBaseSec: number | null = null;
+  /** 直播重连后的时间轴重锚目标（秒）：下一个批次锚点据此重算，见 reanchorTo()。 */
+  private pendingReanchorSec: number | null = null;
+  /** 已发出内容的 MSE 时间轴末端（秒）：重连续接的默认起点。 */
+  private lastEmittedEndSec = 0;
   /** 已发射 init 的轨 id（每轨独立 SourceBuffer，各发各的 init）。 */
   private readonly emittedInit = new Set<number>();
   /** 首个 init 发射时刻，用于起播宽限判定；null 表示尚未发射任何 init。 */
@@ -388,6 +392,33 @@ export class Fmp4Remuxer {
    *
    * 必须在首个 flush（锁定 unifiedBaseSec）之前调用；已锁定后调用无效。
    */
+  /**
+   * 直播重连后的时间轴重锚。
+   *
+   * 上游断开重连会带来**全新的 PTS 纪元**（新连接从它自己的 0 开始）。若继续按旧基准归一化，
+   * 新内容会落到已播区间 → 浏览器不会把播放头往回走 → 表现为"重连了但画面不动"。传入期望起点
+   * （通常 = 已发内容末端 / 当前播放头），下一批样本会以新纪元首个样本反推基准，使时间轴从
+   * 期望起点继续，重连即无缝接续（本地播放器对 CDN 定时踢连接的处理方式）。
+   */
+  reanchorTo(desiredStartSec: number): void {
+    this.pendingReanchorSec = Math.max(0, desiredStartSec);
+    // 允许重新锁定基准；丢弃旧纪元残留，避免两个纪元混进同一批成段。
+    this.unifiedBaseSec = null;
+    this.firstSampleSec.clear();
+    this.lastDuration.clear();
+    // **不复位 videoStarted**：重连拿到的是从 GOP 中间开始的突发流，若重新等关键帧，会一直
+    // 攒到安全上限（25s）——而每次重连又清队列，结果永远不出段（画面卡死）。续切语义本就
+    // 允许落在 GOP 中间（解码器已在跑，顺序续切即可，见 selectVideoRun 注释）。
+    this.silentAudioLastDtsMs = null;
+    this.silentAudioDurationResidual = 0;
+    for (const q of this.queues.values()) q.length = 0;
+  }
+
+  /** 已发出内容的 MSE 时间轴末端（秒）；重连重锚用它决定从哪里续上。 */
+  get emittedEndSec(): number {
+    return this.lastEmittedEndSec;
+  }
+
   setExternalBase(baseSec: number): void {
     if (this.unifiedBaseSec !== null) return;
     this.externalBaseSec = baseSec;
@@ -522,7 +553,7 @@ export class Fmp4Remuxer {
     // 流的视频时间轴因此比音频晚 7.8s，画面要等停摆看门狗把播放头跳进空洞才出来。
     // 故：有视频轨时音频先于视频到达不锁定（音频批次暂留队列，且基准之前的音频整段丢弃，见上）；
     // 仅纯音频流才用首个音频样本。
-    if (this.unifiedBaseSec === null) {
+    if (this.unifiedBaseSec === null && this.pendingReanchorSec === null) {
       if (this.externalBaseSec !== null) {
         // 声画分流的音频流水线：锚到视频基准（见 setExternalBase），
         // 保证音频输出时间 = 音频绝对时间 - 视频首样本 dts，与视频同一坐标系。
@@ -547,12 +578,20 @@ export class Fmp4Remuxer {
       if (!cfg) continue;
       const timescale = cfg.timescale || 1;
       let base = this.unifiedBaseSec;
+      if (base === null && this.pendingReanchorSec !== null) {
+        // 重连重锚：用本批次首段的起点反推基准 → 该段正好落在期望起点上（时间轴续接）。
+        base = r.baseMediaDecodeTime / timescale - this.pendingReanchorSec;
+        this.unifiedBaseSec = base;
+        this.pendingReanchorSec = null;
+      }
       if (base === null) {
         // 兜底：尚无任何首样本记录（不应发生），退化为本段起点
         base = r.baseMediaDecodeTime / timescale;
         this.unifiedBaseSec = base;
       }
       const tsOff = -base;
+      const emittedEndSec = (r.baseMediaDecodeTime + r.totalDuration) / timescale - base;
+      if (emittedEndSec > this.lastEmittedEndSec) this.lastEmittedEndSec = emittedEndSec;
       this.callbacks.onMediaSegment?.({
         data: generateMediaSegment([r]),
         timestampOffset: tsOff,

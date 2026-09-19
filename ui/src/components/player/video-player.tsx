@@ -1522,7 +1522,14 @@ function VideoPlayerShell({
     );
     // 同一线路重建一次仍停摆（第 2 次介入起）：多半是源本身坏了，换下一条线路
     // （环形轮转，退避冷却仍生效）；新线路的停摆计数清零，给它完整的重建宽限。
-    if (stallStrikeRef.current >= STALL_FAILOVER_STRIKES && (channel?.sources.length ?? 0) > 1) {
+    // 原生播放例外：这条路是浏览器自带播放层在解，接管型内核（小米等）会暂停/节流我们的
+    // <video> 元素，currentTime 停推 ≠ 流坏——看门狗误判一次就换线路，用户眼里就是"自己切台"。
+    // 真流坏时 <video> 会抛 error 事件，走错误恢复路径（那条路本来就含换线路）。
+    if (
+      backend.kind !== "native" &&
+      stallStrikeRef.current >= STALL_FAILOVER_STRIKES &&
+      (channel?.sources.length ?? 0) > 1
+    ) {
       stallStrikeRef.current = 0;
       console.warn(`Stall failover: switching to next source after repeated stalls`);
       autoplayIntentRef.current = true;
