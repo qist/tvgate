@@ -40,3 +40,17 @@ export function isMSEPlaybackSupported(): boolean {
   }
 }
 
+/** 逐串列出 MSE 探测结果（诊断浮层用：一眼看出是探测被判死还是流本身的问题）。 */
+export function probeMSESupport(): Array<{ mime: string; supported: boolean }> {
+  const scope = (typeof self !== "undefined" ? self : ({} as Record<string, unknown>)) as Record<string, unknown>;
+  const mse = scope.MediaSource as { isTypeSupported?: (t: string) => boolean } | undefined;
+  const managed = scope.ManagedMediaSource as { isTypeSupported?: (t: string) => boolean } | undefined;
+  return MSE_PROBE_MIMES.map((mime) => {
+    try {
+      return { mime, supported: !!(mse?.isTypeSupported?.(mime) || managed?.isTypeSupported?.(mime)) };
+    } catch {
+      return { mime, supported: false };
+    }
+  });
+}
+

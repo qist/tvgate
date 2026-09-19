@@ -44,6 +44,7 @@ import {
   getPlaybackBackendKind,
   isMSEPlaybackSupported,
   PlayerErrors,
+  probeMSESupport,
   type PlaybackBackend,
   type PlayerError,
   type PlayerMediaInfo,
@@ -477,12 +478,29 @@ function VideoPlayerShell({
   const [notice, setNotice] = useState<PlaybackFailureView | null>(null);
   /** 某槽的视频轨因编码不受支持被跳过（如设备无 HEVC）：屏上只剩声音，给个说明占位。 */
   const [videoUnsupportedBySlot, setVideoUnsupportedBySlot] = useState<Record<SlotTag, boolean>>({ a: false, b: false });
+  // 诊断浮层：?dbg=1 或 localStorage['tvgate-player-debug']='1' 打开；控制台 __tvdbg(true/false) 实时切。
+  // 现场排障用（模拟器/手机浏览器都适用）：一眼看出后端模式、MSE 探测逐串结果、两槽是否有帧。
+  const [debugOverlay, setDebugOverlay] = useState(() => {
+    try {
+      if (new URL(window.location.href).searchParams.get("dbg") === "1") return true;
+      return window.localStorage.getItem("tvgate-player-debug") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [volumeLevel, setVolumeLevel] = useState(() => getVolume());
   const [mutedState, setMutedState] = useState(() => getMuted());
   const [isPlaybackActive, setPlaybackActive] = useState(false);
   const [sessionAnchor, setSessionAnchor] = useState<LiveSessionAnchor | null>(null);
   const inLiveMode = playMode === "live";
   const [requiresGesture, setRequiresGesture] = useState(false);
+  useEffect(() => {
+    const w = window as unknown as { __tvdbg?: (on: boolean) => void };
+    w.__tvdbg = (on: boolean) => setDebugOverlay(Boolean(on));
+    return () => {
+      delete w.__tvdbg;
+    };
+  }, []);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [inPip, setInPip] = useState(false);
   const [inDocumentPip, setInDocumentPip] = useState(false);
@@ -1991,6 +2009,40 @@ function VideoPlayerShell({
       </div>
     );
 
+  /**
+   * 现场诊断面板（默认关闭，?dbg=1 / localStorage['tvgate-player-debug']='1' 打开）：
+   * 后端模式、MSE 逐串探测结果、两槽出帧状态（rs/ct/videoWidth/canvas）——报障时一拍即明。
+   */
+  const debugPanel = debugOverlay && (
+    <div className="pointer-events-none absolute inset-x-2 top-2 z-30 max-h-[72%] overflow-hidden rounded-lg bg-black/78 p-2 font-mono text-[10px] leading-4 text-emerald-200 md:text-[11px]">
+      <div>
+        后端 {backendKind} · 平台 {document.documentElement.dataset.playerPlatform ?? "-"} /{" "}
+        {document.documentElement.dataset.performanceTier ?? "-"} · 显示槽 {displayedSlot}
+      </div>
+      {probeMSESupport().map((probe) => (
+        <div key={probe.mime}>
+          MSE {probe.supported ? "OK" : "NO"} {probe.mime}
+        </div>
+      ))}
+      {(["a", "b"] as const).map((slot) => {
+        const video = videoRefOf(slot).current;
+        const canvas = canvasRefOf(slot).current;
+        return (
+          <div key={slot}>
+            槽{slot} {video ? `rs${video.readyState} ct${video.currentTime.toFixed(1)} ${video.paused ? "暂停" : "播放"} ${video.videoWidth}x${video.videoHeight}` : "无"} · 画布
+            {renderStateBySlot[slot].active ? "开" : "关"}
+            {canvas ? ` ${canvas.width}x${canvas.height}${canvas.classList.contains("hidden") ? " 隐" : ""}` : ""}
+          </div>
+        );
+      })}
+      <div>媒体 {mediaInfoBySlot[displayedSlot] ? JSON.stringify(mediaInfoBySlot[displayedSlot]).slice(0, 150) : "(无)"}</div>
+      <div>告警 {notice?.message ?? "-"}</div>
+      <div>
+        失败 {failure?.message ?? "-"} · 重试 {attemptCount}
+      </div>
+    </div>
+  );
+
   const topLeftStatusBadge = !requiresGesture && !failure && (
     <ClockAndLoadingBadge
       badgeVisible={controlsVisible || showSpinner}
@@ -2228,6 +2280,7 @@ function VideoPlayerShell({
       {gestureHitLayer}
       {audioOnlyStage}
       {videoUnsupportedStage}
+      {debugPanel}
       {streamSwitchMask}
       {topLeftStatusBadge}
       {channelIdentityCard}
