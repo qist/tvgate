@@ -289,7 +289,7 @@ func CopyWithContext(
 	client := h.AddClient(dst, bufSize)
 	defer h.RemoveClient(client)
 
-	h.EnsureProducer(ctx, src, buf)
+	h.EnsureProducer(ctx, src, buf, client)
 	return client.WriteLoop(ctx, updateActive)
 }
 

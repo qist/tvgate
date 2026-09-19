@@ -49,7 +49,10 @@ type HTTPHub struct {
 	closed           bool
 	producerRunning  bool
 	producerCancelFn context.CancelFunc
-	key              string
+	// producerSourceClient 当前作为广播源的那个客户端：它的连接字节流自带 FLV 文件头
+	// 与配置 tag，头信息重放必须跳过它，否则它收到的流里会出现第二个 FLV 头。
+	producerSourceClient *HTTPHubClient
+	key                  string
 
 	// 添加状态管理
 	state            int // 0: stopped, 1: playing, 2: error
@@ -302,7 +305,7 @@ func (h *HTTPHub) ClientCount() int {
 	return len(h.clients)
 }
 
-func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte) {
+func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte, sourceClient *HTTPHubClient) {
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
@@ -316,6 +319,7 @@ func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte)
 	}
 
 	h.producerRunning = true
+	h.producerSourceClient = sourceClient
 	pCtx, cancel := context.WithCancel(ctx)
 	h.producerCancelFn = cancel
 	h.mu.Unlock()
@@ -324,6 +328,7 @@ func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte)
 		defer func() {
 			h.mu.Lock()
 			h.producerRunning = false
+			h.producerSourceClient = nil
 			h.mu.Unlock()
 		}()
 
@@ -336,24 +341,32 @@ func (h *HTTPHub) EnsureProducer(ctx context.Context, src io.Reader, buf []byte)
 		}
 		defer retryTimer.Stop()
 
+		// FLV 头/配置捕获器：producer 级别，每条上游连接从头重新捕获；
+		// 字段只存第一份（上游重连后的新头不覆盖旧值），重放语义不变。
+		flvCapture := &flvHeaderCapture{}
+
 		for {
 			n, err := src.Read(buf)
 			if n > 0 {
-				// 检查是否是FLV流，只有FLV流才缓存头部信息
+				// 检查是否是FLV流，只有FLV流才缓存头部信息。
+				// 捕获按 tag 边界增量解析（见 flvHeaderCapture）：旧实现按「整个读块」做
+				// isFLVHeader/isVideoConfig/isAudioConfig 前缀匹配，而第一个读块几乎必然是
+				// 「文件头+配置tag+若干数据tag」连在一起——结果要么把整块当成 flvHeader
+				// 重放给晚加入的客户端（H5 解复用直接乱套），要么配置 tag 永远抓不到。
 				if isFLVStream(h.key) {
-					// 检查是否是头部信息并缓存
-					data := buf[:n]
-
-					// 检查是否是FLV头部或配置信息并缓存
-					if isFLVHeader(data) && h.flvHeader == nil {
-						h.flvHeader = make([]byte, n)
-						copy(h.flvHeader, data)
-					} else if isVideoConfig(data) && h.videoConfig == nil {
-						h.videoConfig = make([]byte, n)
-						copy(h.videoConfig, data)
-					} else if isAudioConfig(data) && h.audioConfig == nil {
-						h.audioConfig = make([]byte, n)
-						copy(h.audioConfig, data)
+					hdr, vcfg, acfg := flvCapture.feed(buf[:n])
+					if hdr != nil || vcfg != nil || acfg != nil {
+						h.mu.Lock()
+						if hdr != nil && h.flvHeader == nil {
+							h.flvHeader = append([]byte(nil), hdr...)
+						}
+						if vcfg != nil && h.videoConfig == nil {
+							h.videoConfig = append([]byte(nil), vcfg...)
+						}
+						if acfg != nil && h.audioConfig == nil {
+							h.audioConfig = append([]byte(nil), acfg...)
+						}
+						h.mu.Unlock()
 					}
 				}
 
@@ -454,8 +467,9 @@ func (c *HTTPHubClient) WriteLoop(ctx context.Context, updateActive func()) erro
 	// 注意：头部数据必须通过 bw 写入，避免绕过 bufio 导致数据乱序
 	hub := c.getHubByClient()
 	if hub != nil {
-		// 检查是否为FLV流
-		if isFLVStream(hub.key) {
+		// 检查是否为FLV流（源客户端除外：它的连接字节流自带文件头与配置 tag，
+		// 再重放一遍等于在流里插出第二个 FLV 头，H5 解复用器会当作坏 tag）
+		if isFLVStream(hub.key) && hub.producerSourceClient != c {
 			hub.mu.Lock()
 			// 发送缓存的头部信息（如果存在），通过 bw 写入并立即 flush
 			if hub.flvHeader != nil {
@@ -718,31 +732,85 @@ func isFLVHeader(data []byte) bool {
 		data[5] == 0x00 && data[6] == 0x00 && data[7] == 0x00 && data[8] == 0x09 // offset
 }
 
-// isVideoConfig 检查数据是否为视频配置信息 (AVCDecoderConfigurationRecord)
-func isVideoConfig(data []byte) bool {
-	// 检查是否为AVC sequence header
-	// 格式：[AVC sequence header (0x17)] + [AVC config packet (0x00)] + [composition time (0x000000)] + [AVCDecoderConfigurationRecord]
-	if len(data) < 10 {
-		return false
-	}
+// flvTagHeaderLen FLV tag 头长度：类型(1) + 数据长度(3) + 时间戳(3+1) + 流ID(3)。
+const flvTagHeaderLen = 11
 
-	// 检查是否是AVC sequence header (0x17 0x00 0x00 0x00 0x01)
-	return data[0] == 0x17 && // AVC video tag
-		data[1] == 0x00 && // AVC sequence header
-		data[2] == 0x00 &&
-		data[3] == 0x00 &&
-		data[4] == 0x01 // AVCPacketType
+// flvHeaderCapture 从 FLV 流开头按 tag 边界增量捕获三样东西：
+// 文件头（9B 头 + 4B PreviousTagSize0 = 13B）、首个 AVC sequence header tag、首个 AAC sequence header tag。
+// 返回的切片指向内部缓冲，调用方需立即拷贝。
+// 读块边界不必落在 tag 边界上（跨块自动拼齐）；捕获齐三样（或确认不是 FLV）后短路，稳态零解析开销。
+type flvHeaderCapture struct {
+	pending   []byte
+	gotHeader bool
+	gotVideo  bool
+	gotAudio  bool
+	done      bool
 }
 
-// isAudioConfig 检查数据是否为音频配置信息 (AudioSpecificConfig)
-func isAudioConfig(data []byte) bool {
-	// 检查是否为AAC sequence header
-	// 格式：[AAC sequence header (0xAF)] + [AAC config packet (0x00)]
-	if len(data) < 4 {
-		return false
+func (c *flvHeaderCapture) feed(data []byte) (flvHeader, videoConfig, audioConfig []byte) {
+	if c.done {
+		return nil, nil, nil
+	}
+	c.pending = append(c.pending, data...)
+
+	// 文件头：合法流必以 "FLV" 开头；不是则这不是 FLV（如误入的 TS/HTML），放弃捕获。
+	if !c.gotHeader {
+		if len(c.pending) < 9 {
+			return nil, nil, nil // 头部判定至少要 9 字节，等更多数据
+		}
+		if !isFLVHeader(c.pending) {
+			c.done = true
+			c.pending = nil
+			return nil, nil, nil
+		}
+		if len(c.pending) < 13 {
+			return nil, nil, nil
+		}
+		flvHeader = c.pending[:13]
+		c.gotHeader = true
+		c.pending = c.pending[13:]
 	}
 
-	// 检查是否是AAC sequence header (0xAF 0x00)
-	return data[0] == 0xAF && // AAC audio tag
-		data[1] == 0x00 // AAC sequence header
+	// 逐 tag 解析，抓首个 AVC / AAC sequence header（完整 tag：tag 头 + 载荷 + PreviousTagSize）。
+	for {
+		if len(c.pending) < flvTagHeaderLen {
+			break
+		}
+		size := int(c.pending[1])<<16 | int(c.pending[2])<<8 | int(c.pending[3])
+		if size > 1<<20 { // 防御：正常序列头不过几十字节，超限说明流结构异常
+			c.done = true
+			c.pending = nil
+			break
+		}
+		total := flvTagHeaderLen + size + 4
+		if len(c.pending) < total {
+			break // 等下一批数据补齐
+		}
+		tag := c.pending[:total]
+		body := tag[flvTagHeaderLen : len(tag)-4]
+		// 视频：0x17(keyframe+AVC) 0x00 = AVC sequence header；
+		// 音频：首字节高 4 位 SoundFormat=10(AAC)，次字节 0x00 = AAC sequence header
+		//（比旧实现的硬编码 0xAF 更通用：其余采样率/声道组合的 AAC 也能命中）。
+		if !c.gotVideo && len(body) >= 2 && body[0] == 0x17 && body[1] == 0x00 {
+			videoConfig = tag
+			c.gotVideo = true
+		}
+		if !c.gotAudio && len(body) >= 2 && body[0]>>4 == 0x0a && body[1] == 0x00 {
+			audioConfig = tag
+			c.gotAudio = true
+		}
+		c.pending = c.pending[total:]
+		if c.gotVideo && c.gotAudio {
+			c.done = true
+			c.pending = nil
+			break
+		}
+	}
+
+	if len(c.pending) == 0 {
+		c.pending = c.pending[:0]
+	} else if cap(c.pending) > 1<<20 { // 压实：避免底层数组无界增长
+		c.pending = append(make([]byte, 0, len(c.pending)), c.pending...)
+	}
+	return flvHeader, videoConfig, audioConfig
 }
