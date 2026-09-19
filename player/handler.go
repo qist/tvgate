@@ -51,9 +51,14 @@ type Handler struct {
 
 // redirectCache 记录某频道解析型源的最终拉流地址与最近使用时刻。
 // 仅活跃会话（连续轮询间隔内）复用：换台/回看/返回直播等间隔较久的访问重新解析。
+//
+// storedAt 是**绝对有效期**的起点：lastUsed 只回答"频道还在不在播"，但直播直链
+// 本身（签名/CDN 边缘）会过期——过期后 CDN 会不断截断连接，播放器表现为
+// "播几秒断一次、一直重连同一个坏地址"。所以除活跃窗口外还要有绝对有效期。
 type redirectCache struct {
 	finalURL string
 	lastUsed time.Time
+	storedAt time.Time
 }
 
 // segGroup 记录某频道的代理组，带过期时间（超时后重新按域名规则匹配，跟进配置变更）。
@@ -796,7 +801,16 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 		return
 	}
 
+	// 直播直链过早结束 → 说明缓存里那条地址已经不可用（签名/边缘过期），
+	// 清掉解析缓存让下一次请求重新解析；否则播放器会一直重连同一个坏地址，
+	// 在上游看来就是"持续断开重连"。
+	streamStarted := time.Now()
 	stream.HandleProxyResponse(ctx, w, r, base, resp, func() {})
+	if isLiveFLVPath(base) && time.Since(streamStarted) < liveStreamTooShort {
+		h.clearRedirect(ch.Key)
+		logger.LogPrintf("[player] 直播直链过早结束(%s)，已清除解析缓存待重解析 key=%s",
+			time.Since(streamStarted).Truncate(time.Second), ch.Key)
+	}
 }
 
 // shiftSegmentHourDir 把分片 URL 中的「小时目录」前移/后移 deltaHours（-1 = 上一小时）。
@@ -859,7 +873,23 @@ const segGroupTTL = 30 * time.Minute
 
 // 解析结果仅在同一活跃会话内复用：连续轮询间隔（≈ targetDuration）远小于该窗口，
 // 而换台/回看/返回直播等场景的间隔必然更久 → 重新请求上游获取播放地址。
-const redirectActiveWindow = 45 * time.Second
+const (
+	redirectActiveWindow = 45 * time.Second
+	// redirectResolveTTL：解析出的直播直链的绝对有效期。到点即使频道一直在播也重新解析，
+	// 避免长期复用已过期的签名地址（实测过期直链会被 CDN 每几秒截断一次）。
+	redirectResolveTTL = 90 * time.Second
+	// liveStreamTooShort：直播流短于该时长就结束，判定为"缓存里的直链已不可用"，
+	// 清掉解析缓存让下次请求重新解析，而不是一直重连同一个坏地址。
+	liveStreamTooShort = 20 * time.Second
+)
+
+// isLiveFLVPath 判断是否为 FLV 直播直链（只看路径，忽略查询串）。
+func isLiveFLVPath(raw string) bool {
+	if u, err := url.Parse(raw); err == nil {
+		return strings.HasSuffix(strings.ToLower(u.Path), ".flv")
+	}
+	return strings.HasSuffix(strings.ToLower(raw), ".flv")
+}
 
 // getRedirect 返回某频道解析型源的缓存最终地址（未学/会话窗口超时则为空）。
 func (h *Handler) getRedirect(key string) string {
@@ -869,7 +899,9 @@ func (h *Handler) getRedirect(key string) string {
 	}
 	rc := v.(*redirectCache)
 	now := time.Now()
-	if now.Sub(rc.lastUsed) > redirectActiveWindow {
+	// 活跃窗口判断"频道还在不在播"；storedAt 判断"这条直链本身有没有过期"。
+	// 两者缺一不可：只看活跃窗口时，一直播的频道会永远复用第一次解析的地址。
+	if now.Sub(rc.lastUsed) > redirectActiveWindow || now.Sub(rc.storedAt) > redirectResolveTTL {
 		h.redirects.Delete(key)
 		return ""
 	}
@@ -879,7 +911,8 @@ func (h *Handler) getRedirect(key string) string {
 
 // storeRedirect 记住某频道解析型源的最终拉流地址（活跃会话内滚动续期）。
 func (h *Handler) storeRedirect(key, finalURL string) {
-	h.redirects.Store(key, &redirectCache{finalURL: finalURL, lastUsed: time.Now()})
+	now := time.Now()
+	h.redirects.Store(key, &redirectCache{finalURL: finalURL, lastUsed: now, storedAt: now})
 }
 
 // clearRedirect 清除某频道解析型源的最终地址缓存（失效回退时调用）。
