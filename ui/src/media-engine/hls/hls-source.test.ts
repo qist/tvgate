@@ -65,6 +65,23 @@ describe("pickAudioRendition", () => {
   });
 });
 
+describe("HlsSource.load（initialText 复用）", () => {
+  it("预取文本直接解析，不再发播放列表请求（起播少一次往返）", async () => {
+    const playlist = ["#EXTM3U", "#EXT-X-TARGETDURATION:6", "#EXT-X-MEDIA-SEQUENCE:7", "#EXTINF:6,", "s0.ts", "#EXTINF:6,", "s1.ts", "#EXTINF:6,", "s2.ts", "#EXT-X-ENDLIST"].join("\n");
+    let fetchCalls = 0;
+    const source = new HlsSource(
+      "http://x/p.m3u8",
+      {},
+      { initialText: playlist, fetcher: () => { fetchCalls++; return Promise.resolve(playlist); } },
+    );
+    const info = await source.load();
+    expect(info?.segmentCount).toBe(3);
+    expect(info?.live).toBe(false);
+    expect(fetchCalls).toBe(0); // 预取文本已够用：零次请求
+    expect(await source.next()).toBe("http://x/s0.ts");
+  });
+});
+
 describe("HlsSource.pollIntervalMs", () => {
   /** 目标时长 target、起始序号 seq 的媒体播放列表（序号相同 = 没有新分片）。 */
   const playlist = (target: number, seq = 1): string =>

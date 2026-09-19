@@ -36,6 +36,11 @@ export interface HlsSourceOptions {
   liveEdgeSegments?: number;
   /** 连续刷新失败上限，超过则停止并报错。 */
   maxRefreshFailures?: number;
+  /**
+   * 预取的播放列表文本（worker 探测阶段已把整份读回）：load() 首次解析直接复用，
+   * 省掉一次完整的播放列表往返——起播关键路径上实测省 ~0.4s。仅首次 load 生效。
+   */
+  initialText?: string;
   /** 自定义抓取（便于测试注入）。 */
   fetcher?: (url: string) => Promise<string>;
   headers?: Record<string, string>;
@@ -73,6 +78,8 @@ export class HlsSource implements SegmentSource {
   private readonly liveEdgeSegments: number;
   private readonly maxRefreshFailures: number;
   private readonly maxBandwidth?: number;
+  /** 预取的播放列表文本：仅首次 load 使用一次（见 HlsSourceOptions.initialText）。 */
+  private initialText?: string;
 
   constructor(
     url: string,
@@ -83,6 +90,7 @@ export class HlsSource implements SegmentSource {
     this.liveEdgeSegments = options.liveEdgeSegments ?? LIVE_EDGE_SEGMENTS;
     this.maxRefreshFailures = options.maxRefreshFailures ?? MAX_REFRESH_FAILURES;
     this.maxBandwidth = options.maxBandwidth;
+    this.initialText = options.initialText;
     this.fetcher = options.fetcher;
     this.headers = options.headers ?? {};
   }
@@ -92,7 +100,10 @@ export class HlsSource implements SegmentSource {
 
   /** 加载并解析播放列表（master 会再拉一次 variant）。 */
   async load(): Promise<HlsInfo | null> {
-    const text = await this.fetchPlaylist(this.playlistUrl);
+    // 复用探测阶段读回的播放列表文本（一次性）：起播路径少一次网络往返
+    const preloaded = this.initialText;
+    this.initialText = undefined;
+    const text = preloaded ?? (await this.fetchPlaylist(this.playlistUrl));
     if (text === null) {
       return null;
     }

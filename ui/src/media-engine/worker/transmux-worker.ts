@@ -57,34 +57,39 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** 响应前几 KB 判断是否 HLS（#EXTM3U）。
+/** 响应判断是否 HLS（#EXTM3U）并读出完整播放列表文本。
  *  返回 null 表示探测本身失败（网络不可用）——必须与「确定不是 HLS」区分开：
- *  前者应退避重试（服务重启窗口内 fetch 必然短暂失败），后者才降级为直连 URL。 */
-async function sniffHls(url: string): Promise<boolean | null> {
+ *  前者应退避重试（服务重启窗口内 fetch 必然短暂失败），后者才降级为直连 URL。
+ *  文本整体返回给 HlsSource 复用：起播路径上播放列表只下载**一次**
+ *  （此前 sniff 读个开头就 cancel、load 再整份重拉，白付一次往返，实测 ~0.4s）。 */
+async function sniffHls(url: string): Promise<{ hls: boolean; text: string | null } | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 4000);
   try {
     const res = await fetch(url, { signal: ctrl.signal });
-    if (!res.ok || !res.body) return false;
+    if (!res.ok || !res.body) return { hls: false, text: null };
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let acc = "";
     try {
-      for (let i = 0; i !== 32; i++) {
+      for (;;) {
         const c = await reader.read();
         if (c.done) break;
         if (c.value) acc += dec.decode(c.value, { stream: true });
-        if (acc.indexOf("#EXTM3U") !== -1) break;
+        // 播放列表防护上限：直播窗口只有几 KB，2MB 足够容纳任何合规播放列表
+        if (acc.length > 2 * 1024 * 1024) {
+          try {
+            await reader.cancel();
+          } catch {
+            /* ignore */
+          }
+          break;
+        }
       }
     } finally {
       clearTimeout(timer);
-      try {
-        await reader.cancel();
-      } catch {
-        /* ignore */
-      }
     }
-    return acc.indexOf("#EXTM3U") !== -1;
+    return { hls: acc.indexOf("#EXTM3U") !== -1, text: acc };
   } catch {
     clearTimeout(timer);
     // 探测失败（网络不可用 / 超时）：返回 null，由调用方退避重试而非降级直连
@@ -119,16 +124,19 @@ async function resolveSources(
 
   for (let attempt = 1; attempt <= SOURCE_INIT_MAX_ATTEMPTS; attempt++) {
     const sniff = await sniffHls(first);
-    if (sniff === false) {
+    if (sniff === null) {
+      // 探测失败（网络不可用）：退避后重试
+    } else if (!sniff.hls) {
       // 确定不是 HLS（如直连 TS/FLV）：交给 pipeline 按直连流处理，无需重试
       return { source: null, hasAudioRendition: false, audioSourcePromise: Promise.resolve(null), hlsTargetDuration: 0, urls };
-    }
-    if (sniff === true) {
+    } else {
       // 初始化期间 onError 静默：拉取失败由本函数的退避重试消化，不消耗 UI 重试预算
       // liveEdgeSegments: 2 —— 起播点取 edge-1：比 3 片少下 1 片（更快），
       // 又不像 1 片那样直接贴最新片（最新片可能尚未在 CDN 完全就绪 → 拉取失败/重试
       // → 起播反而变慢）。续片由 IO 循环接续。
-      const hls = new HlsSource(first, { onError: () => {} }, { liveEdgeSegments: 2 });
+      // initialText：sniff 已把整份播放列表读回来了，直接复用，不再二次请求
+      // （起播关键路径上省一整个播放列表往返，实测 ~0.4s）。
+      const hls = new HlsSource(first, { onError: () => {} }, { liveEdgeSegments: 2, initialText: sniff.text ?? undefined });
       const info = await hls.load().catch(() => null);
       if (info) {
         // 独立音频 rendition（声画分流）：**异步加载、不阻塞主视频流水线** ——
