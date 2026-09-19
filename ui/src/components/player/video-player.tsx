@@ -475,6 +475,8 @@ function VideoPlayerShell({
     backendKind === "native" || isMSEPlaybackSupported() ? null : { message: tr("mseNotSupported") },
   );
   const [notice, setNotice] = useState<PlaybackFailureView | null>(null);
+  /** 某槽的视频轨因编码不受支持被跳过（如设备无 HEVC）：屏上只剩声音，给个说明占位。 */
+  const [videoUnsupportedBySlot, setVideoUnsupportedBySlot] = useState<Record<SlotTag, boolean>>({ a: false, b: false });
   const [volumeLevel, setVolumeLevel] = useState(() => getVolume());
   const [mutedState, setMutedState] = useState(() => getMuted());
   const [isPlaybackActive, setPlaybackActive] = useState(false);
@@ -898,6 +900,10 @@ function VideoPlayerShell({
   const onBackendError = useEffectEvent((playerError: PlayerError, slot: SlotTag) => {
     if (playerError.detail === PlayerErrors.CODEC_UNSUPPORTED) {
       console.error("Player codec warning:", JSON.stringify(playerError));
+      // 视频轨被跳过 → 屏上只有声音；记下槽位，用于舞台说明占位（换流时清）。
+      if (playerError.track === "video") {
+        setVideoUnsupportedBySlot((previous) => (previous[slot] ? previous : { ...previous, [slot]: true }));
+      }
       setNotice({
         message: playerError.track === "video" ? tr("videoCodecError") : tr("audioCodecError"),
         description: composeTechnicalErrorText(playerError),
@@ -916,6 +922,8 @@ function VideoPlayerShell({
     playheadSecondsRef.current = 0;
     anchorCalibratedRef.current = false;
     setSessionAnchor(null);
+    // 换流（新频道/新线路）后旧流的"视频编码不支持"结论作废，避免占位串台。
+    setVideoUnsupportedBySlot((previous) => (previous.a || previous.b ? { a: false, b: false } : previous));
 
     const isStreamIdentityChange =
       channel != null &&
@@ -1967,6 +1975,22 @@ function VideoPlayerShell({
       </div>
     );
 
+  /**
+   * 视频轨编码不受支持（典型：4K/HEVC 频道遇到无 HEVC 的设备）：引擎跳过该轨继续播
+   * 音频，屏上原本是一片纯黑，观众会以为"这台坏了"。给一块说明占位，声音照常。
+   */
+  const videoUnsupportedStage = videoUnsupportedBySlot[displayedSlot] &&
+    channel &&
+    !failure &&
+    !requiresGesture &&
+    !switchMaskVisible && (
+      <div className="player-performance-overlay-background pointer-events-none absolute inset-0 z-[2] flex flex-col items-center justify-center gap-3 text-center md:gap-4">
+        <CircleAlert className="h-8 w-8 text-amber-200/85 md:h-10 md:w-10" aria-hidden="true" />
+        <div className="max-w-[80%] truncate text-violet-50/90 text-sm md:text-base">{channel.name}</div>
+        <div className="max-w-[85%] text-balance text-violet-100/60 text-[11px] leading-4 md:text-xs">{tr("videoCodecError")}</div>
+      </div>
+    );
+
   const topLeftStatusBadge = !requiresGesture && !failure && (
     <ClockAndLoadingBadge
       badgeVisible={controlsVisible || showSpinner}
@@ -2203,6 +2227,7 @@ function VideoPlayerShell({
       {videoStage}
       {gestureHitLayer}
       {audioOnlyStage}
+      {videoUnsupportedStage}
       {streamSwitchMask}
       {topLeftStatusBadge}
       {channelIdentityCard}

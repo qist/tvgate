@@ -26,8 +26,9 @@ import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { usePlayerTranslation } from "../../hooks/use-player-translation";
 import type { Locale } from "../../lib/locale";
 import { createProgramTimeline, programProgressToWallClock } from "../../lib/program-timeline";
-import type { PlayerMediaInfo, PlayerRenderState } from "../../media-engine";
+import { getPlaybackBackendKind, type PlayerMediaInfo, type PlayerRenderState } from "../../media-engine";
 import { isNearLiveWallClock, type LiveSessionAnchor, mseToWallClock } from "../../media-engine/timeline";
+import { Badge } from "../ui/badge";
 import type { Channel, EPGProgram } from "../../types/player";
 import { PLAYER_CONTROL_BUTTON_CLASS, PLAYER_OVERLAY_SURFACE_CLASS } from "./classnames";
 import { usePlaybackTime } from "./playback-time-context";
@@ -440,6 +441,9 @@ function PlayerControlsView({
   onSourceChange,
 }: ControlsProps) {
   const t = usePlayerTranslation(locale);
+  // 原生播放模式（浏览器不支持 MSE 转封装）没有解封装产物，媒体徽标必然为空：
+  // 明示模式，避免被当成"徽标坏了"，也便于远程报障时一眼定位。
+  const nativePlaybackMode = getPlaybackBackendKind() === "native";
   const supportsSeeking = channel.sources.some((source) => source.timeshift && source.timeshiftTemplate);
   // 静音按钮的判定含"音量为 0"：此时静音图标更符合听感。
   const isEffectivelyMuted = isMuted || volume <= 0;
@@ -523,8 +527,18 @@ function PlayerControlsView({
           <PlaybackClock currentProgram={currentProgram} seekStartTime={seekStartTime} />
 
           {showMediaBadges && (
-            <div className="ml-1 mr-1 flex min-w-0 basis-0 flex-1 items-center md:ml-2 md:mr-2">
+            <div className="ml-1 mr-1 flex min-w-0 basis-0 flex-1 flex-wrap items-center gap-x-1 gap-y-1 md:ml-2 md:mr-2">
               <PlayerMediaBadges mediaInfo={mediaInfo} locale={locale} renderState={renderState} />
+              {nativePlaybackMode && (
+                <Badge
+                  variant="outline"
+                  size="compact"
+                  className="player-performance-media-badge"
+                  title={t("nativePlaybackHint")}
+                >
+                  {t("nativePlayback")}
+                </Badge>
+              )}
             </div>
           )}
         </div>

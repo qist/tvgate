@@ -102,6 +102,9 @@ const base: TranslationDict = {
 
   // 媒体信息（键序与中文表刻意不同：各语言表按各自阅读习惯维护，键集合保持一致）
   mediaInfoLabel: "Stream info",
+  nativePlayback: "Native playback",
+  nativePlaybackHint:
+    "This browser cannot run the built-in remux pipeline (MSE), so the browser's own player is used — resolution / frame-rate / codec info is unavailable.",
   mediaInfoChannelCount: "channels",
   mediaInfoSingleChannel: "Mono",
   mediaInfoStereoSound: "Stereo",
@@ -248,6 +251,9 @@ const zhHans: TranslationDict = {
 
   // 媒体信息（键序与英文表刻意不同；键集合与 base 保持一致）
   mediaInfoLabel: "流信息",
+  nativePlayback: "原生播放",
+  nativePlaybackHint:
+    "当前浏览器不支持内置转封装（MSE），已改用浏览器原生播放：分辨率 / 帧率 / 编码信息不可用。",
   mediaInfoVideoCoding: "视频编码",
   mediaInfoAudioCoding: "音频编码",
   mediaInfoDimensions: "分辨率",
@@ -399,6 +405,9 @@ const zhHant: TranslationDict = {
 
   // 媒體資訊（鍵序另成一種排布：與英文/簡體表均不同，鍵集合保持一致）
   mediaInfoLabel: "串流資訊",
+  nativePlayback: "原生播放",
+  nativePlaybackHint:
+    "目前瀏覽器不支援內建轉封裝（MSE），已改用瀏覽器原生播放：解析度 / 幀率 / 編碼資訊不可用。",
   mediaInfoFps: "幀率",
   mediaInfoDimensions: "解像度",
   mediaInfoHdrRange: "動態範圍",
