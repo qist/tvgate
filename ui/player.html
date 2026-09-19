@@ -3,91 +3,66 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="robots" content="noindex, nofollow" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="format-detection" content="telephone=no" />
-    <meta name="robots" content="noindex, nofollow" />
     <title>Player</title>
     <script>
+      // 首帧前引导：只做三件事——判定平台档位、提前落外观/主题类，避免首屏闪色与首帧卡顿。
+      // 数据契约：<html> 上的 data-player-platform（lib/platform.ts 消费）、
+      // data-performance-tier（index.css 的低性能档选择器消费）、player-theme-*/dark 类。
       (() => {
         const root = document.documentElement;
-        const navigatorStandalone = navigator.standalone;
-        const isStandalone =
-          typeof navigatorStandalone === "boolean"
-            ? navigatorStandalone
-            : window.matchMedia("(display-mode: standalone)").matches;
-        root.classList.toggle("player-standalone", isStandalone);
-
         const ua = navigator.userAgent;
-        const deviceMemory = Number.isFinite(navigator.deviceMemory) ? navigator.deviceMemory : undefined;
-        const hardwareConcurrency = Number.isFinite(navigator.hardwareConcurrency)
-          ? navigator.hardwareConcurrency
-          : undefined;
-        const isLGWebOS =
-          /(?:Web0S|webOS)/i.test(ua) || (/\bNetCast\b/i.test(ua) && /\b(?:SmartTV|Colt)\/[\d.]+/i.test(ua));
-        const isAndroid = /Android|HarmonyOS|OpenHarmony/i.test(ua);
-        const isAndroidTV =
-          isAndroid && /\b(?:TV|SmartTV|GoogleTV|BRAVIA|SHIELD|MiTV|MIBOX)\b|\bAFT[A-Z0-9]+\b/i.test(ua);
-        const isIOS =
+
+        const webOS = /(?:Web0S|webOS)/i.test(ua) || (/\bNetCast\b/i.test(ua) && /\b(?:SmartTV|Colt)\/[\d.]+/i.test(ua));
+        const android = /Android|HarmonyOS|OpenHarmony/i.test(ua);
+        const androidTV = android && /\b(?:TV|SmartTV|GoogleTV|BRAVIA|SHIELD|MiTV|MIBOX)\b|\bAFT[A-Z0-9]+\b/i.test(ua);
+        const iDevice =
           /iPhone|iPad|iPod|CPU (?:iPhone )?OS \d+[_\d]* like Mac OS X|EdgiOS|CriOS|FxiOS|OPiOS/.test(ua) ||
           (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-        const isOtherMobile = /Mobile|Tablet|Silk|Kindle|PlayBook/i.test(ua);
+        const handheld = /Mobile|Tablet|Silk|Kindle|PlayBook/i.test(ua);
 
-        root.dataset.playerPlatform = isLGWebOS
-          ? "lg-webos"
-          : isAndroidTV
-            ? "android-tv"
-            : isAndroid
-              ? "android"
-              : isIOS
-                ? "ios"
-                : isOtherMobile
-                  ? "mobile"
-                  : "desktop";
+        const platform = webOS ? "lg-webos" : androidTV ? "android-tv" : android ? "android" : iDevice ? "ios" : handheld ? "mobile" : "desktop";
+        root.dataset.playerPlatform = platform;
 
-        let performanceTier = "capable";
-        if (isLGWebOS || isAndroidTV) {
-          performanceTier = "constrained";
-        } else if (isAndroid) {
-          const lowMemory = deviceMemory !== undefined && deviceMemory <= 4;
-          const lowConcurrency = hardwareConcurrency !== undefined && hardwareConcurrency <= 4;
-          if (lowMemory || lowConcurrency) performanceTier = "constrained";
-        }
-        root.dataset.performanceTier = performanceTier;
+        const finite = (value) => (Number.isFinite(value) ? value : undefined);
+        const memory = finite(navigator.deviceMemory);
+        const cores = finite(navigator.hardwareConcurrency);
+        const weakAndroid = android && ((memory !== undefined && memory <= 4) || (cores !== undefined && cores <= 4));
+        root.dataset.performanceTier = webOS || androidTV || weakAndroid ? "constrained" : "capable";
 
-        // 界面风格：我们自己的 6 套配色（原始 Fancy/Simple 已移除），默认 emerald（翠绿）。
-        // 必须与 use-player-appearance.ts 的 DEFAULT_APPEARANCE 保持一致，否则首帧会闪另一种配色。
-        var playerAppearances = ["ocean", "emerald", "sunset", "rose", "amber", "slate"];
-        var playerAppearance = "emerald";
+        const inStandalone =
+          typeof navigator.standalone === "boolean"
+            ? navigator.standalone
+            : window.matchMedia("(display-mode: standalone)").matches;
+        root.classList.toggle("player-standalone", inStandalone);
+
+        // 外观：与 lib/appearance.ts、use-appearance.ts 共用同一存储键与类名契约，
+        // 默认 emerald（APPLICATION_APPEARANCES 首项不一致会闪一帧别的配色）。
+        const APPEARANCES = ["ocean", "emerald", "sunset", "rose", "amber", "slate"];
+        let appearance = "emerald";
         try {
-          var storedPlayerAppearance = localStorage.getItem("tvgate-player-appearance");
-          if (playerAppearances.indexOf(storedPlayerAppearance) !== -1) {
-            playerAppearance = storedPlayerAppearance;
-          }
+          const saved = localStorage.getItem("tvgate-player-appearance");
+          if (APPEARANCES.includes(saved)) appearance = saved;
         } catch (error) {
-          console.warn("Failed to apply stored player appearance early", error);
+          console.warn("early appearance bootstrap failed", error);
         }
-        for (var appearanceIndex = 0; appearanceIndex < playerAppearances.length; appearanceIndex++) {
-          var appearanceName = playerAppearances[appearanceIndex];
-          root.classList.toggle("player-theme-" + appearanceName, playerAppearance === appearanceName);
+        for (const name of APPEARANCES) {
+          root.classList.toggle(`player-theme-${name}`, name === appearance);
         }
 
+        // 主题：auto 跟随系统；light/dark 为强制。存储键与 useTheme 的调用点保持一致。
         try {
-          const storageKey = "tvgate-player-theme";
-          const stored = localStorage.getItem(storageKey);
-          const theme = stored === "light" || stored === "dark" ? stored : "auto";
-          const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-          const isDark = theme === "dark" || (theme === "auto" && prefersDark);
-          if (isDark) {
-            root.classList.add("dark");
-            root.style.colorScheme = "dark";
-          } else {
-            root.classList.remove("dark");
-            root.style.colorScheme = "light";
-          }
+          const saved = localStorage.getItem("tvgate-player-theme");
+          const mode = saved === "light" || saved === "dark" ? saved : "auto";
+          const dark = mode === "dark" || (mode === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          root.classList.toggle("dark", dark);
+          root.style.colorScheme = dark ? "dark" : "light";
         } catch (error) {
-          console.warn("Failed to apply stored theme early", error);
+          console.warn("early theme bootstrap failed", error);
         }
       })();
     </script>

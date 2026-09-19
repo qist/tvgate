@@ -10,20 +10,28 @@
   --radius-xl: 1.25rem;
   /* 主色文字（浅底上可读的主色；后台由 .admin-app 按风格覆盖） */
   --primary-text: 234 74% 42%;
+  /* 面：底 / 卡 / 弹层 */
   --background: 226 44% 97%;
   --foreground: 229 36% 14%;
   --card: 0 0% 100%;
+  /* 卡与弹层前景色同底一档，换面不换字色 */
   --card-foreground: 229 36% 14%;
   --popover: 0 0% 100%;
   --popover-foreground: 229 36% 14%;
+
+  /* 品牌色与强调色 */
   --primary: 216 56% 42%;
   --primary-foreground: 0 0% 100%;
   --secondary: 228 46% 94%;
   --secondary-foreground: 232 36% 22%;
-  --muted: 225 31% 93%;
-  --muted-foreground: 226 15% 43%;
   --accent: 250 58% 94%;
   --accent-foreground: 252 52% 29%;
+
+  /* 弱化信息 */
+  --muted: 225 31% 93%;
+  --muted-foreground: 226 15% 43%;
+
+  /* 状态与描边 */
   --destructive: 354 75% 48%;
   --destructive-foreground: 0 0% 98%;
   --border: 226 27% 86%;
@@ -32,33 +40,44 @@
 }
 
 .dark {
+  /* 面 */
   --background: 231 46% 7%;
   --foreground: 220 32% 96%;
   --card: 229 37% 11%;
+  /* 卡与弹层前景同底一档（浅色字） */
   --card-foreground: 220 32% 96%;
   --popover: 229 38% 10%;
   --popover-foreground: 220 32% 96%;
+
+  /* 品牌色与强调色（深底上提亮、降饱和） */
   --primary: 216 60% 60%;
   --primary-foreground: 235 44% 10%;
   --secondary: 228 30% 17%;
   --secondary-foreground: 220 32% 96%;
-  --muted: 228 25% 17%;
-  --muted-foreground: 224 16% 66%;
   --accent: 248 33% 19%;
   --accent-foreground: 246 82% 88%;
+
+  /* 弱化信息 */
+  --muted: 228 25% 17%;
+  --muted-foreground: 224 16% 66%;
+
+  /* 状态与描边 */
   --destructive: 354 72% 50%;
   --destructive-foreground: 0 0% 100%;
   --border: 228 23% 22%;
   --input: 228 24% 24%;
   --ring: 234 89% 64%;
+
+  /* 主色文字 */
   --primary-text: 234 89% 78%;
 }
 
 @layer base {
   html {
     @apply min-h-full bg-background font-sans;
-    font-synthesis: none;
+    /* 关掉合成字重、开可读性优先渲染：中文粗体才不发虚、字重不跳变 */
     text-rendering: optimizeLegibility;
+    font-synthesis: none;
   }
 
   body {
@@ -70,6 +89,7 @@
   input,
   select,
   textarea {
+    /* 统一继承字体：浏览器给各控件的默认字体栈各不相同 */
     font: inherit;
   }
 }
@@ -95,14 +115,14 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-
+  /* 系统"减少动态效果"偏好：动画与过渡统一压到 1 帧 */
   *,
   *::before,
   *::after {
-    scroll-behavior: auto;
-    animation-duration: 0.01ms;
     animation-iteration-count: 1;
+    animation-duration: 0.01ms;
     transition-duration: 0.01ms;
+    scroll-behavior: auto;
   }
 }
 
@@ -843,29 +863,30 @@ html.player-theme-slate .admin-app {
   background-color: hsl(var(--primary) / 0.26);
 }
 
-/* 低性能档（performanceTier=constrained）：用显式语义钩子做平面化，避免误伤播放器全部后代。 */
+/* 低性能档（performanceTier=constrained）：用显式语义钩子做平面化，避免误伤播放器全部后代。
+ * 效果层（模糊/阴影/滤镜）统一关闭；渐变、装饰件、动效各自单独降级。 */
 html[data-performance-tier="constrained"] .player-performance-effect,
-html[data-performance-tier="constrained"] :is(.player-performance-page-background,
-  .player-performance-panel-background,
-  .player-performance-overlay-background,
-  .player-performance-warning-background,
-  .player-performance-error-background,
-  .player-performance-controls-background,
-  .player-performance-progress-track,
-  .player-performance-progress-fill,
-  .player-performance-logo-background,
-  .player-performance-epg-header,
-  .player-performance-list-surface-selected,
-  .player-performance-list-surface-default,
-  .player-performance-channel-groups,
-  .player-performance-group-selected,
-  .player-performance-group-default,
-  .player-performance-channel-number-selected,
-  .player-performance-channel-number-default) {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
+html[data-performance-tier="constrained"] .player-performance-page-background,
+html[data-performance-tier="constrained"] .player-performance-panel-background,
+html[data-performance-tier="constrained"] .player-performance-overlay-background,
+html[data-performance-tier="constrained"] .player-performance-warning-background,
+html[data-performance-tier="constrained"] .player-performance-error-background,
+html[data-performance-tier="constrained"] .player-performance-controls-background,
+html[data-performance-tier="constrained"] .player-performance-progress-track,
+html[data-performance-tier="constrained"] .player-performance-progress-fill,
+html[data-performance-tier="constrained"] .player-performance-logo-background,
+html[data-performance-tier="constrained"] .player-performance-epg-header,
+html[data-performance-tier="constrained"] .player-performance-list-surface-selected,
+html[data-performance-tier="constrained"] .player-performance-list-surface-default,
+html[data-performance-tier="constrained"] .player-performance-channel-groups,
+html[data-performance-tier="constrained"] .player-performance-group-selected,
+html[data-performance-tier="constrained"] .player-performance-group-default,
+html[data-performance-tier="constrained"] .player-performance-channel-number-selected,
+html[data-performance-tier="constrained"] .player-performance-channel-number-default {
   box-shadow: none;
   filter: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 html[data-performance-tier="constrained"] .player-performance-gradient {
@@ -887,27 +908,27 @@ html[data-performance-tier="constrained"] body {
 html[data-performance-tier="constrained"] .player-performance-motion,
 html[data-performance-tier="constrained"] .player-performance-motion::before,
 html[data-performance-tier="constrained"] .player-performance-motion::after {
-  scroll-behavior: auto;
-  animation-duration: 0.01ms;
   animation-iteration-count: 1;
+  animation-duration: 0.01ms;
   transition-duration: 0.01ms;
+  scroll-behavior: auto;
 }
 
 @media (prefers-reduced-motion: no-preference) {
   html[data-performance-tier="constrained"] .player-performance-loading-spinner {
-    animation-duration: 1s;
     animation-iteration-count: infinite;
+    animation-duration: 1s;
   }
 }
 
 html[data-performance-tier="constrained"] .player-performance-page-background {
-  background-color: #f1f5f9;
   background-image: none;
+  background-color: #f1f5f9;
 }
 
 html[data-performance-tier="constrained"] .player-performance-panel-background {
-  background-color: #ffffff;
   background-image: none;
+  background-color: #ffffff;
 }
 
 html.dark[data-performance-tier="constrained"] .player-performance-panel-background {
@@ -915,26 +936,26 @@ html.dark[data-performance-tier="constrained"] .player-performance-panel-backgro
 }
 
 html[data-performance-tier="constrained"] .player-performance-overlay-background {
-  background-color: #0f172a;
   background-image: none;
+  background-color: #0f172a;
   border-color: #475569;
 }
 
 html[data-performance-tier="constrained"] .player-performance-warning-background {
-  border-color: #854d0e;
-  background-color: #2b2111;
   background-image: none;
+  background-color: #2b2111;
+  border-color: #854d0e;
 }
 
 html[data-performance-tier="constrained"] .player-performance-error-backdrop {
-  background-color: #140b18;
   background-image: none;
+  background-color: #140b18;
 }
 
 html[data-performance-tier="constrained"] .player-performance-error-background {
-  border-color: #9f1239;
-  background-color: #2a1226;
   background-image: none;
+  background-color: #2a1226;
+  border-color: #9f1239;
 }
 
 html.dark[data-performance-tier="constrained"] .player-performance-page-background {
@@ -952,15 +973,16 @@ html[data-performance-tier="constrained"] .player-performance-controls-position 
 }
 
 html[data-performance-tier="constrained"] .player-performance-controls-background {
+  /* 控制条：低性能档给平面深底 + 描边，不再叠模糊/阴影 */
   width: auto;
-  margin-right: 1rem;
-  margin-bottom: 1rem;
-  margin-left: 1rem;
+  gap: 0.25rem;
   padding-top: 0.375rem;
   padding-right: 0.5rem;
   padding-bottom: 0.375rem;
   padding-left: 0.5rem;
-  gap: 0.25rem;
+  margin-right: 1rem;
+  margin-bottom: 1rem;
+  margin-left: 1rem;
   border: 1px solid #475569;
   border-radius: 0.75rem;
   background-color: #0f172a;
@@ -973,14 +995,14 @@ html[data-performance-tier="constrained"] .player-performance-controls-backgroun
 
 @media (min-width: 48rem) {
   html[data-performance-tier="constrained"] .player-performance-controls-background {
-    margin-right: 2rem;
-    margin-bottom: 2rem;
-    margin-left: 2rem;
+    gap: 0.5rem;
     padding-top: 0.5rem;
     padding-right: 0.75rem;
     padding-bottom: 0.5rem;
     padding-left: 0.75rem;
-    gap: 0.5rem;
+    margin-right: 2rem;
+    margin-bottom: 2rem;
+    margin-left: 2rem;
   }
 
   html[data-performance-tier="constrained"] .player-performance-controls-background.player-performance-controls-with-timeline {
@@ -990,14 +1012,14 @@ html[data-performance-tier="constrained"] .player-performance-controls-backgroun
 
 @container video (max-height: 320px) {
   html[data-performance-tier="constrained"] .player-performance-controls-background {
-    margin-right: 0.5rem;
-    margin-bottom: 0.5rem;
-    margin-left: 0.5rem;
+    gap: 0.125rem;
     padding-top: 0.25rem;
     padding-right: 0.375rem;
     padding-bottom: 0.25rem;
     padding-left: 0.375rem;
-    gap: 0.125rem;
+    margin-right: 0.5rem;
+    margin-bottom: 0.5rem;
+    margin-left: 0.5rem;
     border-radius: 0.5rem;
   }
 
@@ -1008,11 +1030,11 @@ html[data-performance-tier="constrained"] .player-performance-controls-backgroun
 
 @container video (max-height: 220px) {
   html[data-performance-tier="constrained"] .player-performance-controls-background {
+    padding-top: 0.125rem;
+    padding-bottom: 0.125rem;
     margin-right: 0.25rem;
     margin-bottom: 0.25rem;
     margin-left: 0.25rem;
-    padding-top: 0.125rem;
-    padding-bottom: 0.125rem;
   }
 
   html[data-performance-tier="constrained"] .player-performance-controls-background.player-performance-controls-with-timeline {

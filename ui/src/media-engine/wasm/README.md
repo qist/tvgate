@@ -30,8 +30,8 @@
 > **解码已在开发期用自产 fixture 验证**（48kHz 立体声双音 1s/10s）：5 codec
 > 整块与 1KB/768B/333B 分块喂入均无损恢复、0 解码错误、RMS/声道过零率正确。
 > 该离线 harness 与 fixture **未随仓库交付**（本地文件，非 .gitignore 排除）；
-> 端到端回归可直接用 `ac3-lab`（`ui/ac3-lab.html`，同一份 `audio-sync-core` 与
-> 同一条软解链路）播软解频道观察 drift/underrun/重锚。
+> 端到端回归直接播放软解频道（AC-3/E-AC-3/MP2 源）即可，观察
+> drift / underrun / 重锚行为是否正常。
 > 踩坑记录（`avcodec_audio.c` 内注释已逐条锁定）：
 > ① FFmpeg parser 会在返回 `consumed=0` 的同时交出其内部缓冲的完整帧（帧恰好
 >    结束于本次输入起点）——封装必须在检查 `pkt_size` **之后**才因无进展 break，
@@ -59,11 +59,11 @@ info[6] 为本批输出中起始于本次输入之前（跨 payload 拼帧）的
 
 调用约定：软解路径（MP2/AC-3/E-AC-3）在 `demux/ts-demuxer.ts` 已按帧头切分，
 **一帧一调**（跨 PES 的半帧由 demuxer 的 carry 拼完再送）；WASM 侧 parser 可能压住
-一帧再交出，`info[6]` 会如实上报，上层 `worker/pipeline.ts` 用它把标签回退到帧起点，
+一帧再交出，`info[6]` 会如实上报，上层 `worker/transmux-worker.ts` 用它把标签回退到帧起点，
 逐帧标签因此仍然精确。整段 payload 喂入同样可用（parser + carry 自洽），
 两种喂法共用同一份 info 语义。
 
-TS 侧加载器：`../../decoder/avcodec-audio-decoder.ts`（独立 WASM import 打桩 +
+TS 侧加载器：`decoder/ffmpeg-bridge.ts`（独立 WASM import 打桩 +
 me_* ABI 驱动，同一模块同时供 Worker 解码与主线程 wsola 拉伸）。
 
 ## 5.1 直通（本地实现，2026-09-16）

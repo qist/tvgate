@@ -360,22 +360,18 @@ function readVuiParameters(reader: ExpGolomb, maxSubLayersMinus1: number): VuiIn
   return info;
 }
 
+/** H.265 剖面名表（Annex A Table A.1）；表外取值统一回落 "Unknown"。 */
+const HEVC_PROFILE_NAMES: Record<number, string> = {
+  1: "Main",
+  2: "Main10",
+  3: "MainSP",
+  4: "Rext",
+  9: "SCC",
+};
+
 /** 剖面名（H.265 Annex A Table A.1；未知返回 Unknown）。 */
 export function hevcProfileName(profileIdc: number): string {
-  switch (profileIdc) {
-    case 1:
-      return "Main";
-    case 2:
-      return "Main10";
-    case 3:
-      return "MainSP";
-    case 4:
-      return "Rext";
-    case 9:
-      return "SCC";
-    default:
-      return "Unknown";
-  }
+  return HEVC_PROFILE_NAMES[profileIdc] ?? "Unknown";
 }
 
 /** 色度格式名（H.265 Table 6-1）。 */

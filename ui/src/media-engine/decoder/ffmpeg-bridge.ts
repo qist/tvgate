@@ -165,22 +165,17 @@ class FfmpegWasmBridge implements DecoderBridge {
   destroy(): void {
     const ex = this.exports;
     if (!ex) return;
-    const free = ex.free as (p: number) => void;
     if (this.decoderPtr) {
       (ex[this.abi.destroy] as (d: number) => void)(this.decoderPtr);
       this.decoderPtr = 0;
     }
-    if (this.inputPtr) {
-      free(this.inputPtr);
-      this.inputPtr = 0;
-    }
-    if (this.outputPtr) {
-      free(this.outputPtr);
-      this.outputPtr = 0;
-    }
-    if (this.infoPtr) {
-      free(this.infoPtr);
-      this.infoPtr = 0;
+    // 三块宿主缓冲一并归还：任何一块为空都跳过，退出前统一置零防重复释放
+    const free = ex.free as (p: number) => void;
+    for (const field of ["inputPtr", "outputPtr", "infoPtr"] as const) {
+      const ptr = this[field];
+      if (!ptr) continue;
+      free(ptr);
+      this[field] = 0;
     }
     this.exports = null;
     this.memory = null;
