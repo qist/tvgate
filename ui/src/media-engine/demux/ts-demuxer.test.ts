@@ -123,6 +123,117 @@ describe("TsDemuxer（H264 集成）", () => {
   });
 });
 
+describe("TsDemuxer 视频：无 PTS 注入帧与时间戳跳变（江苏移动系 CDN 实测形态）", () => {
+  const PAT = new Uint8Array([0x00, 0x00, 0xb0, 0x09, 0x00, 0x01, 0xc1, 0x00, 0x00, 0x00, 0x01, 0xe1, 0x00]);
+  const PMT = new Uint8Array([
+    0x00, 0x02, 0xb0, 0x0e, 0x00, 0x01, 0xc1, 0x00, 0x00, 0xe1, 0x00, 0xf0, 0x00, 0x1b, 0xe1, 0x01, 0xf0, 0x00,
+  ]);
+  const SPS = new Uint8Array([0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1e]);
+  const PPS = new Uint8Array([0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80]);
+  const IDR = new Uint8Array([0x00, 0x00, 0x01, 0x65, 0x01, 0x02]);
+  const SLICE = new Uint8Array([0x00, 0x00, 0x01, 0x41, 0x03]);
+
+  /** 造一个视频 PES（可选 PTS/DTS）并打成 TS 包。 */
+  function videoPesTs(payload: Uint8Array, pts: number | null, cc: number, pus = true, dts?: number): Uint8Array {
+    const head =
+      pts === null
+        ? new Uint8Array([0x00, 0x00, 0x01, 0xe0, 0x00, 0x00, 0x80, 0x00, 0x00]) // flags2=0：无 PTS/DTS
+        : dts === undefined
+          ? new Uint8Array([0x00, 0x00, 0x01, 0xe0, 0x00, 0x00, 0x80, 0x80, 0x05, ...encodePts(pts)])
+          : new Uint8Array([0x00, 0x00, 0x01, 0xe0, 0x00, 0x00, 0x80, 0xc0, 0x0a, ...encodePts(pts), ...encodePts(dts)]);
+    return tsPacket(0x0101, concat([head, payload]), pus, cc);
+  }
+
+  function demuxAll(stream: Uint8Array): { tracks: TrackInfo[]; samples: DemuxedSample[] } {
+    const tracks: TrackInfo[] = [];
+    const samples: DemuxedSample[] = [];
+    const demuxer = new TsDemuxer({ onTracks: (t) => tracks.push(...t), onSamples: (s) => samples.push(...s) });
+    demuxer.push(stream);
+    return { tracks, samples };
+  }
+
+  it("无 PTS 注入帧（SPS/PPS/IDR）不丢弃：轨照常发布，样本时间从后继帧回推", () => {
+    const stream = concat([
+      tsPacket(0x0000, PAT, true, 0),
+      tsPacket(0x0100, PMT, true, 0),
+      // 前导帧（PTS 36000）：尚无参数集，样本被丢弃但 dts 序列建立
+      videoPesTs(concat([new Uint8Array([0x00, 0x00, 0x01, 0x09, 0xf0]), SLICE]), 36000, 1),
+      // 无 PTS 注入帧：SPS/PPS/IDR（ Jiangsu CDN 在 GOP 边界整段注入，flags2=0x00 ）
+      videoPesTs(concat([PPS, new Uint8Array([0x00, 0x00, 0x01, 0x09, 0xf0]), SPS, IDR]), null, 2),
+      // 后继帧（PTS 43200）：触发注入帧 flush + 自身成帧
+      videoPesTs(SLICE, 43200, 3),
+      videoPesTs(SLICE, 46800, 4), // 冲刷上一帧
+    ]);
+    const { tracks, samples } = demuxAll(stream);
+
+    const video = tracks.find((t) => t.kind === "video");
+    expect(video).toBeDefined(); // 参数集从注入帧拿到，轨必须发布
+    const videoSamples = samples.filter((s) => s.kind === "video");
+    expect(videoSamples.length).toBeGreaterThanOrEqual(2);
+    // 注入帧（IDR）时间 = 后继帧 DTS − 帧距（3600）；首帧必须是关键帧
+    expect(videoSamples[0].isKeyframe).toBe(true);
+    expect(videoSamples[0].dts).toBe(43200 - 3600);
+    expect(videoSamples[1].dts).toBe(43200);
+    // 时间轴单调连续
+    expect(videoSamples[1].dts - videoSamples[0].dts).toBe(3600);
+  });
+
+  it("注入帧的 PTS 不得与任何帧撞车（同刻双帧 → 浏览器丢帧）", () => {
+    // 还原实测碰撞：#0 PTS=39600（B 帧），注入帧按「est_dts 当 PTS」推算恰好也是
+    // 39600 → 同刻两帧 → 浏览器丢一帧（实测每注入必掉帧 = 持续卡顿/丢帧）。
+    // 修复后注入帧 PTS 取「显示前沿 + 帧距」= 43200，全程唯一。
+    const stream = concat([
+      tsPacket(0x0000, PAT, true, 0),
+      tsPacket(0x0100, PMT, true, 0),
+      // #0 PTS=39600 DTS=36000（B 帧，cts=3600）
+      videoPesTs(SLICE, 39600, 1, true, 36000),
+      // #1 无 PTS 注入帧（SPS/PPS/IDR）
+      videoPesTs(concat([PPS, new Uint8Array([0x00, 0x00, 0x01, 0x09, 0xf0]), SPS, IDR]), null, 2),
+      // #2 PTS=46800 DTS=43200（触发注入帧 flush）
+      videoPesTs(SLICE, 46800, 3, true, 43200),
+      // #3 PTS=50400 DTS=46800
+      videoPesTs(SLICE, 50400, 4, true, 46800),
+      videoPesTs(SLICE, 54000, 5, true, 50400), // 冲刷上一帧
+    ]);
+    const samples: DemuxedSample[] = [];
+    const tracks: TrackInfo[] = [];
+    const demuxer = new TsDemuxer({ onTracks: (t) => tracks.push(...t), onSamples: (s) => samples.push(...s) });
+    demuxer.push(stream);
+    const videoSamples = samples.filter((s) => s.kind === "video");
+    expect(videoSamples.length).toBeGreaterThanOrEqual(3);
+    // PTS 全程唯一：同一显示时刻绝不允许两帧（浏览器遇同刻双帧必丢一帧）
+    const ptsSet = new Set(videoSamples.map((s) => s.pts));
+    expect(ptsSet.size).toBe(videoSamples.length);
+    // 注入帧显示时间 = 显示前沿（#0 的 39600）+ 帧距 = 43200，且 DTS 仍占预留槽 39600
+    const injected = videoSamples.find((s) => s.isKeyframe && s.pts === 43200);
+    expect(injected).toBeDefined();
+    expect(injected!.dts).toBe(39600);
+  });
+
+  it("PTS 纪元跳变（discontinuity 切换）重基：样本 dts 保持连续单调", () => {
+    const stream = concat([
+      tsPacket(0x0000, PAT, true, 0),
+      tsPacket(0x0100, PMT, true, 0),
+      videoPesTs(concat([SPS, PPS, IDR]), 36000, 1),
+      videoPesTs(SLICE, 39600, 2),
+      // 纪元跳变（前跳 ~18s，模拟轮播切歌）：正常解析会让时间轴断成两截
+      videoPesTs(SLICE, 1659600, 3),
+      videoPesTs(SLICE, 1663200, 4),
+      videoPesTs(SLICE, 1666800, 5), // 冲刷上一帧
+    ]);
+    const { samples } = demuxAll(stream);
+    const videoSamples = samples.filter((s) => s.kind === "video");
+    expect(videoSamples.length).toBe(4);
+    // 重基后所有相邻帧距保持帧距（3600），绝不出现巨大空洞/负时长
+    for (let i = 1; i < videoSamples.length; i++) {
+      expect(videoSamples[i].dts - videoSamples[i - 1].dts).toBe(3600);
+    }
+    // 跳变帧重基为「上一帧 + 帧距」
+    expect(videoSamples[2].dts).toBe(43200);
+    expect(videoSamples[3].dts).toBe(46800);
+  });
+});
+
 describe("TsDemuxer 扫描方式（scanType：徽标 1080p / 1080i）", () => {
   it("真实隔行素材（SPS frame_mbs_only_flag=0，field_order=tt）→ interlaced", () => {
     const data = new Uint8Array(readFileSync(new URL("./testdata/test-h264-interlaced.mpegts", import.meta.url)));

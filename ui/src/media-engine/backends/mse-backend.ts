@@ -59,21 +59,22 @@ const TARGET_LATENCY = 6;
  * 启动 hold 的兜底放行时长（毫秒）：某轨"声明了却迟迟不来"（数据损坏 / 极晚）时，
  * 到点无条件放行 append，避免 hold 永久挂起、把起播卡死。
  *
- * 取值口径 = **正常源里两轨 init 应该在多久内到齐**。真实源同一批数据里就同时解析出
- * 音视频 init，worker-client 还会把相邻 init 合并进同一个任务下发（见其注释），
- * 所以正常在毫秒级就齐；等超过 2s 基本只可能是那一轨真的没有 —— 再等纯属把起播
- * 往后拖（旧值 12s：慢源上用户要盯着空屏十几秒）。
- * 超时放行的代价可控：后到轨若真晚于此刻，它的 addSourceBuffer 会撞 Chromium 的
- * "引擎已初始化"限制，由 healSourceBufferLimit 自愈重建（更慢，但不会无画/无声）。
+ * 取值口径 = **worker 侧 init 扣住宽限**（Fmp4Remuxer.startupGraceMs=8s）+ 余量。
+ * worker 侧已保证「PMT 声明了视频但视频轨未注册」时扣住音频 init（见 videoInitPending），
+ * 所以此处兜底提前放行时通常**没有任何已到 init 可 append**（无害）；但若兜底早于
+ * worker 宽限到期，迟到的视频 init 会在引擎被音频初始化后到达 → addSourceBuffer 必抛
+ * QuotaExceededError → 触发整条重建 → 重建后同竞态 → 起播死循环
+ * （实测江苏移动系 CDN：SPS/PPS/IDR 在无 PTS 注入 PES 里，视频轨可比音频晚 10s+）。
+ * 故兜底必须 ≥ worker 宽限，绝不能反过来。
  */
-const MSE_HOLD_FALLBACK_MS = 2_000;
+const MSE_HOLD_FALLBACK_MS = 10_000;
 
 /**
  * 自愈重建（healSourceBufferLimit）后的 hold 兜底（毫秒）：比常规值多等一会儿。
  * 此时**已知**这条流有音频轨、且上一次正是音频 SB 没赶上才失败，多给一点时间
  * 让它建齐，避免刚自愈完又原地撞一次上限（该路径只在异常流上走一次，宁可慢点也别再失败）。
  */
-const MSE_HOLD_FALLBACK_FORCED_MS = 4_000;
+const MSE_HOLD_FALLBACK_FORCED_MS = 12_000;
 
 export class MseBackend implements PlaybackBackend {
   readonly kind: PlaybackBackendKind = "mse";

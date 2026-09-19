@@ -109,16 +109,19 @@ async function resolveSources(
   hasAudioRendition: boolean;
   /** 独立音频 rendition：异步加载（不阻塞主视频起播），完成后交付（失败为 null）。 */
   audioSourcePromise: Promise<SegmentSource | null>;
+  /** 播放列表 targetDuration（秒）：起播宽限按分片时长放宽（见 Fmp4Remuxer.setStartupGraceMs）。 */
+  hlsTargetDuration: number;
   urls: string[];
 }> {
   const first = urls[0];
-  if (!first) return { source: null, hasAudioRendition: false, audioSourcePromise: Promise.resolve(null), urls };
+  if (!first)
+    return { source: null, hasAudioRendition: false, audioSourcePromise: Promise.resolve(null), hlsTargetDuration: 0, urls };
 
   for (let attempt = 1; attempt <= SOURCE_INIT_MAX_ATTEMPTS; attempt++) {
     const sniff = await sniffHls(first);
     if (sniff === false) {
       // 确定不是 HLS（如直连 TS/FLV）：交给 pipeline 按直连流处理，无需重试
-      return { source: null, hasAudioRendition: false, audioSourcePromise: Promise.resolve(null), urls };
+      return { source: null, hasAudioRendition: false, audioSourcePromise: Promise.resolve(null), hlsTargetDuration: 0, urls };
     }
     if (sniff === true) {
       // 初始化期间 onError 静默：拉取失败由本函数的退避重试消化，不消耗 UI 重试预算
@@ -154,7 +157,7 @@ async function resolveSources(
         } else {
           resolveAudioSource(null);
         }
-        return { source: hls, hasAudioRendition, audioSourcePromise, urls: [] };
+        return { source: hls, hasAudioRendition, audioSourcePromise, hlsTargetDuration: info.targetDuration ?? 0, urls: [] };
       }
       hls.destroy();
     }
@@ -167,7 +170,7 @@ async function resolveSources(
     }
   }
   onError(`播放列表连续 ${SOURCE_INIT_MAX_ATTEMPTS} 次加载失败`);
-  return { source: null, hasAudioRendition: false, audioSourcePromise: Promise.resolve(null), urls };
+  return { source: null, hasAudioRendition: false, audioSourcePromise: Promise.resolve(null), hlsTargetDuration: 0, urls };
 }
 
 /** worker 内软解：原始样本 → WASM 解码 → PCM（time 已由 pipeline 归一化）。 */
@@ -435,6 +438,8 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
           post({ type: "media-info", info: merged });
         };
 
+        // 起播宽限按分片时长放宽（约 3 个分片）：注入参数集的关键帧最远在 1~2 个分片后
+        const startupGraceMs = resolved.hlsTargetDuration > 0 ? resolved.hlsTargetDuration * 3000 : undefined;
         pipeline = new TransmuxPipeline(
           {
             urls: resolved.urls,
@@ -444,6 +449,7 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
             targetDuration: cmd.targetDuration,
             maxBytes: cmd.maxBytes,
             bufferThreshold: cmd.bufferThreshold,
+            startupGraceMs,
             softDecodeCodecs: cmd.softDecodeCodecs,
             suppressAudio: hasSeparateAudio,
           },

@@ -96,7 +96,7 @@ export class Fmp4Remuxer {
   private readonly emittedInit = new Set<number>();
   /** 首个 init 发射时刻，用于起播宽限判定；null 表示尚未发射任何 init。 */
   private firstInitAt: number | null = null;
-  private readonly startupGraceMs: number;
+  private startupGraceMs: number;
   /** PMT 是否声明了进 MSE 的 AAC 音轨：null=未知；false=纯视频（首个 init 即可放行）；true=须等音轨 init。 */
   private audioExpected: boolean | null = null;
   /**
@@ -106,6 +106,14 @@ export class Fmp4Remuxer {
    * 会在视频轨注册之前让音频把基准锁成自己的首个样本 —— 实测视频时间轴因此整体后移 7.6s。
    */
   private videoExpected = true;
+  /**
+   * 「PMT 声明了视频但视频轨迟迟未注册」的等待起点（毫秒）。
+   * 实测江苏移动系 CDN 把 SPS/PPS/IDR 放在无 PTS 的注入 PES 里，视频轨可比音频晚数秒
+   * （从 GOP 中间进流时更久）。此窗口内音频 init 不发（见 videoInitPending）：音频 init
+   * 先被 append 会初始化媒体引擎，视频 SourceBuffer 从此建不出来（QuotaExceededError），
+   * 触发上层整条重建 → 重建后同样竞态 → 起播死循环（实测"一直加载中"的根因之一）。
+   */
+  private videoInitHoldSinceMs: number | null = null;
   /** 外部时间基准（见 setExternalBase）；null = 用本流水线首样本。 */
   private externalBaseSec: number | null = null;
   /** 基准待定模式（见 awaitExternalBase）：首个 media 段等外部基准（或超时放行）。 */
@@ -255,6 +263,33 @@ export class Fmp4Remuxer {
     this.videoExpected = hasVideo;
   }
 
+  /**
+   * 运行时放宽起播宽限（**只增不减**）：HLS 播放列表解析出 targetDuration 后按
+   * 「约 3 个分片」放宽。实测注入帧源（江苏移动系 CDN）把 SPS/PPS/IDR 放在 GOP
+   * 边界的无 PTS 注入 PES 里，起播点落在 GOP 中间时视频轨可比音频晚 1~2 个分片
+   * （10s 分片 = 10~20s），8s 缺省宽限经常不够 —— 不够就必然撞 Chromium 的
+   * 「引擎已初始化」上限（音频 init 先 append），视频轨从此建不出来。
+   */
+  setStartupGraceMs(ms: number): void {
+    if (Number.isFinite(ms) && ms > this.startupGraceMs) this.startupGraceMs = ms;
+  }
+
+  /**
+   * 视频轨是否仍在「已声明、未注册」的等待窗口内。
+   * 窗口 = videoExpected 为真、视频轨未注册、且未超过起播宽限（startupGraceMs）。
+   * 期间音频 init 与全部 media 都扣住（见 emitInitIfNeeded / mediaGateOpen）：
+   * 引擎一旦被音频先初始化，后到的视频 SourceBuffer 必然建不出来。
+   * 宽限到期仍无视频轨（声明异常/视频损坏流）→ 放行音频，退化为纯音频播放，不卡死。
+   */
+  private videoInitPending(): boolean {
+    if (!this.videoExpected) return false;
+    for (const c of this.trackConfigs.values()) {
+      if (c.kind === "video") return false;
+    }
+    if (this.videoInitHoldSinceMs === null) this.videoInitHoldSinceMs = Date.now();
+    return Date.now() - this.videoInitHoldSinceMs < this.startupGraceMs;
+  }
+
   /** 队列成段条件：该轨累计时长达标，或全局累计字节超限。 */
   private batchReadyForQueue(q: QueuedSample[], ts: number): boolean {
     if (q.length === 0) return false;
@@ -275,13 +310,24 @@ export class Fmp4Remuxer {
     return first.done ? undefined : first.value.id;
   }
 
-  /** 为所有已注册且 codecPrivate 就绪的轨发射 init（每轨独立 SourceBuffer）。 */
+  /**
+   * 为所有已注册且 codecPrivate 就绪的轨发射 init（每轨独立 SourceBuffer）。
+   * **视频 init 必须先于音频 init**：主线程 onInitSegment 收到即建 SourceBuffer 并泵出
+   * appendBuffer —— 音频 init 先到会先 appendBuffer 初始化媒体引擎，后到的视频
+   * SourceBuffer 就建不出来（Chromium QuotaExceededError → 整条重建 → 同竞态死循环）。
+   * 视频轨后注册（实测注入帧源的常态）时，注册瞬间视频 init 先发、音频 init 随后。
+   */
   private emitInitIfNeeded(): void {
-    for (const c of this.trackConfigs.values()) {
+    const configs = [...this.trackConfigs.values()];
+    // 稳定排序：视频在前，其余（音频）保持注册顺序
+    configs.sort((a, b) => (a.kind === "video" ? -1 : 0) - (b.kind === "video" ? -1 : 0));
+    for (const c of configs) {
       if (this.emittedInit.has(c.id)) continue;
       // 视频需 avcC、音频需 esds 才能生成合法 init；未就绪则跳过，等其就绪后再发射
       if (c.kind === "video" && c.codecPrivate.length === 0) continue;
       if (c.kind === "audio" && c.codecPrivate.length === 0) continue;
+      // 音频 init 扣住到视频轨注册（或宽限到期）：见 videoInitPending 注释
+      if (c.kind === "audio" && this.videoInitPending()) continue;
       if (this.firstInitAt === null) this.firstInitAt = Date.now();
       this.callbacks.onInitSegment?.({
         codec: c.codec,
@@ -387,7 +433,12 @@ export class Fmp4Remuxer {
     // 纯音频轨（声画分流的独立音轨流水线）：无视频可等。门控的初衷是保证「首个 init
     // append 前所有 SourceBuffer 都已创建」，本流水线只产 audio SB，其 init 齐即已满足；
     // 若仍落到 8s 宽限期兜底，音频首段会被凭空压后 8 秒（实测"声音出来慢"的确切原因）。
-    if (!hasVideo) return allInitEmitted;
+    // 但「PMT 声明了视频、视频轨尚未注册」时必须继续扣住：音频 media 一旦 append
+    // 就初始化媒体引擎，后到的视频 SourceBuffer 建不出来（见 videoInitPending）。
+    if (!hasVideo) {
+      if (this.videoInitPending()) return false;
+      return allInitEmitted;
+    }
     if (this.audioExpected === false) return hasVideo; // 纯视频：无需等音频
     const hasAudioInit = configs.some((c) => c.kind === "audio" && this.emittedInit.has(c.id));
     if (hasVideo && hasAudioInit && allInitEmitted) return true;
@@ -480,8 +531,11 @@ export class Fmp4Remuxer {
         const videoBase = this.firstSampleSec.get("video");
         if (videoBase !== undefined) {
           this.unifiedBaseSec = videoBase;
-        } else if (!this.videoExpected && ![...this.trackConfigs.values()].some((c) => c.kind === "video")) {
-          // 只有"PMT 明确没有视频轨"时才允许音频自己锚定（纯音频流）
+        } else if (!this.videoInitPending() && ![...this.trackConfigs.values()].some((c) => c.kind === "video")) {
+          // 纯音频流（PMT 没声明视频），或声明了视频但宽限期内始终未注册（broken 流）：
+          // 允许音频自己锚定，避免音频样本被永久扣住造成无声/卡死。
+          // mediaGateOpen 的扣住与此同步（同一 videoInitPending 判定），能走到这里说明
+          // 门已放行（宽限已过期），音频锚定不会与视频轨后到冲突（轨注册即优先视频锚定）。
           const audioBase = this.firstSampleSec.get("audio");
           if (audioBase !== undefined) this.unifiedBaseSec = audioBase;
         }
@@ -568,6 +622,7 @@ export class Fmp4Remuxer {
     this.silentAudioUnit = null;
     this.silentAudioLastDtsMs = null;
     this.silentAudioDurationResidual = 0;
+    this.videoInitHoldSinceMs = null;
     this.trackConfigs.clear();
     this.queues.clear();
     this.lastDuration.clear();

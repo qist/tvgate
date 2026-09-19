@@ -164,6 +164,14 @@ function addParamSet(list: Uint8Array[] | undefined, nal: Uint8Array): Uint8Arra
 const VIDEO_TIMESCALE = 90000;
 const PTS_MODULUS = 2 ** 33;
 const AAC_SAMPLES_PER_FRAME = 1024;
+/** 视频帧距缺省值（90kHz）：40ms ≈ 25fps，与实测注入帧源一致；仅在无历史帧距时兜底。 */
+const DEFAULT_FRAME_DELTA_90 = 3600;
+/**
+ * 视频时间戳跳变重基阈值（90kHz，2 秒）：正常播放相邻帧差 < 100ms，无 PTS 注入帧占位
+ * 也只有 2×帧距（~80ms）。超过该值的跳变只能是节目/广告切换的 PTS 纪元跳变
+ * （对应 EXT-X-DISCONTINUITY），重基到「上一帧 + 帧距」保持时间轴连续。
+ */
+const DISCONTINUITY_JUMP_90 = 2 * VIDEO_TIMESCALE;
 
 /** AAC 跨 PES 残帧上限（字节）：超过说明长时间找不到帧头（流不同步），丢弃避免无界增长。 */
 const AAC_PENDING_LIMIT = 32 * 1024;
@@ -211,6 +219,21 @@ interface TrackState {
   /** 上一完整 MPEG 音频帧的 PTS 与帧长（90kHz）：payload 头部被半帧占用时接续 PTS 基准。 */
   audioLastFramePts90?: number;
   audioLastFrameDur90?: number;
+  /** 视频相邻帧 DTS 距（90kHz）：无 PTS 注入帧的时间戳推算基准。 */
+  videoDtsDelta?: number;
+  /**
+   * 已解码帧的最大显示时间（90kHz）：B 帧重排下解码序 ≠ 显示序（后面的 B 帧
+   * 显示时间可能大于早解码的帧），无 PTS 注入帧的显示时间必须放在这个
+   * 「显示前沿」之后，否则会与尚未显示的 B 帧的 PTS 精确撞车
+   * （实测：est_dts 恰等于两帧之前某 B 帧的 PTS → 同一显示时刻两帧 →
+   * 浏览器丢一帧 → 每次注入必掉帧，表现为持续丢帧/卡顿）。
+   */
+  videoMaxPts90?: number;
+  /**
+   * 等待时间锚的注入帧 ES 载荷：流首个视频 PES 即无 PTS（观众正好从 GOP 边界进流）时，
+   * 尚无 lastDts 可推算，先暂存，待下一个带 PTS 的 PES 到达后按其 DTS 回退一帧补发。
+   */
+  pendingNoPts?: Uint8Array;
 }
 
 export class TsDemuxer {
@@ -470,6 +493,85 @@ export class TsDemuxer {
     const header = parsePesHeader(pes);
     if (!header) return;
 
+    // PES_packet_length>0 时按声明长度截断，避免把 TS 包尾填充算进帧（video 通常为 0 = 不限定）
+    const payloadOf = (): Uint8Array => {
+      const pesPacketLength = (pes[4] << 8) | pes[5];
+      const payloadEnd =
+        pesPacketLength > 0 ? Math.min(6 + pesPacketLength, pes.length) : pes.length;
+      return pes.subarray(header.payloadStart, payloadEnd);
+    };
+
+    if (track.kind === "video") {
+      // 视频 PES 允许无 PTS/DTS（ISO 13818-1 中 PTS 是可选的）：江苏移动系 CDN 会在
+      // GOP 边界整段注入 [PPS][AUD][SPS][PPS][IDR] 访问单元且不携带任何时间戳（实测
+      // mobaibox/Huawei CDN，`flags2=0x00`）。整包丢弃 = 视频轨永远拿不到参数集与
+      // 关键帧 → 轨无法发布、remuxer 等不到首个关键帧 → 永不开播（界面误判"纯音频"）。
+      // 注入帧不占源 PTS 序列的槽位（前后帧 DTS 连续、且恰在中间留出一个帧距），
+      // 按相邻帧距推算 DTS；PTS 取「已解码帧显示前沿 + 一帧」——B 帧重排下解码序
+      // ≠ 显示序，若直接用 est_dts 当 PTS，会与尚未显示的 B 帧的 PTS 精确撞车
+      // （实测恰与两帧之前某 B 帧同值），浏览器同刻两帧必丢一帧 → 持续丢帧/卡顿。
+      if (header.pts == null) {
+        const payload = payloadOf();
+        if (payload.length === 0) return;
+        if (track.lastDts !== undefined) {
+          const estDts = track.lastDts + (track.videoDtsDelta ?? DEFAULT_FRAME_DELTA_90);
+          const estPts = Math.max(estDts, (track.videoMaxPts90 ?? estDts) + (track.videoDtsDelta ?? DEFAULT_FRAME_DELTA_90));
+          track.lastPts = estPts;
+          track.lastDts = estDts;
+          track.videoMaxPts90 = Math.max(track.videoMaxPts90 ?? estPts, estPts);
+          this.dispatchVideoPes(track, payload, estDts, estPts);
+        } else {
+          // 流首个视频 PES 即无 PTS（观众正好从 GOP 边界进流）：暂存等锚
+          track.pendingNoPts = payload;
+        }
+        return;
+      }
+      const rawPts = header.pts;
+      const rawDts = header.dts ?? rawPts;
+      let pts90 = this.unwrap(rawPts, track.lastPts ?? null);
+      let dts90 = this.unwrap(rawDts, track.lastDts ?? null);
+      const prevDts = track.lastDts;
+      // 节目/广告切换（对应播放列表里的 EXT-X-DISCONTINUITY）：源 PTS 纪元整体跳变
+      // （轮播换内容后新编码器的时间戳与上一段毫无连续性，前跳/后跳都有，实测远超 2s）。
+      // 直接透传 → remuxer 帧时长算出负值、MSE 缓冲出现巨大空洞或远期区间 → 播放头
+      // 追不上 → "一首歌播完下一首开始就一直加载"。重基：从上一帧按原帧距接续，
+      // 保持 MSE 时间轴连续（画面在切换点本就不连续，无碍；关键帧从新 IDR 起）。
+      if (prevDts !== undefined && Math.abs(dts90 - prevDts) > DISCONTINUITY_JUMP_90) {
+        const shift = prevDts + (track.videoDtsDelta ?? DEFAULT_FRAME_DELTA_90) - dts90;
+        pts90 += shift;
+        dts90 += shift;
+      }
+      track.lastPts = pts90;
+      track.lastDts = dts90;
+      // 记录正常帧距（防呆：非连续跳变不当作帧距；重基后的 delta = 原帧距，天然合法）
+      if (prevDts !== undefined) {
+        const delta = dts90 - prevDts;
+        if (delta > 0 && delta < VIDEO_TIMESCALE) track.videoDtsDelta = delta;
+      }
+      // 先消化等锚的注入帧：它占的是本帧前面那个帧槽（est = 本帧 DTS − 帧距）。
+      // 显示前沿此处**尚未并入本帧 PTS**：注入帧解码序在本帧之前，其显示槽应在本帧
+      // 之前的显示前沿之后、本帧的显示时间之前（先并入本帧会撞上它后面的 B 帧）。
+      const pending = track.pendingNoPts;
+      if (pending) {
+        track.pendingNoPts = undefined;
+        const estDts = dts90 - (track.videoDtsDelta ?? DEFAULT_FRAME_DELTA_90);
+        const estPts = Math.max(estDts, (track.videoMaxPts90 ?? estDts) + (track.videoDtsDelta ?? DEFAULT_FRAME_DELTA_90));
+        if (estDts >= 0) {
+          track.videoMaxPts90 = Math.max(track.videoMaxPts90 ?? estPts, estPts);
+          this.dispatchVideoPes(track, pending, estDts, estPts);
+        }
+      }
+      track.videoMaxPts90 = Math.max(track.videoMaxPts90 ?? pts90, pts90);
+      const payload = payloadOf();
+      if (payload.length === 0) return;
+      if (track.streamType === STREAM_TYPE_HEVC) {
+        this.handleVideoHevcPes(track, payload, dts90, pts90);
+      } else {
+        this.handleVideoPes(track, payload, dts90, pts90);
+      }
+      return;
+    }
+
     // 33 位 PTS 解绕，得到单调（允许回绕）的 90kHz 时间
     const rawPts = header.pts;
     if (rawPts == null) return;
@@ -479,23 +581,21 @@ export class TsDemuxer {
     track.lastPts = pts90;
     track.lastDts = dts90;
 
-    // PES_packet_length>0 时按声明长度截断，避免把 TS 包尾填充算进帧（video 通常为 0 = 不限定）
-    const pesPacketLength = (pes[4] << 8) | pes[5];
-    const payloadEnd =
-      pesPacketLength > 0 ? Math.min(6 + pesPacketLength, pes.length) : pes.length;
-    const payload = pes.subarray(header.payloadStart, payloadEnd);
+    const payload = payloadOf();
     if (payload.length === 0) return;
 
-    if (track.kind === "video") {
-      if (track.streamType === STREAM_TYPE_HEVC) {
-        this.handleVideoHevcPes(track, payload, dts90, pts90);
-      } else {
-        this.handleVideoPes(track, payload, dts90, pts90);
-      }
-    } else if (track.streamType === STREAM_TYPE_AAC) {
+    if (track.streamType === STREAM_TYPE_AAC) {
       this.handleAacPes(track, payload, pts90);
     } else {
       this.handlePassthroughAudioPes(track, payload, pts90);
+    }
+  }
+
+  private dispatchVideoPes(track: TrackState, payload: Uint8Array, dts90: number, pts90: number): void {
+    if (track.streamType === STREAM_TYPE_HEVC) {
+      this.handleVideoHevcPes(track, payload, dts90, pts90);
+    } else {
+      this.handleVideoPes(track, payload, dts90, pts90);
     }
   }
 

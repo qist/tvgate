@@ -60,6 +60,11 @@ export interface PipelineConfig {
   /** remux 成段阈值（秒 / 字节）。 */
   targetDuration?: number;
   maxBytes?: number;
+  /**
+   * 起播宽限（毫秒）：HLS 播放列表解析出 targetDuration 后由 worker 按分片时长放宽
+   * （注入参数集的关键帧最远在 1~2 个分片之后，见 Fmp4Remuxer.setStartupGraceMs）。
+   */
+  startupGraceMs?: number;
   /** IO 缓冲聚合阈值（字节）。 */
   bufferThreshold?: number;
   /** 加载错误重试次数。 */
@@ -241,7 +246,11 @@ export class TransmuxPipeline {
         onInitSegment: (seg) => this.callbacks.onInitSegment?.(seg),
         onMediaSegment: (seg) => this.callbacks.onMediaSegment?.(seg),
       },
-      { targetDuration: config.targetDuration, maxBytes: config.maxBytes },
+      {
+        targetDuration: config.targetDuration,
+        maxBytes: config.maxBytes,
+        startupGraceMs: config.startupGraceMs,
+      },
     );
 
     this.demuxerCallbacks = {
