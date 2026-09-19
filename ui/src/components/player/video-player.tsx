@@ -1874,32 +1874,45 @@ function VideoPlayerShell({
   const retryProgressSuffix = attemptCount - attemptFloor > 0 ? ` (${attemptCount - attemptFloor}/${RETRY_BUDGET})` : "";
   const topLeftBadgeText = `${sourceLabelPrefix}${tr("loadingVideo")}${retryProgressSuffix}`;
 
-  // 双槽按"非显示槽在下、显示槽在上"的顺序渲染：换台瞬间新画面天然盖住旧画面。
+  // 双槽固定 DOM 顺序（a 前 b 后），层级交给 z-index：换台不再搬动 video 节点。
+  // 非显示槽**不用 opacity-0 隐藏 video**——小米/UC 这类浏览器会把"不可见视频"的视频层
+  // 摘掉，接管显示后不重建（表现为切开台画面全黑、点一下才回来），改用不透明幕布遮挡：
+  // 两个槽的 video 始终活着，接管瞬间就有画面。
   const videoStage = (
     <div className="absolute inset-0 overflow-hidden">
-      {(displayedSlot === "a" ? (["b", "a"] as const) : (["a", "b"] as const)).map((slot) => (
-        <div key={slot} className="contents">
-          <video
-            ref={videoRefOf(slot)}
-            className={clsx(
-              // object-contain 让任意源比例居中留边展示：不拉伸变形，也不影响外层布局尺寸。
-              "absolute inset-0 size-full min-h-0 min-w-0 object-contain",
-              slot !== displayedSlot && "opacity-0 pointer-events-none",
-              slot === displayedSlot && slotPaintActive[slot] && !isVideoWindowPip && "opacity-0",
+      {(["a", "b"] as const).map((slot) => {
+        const isShown = slot === displayedSlot;
+        return (
+          <div key={slot} className={clsx("absolute inset-0", isShown ? "z-[1]" : "pointer-events-none z-0")}>
+            <video
+              ref={videoRefOf(slot)}
+              className={clsx(
+                // object-contain 让任意源比例居中留边展示：不拉伸变形，也不影响外层布局尺寸。
+                "absolute inset-0 size-full min-h-0 min-w-0 object-contain",
+                !isShown && "pointer-events-none",
+              )}
+              playsInline
+              webkit-playsinline="true"
+              x5-playsinline="true"
+            />
+            <canvas
+              ref={canvasRefOf(slot)}
+              className={clsx(
+                "pointer-events-none absolute inset-0 size-full min-h-0 min-w-0 object-contain",
+                (isVideoWindowPip || !isShown || !slotPaintActive[slot]) && "hidden",
+              )}
+            />
+            {/* 非显示槽的幕布：与舞台同底色，既挡住备用槽画面（避免留边处透出旧台），
+                又不让 video 变成"不可见元素"而被浏览器丢视频层。 */}
+            {!isShown && (
+              <div
+                aria-hidden="true"
+                className="player-performance-video-background pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_35%,#102044_0%,#070516_58%,#01030a_100%)]"
+              />
             )}
-            playsInline
-            webkit-playsinline="true"
-            x5-playsinline="true"
-          />
-          <canvas
-            ref={canvasRefOf(slot)}
-            className={clsx(
-              "pointer-events-none absolute inset-0 size-full min-h-0 min-w-0 object-contain",
-              (isVideoWindowPip || slot !== displayedSlot || !slotPaintActive[slot]) && "hidden",
-            )}
-          />
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 

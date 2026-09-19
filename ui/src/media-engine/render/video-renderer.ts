@@ -221,8 +221,10 @@ export class VideoRenderer {
 
   private ensureContext(): WebGL2RenderingContext | null {
     if (this.gl) return this.gl;
+    // alpha: true 是刻意的兜底：canvas 未绘制（刚接管、上下文丢失、视频层被浏览器挂起
+    // 导致没有新帧）时保持透明，露出下方的原生 <video>，而不是把整块盖成不透明黑。
     const gl = this.canvas.getContext("webgl2", {
-      alpha: false,
+      alpha: true,
       antialias: false,
       depth: false,
       stencil: false,
@@ -262,6 +264,9 @@ export class VideoRenderer {
     if (this.running) return;
     if (!this.ensureContext()) return;
     this.running = true;
+    // 立即补一帧：本槽可能刚从"非显示"切到"显示"（canvas 由 display:none 恢复），
+    // 不补这一帧要等下一个解码帧才上屏，接管瞬间会闪一下底色。
+    this.renderFrame();
     this.scheduleNextFrame();
   }
 
