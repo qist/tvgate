@@ -28,6 +28,54 @@ import {
 /** 排布：row = 一行式（三栏频道浏览）；card = 卡片式（移动端两列网格）。 */
 type ChannelRowLayout = "row" | "card";
 
+/* ---------------- 无台标时的首字徽章 ----------------
+ * 订阅普遍不带 tvgLogo，列表整片纯文字、辨识度全靠读字——观感平淡的主因。
+ * 无台标时渲染一个「频道名首字符」的柔和渐变徽章占台标位：色相对名稳定
+ * （同名频道永远同色），五组低饱和渐变都与 --pg 主题同族，不与选中态抢视觉。
+ */
+
+/** 低饱和渐变族（浅色深字 / 深色浅字），与紫罗兰主题同族、互不刺眼。 */
+const INITIAL_TONES = [
+  "from-violet-500/22 to-purple-500/16 text-violet-700 dark:text-violet-100",
+  "from-sky-500/20 to-indigo-500/16 text-sky-700 dark:text-sky-100",
+  "from-fuchsia-500/20 to-pink-500/14 text-fuchsia-700 dark:text-fuchsia-100",
+  "from-teal-500/18 to-emerald-500/14 text-teal-700 dark:text-teal-100",
+  "from-amber-500/22 to-orange-500/14 text-amber-700 dark:text-amber-100",
+];
+
+function initialOf(name: string): string {
+  const trimmed = name.trim().toUpperCase();
+  // 品牌前缀剥离：CCTV/CGTN 这类台，数字后缀才是辨识主体（CCTV1→1、CCTV5+→5+、
+  // CCTV4欧洲→4欧），否则 CCTV 霸屏的列表里一整列 "C" 毫无区分度。
+  const branded = /^(CCTV|CGTN|CETV|CHC|IPTV|BRT)\s*[-–—]?\s*(\d\S*)$/.exec(trimmed);
+  if (branded) return branded[2].slice(0, 2);
+  // 其余取首个「有效字符」：中文取首字（凤凰卫视→凤），西文取首字母。
+  const first = trimmed.match(/[\u4e00-\u9fffA-Z0-9]/);
+  return first?.[0] ?? "?";
+}
+
+function toneOf(name: string): string {
+  // 名字哈希 → 稳定选色：同一频道刷新/换组后颜色不变，列表整体色彩分布均匀。
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return INITIAL_TONES[hash % INITIAL_TONES.length];
+}
+
+function ChannelInitialBadge({ name, large }: { name: string; large?: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={[
+        "relative z-10 flex shrink-0 items-center justify-center rounded-md bg-gradient-to-br font-semibold ring-1 ring-slate-900/5 dark:ring-white/10",
+        large ? "h-10 w-14 rounded-lg text-lg" : "h-7 w-9 text-sm",
+        toneOf(name),
+      ].join(" ")}
+    >
+      {initialOf(name)}
+    </span>
+  );
+}
+
 interface ChannelRowProps {
   channel: Channel;
   isCurrentChannel: boolean;
@@ -78,11 +126,29 @@ const ChannelRow = forwardRef<HTMLButtonElement, ChannelRowProps>(
         }
         imgClassName="h-full w-full object-contain opacity-95 [filter:drop-shadow(0_1px_1px_rgba(2,6,23,0.45))_drop-shadow(0_0_2px_rgba(2,6,23,0.28))]"
       />
-    ) : null;
+    ) : (
+      // 无台标：首字徽章占位（尺寸对齐台标位），列表不再是一片纯文字
+      isCard ? (
+        <span className="relative z-10 mx-auto flex h-11 w-20 shrink-0 items-center justify-center">
+          <ChannelInitialBadge name={channel.name} large />
+        </span>
+      ) : (
+        <span className="relative z-10 flex h-8 w-12 shrink-0 items-center justify-center px-0.5 md:h-9 md:w-14 md:px-1">
+          <ChannelInitialBadge name={channel.name} />
+        </span>
+      )
+    );
 
     // 状态徽标（回看 / 线路数）：行式跟在名字后，卡片式钉在右上角。
     const statusBadges = (
       <>
+        {isCurrentChannel && (
+          // 「正在播放」脉冲点：红色在任意主题色下都表义"直播中"，与选中态主色不混淆
+          <span className="relative flex h-2 w-2 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-60 motion-reduce:hidden" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
+          </span>
+        )}
         {hasTimeshiftSource && (
           // 回看徽标只靠 title 提示、不占文字位：避免挤压频道名的可用宽度。
           <span title={t("catchupSupported")}>

@@ -184,6 +184,15 @@ function ThreePaneChannelBrowser({
 
   const visibleChannels = useMemo(() => narrowByGroup(channels, activeGroup), [channels, activeGroup]);
 
+  // 各分组的频道数（含"全部"）：分组行右侧的计数徽标，选组前先看体量。
+  const groupCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const channel of channels) {
+      for (const group of channel.groups) counts.set(group, (counts.get(group) ?? 0) + 1);
+    }
+    return counts;
+  }, [channels]);
+
   // 可见频道去抖上报（分组 / 列表刷新都会触发）：父层据此预取 EPG，让节目单栏与列表行有真实节目。
   useEffect(() => {
     if (!onVisibleChannelsChange) return;
@@ -403,7 +412,13 @@ function ThreePaneChannelBrowser({
                       !isPicked && PLAYER_LIST_SURFACE_HOVER_CLASS,
                     ].join(" ")}
                   >
-                    {group ?? t("allChannels")}
+                    <span className="min-w-0 flex-1 truncate">{group ?? t("allChannels")}</span>
+                    {group !== null && (
+                      // 分组体量一目了然："全部"行不标（它就是总数，属冗余信息）。
+                      <span className="shrink-0 rounded bg-slate-400/12 px-1 py-px text-[10px] font-medium leading-3.5 text-slate-500 tabular-nums dark:bg-white/8 dark:text-slate-400">
+                        {groupCounts.get(group) ?? 0}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -553,9 +568,13 @@ const QuickSearchBox = memo(function QuickSearchBox({
                 onChannelSelect(channel);
                 settleAfterPick();
               }}
-              className="block w-full truncate rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-violet-50/70 dark:text-slate-200 dark:hover:bg-violet-300/10"
+              className="flex w-full items-baseline gap-2 truncate rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-violet-50/70 dark:text-slate-200 dark:hover:bg-violet-300/10"
             >
-              {channel.name}
+              {/* 号位等宽对齐：搜索结果与列表行同一「号位 + 台名」阅读顺序 */}
+              <span className="w-6 shrink-0 text-right text-[10px] text-slate-400 tabular-nums dark:text-slate-500">
+                {channel.number ?? ""}
+              </span>
+              <span className="min-w-0 flex-1 truncate">{channel.name}</span>
             </button>
           ))}
         </div>
