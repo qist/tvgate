@@ -424,6 +424,8 @@ function PlayerScreen() {
   const [mountedPanelView, setMountedPanelView] = useState<"channels" | "epg">("channels");
   const [isFullscreenActive, setIsFullscreenActive] = useState(false);
   const [isCompactLayout, setIsCompactLayout] = useState(() => window.innerWidth < COMPACT_LAYOUT_MAX_WIDTH_PX);
+  // 手机端原生解码时，播放/音量/换线路控制条外置到这里（视频区下方的常规文档流）。
+  const [dockControlsHost, setDockControlsHost] = useState<HTMLDivElement | null>(null);
   const [insetPanelRight, setInsetPanelRight] = useState(computePanelInsetSide);
   /** 上述两个视口状态的即时镜像：resize 回调里先比对，值真变了才付钱重渲染。 */
   const isCompactLayoutRef = useRef(isCompactLayout);
@@ -1100,6 +1102,7 @@ function PlayerScreen() {
                 onSourceChange={switchSourceTrack}
                 onSourceFailover={handleSourceFailover}
                 onPlaybackStarted={rememberSourceOnStart}
+                dockControlsHost={dockControlsHost}
               />
             </PlaybackTimeProvider>
             {/* 自动切线路提示：绝对定位锚定视频舞台（sticky/absolute 均为定位上下文） */}
@@ -1111,6 +1114,10 @@ function PlayerScreen() {
               </div>
             )}
           </div>
+
+          {/* 手机端：原生解码时把播放/音量/换线路控制条放到画面外（VideoPlayer 的 dockControlsHost），
+              接管型内核盖不住、也吃不掉视频区外的常规文档流。 */}
+          {isCompactLayout && <div ref={setDockControlsHost} className="shrink-0" />}
 
           <div
             className={clsx(

@@ -106,6 +106,12 @@ interface PlayerShellProps {
   /** 自动故障转移切线路（错误恢复预算耗尽 / 停摆看门狗），上层借此与手动换源区分并提示。 */
   onSourceFailover?: (index: number) => void;
   onPlaybackStarted?: () => void;
+  /**
+   * 控制条外置宿主（视频区下方的常规文档流节点，仅移动端紧凑布局传入）。
+   * 传入且当前为原生解码时，播放/音量/换线路经 portal 挂到它里面：
+   * 接管型内核会把叠在视频上的浮层连同点击一起吞掉，视频区外的文档流不受影响。
+   */
+  dockControlsHost?: HTMLElement | null;
 }
 
 /** 错误 / 告警面板渲染所需的结构化信息。 */
@@ -406,9 +412,14 @@ function VideoPlayerShell({
   onSourceChange,
   onSourceFailover,
   onPlaybackStarted,
+  dockControlsHost = null,
 }: PlayerShellProps) {
   const tr = usePlayerTranslation(locale);
   const backendKind = getPlaybackBackendKind();
+  // 原生解码 + 手机（紧凑布局才会传宿主）：控制条外置到视频区下方。
+  // 接管型内核会把叠在视频上的控制条/徽标整块盖掉、点击也被它吃掉；
+  // 视频区外的常规文档流不受影响，播放/音量/换线路始终可见可点。
+  const toolbarToDock = Boolean(dockControlsHost) && backendKind === "native";
   const playheadSecondsRef = useRef(0);
   const catchupAvailable = Boolean(channel?.sources.some((source) => source.timeshift && source.timeshiftTemplate));
   const mediaSessionSeekEnabled = Boolean(currentProgram) && catchupAvailable;
@@ -2208,7 +2219,40 @@ function VideoPlayerShell({
     </div>
   );
 
-  const controlsToolbar = channel && !failure && !requiresGesture && (
+  // 同一份 PlayerControls：默认挂视频区浮层；原生解码 + 手机时改挂视频区下方（toolbarToDock）。
+  const playerControls = channel && !failure && !requiresGesture ? (
+    <PlayerControls
+      channel={channel}
+      currentProgram={currentProgram}
+      isLive={inLiveMode}
+      onSeek={performSeek}
+      onScrubbingChange={applyScrubbingState}
+      locale={locale}
+      mediaInfo={mediaInfoBySlot[displayedSlot]}
+      renderState={renderStateBySlot[displayedSlot]}
+      seekStartTime={streamStartTime}
+      liveSessionAnchor={sessionAnchor}
+      isPlaying={isPlaybackActive}
+      onPlayPause={flipPlayback}
+      volume={volumeLevel}
+      onVolumeChange={changeVolume}
+      canControlVolume={volumeControlAvailable}
+      isMuted={mutedState}
+      onMuteToggle={flipMute}
+      onFullscreen={toggleScreenMode}
+      isFullscreen={isFullscreen}
+      showSidebar={showSidebar}
+      isPiP={inPip}
+      isPiPSupported={isPictureInPictureSupported()}
+      onPiPToggle={flipPip}
+      showMediaBadges={!inDocumentPip}
+      activeSourceIndex={activeSourceIndex}
+      onSourceChange={onSourceChange}
+      docked={toolbarToDock}
+    />
+  ) : null;
+
+  const controlsToolbar = playerControls && !toolbarToDock && (
     <div
       role="toolbar"
       className={clsx(
@@ -2219,36 +2263,21 @@ function VideoPlayerShell({
           : "opacity-0 pointer-events-none has-focus-visible:opacity-100 has-focus-visible:pointer-events-auto",
       )}
     >
-      <PlayerControls
-        channel={channel}
-        currentProgram={currentProgram}
-        isLive={inLiveMode}
-        onSeek={performSeek}
-        onScrubbingChange={applyScrubbingState}
-        locale={locale}
-        mediaInfo={mediaInfoBySlot[displayedSlot]}
-        renderState={renderStateBySlot[displayedSlot]}
-        seekStartTime={streamStartTime}
-        liveSessionAnchor={sessionAnchor}
-        isPlaying={isPlaybackActive}
-        onPlayPause={flipPlayback}
-        volume={volumeLevel}
-        onVolumeChange={changeVolume}
-        canControlVolume={volumeControlAvailable}
-        isMuted={mutedState}
-        onMuteToggle={flipMute}
-        onFullscreen={toggleScreenMode}
-        isFullscreen={isFullscreen}
-        showSidebar={showSidebar}
-        isPiP={inPip}
-        isPiPSupported={isPictureInPictureSupported()}
-        onPiPToggle={flipPip}
-        showMediaBadges={!inDocumentPip}
-        activeSourceIndex={activeSourceIndex}
-        onSourceChange={onSourceChange}
-      />
+      {playerControls}
     </div>
   );
+
+  // 外置控制条：portal 到视频区下方的宿主节点（pages/player.tsx 在紧凑布局渲染）。
+  // 与视频内浮层功能完全一致；接管型内核盖不住视频区外的常规文档流。
+  const dockedControlsToolbar =
+    toolbarToDock && dockControlsHost && playerControls
+      ? createPortal(
+          <div className="border-violet-950/10 border-t bg-slate-950/85 pb-[env(safe-area-inset-bottom)] dark:border-violet-100/10">
+            {playerControls}
+          </div>,
+          dockControlsHost,
+        )
+      : null;
 
   const gestureFeedbackLayer = channel && !failure && !requiresGesture && (
     <PlayerGestureIndicatorOverlay indicator={gestureIndicator} locale={locale} />
@@ -2295,6 +2324,7 @@ function VideoPlayerShell({
       {warningBanner}
       {errorPanel}
       {controlsToolbar}
+      {dockedControlsToolbar}
       {gestureFeedbackLayer}
     </div>
   );

@@ -22,7 +22,8 @@ import {
   Volume1,
   VolumeX,
 } from "lucide-react";
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePlayerTranslation } from "../../hooks/use-player-translation";
 import type { Locale } from "../../lib/locale";
 import { createProgramTimeline, programProgressToWallClock } from "../../lib/program-timeline";
@@ -62,6 +63,12 @@ interface ControlsProps {
   showSidebar?: boolean;
   activeSourceIndex?: number;
   onSourceChange?: (index: number) => void;
+  /**
+   * 外置条模式：控制条挂在视频区下方的常规文档流里（手机 + 原生解码）。
+   * 换线路菜单随之改为「点击开合 + portal 置顶浮层」，选中即收回——
+   * 手机没有 hover，且菜单必须逃出任何 overflow 裁剪、永远在最前面。
+   */
+  docked?: boolean;
 }
 
 /** 矮容器（容器高度 ≤320px）下的按钮/图标压缩尺寸，避免控制条挤压时间轴。 */
@@ -439,11 +446,70 @@ function PlayerControlsView({
   showSidebar = true,
   activeSourceIndex = 0,
   onSourceChange,
+  docked = false,
 }: ControlsProps) {
   const t = usePlayerTranslation(locale);
   // 原生播放模式（浏览器不支持 MSE 转封装）没有解封装产物，媒体徽标必然为空：
   // 明示模式，避免被当成"徽标坏了"，也便于远程报障时一眼定位。
   const nativePlaybackMode = getPlaybackBackendKind() === "native";
+
+  // 换线路菜单（外置条）：手机没有 hover，改为「点击开合 + portal 置顶浮层」——
+  // 菜单挂到 body 上用 fixed 定位，不受任何 overflow 裁剪、永远在最前面；
+  // 选中线路立即收回，点菜单/触发钮以外的地方也收回。非外置条维持 hover 弹层。
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  const [sourceMenuPos, setSourceMenuPos] = useState<{ left: number; top: number; width: number } | null>(null);
+  const sourceTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const sourceMenuRef = useRef<HTMLDivElement | null>(null);
+  const placeSourceMenu = useCallback(() => {
+    const el = sourceTriggerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const width = Math.min(300, window.innerWidth - 16);
+    const left = Math.min(Math.max(rect.left + rect.width / 2, width / 2 + 8), window.innerWidth - width / 2 - 8);
+    setSourceMenuPos({ left, top: Math.min(rect.bottom + 6, window.innerHeight - 56), width });
+  }, []);
+  useEffect(() => {
+    if (!sourceMenuOpen) return;
+    placeSourceMenu();
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (sourceMenuRef.current?.contains(target) || sourceTriggerRef.current?.contains(target)) return;
+      setSourceMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("scroll", placeSourceMenu, true);
+    window.addEventListener("resize", placeSourceMenu);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("scroll", placeSourceMenu, true);
+      window.removeEventListener("resize", placeSourceMenu);
+    };
+  }, [sourceMenuOpen, placeSourceMenu]);
+  const toggleSourceMenu = useCallback(() => {
+    setSourceMenuOpen((open) => {
+      if (!open) placeSourceMenu();
+      return !open;
+    });
+  }, [placeSourceMenu]);
+
+  // 换线路菜单项：hover 弹层与置顶浮层共用同一份列表，仅「选中后是否收回」不同。
+  const renderSourceItems = (onPick: (index: number) => void) =>
+    collectSwitchableSources(channel.sources, isLive).map(({ source, index }) => (
+      <button
+        type="button"
+        key={source.url}
+        onClick={() => onPick(index)}
+        className={[
+          "player-performance-motion relative z-10 block w-full cursor-pointer whitespace-nowrap px-3 py-1.5 text-left text-xs transition-colors md:text-sm",
+          index === activeSourceIndex ? "bg-violet-300/10 font-medium text-violet-200" : "text-white/75 hover:bg-violet-200/10 hover:text-violet-50",
+        ].join(" ")}
+      >
+        <span className="flex items-center gap-2">
+          {!isLive ? <History className="h-3 w-3" /> : <Tv className="h-3 w-3" />}
+          {`${t("source")} ${index + 1}`}
+        </span>
+      </button>
+    ));
   const supportsSeeking = channel.sources.some((source) => source.timeshift && source.timeshiftTemplate);
   // 静音按钮的判定含"音量为 0"：此时静音图标更符合听感。
   const isEffectivelyMuted = isMuted || volume <= 0;
@@ -566,6 +632,10 @@ function PlayerControlsView({
             <div className="group/source relative flex items-center focus-within:z-10" tabIndex={-1}>
               <button
                 type="button"
+                ref={docked ? sourceTriggerRef : undefined}
+                aria-expanded={docked ? sourceMenuOpen : undefined}
+                aria-haspopup={docked ? "menu" : undefined}
+                onClick={docked ? toggleSourceMenu : undefined}
                 className={[
                   PLAYER_CONTROL_BUTTON_CLASS,
                   "max-w-14 cursor-pointer truncate px-1.5 py-0.5 text-[11px] font-medium min-[360px]:max-w-20 md:max-w-40 md:px-2.5 md:py-1.5 md:text-sm",
@@ -574,35 +644,43 @@ function PlayerControlsView({
                 {/* 触发钮带出线路位次（如"线路 2/3"），与下拉菜单里的逐条线路对应 */}
                 {t("source")} {activeSourceIndex + 1}/{channel.sources.length}
               </button>
-              <div
-                className={[
-                  PLAYER_OVERLAY_SURFACE_CLASS,
-                  "player-performance-motion invisible absolute bottom-full left-1/2 -translate-x-1/2 overflow-hidden rounded-xl py-1 opacity-0 transition-[opacity,visibility] duration-150 group-hover/source:visible group-hover/source:opacity-100 group-focus-within/source:visible group-focus-within/source:opacity-100",
-                ].join(" ")}
-              >
-                <PlayerSelectedGlassLayers />
-                {collectSwitchableSources(channel.sources, isLive).map(({ source, index }) => (
-                  <button
-                    type="button"
-                    key={source.url}
-                    onClick={(event) => {
-                      onSourceChange(index);
-                      event.currentTarget.blur();
-                    }}
-                    className={[
-                      "player-performance-motion relative z-10 block w-full cursor-pointer whitespace-nowrap px-3 py-1.5 text-left text-xs transition-colors md:text-sm",
-                      index === activeSourceIndex ? "bg-violet-300/10 font-medium text-violet-200" : "text-white/75 hover:bg-violet-200/10 hover:text-violet-50",
-                    ].join(" ")}
-                  >
-                    <span className="flex items-center gap-2">
-                      {!isLive ? <History className="h-3 w-3" /> : <Tv className="h-3 w-3" />}
-                      {`${t("source")} ${index + 1}`}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              {!docked && (
+                <div
+                  className={[
+                    PLAYER_OVERLAY_SURFACE_CLASS,
+                    "player-performance-motion invisible absolute bottom-full left-1/2 -translate-x-1/2 overflow-hidden rounded-xl py-1 opacity-0 transition-[opacity,visibility] duration-150 group-hover/source:visible group-hover/source:opacity-100 group-focus-within/source:visible group-focus-within/source:opacity-100",
+                  ].join(" ")}
+                >
+                  <PlayerSelectedGlassLayers />
+                  {renderSourceItems((index) => onSourceChange?.(index))}
+                </div>
+              )}
             </div>
           )}
+          {docked &&
+            sourceMenuOpen &&
+            sourceMenuPos &&
+            createPortal(
+              <div
+                ref={sourceMenuRef}
+                role="menu"
+                style={{
+                  position: "fixed",
+                  left: sourceMenuPos.left,
+                  top: sourceMenuPos.top,
+                  width: sourceMenuPos.width,
+                  transform: "translateX(-50%)",
+                  zIndex: 9999,
+                }}
+                className="overflow-hidden rounded-xl border border-violet-200/25 bg-slate-950/95 py-1 shadow-2xl backdrop-blur-md"
+              >
+                {renderSourceItems((index) => {
+                  onSourceChange?.(index);
+                  setSourceMenuOpen(false);
+                })}
+              </div>,
+              document.body,
+            )}
 
           <button
             type="button"
