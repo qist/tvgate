@@ -128,6 +128,45 @@ UI ↔ 核心通信走**本地 HTTP**：端内核心监听 `127.0.0.1` 随机端
 - **联网模式**：端内核心连远程 tvgate 服务器（订阅/白名单同步），播放走远程 `/player/<key>`。
 - 两种模式核心代码同一份，仅配置来源不同。
 
+### 8.1 工程结构（TVFusion monorepo）
+
+```
+tvfusion/                        # 新仓库（monorepo，跨 Go/Kotlin/Swift 目录分层）
+├── tvfusion-core/               # Go module: github.com/qist/tvfusion/core
+│   ├── mobile/                  #   gomobile bind 入口（Lifecycle/Start/Stop/Config）
+│   ├── bridge/                  #   平台回调桥接口（jar: ART DexClassLoader 委托）
+│   └── local/                   #   端内 127.0.0.1 服务装配（player 模块挂载 /api/*）
+│   # 依赖 github.com/qist/tvgate —— JSON/Spider/VOD/Live 的实现在 tvgate 仓库
+│   # （服务器与端内同一份代码；服务器版先落地验证，TVFusion 只做绑定与装配）
+├── tvfusion-player/             # 解码器适配层
+│   ├── api/                     #   PlayerEngine 统一接口（setDataSource+headers/play/seek/...）
+│   ├── media3/                  #   ExoPlayer/Media3（Android 手机/TV 首选）
+│   ├── mpv/                     #   libmpv（desktop/iOS 首选，FFmpeg 内核）
+│   ├── ijk/  vlc/               #   备选引擎（ijk=Android 容错；VLC=组播/裸流）
+│   └── ffmpeg/                  #   FFmpeg 产物与协议资源管理（mpv/ijk 共用内核）
+├── tvfusion-ui/                 # Compose Multiplatform 共享 UI（commonMain：频道单/EPG/播放控制）
+├── tvfusion-android/            # Android 手机/TV 壳（gomobile .aar、D-pad 焦点、ART jar 委托实现）
+├── tvfusion-desktop/            # Windows/Linux/macOS 壳（Compose Desktop、sidecar JVM jarhost、mpv via JNA）
+├── tvfusion-ios/                # iOS 壳（xcframework、AVPlayer、jar 走服务器桥）
+└── docs/                        # 随行文档（指向 tvgate/doc 设计基准）
+```
+
+依赖方向（单向，禁止反向）：
+
+```
+tvgate（实现：JSON/Spider/VOD/Live/播放服务）
+   ▲
+tvfusion-core（绑定+装配）
+   ▲
+tvfusion-android / desktop / ios（壳）──▶ tvfusion-ui（共享 UI）
+                        ▲
+                 tvfusion-player（解码器适配，壳按端组装）
+```
+
+- `tvfusion-core` 的 Go 实现全部长在 tvgate 仓库，monorepo 里的 core 只含绑定层与端内装配——**端内版与服务器版行为一致由"同一份实现"保证**，不靠复制。
+- `tvfusion-core`（gomobile 产物）与 `tvfusion-player` 适配由壳仓库组合，player 的 `api/` 是唯一跨端契约点。
+- 多 module 布局：core 与各端各自独立构建（Go module / Gradle / Xcode），CI 按目录触发。
+
 ## 九、分期路线
 
 | 阶段 | 内容 | 备注 |
