@@ -570,7 +570,10 @@ function PlayerControlsView({
               <div
                 className={[
                   PLAYER_OVERLAY_SURFACE_CLASS,
-                  "player-performance-motion invisible absolute bottom-full left-1/2 flex -translate-x-1/2 cursor-pointer items-center justify-center rounded-xl px-2 py-2 opacity-0 transition-[opacity,visibility] duration-150 group-hover/volume:visible group-hover/volume:opacity-100 group-focus-within/volume:visible group-focus-within/volume:opacity-100 md:px-3",
+                  "player-performance-motion invisible absolute left-1/2 flex -translate-x-1/2 cursor-pointer items-center justify-center rounded-xl px-2 py-2 opacity-0 transition-[opacity,visibility] duration-150 group-hover/volume:visible group-hover/volume:opacity-100 group-focus-within/volume:visible group-focus-within/volume:opacity-100 md:px-3",
+                  // 外置条（手机原生播放）时控制条挂在视频区下方，向上弹会被画布拦截无法操作，
+                  // 改为向下弹出，与换线路菜单方向一致。
+                  docked ? "top-full mt-1" : "bottom-full",
                 ].join(" ")}
               >
                 <PlayerSelectedGlassLayers compact />
