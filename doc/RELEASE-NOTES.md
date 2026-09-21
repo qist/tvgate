@@ -10,7 +10,7 @@
 | 版本 | **v3.3.2** |
 | 发布日期 | 2026-09-21 |
 | 发布提交 | （见 tag `v3.3.2` 指向）· tag `v3.3.2` |
-| 距上一版 | v3.3.1（2026-09-19）以来 11 个提交 |
+| 距上一版 | v3.3.1（2026-09-19）以来 15 个提交 |
 | 平台 | Linux / Windows / macOS / Android 共 30+ 目标（新旧两套命名并存） |
 | 资产 | `TVGate-<平台>-<架构>.zip` + 同名 `.dgst`（MD5/SHA1/SHA256/SHA512） |
 | Docker | `docker.io/juestnow/tvgate:v3.3.2`、`ghcr.io/qist/tvgate:v3.3.2`（同时打 `latest`） |
