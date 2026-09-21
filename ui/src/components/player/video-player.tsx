@@ -2272,7 +2272,10 @@ function VideoPlayerShell({
   const dockedControlsToolbar =
     toolbarToDock && dockControlsHost && playerControls
       ? createPortal(
-          <div className="border-violet-950/10 border-t bg-slate-950/85 pb-[env(safe-area-inset-bottom)] dark:border-violet-100/10">
+          // relative z-30：外置条内的下拉弹层（音量/换线路）会伸出条外进入下方页面区域，
+          // 无层级的静态包裹层会让后续文档流内容盖住弹层——建立独立层叠上下文抬到其上
+          // （高于 AppShell header 的 z-20，低于移动端抽屉的 z-40）。
+          <div className="relative z-30 border-violet-950/10 border-t bg-slate-950/85 pb-[env(safe-area-inset-bottom)] dark:border-violet-100/10">
             {playerControls}
           </div>,
           dockControlsHost,
