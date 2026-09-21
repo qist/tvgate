@@ -99,6 +99,24 @@ UI ↔ 核心通信走**本地 HTTP**：端内核心监听 `127.0.0.1` 随机端
 - catchup `from/to`（Unix 秒）→ 各引擎 seek 语义做一次薄适配。
 - 独立模式可旁路直连原始流（mpv/VLC 直吃 ts/flv，性能最优；端内本来不设防）。
 
+### 7.1 双通路播放方案（转发 / 直通）
+
+两条通路并存，按次播放可切：
+
+| 通路 | 数据面 | 保留能力 | 适用 |
+|---|---|---|---|
+| **转发（默认）** | 核心 `/player/<key>` 清水 HLS → 解码器 | EPG / catchup / m3u8 重写 / 防盗链 / 多线路聚合 / 不透明地址 | 直播、需重写的源、缺省 |
+| **直通（可选）** | 核心解析出真实 URL + 请求头 → 解码器原生网络栈直连 | 零中转、CDN 就近、解码器原生协议面（ijk/VLC 直吃 udp/rtp/组播/ts） | 点播直链、4K 高码率低配端、组播裸流 |
+
+设计要点：
+
+- **API 统一响应**：解析层（SpiderHost playerContent / lives tune）返回 `{play, direct?}`——转发填 `play`（key 路径）；直通填 `direct: {url, headers, advised}`。UI 适配层提供统一 `setHeaders()` 抽象，逐引擎映射（ExoPlayer headers / mpv `http-header-fields` / ijk option / VLC agent 参数）。
+- **开关层级**：全局默认（设置）→ 站点/频道覆盖（`jsm.json` 字段透传）→ 播放页一键切换。与 TVBox `playerType`（选解码器）正交：playerType 管"谁解码"，通路管"数据从哪来"。
+- **直通适合度判定**：解析层同时给 `advised`——源需要 m3u8 重写 / 防盗链 / 有广告注入风险 → `advised=false`，UI 缺省仍走转发并提示；VOD 直链、组播裸流 → `advised=true`，UI 缺省直通。
+- **回落链**：直通失败（连接/引擎错误/超时）自动回落转发通路重 tune；转发侧严重卡顿时 UI 提示可切直通。反向不自动。
+- **安全边界**：直通 = 该次播放放弃 EPG/catchup/聚合与不透明地址，UI 明示"直连中"；真实 URL 仅存端内内存，日志默认脱敏不落 URL（与服务器版红线一致）；联网模式下直通由**服务器解析下发直链、端直连 CDN**——服务器零流量，真实 URL 只到可信端。
+- **切换语义**：切通路 = 重 tune（换地址重开流），播放会话内不换解码器实例；换源/换线路逻辑复用现有 onSourceFailover 预算机制。
+
 ## 八、端内打包与运行形态
 
 - **打包**：Android gomobile `.aar`（CGO 链路已验证，`CGO_ENABLED=1` 走 cgo DNS）；桌面 `.dll/.dylib/.so` + 壳；iOS xcframework（受限 CGO 子集，注意 CGO 禁令只针对纯 Go 构建的旧约束，iOS 打包单独处理）。
@@ -113,7 +131,7 @@ UI ↔ 核心通信走**本地 HTTP**：端内核心监听 `127.0.0.1` 随机端
 | A | `jsm.json` 输入：sites/lives 解析，lives 直接进现有订阅管线；Web 端先验证 | 协议解析为主，无解释器 |
 | B | VOD 模块：type=4/声明式规则引擎（XBPQ/XYQHiker），分类/详情/搜索/播放 | 纯 Go |
 | C | SpiderHost：**先以 phpgo 为参考实现打通七方法 ABI（php 解释器已有）**→ goja(js) → jar（Android ART 委托 + 桌面 sidecar）→ py(CPYTHON)；d2j 转换器与 Android 桩库；出站管线 ads 域名拦截 | 唯一硬骨头，php 路径零新增 |
-| D | Android Compose 壳 + gomobile 打包 + ExoPlayer 适配（M1 闭环：连服务器播 `/player/<key>`） | 先联网模式后单机 |
+| D | Android Compose 壳 + gomobile 打包 + ExoPlayer 适配（M1 闭环：连服务器播 `/player/<key>`）；双通路切换与回落链 | 先联网模式后单机 |
 | E | 桌面 libmpv → iOS AVPlayer（jar 走服务器桥）；TV 焦点与遥控细节 | |
 | F | TVBox 导出端点（`/tvbox/config.json`，供给 TVBox 族客户端，反向兼容） | 与 A 无依赖，可穿插 |
 
@@ -131,3 +149,4 @@ UI ↔ 核心通信走**本地 HTTP**：端内核心监听 `127.0.0.1` 随机端
 - 同一份 `jsm.json` 在 Android 壳与 H5 后台表现出一致的频道/EPG/回看语义。
 - 全程抓包：真实源 URL 仅出现在核心日志与进程内存，UI 层与网络对面只见不透明地址。
 - 出站链路四能力对 spider 请求各验一例：`ads` 域名拦截生效、domainmap 改写生效、DNS 兜底链生效、代理分组命中。
+- 双通路：直通失败自动回落转发；转发页可手动切直通且 UI 明示"直连中"；直通日志无真实 URL。
