@@ -365,7 +365,14 @@ func RegisterJXAndProxyMux(mux *http.ServeMux, cfg *config.Config) {
 			http.Redirect(w, r, target, http.StatusFound)
 		})))
 		if cfg.Player.LogoDir != "" {
-			mux.Handle("/player/logo/", SecurityHeaders(http.StripPrefix("/player/logo/", http.FileServer(http.Dir(cfg.Player.LogoDir)))))
+			// 台标文件补显式缓存头：图片内容基本不变，浏览器 4h 内直接复用本地副本，
+			// 过期后凭 FileServer 的 Last-Modified 条件校验（304 不重传）。
+			// 仅作用于台标这一条路由，不影响任何其它文件/静态服务。
+			logoFiles := http.StripPrefix("/player/logo/", http.FileServer(http.Dir(cfg.Player.LogoDir)))
+			mux.Handle("/player/logo/", SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Cache-Control", "public, max-age=14400, must-revalidate")
+				logoFiles.ServeHTTP(w, r)
+			})))
 		}
 	}
 

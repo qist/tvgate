@@ -485,6 +485,9 @@ func (m *Manager) Reload() {
 			newGroups = append(newGroups, c.Group)
 		}
 	}
+	// 外部台标死链探测：确认 404/410 的置空（限并发 + 总预算 + TTL 缓存）。
+	// 必须在组内聚合之前——死链先清掉，聚合头部 TVGLogo 才能落到存活的线路。
+	m.pruneDeadLogos(newOrder)
 	// 组内聚合：同分组内名称完全一致 → 一个频道多线路（白名单保持全线路）
 	newOrder = aggregateIntraGroup(newOrder)
 	m.mu.Lock()
