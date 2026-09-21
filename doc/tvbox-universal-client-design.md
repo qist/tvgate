@@ -1,11 +1,13 @@
-# TVBox 兼容与全平台客户端设计（tvbox-universal-client）
+# TVFusion — TVBox 兼容与全平台客户端设计（tvbox-universal-client）
 
 > 状态：设计基准（未实施）。本文档是后续 TVBox 接口兼容与原生客户端开发的**协议与架构基准**，实施时以本文为准；如实现过程中决策变更，先改本文再动代码。
+>
+> **项目命名：TVFusion**（服务端/核心仓库沿用 `qist/tvgate`，客户端项目名 TVFusion）。寓意：融合四执行体（php/js/py/jar）、多解码器（EXO/ijk/mpv/VLC）、双通路（转发/直通）与全平台 UI 于一份 `jsm.json` 协议之下。命名核查：MediaFusion 为 Stremio 生态知名聚合插件（mhdzumair/MediaFusion），同赛道撞名弃用；TVFusion 未发现同名项目。
 
 ## 一、目标与定位
 
 - **tvgate 不只是服务端，而是可打包进端内的"核心驱动框架"（Go 运行时）**：负责源解析、地址归一化、播放服务；端上只留 UI 壳 + 解码器两层。
-- **做一个全平台 TVBox 替代品**：Android / Android TV / Windows / Linux / macOS / iOS，同一份 `jsm.json` 配置通吃。
+- **做一个全平台 TVBox 替代品（TVFusion）**：Android / Android TV / Windows / Linux / macOS / iOS，同一份 `jsm.json` 配置通吃。
 - **现有 H5 保留不动**：继续作为浏览器入口对外提供（`/api/player/*` v2 契约不变），原生客户端是同一服务端的第一个"正经 API 客户端"。
 - 生态原则：**不另发明配置格式**。用户自有 `qist/tvbox/jsm.json` 即统一配置协议，TVBox/FongMi/饭太硬等现有配置尽量直接可用。
 
@@ -70,6 +72,8 @@ UI ↔ 核心通信走**本地 HTTP**：端内核心监听 `127.0.0.1` 随机端
 | 代理 | PROXYGROUPS（✓已有） | `proxy` / `sites[].proxy` | 按域名/IP 分组上游代理、测速切换，http/https/socks5/socks4 |
 
 配置来源：单机模式吃端内 `jsm.json` 对应字段；联网模式以下发服务器端配置为准（端内字段仅作缺省）。
+
+> 字段实证（2026-09-21 核对 FongMi/TV README）：FongMi 配置协议原生含 `proxy`（按域名走代理分组）、`hosts`（域名映射）、`headers`（按 host 自定义请求头）三字段——与上表映射一致，无需扩展协议。
 
 ## 六、JAR 三路执行设计
 
