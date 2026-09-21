@@ -19,6 +19,7 @@ import (
 	"github.com/jedisct1/go-dnsstamps"
 	"github.com/miekg/dns"
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/utils/tlsutil"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 )
@@ -829,7 +830,10 @@ func (c *dotClient) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr
 	defer cancel()
 
 	// 创建TLS连接
-	tlsConfig := &tls.Config{InsecureSkipVerify: *config.Cfg.HTTP.InsecureSkipVerify}
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: *config.Cfg.HTTP.InsecureSkipVerify,
+		CipherSuites:       tlsutil.CipherSuitesWithRSAKex(),
+	}
 	dialer := &net.Dialer{Timeout: c.timeout}
 	conn, err := tls.DialWithDialer(dialer, "tcp", serverAddr, tlsConfig)
 	if err != nil {
@@ -989,7 +993,10 @@ func getDoHTransport(dnsServer string, maxConns int) *http.Transport {
 		return cached.(*http.Transport)
 	}
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: key.insecure},
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: key.insecure,
+			CipherSuites:       tlsutil.CipherSuitesWithRSAKex(),
+		},
 		MaxConnsPerHost: maxConns,
 	}
 	dohTransportCache.Store(key, transport)

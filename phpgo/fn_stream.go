@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/qist/tvgate/utils/tlsutil"
 )
 
 func init() {
@@ -30,7 +32,10 @@ func init() {
 		case "ssl", "tls":
 			// IPTV 解析脚本普遍连自签/校验不全的源，与 curl 扩展宽松风格一致：跳过证书校验
 			d := &net.Dialer{Timeout: timeout}
-			return tls.DialWithDialer(d, "tcp", rest, &tls.Config{InsecureSkipVerify: true})
+			return tls.DialWithDialer(d, "tcp", rest, &tls.Config{
+				InsecureSkipVerify: true,
+				CipherSuites:       tlsutil.CipherSuitesWithRSAKex(),
+			})
 		default:
 			return nil, fmt.Errorf("unsupported scheme %q in %q", scheme, address)
 		}

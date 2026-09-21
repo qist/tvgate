@@ -182,9 +182,11 @@
 ```
 1、旧 CDN TLS 握手失败修复 — 部分 CDN 仅支持 TLS 1.2 + 静态 RSA 密钥交换，而 Go 新版
    默认套件列表已剔除静态 RSA：客户端握手直接被拒（remote error: tls: handshake failure），
-   频道打不开（openssl/浏览器正常，Go 失败）。编译期启用 tlsrsakex 兼容开关恢复 RSA 密钥
-   交换套件——正常 CDN 仍按客户端优先级协商 ECDHE、前向保密不受影响，仅这类旧 CDN 落到
-   RSA 兜底；一行覆盖全部出站 HTTPS 链路（播放器直连 / 代理组 / php 源 / 域名映射）
+   频道打不开（openssl/浏览器正常，Go 失败）。所有出站 TLS 客户端显式配置套件列表（静态
+   RSA + 现代默认套件，utils/tlsutil 统一实现）：正常 CDN 仍优先协商 ECDHE、前向保密不受
+   影响，仅旧 CDN 落到 RSA 兜底；覆盖播放器直连 / 代理组 / php 源 / DNS DoT、DoH / 域名
+   映射 / 全局 DefaultTransport。不用 GODEBUG tlsrsakex（已于 Go 1.27 移除），全版本 Go
+   行为一致
 2、台标死链自动清理 — 模板补齐的台标地址在订阅刷新时轻量并发探测（Range 探测、限并发
    16、单请求 5 秒 / 单轮 10 秒预算，不拖重载、未探完的下轮续探），确认 404/410 的置空
    台标——前端直接走首字徽章，不再整页空等图床失败（首轮清理 350+ 频道）；403/5xx/

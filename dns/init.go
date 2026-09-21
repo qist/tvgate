@@ -2,10 +2,13 @@ package dns
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
-	"time"
 	"sync"
+	"time"
+
+	"github.com/qist/tvgate/utils/tlsutil"
 )
 
 var onceInit sync.Once
@@ -49,6 +52,7 @@ func SetupGlobalDNSResolver() {
 			MaxIdleConns:        20,
 			MaxIdleConnsPerHost: 2,
 			IdleConnTimeout:     30 * time.Second,
+			TLSClientConfig:     &tls.Config{CipherSuites: tlsutil.CipherSuitesWithRSAKex()},
 		}
 	})
 }

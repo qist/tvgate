@@ -2,12 +2,6 @@ module github.com/qist/tvgate
 
 go 1.26.0
 
-// 恢复静态 RSA 密钥交换套件（Go 1.22 起默认剔除）。部分直播 CDN 仅支持
-// TLS 1.2 + 静态 RSA（无 ECDHE、无 TLS 1.3），新默认列表会被服务端以
-// handshake_failure 拒绝。显式恢复后：现代服务端仍按客户端优先级先协商
-// ECDHE（前向保密不受影响），仅旧 CDN 落到 RSA 兜底。
-godebug tlsrsakex=1
-
 require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
 	github.com/andybalholm/brotli v1.2.4

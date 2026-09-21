@@ -30,6 +30,7 @@ import (
 	"github.com/qist/tvgate/rules"
 	"github.com/qist/tvgate/stream"
 	"github.com/qist/tvgate/utils/buffer"
+	"github.com/qist/tvgate/utils/tlsutil"
 )
 
 // 预编译的正则表达式，避免在热路径中重复编译
@@ -899,7 +900,10 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		MaxIdleConnsPerHost:   httpCfg.MaxIdleConnsPerHost,
 		MaxConnsPerHost:       httpCfg.MaxConnsPerHost,
 		DisableKeepAlives:     *httpCfg.DisableKeepAlives,
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: *httpCfg.InsecureSkipVerify},
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: *httpCfg.InsecureSkipVerify,
+			CipherSuites:       tlsutil.CipherSuitesWithRSAKex(),
+		},
 	}
 
 	// 创建 Client

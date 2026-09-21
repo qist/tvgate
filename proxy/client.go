@@ -15,6 +15,7 @@ import (
 	"github.com/qist/tvgate/logger"
 	conf "github.com/qist/tvgate/proxy/config"
 	httpclient "github.com/qist/tvgate/utils/http"
+	"github.com/qist/tvgate/utils/tlsutil"
 )
 
 // Transport 缓存，避免每次请求都创建新的 http.Transport
@@ -49,7 +50,10 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 	}
 
 	transport := &http.Transport{
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: *cfg.HTTP.InsecureSkipVerify},
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: *cfg.HTTP.InsecureSkipVerify,
+			CipherSuites:       tlsutil.CipherSuitesWithRSAKex(),
+		},
 		ResponseHeaderTimeout: 10 * time.Second,
 		IdleConnTimeout:       5 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,

@@ -12,6 +12,7 @@ import (
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/utils/tlsutil"
 )
 
 const (
@@ -73,7 +74,10 @@ func newTransport(c *config.Config) *http.Transport {
 		},
 
 		ResponseHeaderTimeout: c.HTTP.ResponseHeaderTimeout,
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: boolOr(c.HTTP.InsecureSkipVerify, false)},
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: boolOr(c.HTTP.InsecureSkipVerify, false),
+			CipherSuites:       tlsutil.CipherSuitesWithRSAKex(),
+		},
 		IdleConnTimeout:       c.HTTP.IdleConnTimeout,
 		TLSHandshakeTimeout:   c.HTTP.TLSHandshakeTimeout,
 		ExpectContinueTimeout: c.HTTP.ExpectContinueTimeout,

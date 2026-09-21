@@ -19,6 +19,7 @@ import (
 
 	"github.com/andybalholm/brotli"
 	pgdns "github.com/qist/tvgate/dns"
+	"github.com/qist/tvgate/utils/tlsutil"
 )
 
 // ServePHP 执行 PHP 源码并写入 HTTP 响应。
@@ -310,7 +311,10 @@ func defaultProxy(client *http.Client) ProxyFunc {
 
 // buildCurlTLSConfig 按 curl TLS 选项构建 tls.Config。
 func buildCurlTLSConfig(opts *CurlOptions) (*tls.Config, error) {
-	tlsCfg := &tls.Config{InsecureSkipVerify: opts.SkipSSL || opts.SkipHostVerify}
+	tlsCfg := &tls.Config{
+		InsecureSkipVerify: opts.SkipSSL || opts.SkipHostVerify,
+		CipherSuites:       tlsutil.CipherSuitesWithRSAKex(),
+	}
 	if opts.TLSVersion != 0 {
 		tlsCfg.MinVersion = opts.TLSVersion
 	}
