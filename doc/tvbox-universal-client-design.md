@@ -38,7 +38,7 @@
 │  │               │        纯 Go 随核心全端生效，作 ABI 参考实现）    │
 │  │               ├── js:  goja（纯 Go）→ 必要时 CGO QuickJS         │
 │  │               ├── py:  CGO CPython 嵌入                         │
-│  │               └── jar: 见 §五（按平台三路）                      │
+│  │               └── jar: 见 §六（按平台三路）                      │
 │  ├── 播放服务：/player/<key> 归一化 HLS/FLV、catchup、m3u8 重写 ✓   │
 │  └── 声明式源：type=4 VOD(苹果CMS) / XBPQ / XYQHiker 规则引擎（新建）│
 └──────────────────────────────────────────────────────────────────┘
@@ -54,11 +54,24 @@ UI ↔ 核心通信走**本地 HTTP**：端内核心监听 `127.0.0.1` 随机端
 | PHP 源（phpgo 承接） | ✅ **已有**：phpgo 纯 Go 解释器随核心分发，五端零成本（`php://` 频道源同链路） | ✅ 透传 |
 | JS spider（drpy/drpy2） | ✅ goja 嵌入核心，一次实现全端生效 | ✅ 透传（客户端自带运行时） |
 | PY spider（dr_py/hipy） | ✅ CGO CPython；协议与 JS 同构 | ✅ 透传 |
-| JAR（dex 字节码，csp_XXX） | △ 三路执行见 §五；iOS 走服务器桥 | ✅ 透传（客户端原生执行） |
+| JAR（dex 字节码，csp_XXX） | △ 三路执行见 §六；iOS 走服务器桥 | ✅ 透传（客户端原生执行） |
 
 **spider 只服务点播；直播 lives 全是纯 URL 协议**——直播兼容不依赖任何解释器。
 
-## 五、JAR 三路执行设计
+## 五、出站链路能力（去广告 / 域名映射 / DNS / 代理）
+
+核心的**全部出站请求**（spider req / phpgo 网络 / 订阅拉取 / 流拉取 / jar 桥下载）统一经过同一条出站管线，四项能力在管线一处生效，SpiderHost 各执行体自动继承——不允许解释器各自为政：
+
+| 能力 | 承接 | TVBox 配置字段映射 | 说明 |
+|---|---|---|---|
+| 去广告 | **新建（轻量域名拦截链）** | `ads: []` | 出站管线按域名/IP 黑名单拦截广告请求，行为对齐 TVBox 客户端 ads 过滤；域名层拦截在出站前完成。m3u8 分片级广告过滤（素材特征识别）列为后续增强，不在首期 |
+| 域名映射 | DOMAINMAP（✓已有） | `hosts` / 站点自定义头 | 请求域名改写 + 自定义请求头；TVBox `hosts` 的 IP 映射语义由 DNS 层承接，改写语义由 domainmap 承接 |
+| DNS 设置 | DNS 模块（✓已有） | `doh: []` | 配置 DNS → 系统 → 公共 DNS 三级兜底链（含 Android cgo 解析约束） |
+| 代理 | PROXYGROUPS（✓已有） | `proxy` / `sites[].proxy` | 按域名/IP 分组上游代理、测速切换，http/https/socks5/socks4 |
+
+配置来源：单机模式吃端内 `jsm.json` 对应字段；联网模式以下发服务器端配置为准（端内字段仅作缺省）。
+
+## 六、JAR 三路执行设计
 
 实测依据（`spider.jar` 116 个 `com.github.catvod.spider.*` 类）：spider 逻辑层依赖 okhttp/jsoup/gson/protobuf/org.json + `javax.crypto`，Android 触点仅薄层工具类（`android.util.Base64/Log/Pair`、`android.text.TextUtils`、`android.net.Uri`、`android.webkit.CookieManager`、接口签名所需的 `android.content.Context`）。
 
@@ -72,7 +85,7 @@ UI ↔ 核心通信走**本地 HTTP**：端内核心监听 `127.0.0.1` 随机端
 
 信任模型：`php://` 已在核心内执行用户脚本，jar/py/js 同级信任，不开新口子。
 
-## 六、播放器适配层
+## 七、播放器适配层
 
 | 平台 | 首选 | 备选 | 备注 |
 |---|---|---|---|
@@ -86,25 +99,25 @@ UI ↔ 核心通信走**本地 HTTP**：端内核心监听 `127.0.0.1` 随机端
 - catchup `from/to`（Unix 秒）→ 各引擎 seek 语义做一次薄适配。
 - 独立模式可旁路直连原始流（mpv/VLC 直吃 ts/flv，性能最优；端内本来不设防）。
 
-## 七、端内打包与运行形态
+## 八、端内打包与运行形态
 
 - **打包**：Android gomobile `.aar`（CGO 链路已验证，`CGO_ENABLED=1` 走 cgo DNS）；桌面 `.dll/.dylib/.so` + 壳；iOS xcframework（受限 CGO 子集，注意 CGO 禁令只针对纯 Go 构建的旧约束，iOS 打包单独处理）。
 - **单机模式**：核心端内独立运行，自带订阅，全链路 127.0.0.1——"随身 TVBox"。
 - **联网模式**：端内核心连远程 tvgate 服务器（订阅/白名单同步），播放走远程 `/player/<key>`。
 - 两种模式核心代码同一份，仅配置来源不同。
 
-## 八、分期路线
+## 九、分期路线
 
 | 阶段 | 内容 | 备注 |
 |---|---|---|
 | A | `jsm.json` 输入：sites/lives 解析，lives 直接进现有订阅管线；Web 端先验证 | 协议解析为主，无解释器 |
 | B | VOD 模块：type=4/声明式规则引擎（XBPQ/XYQHiker），分类/详情/搜索/播放 | 纯 Go |
-| C | SpiderHost：**先以 phpgo 为参考实现打通七方法 ABI（php 解释器已有）**→ goja(js) → jar（Android ART 委托 + 桌面 sidecar）→ py(CPython)；d2j 转换器与 Android 桩库 | 唯一硬骨头，php 路径零新增 |
+| C | SpiderHost：**先以 phpgo 为参考实现打通七方法 ABI（php 解释器已有）**→ goja(js) → jar（Android ART 委托 + 桌面 sidecar）→ py(CPYTHON)；d2j 转换器与 Android 桩库；出站管线 ads 域名拦截 | 唯一硬骨头，php 路径零新增 |
 | D | Android Compose 壳 + gomobile 打包 + ExoPlayer 适配（M1 闭环：连服务器播 `/player/<key>`） | 先联网模式后单机 |
 | E | 桌面 libmpv → iOS AVPlayer（jar 走服务器桥）；TV 焦点与遥控细节 | |
 | F | TVBox 导出端点（`/tvbox/config.json`，供给 TVBox 族客户端，反向兼容） | 与 A 无依赖，可穿插 |
 
-## 九、风险与已验证事实
+## 十、风险与已验证事实
 
 - ✅ 已实测：`spider.jar`（116 类）Android 引用集中在壳工程，spider 逻辑层为纯 Java 依赖——端上 ART 委托可行。
 - ✅ 已实测：外部台标 CDN 命中率、H5 引擎 HEVC/AC-3 教训（ts-demuxer layout.video 需认 0x1b/0x24；DVB 私有流音频靠 ES descriptor 识别）——原生端用系统解码器可规避 H5 软解坑。
@@ -112,8 +125,9 @@ UI ↔ 核心通信走**本地 HTTP**：端内核心监听 `127.0.0.1` 随机端
 - ⚠️ iOS：无 JIT、禁动态加载字节码；AVPlayer 格式面窄。jar 与格式兼容均依赖核心归一化兜底。
 - ⚠️ 硬约束：严禁从 GPL 上游（rtp2httpd / FongMi 等）逐行移植代码；jar 桥/桩库一律行为级实现（读行为 → 脱离源码重写）。
 
-## 十、验收基准
+## 十一、验收基准
 
 - 用户自有 `qist/tvbox/jsm.json` 为第一个端到端用例：导入 → lives 频道即播 → `spider.jar` 的 sites 可分类/搜索/播放。
 - 同一份 `jsm.json` 在 Android 壳与 H5 后台表现出一致的频道/EPG/回看语义。
 - 全程抓包：真实源 URL 仅出现在核心日志与进程内存，UI 层与网络对面只见不透明地址。
+- 出站链路四能力对 spider 请求各验一例：`ads` 域名拦截生效、domainmap 改写生效、DNS 兜底链生效、代理分组命中。
