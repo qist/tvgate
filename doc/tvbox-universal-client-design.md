@@ -34,6 +34,8 @@
 │  ├── 直播：lives → 订阅管线（M3U/TXT 解析、聚合、白名单、EPG）✓已有  │
 │  ├── 点播：sites → VOD 模块（新建）                                │
 │  │          └── SpiderHost 七方法 ABI（新建）                      │
+│  │               ├── php: phpgo（✓已有，php:// 频道源同链路；       │
+│  │               │        纯 Go 随核心全端生效，作 ABI 参考实现）    │
 │  │               ├── js:  goja（纯 Go）→ 必要时 CGO QuickJS         │
 │  │               ├── py:  CGO CPython 嵌入                         │
 │  │               └── jar: 见 §五（按平台三路）                      │
@@ -49,6 +51,7 @@ UI ↔ 核心通信走**本地 HTTP**：端内核心监听 `127.0.0.1` 随机端
 | 执行体 | 输入侧（核心自己执行，解析成频道/点播） | 输出侧（导出给 TVBox 族客户端） |
 |---|---|---|
 | JSON 声明式（type=4 VOD / 内联 lives / txt / XBPQ / XYQHiker） | ✅ 纯协议解析，Go 原生 | ✅ 透传 |
+| PHP 源（phpgo 承接） | ✅ **已有**：phpgo 纯 Go 解释器随核心分发，五端零成本（`php://` 频道源同链路） | ✅ 透传 |
 | JS spider（drpy/drpy2） | ✅ goja 嵌入核心，一次实现全端生效 | ✅ 透传（客户端自带运行时） |
 | PY spider（dr_py/hipy） | ✅ CGO CPython；协议与 JS 同构 | ✅ 透传 |
 | JAR（dex 字节码，csp_XXX） | △ 三路执行见 §五；iOS 走服务器桥 | ✅ 透传（客户端原生执行） |
@@ -96,7 +99,7 @@ UI ↔ 核心通信走**本地 HTTP**：端内核心监听 `127.0.0.1` 随机端
 |---|---|---|
 | A | `jsm.json` 输入：sites/lives 解析，lives 直接进现有订阅管线；Web 端先验证 | 协议解析为主，无解释器 |
 | B | VOD 模块：type=4/声明式规则引擎（XBPQ/XYQHiker），分类/详情/搜索/播放 | 纯 Go |
-| C | SpiderHost：goja(js) → jar（Android ART 委托 + 桌面 sidecar）→ py(CPython)；d2j 转换器与 Android 桩库 | 唯一硬骨头 |
+| C | SpiderHost：**先以 phpgo 为参考实现打通七方法 ABI（php 解释器已有）**→ goja(js) → jar（Android ART 委托 + 桌面 sidecar）→ py(CPython)；d2j 转换器与 Android 桩库 | 唯一硬骨头，php 路径零新增 |
 | D | Android Compose 壳 + gomobile 打包 + ExoPlayer 适配（M1 闭环：连服务器播 `/player/<key>`） | 先联网模式后单机 |
 | E | 桌面 libmpv → iOS AVPlayer（jar 走服务器桥）；TV 焦点与遥控细节 | |
 | F | TVBox 导出端点（`/tvbox/config.json`，供给 TVBox 族客户端，反向兼容） | 与 A 无依赖，可穿插 |
