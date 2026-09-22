@@ -16,7 +16,7 @@
 | 模块 | 文档 | 说明 |
 |------|------|------|
 | 服务器与传输 | [doc/SERVER.md](doc/SERVER.md) | `server` 监听端口 / TLS / `http` 连接池 / `reload` 热重载 |
-| TVBox 全平台客户端（设计） | [doc/tvbox-universal-client-design.md](doc/tvbox-universal-client-design.md) | `jsm.json` 协议兼容 / SpiderHost（js·py·jar）/ 原生壳与多解码器（未实施，设计基准） |
+| TVBox 全平台客户端（TVFusion） | [github.com/qist/tvfusion](https://github.com/qist/tvfusion) | 已迁移至独立仓库开发（设计基准随迁 `DESIGN.md`）；tvgate 作为引擎依赖（Go module） |
 | Web 管理后台 | [doc/WEB.md](doc/WEB.md) | 登录 / 二次授权 / 代码文件管理 / 三处备份机制 |
 | H5 播放器 | [doc/PLAYER.md](doc/PLAYER.md) | IPTV 订阅 / EPG / 回看 / 不透明 key / `/pp` 播放入口 |
 | 推流发布 | [doc/PUBLISHER.md](doc/PUBLISHER.md) | RTMP 转推 / 本地 FLV·HLS / 录像回放 / MP4 归档 / 配置模板 |
