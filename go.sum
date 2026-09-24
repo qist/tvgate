@@ -12,8 +12,8 @@ github.com/asticode/go-astits v1.16.0 h1:MgyLnG30oRiQsHWQNXA29ZS6i7UNN/OGcPdgH86
 github.com/asticode/go-astits v1.16.0/go.mod h1:psImoC1BhcAWIsyM/RnbO1OgUW+XSf8fZpFvF5McDyo=
 github.com/bluenviron/gortsplib/v5 v5.6.5 h1:mg2tbaC80wboBTlk4WqB1UK0WGxwo0SgmQBZCKozyOs=
 github.com/bluenviron/gortsplib/v5 v5.6.5/go.mod h1:w5R5D0bNncvjWvmBMM5MQg8TXfW8A4c+25nAN9e1nck=
-github.com/bluenviron/mediacommon/v2 v2.9.4 h1:KmV83wTPYGUp32WJd450NnnRr5Db8cpSvO3Y1KiGIKE=
-github.com/bluenviron/mediacommon/v2 v2.9.4/go.mod h1:6KbotxrKqZ6IUyq8g2/9ApcfGGuArFUQOJsH5lYosFk=
+github.com/bluenviron/mediacommon/v2 v2.9.5 h1:6r1vq9qFH5AUUjPOPxRd00BhBNAg1EcmYNvwmpzAibo=
+github.com/bluenviron/mediacommon/v2 v2.9.5/go.mod h1:1J4QckclKIksdI9+7C+PJXVBkpO/JYWn7/h+wOYq+7E=
 github.com/cloudflare/tableflip v1.2.3 h1:8I+B99QnnEWPHOY3fWipwVKxS70LGgUsslG7CSfmHMw=
 github.com/cloudflare/tableflip v1.2.3/go.mod h1:P4gRehmV6Z2bY5ao5ml9Pd8u6kuEnlB37pUFMmv7j2E=
 github.com/dlclark/regexp2 v1.12.0 h1:0j4c5qQmnC6XOWNjP3PIXURXN2gWx76rd3KvgdPkCz8=

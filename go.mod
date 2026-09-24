@@ -7,8 +7,9 @@ require (
 	github.com/andybalholm/brotli v1.2.4
 	github.com/asticode/go-astits v1.16.0
 	github.com/bluenviron/gortsplib/v5 v5.6.5
-	github.com/bluenviron/mediacommon/v2 v2.9.4
+	github.com/bluenviron/mediacommon/v2 v2.9.5
 	github.com/cloudflare/tableflip v1.2.3
+	github.com/dlclark/regexp2 v1.12.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jedisct1/go-dnsstamps v0.0.0-20240423203910-07a0735c7774
 	github.com/libp2p/go-reuseport v0.4.0
@@ -29,7 +30,6 @@ require (
 	github.com/AdguardTeam/golibs v0.32.7 // indirect
 	github.com/ameshkov/dnsstamps v1.0.3 // indirect
 	github.com/asticode/go-astikit v0.30.0 // indirect
-	github.com/dlclark/regexp2 v1.12.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
