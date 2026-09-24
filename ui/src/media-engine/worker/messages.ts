@@ -25,6 +25,8 @@ export type WorkerCommand =
       softDecodeAudio?: boolean;
       /** 设备可用的 PCM 输出声道数（0/缺省 = 直通源声道；2 = 强制 2.0；用于 5.1 设备兼容）。 */
       pcmOutputChannels?: number;
+      /** 主线程调试开关（?dbg=1 / localStorage）：worker 内诊断日志是否输出。 */
+      debug?: boolean;
     }
   | {
       type: "clock";

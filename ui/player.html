@@ -66,6 +66,48 @@
         }
       })();
     </script>
+    <script>
+      // 启动错误上屏：iOS 15 等无 devtools 设备白屏时，把首帧前的 JS 错误直接画在页面上，
+      // 截图即可回报；root 6s 仍未渲染时也给出提示（脚本未执行/资源被拦截/网络未通）。
+      (function () {
+        var shown = 0;
+        function show(msg) {
+          shown++;
+          try {
+            var el = document.createElement("div");
+            el.setAttribute(
+              "style",
+              "position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:#7f1d1d;color:#fff;" +
+                "font:11px/1.5 monospace;padding:8px 10px;word-break:break-all;max-height:50vh;overflow:auto;white-space:pre-wrap;",
+            );
+            el.textContent = "[启动错误] " + msg;
+            (document.body || document.documentElement).appendChild(el);
+          } catch (e) {
+            /* ignore */
+          }
+        }
+        window.addEventListener(
+          "error",
+          function (e) {
+            // 带 target 的资源加载错误（script/link 加载失败）没有 message，由下方兜底提示覆盖
+            if (e && e.target && e.target.tagName && !e.message) return;
+            var m = e && e.message ? e.message + " @" + (e.filename || "") + ":" + (e.lineno || 0) : String(e);
+            show(m);
+          },
+          true,
+        );
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e && (e.reason || e.detail);
+          show("Promise 拒绝: " + (r && r.stack ? String(r.stack).slice(0, 500) : String(r)));
+        });
+        setTimeout(function () {
+          var root = document.getElementById("root");
+          if (root && root.childElementCount === 0 && shown === 0) {
+            show("页面 6s 未渲染且无 JS 错误：脚本可能未执行或资源未加载。UA=" + navigator.userAgent.slice(0, 140));
+          }
+        }, 6000);
+      })();
+    </script>
     <link href="/src/styles/index.css" rel="stylesheet" />
   </head>
   <body class="overflow-hidden bg-background text-foreground antialiased">

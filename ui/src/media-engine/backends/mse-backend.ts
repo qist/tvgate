@@ -25,6 +25,7 @@ import type {
 } from "./types";
 import { detectAudioOutputChannels } from "../audio/output-channels";
 import { PlayerErrors } from "../errors";
+import { debugWarn, isPlayerDebugEnabled } from "../../lib/debug-log";
 
 export interface MseBackendOptions {
   sourceMode?: SourceMode;
@@ -76,9 +77,29 @@ const MSE_HOLD_FALLBACK_MS = 10_000;
  */
 const MSE_HOLD_FALLBACK_FORCED_MS = 12_000;
 
+/**
+ * MMS sourceopen 看门狗间隔（毫秒）：iPhone Safari 的 ManagedMediaSource 下 sourceopen
+ * 可能极晚甚至不触发（远程播放抢占/资源选择停滞）。到点先重跑一次资源选择（video.load()），
+ * 再到点仍不开则上报错误走上层恢复链路。
+ */
+const OPEN_WATCHDOG_MS = 4_000;
+
 export class MseBackend implements PlaybackBackend {
   readonly kind: PlaybackBackendKind = "mse";
   readonly mediaElement: HTMLVideoElement;
+
+  // ---- 诊断（video-player 诊断面板读取；NativeBackend 无此字段，面板自动隐藏该行）----
+  /** MediaSource 是否已 open（iPhone MMS sourceopen 迟滞排障关键）。 */
+  get mseOpen(): boolean {
+    return this.mse.isOpen;
+  }
+  get mseOpening(): boolean {
+    return this.mse.isOpening;
+  }
+  /** 是否使用 ManagedMediaSource（iOS Safari）。 */
+  get mseManaged(): boolean {
+    return this.mse.usesManaged;
+  }
 
   private readonly mse: MediaSourceController;
   private readonly playback: PlaybackController;
@@ -102,6 +123,9 @@ export class MseBackend implements PlaybackBackend {
   /** 本流已被判定"编码不受支持"的轨（用于区分单轨降级与整条流不可播）。 */
   private readonly unsupportedTracks = new Set<string>();
   private mseHoldTimer: ReturnType<typeof setTimeout> | null = null;
+  /** MMS sourceopen 看门狗定时器 / 加载代次：换台或 stop 后旧定时器按代次失效。 */
+  private openWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
+  private openEpoch = 0;
 
   private readonly emitter = new BackendEventEmitter();
   private readonly bufferedRanges = new Map<string, BufferedRange[]>();
@@ -260,11 +284,96 @@ export class MseBackend implements PlaybackBackend {
     // 若复用同一 MS，旧 buffered 区间与旧 currentTime 残留会让新流（从 0 起缓冲）
     // 与播放头错位 → "有数据但不开始播放"（故每次 loadSegments 都重建 MSE）。
     this.mse.destroy();
-    this.mse.open(() => this.startPipeline());
+    this.openMseAndStartPipeline();
   }
 
-  private startPipeline(): void {
+  /**
+   * open() + 立即启动管线 + MMS 看门狗（loadSegments 与自愈重建共用）。
+   * iPhone Safari（ManagedMediaSource）下 sourceopen 可能极晚甚至不触发：原先管线启动
+   * 完全被 sourceopen 门控，worker 拉流/解封装迟迟不动 → rs0/无媒体信息/无限转圈。
+   * 改为 open() 后**立即**启动管线；open 前到达的 init/media 由控制器暂存（pre-open 队列），
+   * sourceopen 后经 drainPreOpen 按序回放（重建 hold，避免逐条 append 锁死 SB 数量）。
+   * 看门狗：sourceopen 迟迟不来时先重跑一次资源选择，仍不开则报错走恢复。
+   */
+  private openMseAndStartPipeline(): void {
+    this.openEpoch++;
+    this.disarmOpenWatchdog();
+    this.mse.open(() => {
+      this.disarmOpenWatchdog();
+      // beginPipeline 在 open 前执行的 setDuration 是 no-op，此处补设直播无限时长
+      this.mse.setDuration(Infinity);
+      this.drainPreOpen();
+    });
     this.beginPipeline();
+    if (this.mse.usesManaged) this.armOpenWatchdog(0);
+  }
+
+  /** 段处理：worker 回调与 drainPreOpen 回放共用（保证两条路径行为完全一致）。 */
+  private handleInitSegment(seg: { kind: string; data: Uint8Array; codec: string; container: string }): void {
+    this.mse.appendInit(seg.kind, seg.data, seg.codec, seg.container);
+    // 标记该轨缓冲已建，并在「所有预期轨」都就绪后才统一放行 append
+    if (seg.kind === "video") this.videoArmed = true;
+    if (seg.kind === "audio") this.audioArmed = true;
+    this.maybeReleaseHold();
+  }
+
+  private handleMediaSegment(seg: { kind: string; data: Uint8Array; timestampOffset?: number }): void {
+    this.mse.appendMedia(seg.kind, seg.data, seg.timestampOffset);
+    // 注意：不可按段推进 duration —— remuxer 的 startDts 是 90kHz 原始刻度（直播约 3.3e9），
+    // 直接当秒设给 MediaSource 会让 duration/seekable 失真到数十亿秒，进而破坏直播边判定。
+    // 直播时长语义固定为 Infinity（见 beginPipeline / onOpen 回调）。
+  }
+
+  /**
+   * 回放 sourceopen 前暂存的 init/media 段。必须先重置 armed 并重新 hold：
+   * 暂存阶段 handleInitSegment 已把 armed 置真（且可能已触发过 release），
+   * 若直接逐条回放，video init 会被立即 append → Chromium 锁死 SourceBuffer 数量
+   * → 紧随其后的 audio addSourceBuffer 必抛已达上限（有画无声死循环）。
+   * 重新走「先建齐两轨 SB 再统一放行」的原路径。
+   */
+  private drainPreOpen(): void {
+    const items = this.mse.drainPreOpen();
+    if (items.length === 0) return;
+    this.videoArmed = false;
+    this.audioArmed = false;
+    this.startMseHold();
+    for (const item of items) {
+      if (item.kind === "init") {
+        this.handleInitSegment({
+          kind: item.track,
+          data: item.data,
+          codec: item.codec ?? "",
+          container: item.container ?? "",
+        });
+      } else {
+        this.handleMediaSegment({ kind: item.track, data: item.data, timestampOffset: item.timestampOffset });
+      }
+    }
+  }
+
+  /** MMS sourceopen 看门狗：4s 未 open 重跑一次资源选择，再 4s 仍不开则报错走恢复链路。 */
+  private armOpenWatchdog(attempt: number): void {
+    const epoch = this.openEpoch;
+    this.openWatchdogTimer = setTimeout(() => {
+      this.openWatchdogTimer = null;
+      if (this.destroyed || epoch !== this.openEpoch) return;
+      if (this.mse.isOpen) return;
+      // 注意不得以 isOpening 为放行条件：重挂/拆除后 opening 会被 sourceclose 置回 false，
+      // 若此时静默 return，看门狗就再也不报错、上层也无从恢复（无声卡死）。
+      if (attempt === 0) {
+        this.mse.retriggerLoad();
+        this.armOpenWatchdog(1);
+      } else {
+        this.emitError({ category: "media", info: "MediaSource 长时间未 open（sourceopen 丢失）" });
+      }
+    }, OPEN_WATCHDOG_MS);
+  }
+
+  private disarmOpenWatchdog(): void {
+    if (this.openWatchdogTimer !== null) {
+      clearTimeout(this.openWatchdogTimer);
+      this.openWatchdogTimer = null;
+    }
   }
 
   private beginPipeline(): void {
@@ -286,19 +395,8 @@ export class MseBackend implements PlaybackBackend {
         this.expectsAudio = layout.mseAudio;
         this.maybeReleaseHold();
       },
-      onInitSegment: (seg) => {
-        this.mse.appendInit(seg.kind, seg.data, seg.codec, seg.container);
-        // 标记该轨缓冲已建，并在「所有预期轨」都就绪后才统一放行 append
-        if (seg.kind === "video") this.videoArmed = true;
-        if (seg.kind === "audio") this.audioArmed = true;
-        this.maybeReleaseHold();
-      },
-      onMediaSegment: (seg) => {
-        this.mse.appendMedia(seg.kind, seg.data, seg.timestampOffset);
-        // 注意：不可按段推进 duration —— remuxer 的 startDts 是 90kHz 原始刻度（直播约 3.3e9），
-        // 直接当秒设给 MediaSource 会让 duration/seekable 失真到数十亿秒，进而破坏直播边判定。
-        // 直播时长语义固定为 Infinity（见 beginPipeline）。
-      },
+      onInitSegment: (seg) => this.handleInitSegment(seg),
+      onMediaSegment: (seg) => this.handleMediaSegment(seg),
       onMediaInfo: (info) => {
         this.mediaInfo = info;
         // 4K（≥3840×2160）必为逐行扫描：去隔行/增强均无正向意义，反而加重
@@ -367,6 +465,7 @@ export class MseBackend implements PlaybackBackend {
       softDecodeAudio: softEnabled,
       wasmDecoders: this.options.wasmDecoders,
       pcmOutputChannels: outputChannels,
+      debug: isPlayerDebugEnabled(),
     });
   }
 
@@ -456,7 +555,7 @@ export class MseBackend implements PlaybackBackend {
     if (this.destroyed || this.sbLimitHealed || this.segments.length === 0) return false;
     this.sbLimitHealed = true;
     this.audioExpectedForced = true;
-    console.warn(`[MSE] ${track} SourceBuffer 创建失败，重建媒体源重试一次：${message}`);
+    debugWarn(`[MSE] ${track} SourceBuffer 创建失败，重建媒体源重试一次：${message}`);
     // 不能在自己的 appendInit 调用栈里拆自己：推到下一个任务做
     setTimeout(() => {
       if (this.destroyed) return;
@@ -464,7 +563,7 @@ export class MseBackend implements PlaybackBackend {
       this.worker?.destroy();
       this.worker = null;
       this.pcmPlayer?.flush();
-      this.mse.open(() => this.beginPipeline());
+      this.openMseAndStartPipeline();
     }, 0);
     return true;
   }
@@ -712,12 +811,15 @@ export class MseBackend implements PlaybackBackend {
     // 画面侧同样不再保留旧台静帧：切台的空窗改由上层 loading 遮罩表达（见 video-player）。
     // 下一次 loadSegments 本就会重建 MediaSource，无额外开销。
     this.mse.destroy();
-    this.streamLoaded = false;
+    // 看门狗随本条流作废：换代次 + 摘定时器，旧流的 sourceopen 超时不得误伤新流
+    this.openEpoch++;
+    this.disarmOpenWatchdog();
   }
-
   destroy(): void {
     this.destroyed = true;
     this.streamLoaded = false;
+    this.openEpoch++;
+    this.disarmOpenWatchdog();
     if (this.tickTimer !== null) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;

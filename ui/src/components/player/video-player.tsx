@@ -26,6 +26,7 @@ import { createPortal } from "react-dom";
 import { usePlayerTouchGestures } from "../../hooks/use-player-touch-gestures";
 import { usePlayerTranslation } from "../../hooks/use-player-translation";
 import { createProgramTimeline, programPositionToWallClock } from "../../lib/program-timeline";
+import { debugWarn, isPlayerDebugEnabled, setPlayerDebugOverride } from "../../lib/debug-log";
 import { getMuted, getVolume, saveMuted, saveVolume } from "../../lib/player-storage";
 import { isVolumeControlSupported } from "../../lib/platform";
 import type { Locale } from "../../lib/locale";
@@ -491,14 +492,8 @@ function VideoPlayerShell({
   const [videoUnsupportedBySlot, setVideoUnsupportedBySlot] = useState<Record<SlotTag, boolean>>({ a: false, b: false });
   // 诊断浮层：?dbg=1 或 localStorage['tvgate-player-debug']='1' 打开；控制台 __tvdbg(true/false) 实时切。
   // 现场排障用（模拟器/手机浏览器都适用）：一眼看出后端模式、MSE 探测逐串结果、两槽是否有帧。
-  const [debugOverlay, setDebugOverlay] = useState(() => {
-    try {
-      if (new URL(window.location.href).searchParams.get("dbg") === "1") return true;
-      return window.localStorage.getItem("tvgate-player-debug") === "1";
-    } catch {
-      return false;
-    }
-  });
+  // 同一开关同时控制诊断性 console 日志（lib/debug-log）的输出。
+  const [debugOverlay, setDebugOverlay] = useState(() => isPlayerDebugEnabled());
   const [volumeLevel, setVolumeLevel] = useState(() => getVolume());
   const [mutedState, setMutedState] = useState(() => getMuted());
   const [isPlaybackActive, setPlaybackActive] = useState(false);
@@ -507,7 +502,10 @@ function VideoPlayerShell({
   const [requiresGesture, setRequiresGesture] = useState(false);
   useEffect(() => {
     const w = window as unknown as { __tvdbg?: (on: boolean) => void };
-    w.__tvdbg = (on: boolean) => setDebugOverlay(Boolean(on));
+    w.__tvdbg = (on: boolean) => {
+      setPlayerDebugOverride(Boolean(on));
+      setDebugOverlay(Boolean(on));
+    };
     return () => {
       delete w.__tvdbg;
     };
@@ -928,7 +926,7 @@ function VideoPlayerShell({
    */
   const onBackendError = useEffectEvent((playerError: PlayerError, slot: SlotTag) => {
     if (playerError.detail === PlayerErrors.CODEC_UNSUPPORTED) {
-      console.error("Player codec warning:", JSON.stringify(playerError));
+      debugWarn("Player codec warning:", JSON.stringify(playerError));
       // 视频轨被跳过 → 屏上只有声音；记下槽位，用于舞台说明占位（换流时清）。
       if (playerError.track === "video") {
         setVideoUnsupportedBySlot((previous) => (previous[slot] ? previous : { ...previous, [slot]: true }));
@@ -1521,13 +1519,13 @@ function VideoPlayerShell({
 
     if (bufferedSecondsAheadOfPlayhead(video) > MIN_BUFFERED_AHEAD_TO_RESUME_SECONDS && !decodeStuck) {
       // 数据在手却停着：补播一次即可，重建会白丢已缓冲内容。
-      console.warn(`Playback stalled ${Math.round(stalledFor)}ms with data buffered; resuming playback`);
+      debugWarn(`Playback stalled ${Math.round(stalledFor)}ms with data buffered; resuming playback`);
       backend.play().catch(() => {});
       return;
     }
 
     stallStrikeRef.current += 1;
-    console.warn(
+    debugWarn(
       `Playback stalled ${Math.round(stalledFor)}ms with no usable buffer (readyState=${video.readyState}, ` +
         `paused=${state.paused}, decodeStuck=${decodeStuck})`,
     );
@@ -1542,7 +1540,7 @@ function VideoPlayerShell({
       (channel?.sources.length ?? 0) > 1
     ) {
       stallStrikeRef.current = 0;
-      console.warn(`Stall failover: switching to next source after repeated stalls`);
+      debugWarn(`Stall failover: switching to next source after repeated stalls`);
       autoplayIntentRef.current = true;
       (onSourceFailover ?? onSourceChange)?.((activeSourceIndex + 1) % channel!.sources.length);
       return;
@@ -2042,6 +2040,16 @@ function VideoPlayerShell({
           MSE {probe.supported ? "OK" : "NO"} {probe.mime}
         </div>
       ))}
+      {(() => {
+        // MediaSource 生命周期（iPhone MMS 排障关键：sourceopen 是否触发）
+        const b = activeBackend() as { mseOpen?: boolean; mseOpening?: boolean; mseManaged?: boolean } | undefined;
+        if (!b || typeof b.mseOpen !== "boolean") return null;
+        return (
+          <div>
+            MS源 {b.mseManaged ? "MMS" : "标准"} {b.mseOpen ? "已开" : b.mseOpening ? "开启中" : "未开"}
+          </div>
+        );
+      })()}
       {(["a", "b"] as const).map((slot) => {
         const video = videoRefOf(slot).current;
         const canvas = canvasRefOf(slot).current;

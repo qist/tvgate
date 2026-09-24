@@ -6,6 +6,8 @@
  * onBufferUpdated / onStartStreaming / onEndStreaming（ManagedMediaSource 流控）。
  */
 
+import { debugWarn } from "../../lib/debug-log";
+
 interface ManagedMediaSource extends MediaSource {
   disableRemotePlayback: boolean;
 }
@@ -64,6 +66,18 @@ interface TrackState {
 const DEFAULT_KEEP_BEHIND = 12;
 /** QuotaExceeded 后的重试间隔（毫秒）：缓冲腾出后自动恢复拉流，避免永久暂停。 */
 const FULL_RETRY_MS = 500;
+/** sourceopen 前暂存 init/media 的队列上限（条）：溢出时优先丢最旧 media 段（直播语义下价值最低）。 */
+const MAX_PRE_OPEN_QUEUE = 64;
+
+/** open() 前到达的段载体：由后端在 sourceopen 后经原 onInitSegment/onMediaSegment 路径回放。 */
+export interface PreOpenItem {
+  kind: "init" | "media";
+  track: string;
+  data: Uint8Array;
+  codec?: string;
+  container?: string;
+  timestampOffset?: number;
+}
 
 export class MediaSourceController {
   private mediaSource: MediaSource | null = null;
@@ -74,6 +88,8 @@ export class MediaSourceController {
   private opened = false;
   private opening = false;
   private pendingOpens: (() => void)[] = [];
+  /** sourceopen 前到达的 init/media 段暂存（iPhone Safari MMS：sourceopen 可能极晚，而管线已提前启动）。 */
+  private preOpenQueue: PreOpenItem[] = [];
   /**
    * 启动 hold：Chromium 一旦 append 了任一 init/moov 就锁定 SourceBuffer 数量，
    * 之后 addSourceBuffer 必然抛 QuotaExceededError。故首个 init 必须先建好所有轨缓冲再统一放行。
@@ -98,6 +114,16 @@ export class MediaSourceController {
 
   get isOpen(): boolean {
     return this.opened;
+  }
+
+  /** open() 已发起但 sourceopen 尚未触发（看门狗/诊断用）。 */
+  get isOpening(): boolean {
+    return this.opening;
+  }
+
+  /** 是否实际使用 ManagedMediaSource（iOS Safari）。 */
+  get usesManaged(): boolean {
+    return this.usesManagedMSE;
   }
 
   /** 创建 MediaSource 并挂到 video；ManagedMediaSource 优先（支持 UA 流控）。 */
@@ -139,6 +165,18 @@ export class MediaSourceController {
     this.mediaSource = ms;
 
     const managed = ms as ManagedMediaSource;
+    // Apple 规范要求：Safari 只有在**媒体元素**上显式禁用远程播放（HTMLMediaElement.
+    // disableRemotePlayback = true）后 MMS 才会激活，否则 sourceopen 永不触发
+    // （iPhone 无限转圈的直接原因）。注意必须设在 video 元素上 —— 设在 MediaSource
+    // 对象上只是无效果的普通属性赋值（不报错）；且必须在挂 src 之前完成。
+    if (this.usesManagedMSE) {
+      const el = this.video as HTMLVideoElement & { disableRemotePlayback?: boolean };
+      try {
+        el.disableRemotePlayback = true;
+      } catch {
+        /* 忽略 */
+      }
+    }
 
     // 监听器一律带「身份校验」：destroy() 里 video.load() 会让**旧** MediaSource 异步派发
     // sourceclose；不加校验就会把**新**会话的 opened/opening 置 false 并清空新轨队列
@@ -197,9 +235,12 @@ export class MediaSourceController {
   /** 追加 init segment（内含 codec/container 描述，内部据此建 SourceBuffer）。 */
   appendInit(track: string, data: Uint8Array, codec: string, container: string): void {
     const ms = this.mediaSource;
-    if (!ms || !this.opened) {
-      // 撕裂/竞态中的过期 init（旧 pipeline 已被替换、MediaSource 已关闭）直接丢弃，
-      // 不当成致命错误上报（否则会诱发无意义的错误恢复/重载循环）
+    if (!ms) return;
+    if (!this.opened) {
+      // iPhone Safari（MMS）：管线已在 open 前启动 —— init 暂存，sourceopen 后按序回放
+      // （直接丢弃会让该轨 SourceBuffer 永远建不出来 → 无限转圈）。
+      // opening=false 说明 MediaSource 已拆除（撕裂竞态中的过期数据），维持丢弃不上报。
+      if (this.opening) this.pushPreOpen({ kind: "init", track, data, codec, container });
       return;
     }
     if (this.disabled.has(track)) return; // 该轨已判定不可用，避免反复重试刷屏
@@ -249,8 +290,7 @@ export class MediaSourceController {
         // 关键修复：浏览器拒收某段会派发 error 事件，但 updating 不会自动复位 → pump 永久阻塞、
         // 后续所有段卡在队列、缓冲冻结在首个成功段（起播空洞/卡死）。必须复位并继续泵队列。
         sbState.updating = false;
-        // eslint-disable-next-line no-console
-        console.warn(`VIDERR ${track} SB error event (updating reset) — 浏览器拒收该分片 mime=${mime} codec=${codec}`);
+        debugWarn(`VIDERR ${track} SB error event (updating reset) — 浏览器拒收该分片 mime=${mime} codec=${codec}`);
         this.callbacks.onError?.(`SourceBuffer error: ${track}`);
         this.pump(track);
       });
@@ -261,8 +301,40 @@ export class MediaSourceController {
   /** 追加 media segment；timestampOffset 单位秒。 */
   appendMedia(track: string, data: Uint8Array, timestampOffset?: number): void {
     if (this.disabled.has(track)) return;
+    if (!this.opened) {
+      // 同 appendInit：opening 期间暂存（顺序在对应 init 之后，回放时天然保序）
+      if (this.opening) this.pushPreOpen({ kind: "media", track, data, timestampOffset });
+      return;
+    }
     if (!this.tracks.has(track)) return; // init 尚未到达/已被丢弃时的竞态数据，直接忽略
     this.enqueue(track, { data, timestampOffset });
+  }
+
+  private pushPreOpen(item: PreOpenItem): void {
+    if (this.preOpenQueue.length >= MAX_PRE_OPEN_QUEUE) {
+      // 优先丢最旧 media 段；全是 init 的极端情况丢队首（init 只出现在流头部，实际到不了这）
+      const mediaIdx = this.preOpenQueue.findIndex((q) => q.kind === "media");
+      if (mediaIdx >= 0) this.preOpenQueue.splice(mediaIdx, 1);
+      else this.preOpenQueue.shift();
+    }
+    this.preOpenQueue.push(item);
+  }
+
+  /** 取走暂存段：由后端在 sourceopen 后经原回调路径回放，复用 hold/armed 建齐逻辑。 */
+  drainPreOpen(): PreOpenItem[] {
+    const items = this.preOpenQueue;
+    this.preOpenQueue = [];
+    return items;
+  }
+
+  /** 看门狗专用：重跑 media load 算法促使 UA 重新派发 sourceopen（仅 opening 阶段有效）。 */
+  retriggerLoad(): void {
+    if (!this.opening || this.opened || !this.mediaSource) return;
+    try {
+      this.video.load();
+    } catch {
+      /* 忽略 */
+    }
   }
 
   private enqueue(track: string, item: { data: Uint8Array; timestampOffset?: number }): void {
@@ -460,9 +532,17 @@ export class MediaSourceController {
     // 仍被挂载；必须再调 load() 才会真正释放旧管线。
     this.video.removeAttribute("src");
     this.video.load();
+    // MMS 会话结束：恢复远程播放（AirPlay），避免后续 native 后端无法投屏
+    const el = this.video as HTMLVideoElement & { disableRemotePlayback?: boolean };
+    try {
+      el.disableRemotePlayback = false;
+    } catch {
+      /* 忽略 */
+    }
     this.mediaSource = null;
     this.opened = false;
     this.opening = false;
     this.pendingOpens = [];
+    this.preOpenQueue = [];
   }
 }

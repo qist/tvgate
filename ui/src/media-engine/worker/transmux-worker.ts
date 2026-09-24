@@ -14,6 +14,7 @@ import type { SegmentSource } from "../hls/segment-source";
 import type { WorkerCommand, WorkerEvent } from "./messages";
 import type { PcmWorkerStats, PlayerMediaInfo } from "../backends/types";
 import { PcmTimeline } from "./pcm-timeline";
+import { setWorkerDebug, workerDebugWarn } from "./debug";
 
 let pipeline: TransmuxPipeline | null = null;
 let audioPipeline: TransmuxPipeline | null = null;
@@ -170,8 +171,7 @@ async function resolveSources(
               const ainfo = await ah.load().catch(() => null);
               resolveAudioSource(ainfo ? ah : null);
             } catch (e) {
-              // eslint-disable-next-line no-console
-              console.warn(`[HLS] 音频 rendition 解析失败，仅播视频: ${e instanceof Error ? e.message : String(e)}`);
+              workerDebugWarn(`[HLS] 音频 rendition 解析失败，仅播视频: ${e instanceof Error ? e.message : String(e)}`);
               resolveAudioSource(null);
             }
           })();
@@ -185,8 +185,7 @@ async function resolveSources(
     // sniff === null（探测失败）或播放列表加载失败 → 退避后重试
     if (attempt < SOURCE_INIT_MAX_ATTEMPTS) {
       const delay = Math.min(SOURCE_INIT_BASE_DELAY_MS * 2 ** (attempt - 1), SOURCE_INIT_MAX_DELAY_MS);
-      // eslint-disable-next-line no-console
-      console.warn(`[TransmuxWorker] 源初始化失败，${delay}ms 后重试 ${attempt}/${SOURCE_INIT_MAX_ATTEMPTS}`);
+      workerDebugWarn(`[TransmuxWorker] 源初始化失败，${delay}ms 后重试 ${attempt}/${SOURCE_INIT_MAX_ATTEMPTS}`);
       await sleep(delay);
     }
   }
@@ -282,8 +281,7 @@ class WorkerSoftDecoder {
         // 仅在首次失败时计数，避免每块重复累加。
         if (st.decodeInitFailed === 0) {
           st.decodeInitFailed++;
-          // eslint-disable-next-line no-console
-          console.warn(`[DEC-INIT-FAIL] ${codec}: 软解 WASM 不可用（未配置或初始化失败）`);
+          workerDebugWarn(`[DEC-INIT-FAIL] ${codec}: 软解 WASM 不可用（未配置或初始化失败）`);
         }
         return;
       }
@@ -332,12 +330,10 @@ class WorkerSoftDecoder {
           // 若不处理会「静默停供」（音频永久无声且无任何报错）——故累计到阈值即重建解码器自愈。
           st.decodeErrors++;
           if (st.decodeErrors <= 3) {
-            // eslint-disable-next-line no-console
-            console.warn(`[DEC-ERR] ${codec} #${st.decodeErrors}: ${e instanceof Error ? e.message : String(e)}`);
+            workerDebugWarn(`[DEC-ERR] ${codec} #${st.decodeErrors}: ${e instanceof Error ? e.message : String(e)}`);
           }
           if (st.decodeErrors >= DECODER_RESET_ERROR_THRESHOLD) {
-            // eslint-disable-next-line no-console
-            console.warn(`[DEC-RESET] ${codec}: ${st.decodeErrors} 次连续失败，重建解码器`);
+            workerDebugWarn(`[DEC-RESET] ${codec}: ${st.decodeErrors} 次连续失败，重建解码器`);
             try {
               st.decoder?.flush();
             } catch {
@@ -420,6 +416,7 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
 
       const wasmDecoders = cmd.wasmDecoders ?? builtinWasmDecoders;
       const softEnabled = cmd.softDecodeAudio ?? true;
+      setWorkerDebug(cmd.debug === true);
 
       void (async () => {
         const resolved = await resolveSources(cmd.urls, (msg) =>
@@ -575,8 +572,7 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
             // 仅首个 media 段推迟到基准到达（remuxer 侧超时 1.5s 自行放行），避免为等基准拖慢起播。
             audioPipeline.awaitExternalBase();
             void audioPipeline.start().catch((e: unknown) => {
-              // eslint-disable-next-line no-console
-              console.warn(`[HLS] 音频 rendition 流水线启动失败: ${e instanceof Error ? e.message : String(e)}`);
+              workerDebugWarn(`[HLS] 音频 rendition 流水线启动失败: ${e instanceof Error ? e.message : String(e)}`);
             });
             // 后台轮询视频基准就绪后锚定（视频链通常先就绪；最多等 ~2s）
             void (async () => {

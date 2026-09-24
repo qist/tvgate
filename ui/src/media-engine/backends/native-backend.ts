@@ -52,9 +52,25 @@ export class NativeBackend implements PlaybackBackend {
     v.addEventListener("waiting", (e) => this.emitter.emit("transport-state", "waiting", e.timeStamp));
     v.addEventListener("pause", (e) => this.emitter.emit("transport-state", "paused", e.timeStamp));
     v.addEventListener("ended", () => this.emitter.emit("ended"));
-    v.addEventListener("error", () =>
-      this.emitter.emit("error", { category: "media", info: "原生播放失败" }),
-    );
+    v.addEventListener("error", () => {
+      // code=1（MEDIA_ERR_ABORTED）：换台/stop() 触发 load() 中断旧加载的良性事件，
+      // 不是真失败 —— 上报会导致上层错误恢复误切线路（iOS Safari 换台必发）。
+      const me = v.error;
+      if (!me || me.code === 1) return;
+      const names: Record<number, string> = { 2: "网络", 3: "解码", 4: "格式不支持" };
+      const kind = names[me.code] ? `（${names[me.code]}）` : "";
+      const src = (v.currentSrc || v.src || "").replace(/^[a-z]+:\/\/[^/]+/i, "");
+      // code=3/4 在原生 HLS 上的最常见原因：源音轨是 MP2/MP3/AC-3 等 Safari 原生 HLS
+      // 不支持的编码（引擎 MSE 路径有 WASM 软解所以安卓/iOS 17+ 能播；iOS 15 无 MSE 只能原生）。
+      const hint =
+        me.code === 3 || me.code === 4
+          ? "：该频道音/视频编码不被此系统原生播放支持（常见于 MP2/AC-3 音轨源），iOS 17+ 或安卓可正常观看"
+          : "";
+      this.emitter.emit("error", {
+        category: "media",
+        info: `原生播放失败 code=${me.code}${kind}${hint}${me.message ? " " + me.message : ""} src=${src.slice(0, 100)}`,
+      });
+    });
   }
 
   on<K extends keyof PlayerEventMap>(event: K, handler: PlayerEventMap[K]): void {

@@ -18,6 +18,7 @@ import {
 import { FlvDemuxer } from "../demux/flv-demuxer";
 import { TsDemuxer, type TrackInfo, type TsDemuxerCallbacks } from "../demux/ts-demuxer";
 import { AdtsDemuxer, probeAdtsStream } from "../demux/adts-demuxer";
+import { workerDebugWarn } from "../worker/debug";
 import type { SegmentSource } from "../hls/segment-source";
 import {
   Fmp4Remuxer,
@@ -487,8 +488,7 @@ export class TransmuxPipeline {
         this.demuxer?.reset();
         this.demuxer = null;
         this.demuxProbeBuffer = null;
-        // eslint-disable-next-line no-console
-        console.warn(
+        workerDebugWarn(
           `[PIPELINE] 直播连接 EOF（本次 ${(loader.bytesReceived / 1024).toFixed(0)}KB）→ ` +
             `重锚到 ${continueAtSec.toFixed(1)}s（已发末端 ` +
             `${this.remuxer.emittedEndSec.toFixed(1)}s / 播放头 ${playheadSec.toFixed(1)}s）→ ${delay}ms 后重连`,
@@ -517,8 +517,7 @@ export class TransmuxPipeline {
       attempt++;
       if (!segmented && live && attempt <= maxAttempts) {
         const delay = Math.min(RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), RETRY_MAX_DELAY_MS);
-        // eslint-disable-next-line no-console
-        console.warn(
+        workerDebugWarn(
           `[PIPELINE] 直播流中断（code=${code}${loader.dataStalled ? " 无数据看门狗" : ""}）→ ` +
             `${delay}ms 后重连 ${attempt}/${maxAttempts}`,
         );
@@ -665,8 +664,7 @@ export class TransmuxPipeline {
       if (this.suppressAudio && s.kind === "audio") continue;
       if (this.audioOnly && !(codec && this.softDecodeCodecs.has(codec))) {
         // audio-only 流水线只处理需软解的音轨；其余（如 AAC 分离音轨）本期不接入 MSE，丢弃并告警
-        // eslint-disable-next-line no-console
-        console.warn(`[PIPELINE] audio-only 流水线忽略非软解音轨 codec=${codec ?? "?"}（本期不接入 MSE）`);
+        workerDebugWarn(`[PIPELINE] audio-only 流水线忽略非软解音轨 codec=${codec ?? "?"}（本期不接入 MSE）`);
         continue;
       }
       if (codec && this.softDecodeCodecs.has(codec)) {
@@ -837,8 +835,7 @@ export class TransmuxPipeline {
       if (deltaSec <= PCM_REANCHOR_AHEAD_SEC && deltaSec >= -PCM_REANCHOR_BEHIND_SEC) {
         return; // 界内：保留时间轴
       }
-      // eslint-disable-next-line no-console
-      console.warn(`[PIPELINE] PCM 轴偏离播放头 ${(deltaSec * 1000).toFixed(0)}ms → 重钉 PCM 时间轴`);
+      workerDebugWarn(`[PIPELINE] PCM 轴偏离播放头 ${(deltaSec * 1000).toFixed(0)}ms → 重钉 PCM 时间轴`);
     }
     // 重钉：清 PCM 基准与暂存块，下一帧按新基准重新锚定（有视频轨时钉视频首样本；
     // 分离音轨钉音频首样本）。worker 侧软解状态由其锚点阈值/PcmTimeline 自行吸收。

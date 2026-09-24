@@ -291,8 +291,13 @@ function releaseOrientationLock(): void {
  * 侧栏内容需要用 safe-area-inset-right 垫开。
  */
 function computePanelInsetSide(): boolean {
-  const { angle, type } = screen.orientation;
-  if (!type.startsWith("landscape")) return true;
+  // iPhone Safari（iOS 16.4 前）没有 Orientation API：screen.orientation 为 undefined，
+  // 直接解构会抛 "Right side of assignment cannot be destructured" → React 无法挂载 → 整页白屏。
+  // 缺失时退回窗口尺寸判断；横屏下拿不到 angle，按顺时针 90°（无需右侧垫开）处理。
+  const orientation = screen.orientation;
+  if (!orientation) return window.innerWidth < window.innerHeight;
+  const { angle, type } = orientation;
+  if (!type || !type.startsWith("landscape")) return true;
   return angle !== 90;
 }
 
@@ -499,11 +504,13 @@ function PlayerScreen() {
       debounceHandle = window.setTimeout(commitViewport, VIEWPORT_DEBOUNCE_MS);
     };
     window.addEventListener("resize", scheduleViewportCommit);
-    screen.orientation.addEventListener("change", scheduleViewportCommit);
+    // iPhone Safari（iOS 16.4 前）无 screen.orientation：跳过注册，旋转已由 resize 事件覆盖
+    const screenOrientation = screen.orientation;
+    if (screenOrientation) screenOrientation.addEventListener("change", scheduleViewportCommit);
     return () => {
       if (debounceHandle) window.clearTimeout(debounceHandle);
       window.removeEventListener("resize", scheduleViewportCommit);
-      screen.orientation.removeEventListener("change", scheduleViewportCommit);
+      if (screenOrientation) screenOrientation.removeEventListener("change", scheduleViewportCommit);
     };
   }, []);
 

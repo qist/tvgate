@@ -12,6 +12,7 @@
 
 import type { BufferedRange } from "./media-source-controller";
 import type { SourceMode } from "../types";
+import { debugWarn } from "../../lib/debug-log";
 
 export interface PlaybackControllerCallbacks {
   onRateChange?(rate: number): void;
@@ -203,8 +204,7 @@ export class PlaybackController {
     if (gap < GAP_SKIP_MIN_SEC || gap > GAP_SKIP_MAX_SEC) return false;
     if (b.end(idx + 1) - nextStart < GAP_SKIP_MIN_TARGET_SEC) return false; // 空洞后数据太少，跳过去也会再 stall
     const target = nextStart + GAP_SKIP_EPSILON_SEC;
-    // eslint-disable-next-line no-console
-    console.warn(
+    debugWarn(
       `[MSE] 缓冲缺口 ${gap.toFixed(2)}s（${currentEnd.toFixed(2)} → ${nextStart.toFixed(2)}）→ 跳过缺失段`,
     );
     this.callbacks.onGapSkip?.(gap);

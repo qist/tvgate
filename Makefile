@@ -28,7 +28,9 @@ BUILD    = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) $(if $(3),GOARM=$(3) )go build -l
 UI_DIR      := ui
 DIST_STAMP  := web/dist/.built
 # 前端源码变化时自动重建 dist（go:embed 依赖此产物，避免二进制嵌入过期前端）
-UI_SRCS     := $(shell find $(UI_DIR)/src -type f 2>/dev/null)
+# 注意：入口 HTML（index.html / player.html）与 vite.config 也必须纳入——
+# 它们承载内联引导脚本与构建配置，改动不触发重建会嵌入过期页面（实测 iOS 白屏排查陷阱未生效）。
+UI_SRCS     := $(shell find $(UI_DIR)/src -type f 2>/dev/null) $(UI_DIR)/index.html $(UI_DIR)/player.html $(UI_DIR)/vite.config.ts
 # Go 源码变化时自动重编（所有平台二进制目标的公共依赖，避免改代码后 make 判定"无需重建"）
 GO_SRCS     := $(shell find . -name '*.go' -not -path './ui/*' 2>/dev/null) go.mod go.sum config/version
 
