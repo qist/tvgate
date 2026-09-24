@@ -4,6 +4,17 @@
 
 ## Android (tvgate-android)
 
+### v3.3.3
+
+```
+1、内嵌服务端同步至 v3.3.3 — iPhone Safari 播放一直转圈修复（ManagedMediaSource
+   sourceopen 不触发）、iOS 15 打开播放页整页白屏修复、原生播放失败给出明确原因提示
+   （编码不支持等）、播放器诊断日志收口到调试开关（未开启调试控制台零输出）；
+   详见服务端 v3.3.3 条目
+2、App 侧本次无独立代码改动 — 仅随服务端同步发版：内嵌同版本服务端二进制（含 /pp H5
+   播放器与管理后台），覆盖安装即可升级
+```
+
 ### v3.3.2
 
 ```
@@ -177,6 +188,34 @@
 ---
 
 ## 服务端 (tvgate)
+
+### v3.3.3
+
+```
+1、iPhone Safari 播放一直转圈修复 — iOS 17+ 走 ManagedMediaSource（MMS），而 MMS 的
+   激活条件是必须在挂 src 之前于 video 元素上设 disableRemotePlayback=true（此前误设在
+   MediaSource 对象上是无声的无效赋值，AirPlay 预期抑制 sourceopen，管线永不启动）；
+   同时管线改为 open 后立即启动、init/media 段暂存待 sourceopen 补发（不再被事件
+   门控饿死）；sourceopen 看门狗修复重挂后静默卡死的洞（video.load() 会 detach 且
+   不可重挂，看门狗不再被 opening 状态放行）；诊断面板新增「MS源」状态行
+2、iOS 15 打开播放页整页白屏修复 — iPhone Safari 16.4 之前没有 screen.orientation
+   API，直接解构 undefined 抛 TypeError 导致 React 整树无法挂载；改为 API 守卫 +
+   innerWidth<innerHeight 降级判断横竖屏（监听注册/清理同样守卫）
+3、原生播放失败诊断与误报治理 — error 事件上报 MediaError code/message/src（此前只有
+   一句「原生播放失败」无细节）；code=1（换台 load() 中断）为良性事件不再上报，避免
+   误触错误恢复切线路；code=3/4 追加明确提示：常见于 MP2/MP3/AC-3 音轨源不被系统原生
+   HLS 支持（iOS 15 无 MSE 只能原生，引擎 MSE 路径有 WASM 软解故 iOS 17+/安卓可播），
+   属系统级限制
+4、启动错误上屏 — 两个入口 HTML（index/player）加 ES5 启动错误陷阱：脚本异常/
+   Promise 拒绝在页面底部红条显示、6 秒 root 仍空给出资源未加载提示——旧 WebView/
+   低版本系统上白屏不再无声无息（本次即靠它定位 iOS 15 解构崩溃）
+5、播放器诊断日志收口 — 全部诊断性 console.warn 统一收口到调试开关：?dbg=1 /
+   localStorage['tvgate-player-debug']='1' / __tvdbg() 三种开启方式，主线程与 worker
+   线程（开关随 load 命令下发）全覆盖；未开启调试控制台零输出；错误级日志（真故障）
+   不受开关影响始终显示
+6、构建依赖修复 — Makefile UI 重建依赖补齐入口 HTML 与 vite.config.ts：此前改入口
+   文件（如启动错误陷阱）不触发前端重建，产物与源码不一致
+```
 
 ### v3.3.2
 
