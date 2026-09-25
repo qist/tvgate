@@ -26,6 +26,30 @@ func installXMLTV(t *testing.T, b *EPGBank, bodies ...string) {
 	b.install(sets)
 }
 
+// TestStripQualitySuffix 模板 EPG 查询名的画质后缀剥离规则：
+// 分隔符/中文前缀可剥（CCTV1-4K→CCTV1），紧跟数字/字母的不剥（CCTV4K/SEPD4K
+// 剥了会变成另一个台名）。
+func TestStripQualitySuffix(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"CCTV1-4K", "CCTV1"},     // 线上实测：api.erw.cc 把原样名错配成 CCTV14
+		{"CCTV1_4K", "CCTV1"},
+		{"CCTV1 4K", "CCTV1"},
+		{"北京卫视4K", "北京卫视"},   // 中文前缀：只剥后缀
+		{"欢笑剧场4K", "欢笑剧场"},
+		{"CCTV-1 高清", "CCTV-1"},
+		{"湖南卫视-超清", "湖南卫视"},
+		{"CCTV4K", "CCTV4K"},      // 紧跟数字：剥了会撞 CCTV4
+		{"SEPD4K", "SEPD4K"},      // 紧跟字母
+		{"CCTV5+", "CCTV5+"},      // 无画质后缀
+		{"4K", "4K"},              // 整名即后缀：不剥
+		{"CCTV16-4K", "CCTV16"},   // 可剥（CCTV16 本身就是超高清频道）
+	} {
+		if got := stripQualitySuffix(c.in); got != c.want {
+			t.Errorf("stripQualitySuffix(%q)=%q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 // TestEPGLoadFollowsRedirect 回归：EPG 来源 301/302 跳到别的域名（如
 // epg.51zmt.top:8000/e1.xml.gz → s.102031.xyz/xml/xxx.xml.gz）必须跟随，
 // 否则整份节目单拉不到（基座 client 不自动跟随重定向）。

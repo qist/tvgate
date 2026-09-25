@@ -3,11 +3,13 @@ package web
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/qist/tvgate/config/load"
 	"io"
 	"net/http"
 	"os"
 
+	"github.com/qist/tvgate/config/load"
+
+	"github.com/qist/tvgate/clear"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
 	"gopkg.in/yaml.v3"
@@ -564,4 +566,53 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 	w.Write([]byte("配置保存成功"))
 
 	// logger.LogPrintf("代理组配置保存完成")
+}
+
+// handleProxyGroupsCacheClear 处理单个代理组的缓存清理请求（POST，JSON: {"group": "组名"}）：
+// 清空该组的全部访问缓存条目（域名→代理组映射）并重置该组测速统计，
+// 下次请求按当前规则重新匹配分组并重新测速，用于修改规则后立即生效。
+func (h *ConfigHandler) handleProxyGroupsCacheClear(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "读取请求体失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var req struct {
+		Group string `json:"group"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "解析JSON失败: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Group == "" {
+		http.Error(w, "缺少 group 参数", http.StatusBadRequest)
+		return
+	}
+
+	// 读当前配置找到该组（持读锁），重置其测速统计
+	config.CfgMu.RLock()
+	group, ok := config.Cfg.ProxyGroups[req.Group]
+	config.CfgMu.RUnlock()
+	if !ok {
+		http.Error(w, "代理组不存在: "+req.Group, http.StatusNotFound)
+		return
+	}
+	clear.ResetProxyGroupStats(group)
+
+	removed := clear.ClearAccessCacheByGroup(req.Group)
+	logger.LogPrintf("🧹 手动清理代理组 %s 缓存: 访问缓存 %d 条, 测速统计已重置", req.Group, removed)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"cleared": removed,
+		"message": fmt.Sprintf("已清理 %d 条访问缓存, 测速统计已重置", removed),
+	})
 }

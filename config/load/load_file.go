@@ -3,6 +3,7 @@ package load
 import (
 	"fmt"
 	"os"
+
 	// "strings"
 
 	"github.com/qist/tvgate/config"
@@ -52,7 +53,11 @@ func LoadConfig(configPath string) error {
 	// 而 web 各保存路径（saveAndResponse）之后并**不会**再调 SetDefaults，nil 会一直留着，
 	// 后续任何一次 HTTP client 创建 / DNS 解析都会再崩一次。SetDefaults 幂等，这里提前调用安全。
 	newCfg.SetDefaults()
+	// 发布全局配置必须持写锁：读方（player.interval、stream、web 等多处）
+	// 均以 CfgMu.RLock 读取 config.Cfg，发布是无锁写会与它们竞争（-race 实证）。
+	config.CfgMu.Lock()
 	config.Cfg = newCfg
+	config.CfgMu.Unlock()
 
 	// 初始化统计结构
 	groupstats.InitProxyGroups()

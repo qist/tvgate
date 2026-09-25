@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, X, GripVertical, Save } from "lucide-react";
+import { Plus, Pencil, Trash2, X, GripVertical, Save, Eraser } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AsyncActionButton } from "@/components/config/async-action-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { listProxyGroups, saveProxyGroups, type Proxy, type ProxyGroup } from "@/api/proxygroups";
+import { clearProxyGroupCache, listProxyGroups, saveProxyGroups, type Proxy, type ProxyGroup } from "@/api/proxygroups";
 
 interface Entry {
   name: string;
@@ -64,6 +64,18 @@ export function ProxyGroupsPage() {
   const [pendingDelete, setPendingDelete] = useState<number | null>(null);
   const askDelete = (i: number) => setPendingDelete(i);
 
+  // 清理单个组的访问缓存并重置测速统计（改规则后立即生效，不等定时/热重载）
+  const clearCache = async (name: string) => {
+    try {
+      const res = await clearProxyGroupCache(name);
+      setNotice({ type: "ok", msg: `「${name}」${res.message || "缓存已清理"}` });
+      setTimeout(refresh, 500); // 统计已重置，刷新后节点显示为"未测"
+    } catch (e) {
+      setNotice({ type: "err", msg: (e as Error).message });
+    }
+    setTimeout(() => setNotice(null), 4000);
+  };
+
   const save = async () => {
     const map: Record<string, ProxyGroup> = {};
     for (const e of entries) {
@@ -110,7 +122,7 @@ export function ProxyGroupsPage() {
         editing.has(i) ? (
           <GroupEditCard key={i} entry={e} onChange={(p) => set(i, p)} onName={(n) => setEntries((prev) => prev.map((x, idx) => (idx === i ? { ...x, name: n } : x)))} onSave={save} onCancel={() => setEditing((prev) => { const n = new Set(prev); n.delete(i); return n; })} onDelete={() => askDelete(i)} />
         ) : (
-          <GroupViewCard key={i} entry={e} onEdit={() => setEditing((prev) => new Set(prev).add(i))} onDelete={() => askDelete(i)} />
+          <GroupViewCard key={i} entry={e} onEdit={() => setEditing((prev) => new Set(prev).add(i))} onDelete={() => askDelete(i)} onClearCache={e.name.trim() ? () => clearCache(e.name.trim()) : undefined} />
         ),
       )}
 
@@ -129,7 +141,7 @@ export function ProxyGroupsPage() {
   );
 }
 
-function GroupViewCard({ entry, onEdit, onDelete }: { entry: Entry; onEdit: () => void; onDelete: () => void }) {
+function GroupViewCard({ entry, onEdit, onDelete, onClearCache }: { entry: Entry; onEdit: () => void; onDelete: () => void; onClearCache?: () => void }) {
   const g = entry.g;
   const proxyStats = g.stats?.ProxyStats || {};
   const aliveCount = g.proxies.filter((p) => {
@@ -152,6 +164,11 @@ function GroupViewCard({ entry, onEdit, onDelete }: { entry: Entry; onEdit: () =
           {g.loadbalance && <Badge variant="outline">{g.loadbalance}</Badge>}
         </div>
         <div className="flex gap-1.5">
+          {onClearCache && (
+            <AsyncActionButton variant="outline" size="sm" action={onClearCache} busyText="清理中…" title="清理该组访问缓存并重置测速统计">
+              <Eraser className="h-4 w-4" />
+            </AsyncActionButton>
+          )}
           <Button variant="outline" size="sm" onClick={onEdit}><Pencil className="h-4 w-4" /></Button>
           <Button variant="destructive" size="sm" onClick={onDelete}><Trash2 className="h-4 w-4" /></Button>
         </div>

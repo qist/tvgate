@@ -20,11 +20,27 @@ import (
 	"github.com/qist/tvgate/php"
 )
 
+// setCfgPlayer 持写锁更新全局 player 配置。读方（Manager.interval 等）以
+// CfgMu.RLock 读取，无锁写会被 -race 报告（实测 TestNotifyPlayer 系列）。
+func setCfgPlayer(p config.PlayerConfig) {
+	config.CfgMu.Lock()
+	config.Cfg.Player = p
+	config.CfgMu.Unlock()
+}
+
 // setTestPlayer 写入全局播放器配置供 Reload 读取，测试结束还原。
 func setTestPlayer(p config.PlayerConfig, t *testing.T) {
 	old := config.Cfg.Player
-	config.Cfg.Player = p
-	t.Cleanup(func() { config.Cfg.Player = old })
+	setCfgPlayer(p)
+	// 测试会整体替换全局配置：禁用台标后台探测派发，避免泄漏的 goroutine
+	// 在后续测试写配置时读到中间态（-race 报告）。后台路径由
+	// TestProbeAndPruneClearsLive 直接（同步）验证。
+	oldDisabled := logoProbeAsyncDisabled
+	logoProbeAsyncDisabled = true
+	t.Cleanup(func() {
+		setCfgPlayer(old)
+		logoProbeAsyncDisabled = oldDisabled
+	})
 }
 
 func TestManagerReloadAndChannels(t *testing.T) {
@@ -178,10 +194,6 @@ func TestM3UEmbeddedEpgConfigFallback(t *testing.T) {
 // http → https 升级、域名/CDN 搬迁很常见（源站把 http 跳 https），不跟随就等于订阅拉不到。
 // 这里让 http 源 301 到一个 **https** 源，验证跨协议跳转后仍能正常解析出频道表。
 func TestSubscriptionFollowsRedirect(t *testing.T) {
-	no := false
-	config.Cfg.HTTP.InsecureSkipVerify = &no
-	config.Cfg.HTTP.DisableKeepAlives = &no
-
 	// 最终订阅（https，自签证书由 httptest 的 client 信任）
 	final := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -292,8 +304,8 @@ func TestFetchAllDir(t *testing.T) {
 
 	// Reload 合并：3 频道、3 分组、按文件序
 	m.cfg = &config.PlayerConfig{Enabled: true, Subscription: sub}
-	config.Cfg.Player = *m.cfg
-	t.Cleanup(func() { config.Cfg.Player = config.PlayerConfig{} })
+	setCfgPlayer(*m.cfg)
+	t.Cleanup(func() { setCfgPlayer(config.PlayerConfig{}) })
 	m.Reload()
 	cs := m.Channels()
 	if len(cs) != 3 {
@@ -506,7 +518,7 @@ func TestHotReloadNotifyReloadsSubscription(t *testing.T) {
 	// 模拟后台改配置：追加 subscriptions 源 → 通知 → 立即重载
 	p := config.Cfg.Player
 	p.Subscriptions = []string{subB.URL}
-	config.Cfg.Player = p
+	setCfgPlayer(p)
 	NotifyConfigChanged()
 	waitChans(2, "热加载追加订阅源后")
 }
@@ -567,7 +579,7 @@ func TestNotifyPlayerConfigChangedAfterExternalLoad(t *testing.T) {
 	// 模拟后台保存配置：新配置（含 logo 模板）已被别的路径 load 进内存，但没通知过播放器
 	next := config.Cfg.Player
 	next.Logo = "https://logo.example.com/{name}.png"
-	config.Cfg.Player = next
+	setCfgPlayer(next)
 
 	// 加载出口的兜底通知：必须让播放器按新配置重载订阅（台标由此补上）
 	NotifyPlayerConfigChanged(next)
@@ -1181,6 +1193,75 @@ func TestServeEPGKeyOnly(t *testing.T) {
 		if got := normalizeEPGDate(c.in); got != c.want {
 			t.Fatalf("normalizeEPGDate(%q)=%q，期望 %q", c.in, got, c.want)
 		}
+	}
+}
+
+// TestServeEPGTemplateQualitySuffix 回归（线上事故）：频道名带画质后缀（CCTV1-4K）
+// 时，模板 EPG 查询必须先剥后缀查主名（外源对未收录名做模糊匹配会把 CCTV1-4K
+// 错配成 CCTV14 少儿）；剥后名查不到再回落原始全名。
+func TestServeEPGTemplateQualitySuffix(t *testing.T) {
+	no := false
+	config.Cfg.HTTP.InsecureSkipVerify = &no
+	config.Cfg.HTTP.DisableKeepAlives = &no
+
+	var queries []string
+	tpl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ch := r.URL.Query().Get("ch")
+		date := r.URL.Query().Get("date")
+		queries = append(queries, ch)
+		switch {
+		case ch == "CCTV1" && date == "20260901": // 剥后名有节目（常见：外源只收录主频道名）
+			w.Write([]byte(`{"epg_data":[{"start":"08:00","end":"09:00","title":"朝闻天下"}]}`))
+		case ch == "CCTV1-4K" && date == "20260902": // 原始全名也有节目（源只收录变体全名时走回落）
+			w.Write([]byte(`<tv><programme start="20260902100000 +0800" stop="20260902110000 +0800" channel="1"><title>4K 专属</title></programme></tv>`))
+		default: // 未收录：返回空（diyp 形态的空 epg_data）
+			w.Write([]byte(`{"epg_data":[]}`))
+		}
+	}))
+	defer tpl.Close()
+
+	m := &Manager{
+		epgSource: EPGSource{Type: "template", URL: tpl.URL + "?ch={name}&date={date}"},
+		epgTpls:   []string{tpl.URL + "?ch={name}&date={date}"},
+		epg:       NewEPGBank(),
+	}
+	h := NewHandler(m)
+
+	// 场景1：剥后名命中 → 只发一次请求，且查询名是 CCTV1 而非 CCTV1-4K
+	rr := httptest.NewRecorder()
+	h.ServeEPG(rr, httptest.NewRequest("GET", "/api/player/epg?ch="+url.QueryEscape("CCTV1-4K")+"&date=20260901", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("应 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Programs []Program `json:"programs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("epg 响应异常: %s", rr.Body.String())
+	}
+	if len(queries) != 1 || queries[0] != "CCTV1" {
+		t.Fatalf("应只按剥后名 CCTV1 查询, got %v", queries)
+	}
+	if len(resp.Programs) != 1 || resp.Programs[0].Title != "朝闻天下" {
+		t.Fatalf("剥后名节目不对: %+v", resp.Programs)
+	}
+
+	// 场景2：剥后名无节目 → 回落原始全名 CCTV1-4K
+	queries = nil
+	rr2 := httptest.NewRecorder()
+	h.ServeEPG(rr2, httptest.NewRequest("GET", "/api/player/epg?ch="+url.QueryEscape("CCTV1-4K")+"&date=20260902", nil))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("回落应 200, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	if len(queries) != 2 || queries[0] != "CCTV1" || queries[1] != "CCTV1-4K" {
+		t.Fatalf("应先剥后名再回落原始名, got %v", queries)
+	}
+	resp.Programs = nil
+	if err := json.Unmarshal(rr2.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("回落响应异常: %s", rr2.Body.String())
+	}
+	if len(resp.Programs) != 1 || resp.Programs[0].Title != "4K 专属" {
+		t.Fatalf("回落原始名节目不对: %+v", resp.Programs)
 	}
 }
 

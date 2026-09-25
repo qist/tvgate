@@ -54,8 +54,8 @@ type xmltv struct {
 type EPGBank struct {
 	mu sync.RWMutex
 	// sets 已加载来源的数据，顺序即优先级（订阅内嵌来源 → 配置来源）
-	sets   []*epgDataset
-	loaded bool
+	sets     []*epgDataset
+	loaded   bool
 	interval time.Duration
 	stop     chan struct{}
 	// 刷新循环状态：Reload 会反复调用 startRefresh，必须幂等，
@@ -81,11 +81,21 @@ func NewEPGBank() *EPGBank {
 // 生效；全部来源都拿不到数据则保留旧数据。去重：进行中跳过；1 分钟内已尝试过也跳过
 // （Reload 每次都会触发 Load）。
 func (b *EPGBank) Load(urls ...string) {
+	b.load(false, urls...)
+}
+
+// ForceLoad 强制重新下载并解析全部来源：绕过 1 分钟节流（仍保留 loading 去重防并发）。
+// 用于 EPG 缓存的每日 0 点定时过期——节目单按天组织，跨天后旧数据不再准确，必须拉新。
+func (b *EPGBank) ForceLoad(urls ...string) {
+	b.load(true, urls...)
+}
+
+func (b *EPGBank) load(force bool, urls ...string) {
 	if len(urls) == 0 {
 		return
 	}
 	b.mu.Lock()
-	if b.loading || time.Since(b.lastAttempt) < time.Minute {
+	if b.loading || (!force && time.Since(b.lastAttempt) < time.Minute) {
 		b.mu.Unlock()
 		return
 	}
@@ -184,15 +194,29 @@ func (b *EPGBank) startRefresh(interval time.Duration, urls ...string) {
 	go func() {
 		t := time.NewTicker(interval)
 		defer t.Stop()
+		// EPG 缓存每日本地 0 点强制过期重拉：节目单按天组织，跨天后旧缓存
+		// 不再准确；0 点触发走 ForceLoad 绕过节流（周期刷新仍受节流保护）。
+		midnight := time.NewTimer(timeUntilMidnight())
+		defer midnight.Stop()
 		for {
 			select {
 			case <-stop:
 				return
 			case <-t.C:
 				b.Load(urls...)
+			case <-midnight.C:
+				midnight.Reset(timeUntilMidnight())
+				b.ForceLoad(urls...)
 			}
 		}
 	}()
+}
+
+// timeUntilMidnight 距下一个本地 0 点的时长。
+func timeUntilMidnight() time.Duration {
+	now := time.Now()
+	next := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Add(24 * time.Hour)
+	return next.Sub(now)
 }
 
 func sameStrings(a, b []string) bool {
@@ -353,6 +377,42 @@ func datePrefix(date string) string {
 		return date[:8]
 	}
 	return ""
+}
+
+// epgQualitySuffixes 频道名尾部的画质后缀（不是频道身份，EPG 查询前可剥）。
+var epgQualitySuffixes = []string{"4k", "uhd", "fhd", "hd", "高清", "超清", "标清"}
+
+// stripQualitySuffix 剥掉频道名尾部的画质后缀，其余保持原样（大小写/分隔符不动，
+// 供模板 EPG 按名查询用：外源服务做的是可读名匹配）。仅当后缀前是分隔符
+// （-/_/空格/·）或非 ASCII 字符（中文台名）才剥："CCTV1-4K"→"CCTV1"、
+// "北京卫视4K"→"北京卫视"；紧跟数字/字母的不剥——"CCTV4K" 剥成 "CCTV4"、
+// "SEPD4K" 剥成 "SEPD" 会变成另一个台名。
+func stripQualitySuffix(name string) string {
+	for {
+		lower := strings.ToLower(name)
+		suf := ""
+		for _, s := range epgQualitySuffixes {
+			if strings.HasSuffix(lower, s) {
+				suf = s
+				break
+			}
+		}
+		if suf == "" {
+			return name
+		}
+		idx := len(name) - len(suf)
+		if idx <= 0 {
+			return name
+		}
+		switch prev := name[idx-1]; {
+		case prev == '-' || prev == '_' || prev == ' ' || prev == '·':
+			name = name[:idx-1] // 分隔符连同后缀一起剥
+		case prev >= 0x80:
+			name = name[:idx] // 中文等非 ASCII：只剥后缀
+		default:
+			return name // 紧跟数字/字母：后缀是名字本体，不剥
+		}
+	}
 }
 
 // normalizeChannelName 归一化频道名用于模糊匹配：小写、去常见分隔符

@@ -173,6 +173,7 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc(webPath+"config/save-domainmap", h.cookieAuth(h.handleDomainMapConfigSave))
 	mux.HandleFunc(webPath+"config/proxygroups", h.cookieAuth(h.handleProxyGroupsConfig))
 	mux.HandleFunc(webPath+"config/save-proxygroups", h.cookieAuth(h.handleProxyGroupsConfigSave))
+	mux.HandleFunc(webPath+"config/proxygroups/clear-cache", h.cookieAuth(h.handleProxyGroupsCacheClear))
 	mux.HandleFunc(webPath+"config/publisher", h.cookieAuth(h.handlePublisherConfig))
 	mux.HandleFunc(webPath+"config/save-publisher", h.cookieAuth(h.handlePublisherConfigSave))
 	mux.HandleFunc(webPath+"api/publisher/stats", h.cookieAuth(h.handlePublisherStats))

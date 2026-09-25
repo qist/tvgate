@@ -261,11 +261,20 @@ func (h *Handler) bankPrograms(ch, name, date string) []Program {
 // mergeTemplateEPGs 按优先级逐个查询模板来源并合并结果：同一开始时间（from）已由
 // 靠前来源提供则忽略后面的（避免同一时段重影），不同时间追加；最终按开始时间排序。
 // 单个来源失败（拉取/解析失败返回空）只跳过自身，其余来源照常。
+//
+// 查询名先剥画质后缀（"CCTV1-4K"→"CCTV1"）：外源 EPG 服务对未收录的名字常做
+// 模糊匹配，会把画质变体错配到别的台（实测 api.erw.cc 把 CCTV1-4K 错配成 CCTV14
+// 少儿）；剥后无结果再回落原始名（源只收录变体全名的情况）。
 func (h *Handler) mergeTemplateEPGs(ctx context.Context, tpls []string, name, date string) []Program {
 	var out []Program
 	seen := make(map[string]bool, 16)
+	qName := stripQualitySuffix(name)
 	for _, tpl := range tpls {
-		for _, p := range h.fetchTemplateEPG(ctx, fillEpgURL(tpl, name, date)) {
+		progs := h.fetchTemplateEPG(ctx, fillEpgURL(tpl, qName, date))
+		if len(progs) == 0 && qName != name {
+			progs = h.fetchTemplateEPG(ctx, fillEpgURL(tpl, name, date))
+		}
+		for _, p := range progs {
 			if seen[p.Start] {
 				continue
 			}

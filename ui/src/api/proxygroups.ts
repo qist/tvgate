@@ -48,3 +48,13 @@ export async function listProxyGroups(): Promise<ProxyGroupMap> {
 export async function saveProxyGroups(map: ProxyGroupMap): Promise<void> {
   await api.post("config/save-proxygroups", map);
 }
+
+export interface ClearCacheResult {
+  cleared: number;
+  message: string;
+}
+
+/** 清理单个代理组的访问缓存并重置其测速统计（改规则后立即生效） */
+export async function clearProxyGroupCache(group: string): Promise<ClearCacheResult> {
+  return api.post<ClearCacheResult>("config/proxygroups/clear-cache", { group });
+}

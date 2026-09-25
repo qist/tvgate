@@ -452,6 +452,9 @@ func (m *Manager) Reload() {
 	}
 	// 台标填充：本地 logo_dir 优先（<频道名>.png 等），否则用模板 logoTpl；M3U/txt 已有 tvg-logo 则不覆盖
 	logoDir := p.LogoDir
+	// 目录索引一次扫描建好（替代逐频道最多 5 次 os.Stat——几千频道在 Android
+	// 存储上是上万次 stat，拖慢每次重载/启动）
+	logoIdx := logoIndex(logoDir)
 	newCh := make(map[string]*Channel, len(chans))
 	newByURL := make(map[string]string, len(chans))
 	newOrder := make([]*Channel, 0, len(chans))
@@ -468,8 +471,8 @@ func (m *Manager) Reload() {
 		}
 		c.Key = m.assignStableKey(c, seenIdentity, newByURL)
 		if c.TVGLogo == "" {
-			if logoDir != "" && c.Name != "" {
-				if f := logoFilePath(logoDir, c.Name); f != "" {
+			if logoIdx != nil && c.Name != "" {
+				if f := logoFromIndex(logoIdx, c.Name); f != "" {
 					c.TVGLogo = "/player/logo/" + f
 				}
 			}
@@ -663,6 +666,7 @@ const fetchRedirectMaxHops = 5
 // 处理），但这两类拉取必须跟：
 //   - 订阅源：http → https 升级（源站把 http 301 到 https）、域名/CDN 搬迁，很常见；
 //   - EPG 源：整份 xml.gz 常跳到 CDN 域名（如 epg.51zmt.top:8000/e1.xml.gz → s.xxx.xyz）。
+//
 // 相对 Location 按当前地址解析；只接受 http/https（拒绝重定向到 file:// 等其它 scheme）。
 func getFollowRedirects(ctx context.Context, client *http.Client, rawURL string) (*http.Response, error) {
 	u := rawURL
@@ -761,11 +765,29 @@ func fillTemplate(tpl, key, value string) string {
 	return strings.ReplaceAll(tpl, "{"+key+"}", url.PathEscape(value))
 }
 
-// logoFilePath 在 logoDir 下查找 <频道名>.<图片扩展>；找到返回 URL 转义的文件名，否则空。
-func logoFilePath(dir, name string) string {
+// logoIndex 一次扫描 logoDir 建立文件名索引；目录未配置/不可读返回 nil。
+func logoIndex(dir string) map[string]bool {
+	if dir == "" {
+		return nil
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	idx := make(map[string]bool, len(ents))
+	for _, e := range ents {
+		if !e.IsDir() {
+			idx[e.Name()] = true
+		}
+	}
+	return idx
+}
+
+// logoFromIndex 在索引里查找 <频道名>.<图片扩展>；找到返回 URL 转义的文件名，否则空。
+func logoFromIndex(idx map[string]bool, name string) string {
 	for _, ext := range []string{".png", ".jpg", ".jpeg", ".webp", ".gif"} {
 		base := name + ext
-		if _, err := os.Stat(filepath.Join(dir, base)); err == nil {
+		if idx[base] {
 			return url.PathEscape(base)
 		}
 	}

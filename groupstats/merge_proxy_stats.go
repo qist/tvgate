@@ -71,10 +71,19 @@ func MergeProxyStats(oldGroups, newGroups map[string]*config.ProxyGroupConfig) {
 			}
 		}
 
-		// 清理访问缓存
+		// 清理访问缓存（按组名全量清理：覆盖域名删除/挪组等所有变更场景）
 		if shouldClearCache {
 			logger.LogPrintf("🧹 代理组 %s 配置变更，清理访问缓存", groupName)
-			clear.ClearAccessCache(newGroup.Domains)
+			clear.ClearAccessCacheByGroup(groupName)
+		}
+	}
+
+	// 整组删除/改名：旧组名下残留的缓存条目一并清理（新配置里已无此组，
+	// 不清理的话请求会继续命中旧组指针，走已失效的代理规则）
+	for oldName := range oldGroups {
+		if _, ok := newGroups[oldName]; !ok {
+			logger.LogPrintf("🧹 代理组 %s 已删除/改名，清理其访问缓存", oldName)
+			clear.ClearAccessCacheByGroup(oldName)
 		}
 	}
 }
