@@ -8,7 +8,9 @@ import * as React from "react";
  */
 
 const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(({ className, ...rest }, ref) => (
-  <div ref={ref} className={clsx("ui-card", "rounded-2xl border text-card-foreground", className)} {...rest} />
+  // min-w-0：Card 常作 grid/flex 子项，默认 min-width:auto 会被内部宽表格/代码块撑开，
+  // 导致整页横向溢出（表格自身的滚动容器随之失效）；可收缩后滚动交给内部容器。
+  <div ref={ref} className={clsx("ui-card", "min-w-0 rounded-2xl border text-card-foreground", className)} {...rest} />
 ));
 Card.displayName = "Card";
 

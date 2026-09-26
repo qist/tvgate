@@ -128,9 +128,10 @@ export function ConfigBackupPage() {
 
   return (
     <div className="space-y-4">
+      {/* ml-auto + flex-wrap：窄屏按钮组换行后仍靠右、不溢出（4 个按钮约 400px 宽） */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">配置备份</h1>
-        <div className="flex gap-2">
+        <div className="ml-auto flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={doManualBackup} title="立即把当前配置存一份快照">
             <Save className="mr-1 h-4 w-4" /> 手动备份
           </Button>
@@ -159,13 +160,13 @@ export function ConfigBackupPage() {
           <div className="flex items-center gap-3 border-b px-3 py-2 text-sm text-muted-foreground">
             <Checkbox checked={allSelected} onChange={toggleAll} />
             <span className="flex-1">文件路径</span>
-            <span className="w-40 text-right">操作</span>
+            <span className="hidden shrink-0 text-right sm:block sm:w-40">操作</span>
           </div>
           {backups.length === 0 ? (
             <div className="p-6 text-center text-sm text-muted-foreground">暂无备份文件</div>
           ) : (
             backups.map((f) => (
-              <div key={f} className="flex items-center gap-3 border-b px-3 py-2 text-sm last:border-0 hover:bg-accent/40">
+              <div key={f} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-2 text-sm last:border-0 hover:bg-accent/40">
                 <Checkbox checked={selected.has(f)} onChange={(v) => setSelected((prev) => {
                   const next = new Set(prev);
                   if (v) next.add(f);
@@ -173,10 +174,13 @@ export function ConfigBackupPage() {
                   return next;
                 })} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-mono text-xs text-muted-foreground">{f}</div>
-                  <div className="truncate text-foreground">{fileName(f)}</div>
+                  {/* 备份名形如 config.yaml.backup.20260919230121.325：路径与文件名同值，
+                      窄屏只留一行（两行会被挤成同样的 "config.yaml…"），并让文件名列更宽 */}
+                  <div className="hidden truncate font-mono text-xs text-muted-foreground sm:block">{f}</div>
+                  <div className="truncate font-mono text-xs text-foreground" title={f}>{fileName(f)}</div>
                 </div>
-                <div className="flex w-40 justify-end gap-1">
+                {/* basis-full：窄屏操作区独占一行（右对齐），文件名才能拿到整行宽度；sm 起回到同行 */}
+                <div className="flex shrink-0 basis-full justify-end gap-1 sm:basis-auto sm:w-40">
                   <Button size="sm" onClick={() => doRestore(f)}>
                     <RotateCcw className="mr-1 h-4 w-4" /> 还原
                   </Button>

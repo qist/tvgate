@@ -128,9 +128,10 @@ export function BackupCenterPage() {
 
   return (
     <div className="space-y-4">
+      {/* ml-auto + flex-wrap：窄屏按钮组换行后仍靠右、不溢出（5 个按钮约 490px 宽） */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">备份中心</h1>
-        <div className="flex gap-2">
+        <div className="ml-auto flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={() => navigate("/code")} title="打开代码文件管理">
             <FolderCode className="mr-1 h-4 w-4" /> 代码文件
           </Button>
@@ -162,15 +163,17 @@ export function BackupCenterPage() {
           <div className="flex items-center gap-3 border-b px-3 py-2 text-sm text-muted-foreground">
             <Checkbox checked={allSelected} onChange={toggleAll} />
             <span className="flex-1">原始文件</span>
-            <span className="w-32">备份时间</span>
+            {/* 各列固定宽合计 384px + 操作列 ≈ 手机屏宽：窄屏隐藏「备份时间」（文件名才是主要信息），
+                操作列改自适应宽度，避免整表撑破卡片 */}
+            <span className="hidden w-32 sm:block">备份时间</span>
             <span className="w-20 text-right">大小</span>
-            <span className="w-44 text-right">操作</span>
+            <span className="hidden shrink-0 text-right sm:block sm:w-44">操作</span>
           </div>
           {items.length === 0 ? (
             <div className="p-6 text-center text-sm text-muted-foreground">暂无备份文件</div>
           ) : (
             items.map((it) => (
-              <div key={it.name} className="flex items-center gap-3 border-b px-3 py-2 text-sm last:border-0 hover:bg-accent/40">
+              <div key={it.name} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-2 text-sm last:border-0 hover:bg-accent/40">
                 <Checkbox checked={selected.has(it.name)} onChange={(v) => setSelected((prev) => {
                   const next = new Set(prev);
                   if (v) next.add(it.name);
@@ -178,9 +181,11 @@ export function BackupCenterPage() {
                   return next;
                 })} />
                 <div className="min-w-0 flex-1 truncate" title={it.name}>{it.original}</div>
-                <div className="w-32 shrink-0 text-xs text-muted-foreground">{it.time}</div>
+                <div className="hidden w-32 shrink-0 text-xs text-muted-foreground sm:block">{it.time}</div>
                 <div className="w-20 shrink-0 text-right text-xs text-muted-foreground">{fmtSize(it.size)}</div>
-                <div className="flex w-44 shrink-0 justify-end gap-1">
+                {/* basis-full：窄屏操作区独占一行（右对齐），文件名才能拿到整行宽度；
+                sm 起 basis-auto 回到同行，避免固定列把文件名挤没（曾实测被挤到 0 宽） */}
+                <div className="flex shrink-0 basis-full justify-end gap-1 sm:basis-auto sm:w-44">
                   <Button size="sm" onClick={() => doRestore(it)}>
                     <RotateCcw className="mr-1 h-4 w-4" /> 回滚
                   </Button>

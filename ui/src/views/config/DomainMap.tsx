@@ -74,9 +74,10 @@ export function DomainMapPage() {
 
   return (
     <div className="space-y-4">
+      {/* ml-auto + flex-wrap：窄屏按钮组换行后仍靠右、不溢出 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">域名映射</h1>
-        <div className="flex gap-2">
+        <div className="ml-auto flex flex-wrap gap-2">
           <AsyncActionButton variant="secondary" action={refresh} busyText="加载中…">重新加载</AsyncActionButton>
           <AsyncActionButton action={save} busyText="保存中…"><Save className="mr-1 h-4 w-4" />保存全部配置</AsyncActionButton>
           <Button onClick={add}>
@@ -117,13 +118,13 @@ export function DomainMapPage() {
 function ViewCard({ m, onEdit, onDelete }: { m: DomainMap; onEdit: () => void; onDelete: () => void }) {
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <CardTitle className="text-base">{m.name || "(未命名)"}</CardTitle>
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <CardTitle className="shrink-0 text-base">{m.name || "(未命名)"}</CardTitle>
           {m.protocol && <Badge variant="outline">{m.protocol}</Badge>}
           {m.auth && authPresent(m.auth) && <KeyRound className="h-4 w-4 text-muted-foreground" />}
         </div>
-        <div className="flex gap-1.5">
+        <div className="ml-auto flex gap-1.5">
           <Button variant="outline" size="sm" onClick={onEdit}><Pencil className="h-4 w-4" /></Button>
           <Button variant="destructive" size="sm" onClick={onDelete}><Trash2 className="h-4 w-4" /></Button>
         </div>
@@ -142,9 +143,9 @@ function EditCard({ m, onChange, onAuth, onCancel, onDelete }: { m: DomainMap; o
   const auth = m.auth || emptyAuth();
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-2">
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
         <CardTitle className="text-base">编辑映射</CardTitle>
-        <div className="flex gap-1.5">
+        <div className="ml-auto flex gap-1.5">
           <Button variant="outline" size="sm" onClick={onCancel}><X className="mr-1 h-4 w-4" />取消</Button>
           <Button variant="destructive" size="sm" onClick={onDelete}><Trash2 className="h-4 w-4" /></Button>
         </div>

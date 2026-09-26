@@ -98,9 +98,9 @@ export function ProxyGroupsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center gap-3 sm:justify-between">
         <h1 className="text-xl font-semibold">代理组</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <AsyncActionButton variant="secondary" action={refresh} busyText="加载中…">重新加载</AsyncActionButton>
           <AsyncActionButton action={save} busyText="保存中…"><Save className="mr-1 h-4 w-4" />保存全部配置</AsyncActionButton>
           <Button onClick={addGroup}>
@@ -154,16 +154,17 @@ function GroupViewCard({ entry, onEdit, onDelete, onClearCache }: { entry: Entry
   }).length;
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <CardTitle className="text-base">{entry.name || "(未命名组)"}</CardTitle>
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <CardTitle className="shrink-0 text-base">{entry.name || "(未命名组)"}</CardTitle>
           <Badge variant="secondary">{g.proxies.length} 代理</Badge>
           <Badge variant={aliveCount > 0 ? "default" : "outline"} className={aliveCount > 0 ? "bg-green-600 text-white" : unknownCount === g.proxies.length && g.proxies.length > 0 ? "bg-muted text-muted-foreground" : ""}>
             {aliveCount}/{g.proxies.length} 在线{unknownCount > 0 ? ` · ${unknownCount} 未测` : ""}
           </Badge>
           {g.loadbalance && <Badge variant="outline">{g.loadbalance}</Badge>}
         </div>
-        <div className="flex gap-1.5">
+        {/* ml-auto：同行时靠右，窄屏换行后仍靠右，不与左侧标题/徽章混排 */}
+        <div className="ml-auto flex gap-1.5">
           {onClearCache && (
             <AsyncActionButton variant="outline" size="sm" action={onClearCache} busyText="清理中…" title="清理该组访问缓存并重置测速统计">
               <Eraser className="h-4 w-4" />
@@ -248,9 +249,9 @@ function GroupEditCard({
   const g = entry.g;
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-2">
-        <CardTitle className="text-base">编辑代理组</CardTitle>
-        <div className="flex gap-1.5">
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
+        <CardTitle className="shrink-0 text-base">编辑代理组</CardTitle>
+        <div className="ml-auto flex gap-1.5">
           <Button size="sm" onClick={onSave}><Save className="mr-1 h-4 w-4" />保存</Button>
           <Button variant="outline" size="sm" onClick={onCancel}><X className="mr-1 h-4 w-4" />取消</Button>
           <Button variant="destructive" size="sm" onClick={onDelete}><Trash2 className="h-4 w-4" /></Button>

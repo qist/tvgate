@@ -482,10 +482,13 @@ export function CodePage() {
                   ) : (
                     <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                   )}
-                  <span className="truncate font-mono text-xs">{it.name}</span>
+                  <span className="min-w-0 truncate font-mono text-xs">{it.name}</span>
                   {!it.isDir && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{fmtSize(it.size)}</span>}
                 </button>
-                <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+                {/* 移动端无 hover：操作按钮常显（max-lg:flex）；桌面端默认隐藏、悬停行才显示。
+                    注意不能用 lg:hidden + lg:group-hover:flex —— 两者同为 display 且 lg:hidden 在
+                    样式表中排后，悬停时被它覆盖，桌面端将永远看不到这些按钮。 */}
+                <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex max-lg:flex">
                   {isZip(it.name) && (
                     <button className="rounded p-0.5 text-muted-foreground hover:text-foreground" title="解压到当前目录" onClick={() => doUnzip(it)}>
                       <Box className="h-3.5 w-3.5" />
@@ -518,9 +521,13 @@ export function CodePage() {
       <Card className="flex min-h-[50vh] min-w-0 flex-1 flex-col p-0 lg:min-h-0">
         {current ? (
           <>
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b px-2 py-1.5">
-              <span className="truncate font-mono text-xs text-muted-foreground">{current}{dirty ? " ●" : ""}</span>
-              <div className="flex shrink-0 flex-wrap gap-1">
+            {/* 按钮组约 627px：窄屏必须让它自己换行。
+                原先 shrink-0 把容器锁在 max-content（627px），flex-wrap 形同虚设
+                → 溢出卡片、整页横向滚动（scrollWidth 652）、末尾按钮被裁。
+                移动端改为上下两行（文件名 / 按钮），lg 起恢复同行、按钮靠右。 */}
+            <div className="flex flex-col gap-1 border-b px-2 py-1.5 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between lg:gap-2">
+              <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">{current}{dirty ? " ●" : ""}</span>
+              <div className="flex flex-wrap gap-1 lg:justify-end">
                 <Button size="sm" className="h-7 text-xs" onClick={save}>
                   <Save className="h-3.5 w-3.5" /> 保存
                 </Button>

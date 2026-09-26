@@ -231,9 +231,10 @@ export function YAMLEditorPage() {
 
   return (
     <div className="space-y-4">
+      {/* ml-auto + flex-wrap：窄屏按钮组换行后仍靠右、不溢出（4 个按钮约 360px 宽） */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">YAML 编辑器</h1>
-        <div className="flex gap-2">
+        <div className="ml-auto flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={load} disabled={busy}>
             <RotateCcw className="mr-1 h-4 w-4" /> 重新加载
           </Button>

@@ -148,8 +148,10 @@ export function TasksPage() {
   const shown = groupFilter ? tasks.filter((t) => t.group.trim() === groupFilter) : tasks;
 
   const openEdit = (i: number) => {
-    setSnapshot((prev) => ({ ...prev, [i]: { ...tasks[i] } }));
-    const v = parseCronVisual(tasks[i].cron) || { ...DEFAULT_VISUAL, mode: "expr" as const, time: "00:00" };
+    const target = tasks[i];
+    if (!target) return;
+    setSnapshot((prev) => ({ ...prev, [i]: { ...target } }));
+    const v = parseCronVisual(target.cron) || { ...DEFAULT_VISUAL, mode: "expr" as const, time: "00:00" };
     setVisual((prev) => ({ ...prev, [i]: v }));
     setEditing((prev) => new Set(prev).add(i));
   };
@@ -174,8 +176,12 @@ export function TasksPage() {
 
   const addNew = () => {
     const t: Task = { name: "", enabled: false, group: "", cron: buildCron(DEFAULT_VISUAL), command: "", timeout: "", notes: "" };
+    const idx = tasks.length;
     setTasks((prev) => [...prev, t]);
-    openEdit(tasks.length);
+    // 新任务的 visual/cron 已知（DEFAULT_VISUAL），直接进入编辑态；
+    // 不能走 openEdit(tasks.length)——闭包里的 tasks 还是旧数组，[length] 越界 undefined。
+    setVisual((prev) => ({ ...prev, [idx]: DEFAULT_VISUAL }));
+    setEditing((prev) => new Set(prev).add(idx));
   };
 
   const remove = (i: number) => {
@@ -255,9 +261,8 @@ export function TasksPage() {
 
       {notice && (
         <div
-          className={`rounded-lg border px-3 py-2 text-sm ${
-            notice.type === "ok" ? "border-primary/30 bg-primary/10 text-primary" : "border-destructive/30 bg-destructive/10 text-destructive"
-          }`}
+          className={`rounded-lg border px-3 py-2 text-sm ${notice.type === "ok" ? "border-primary/30 bg-primary/10 text-primary" : "border-destructive/30 bg-destructive/10 text-destructive"
+            }`}
         >
           {notice.msg}
         </div>
@@ -315,7 +320,7 @@ function ViewCard({ task, st, onEdit, onRun, onDelete }: { task: Task; st: TaskS
   const lastMsg = (st.last_message || "").trim();
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-2">
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <CardTitle className="truncate text-base">
             {task.name || task.command || "(未命名)"}
@@ -331,7 +336,7 @@ function ViewCard({ task, st, onEdit, onRun, onDelete }: { task: Task; st: TaskS
             {task.enabled ? "已启用" : "已停用"}
           </Badge>
         </div>
-        <div className="flex shrink-0 gap-1.5">
+        <div className="ml-auto flex shrink-0 gap-1.5">
           <Button variant="secondary" size="sm" onClick={onRun} title="立即执行">
             <Play className="h-4 w-4" />
           </Button>
@@ -390,9 +395,9 @@ function EditCard({
   };
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-2">
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
         <CardTitle className="text-base">编辑任务：{task.name || task.command || "(未命名)"}</CardTitle>
-        <div className="flex gap-1.5">
+        <div className="ml-auto flex gap-1.5">
           <Button variant="outline" size="sm" onClick={onCancel}>
             <X className="mr-1 h-4 w-4" /> 取消
           </Button>

@@ -39,7 +39,9 @@ func serveSPA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
+	// no-store：入口 HTML 必须随二进制更新立即生效（no-cache 仍允许存缓存，
+	// 部分 WebView revalidate 不彻底，会拿着旧 index.html 引用已不存在的旧 assets）
+	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(data)
 }
 
