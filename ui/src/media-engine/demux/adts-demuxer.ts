@@ -43,7 +43,8 @@ export function probeAdtsStream(data: Uint8Array): boolean {
   const first = parseAdtsFrame(data, offset);
   if (!first || first.frameLength <= first.headerLength) return false;
   const secondOffset = offset + first.frameLength;
-  if (secondOffset + 7 > data.length) return true; // 数据还不够验证第二帧：认（真流马上会补齐）
+  if (secondOffset > data.length) return false; // 首帧声称的帧长远超数据：假头（真半帧只会止于数据尾）
+  if (secondOffset + 7 > data.length) return true; // 帧恰好止于数据尾（等下一块补齐）：认
   return parseAdtsFrame(data, secondOffset) !== null;
 }
 

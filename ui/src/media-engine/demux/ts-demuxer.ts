@@ -246,7 +246,7 @@ export class TsDemuxer {
   private pesBuffers = new Map<number, PesBuffer>();
   private pmtPids = new Set<number>();
 
-  constructor(private readonly callbacks: TsDemuxerCallbacks = {}) {}
+  constructor(private readonly callbacks: TsDemuxerCallbacks = {}) { }
 
   /** 推入一段 TS 字节流（可任意切分，内部自行缓冲与同步）。 */
   push(chunk: Uint8Array): void {
@@ -895,6 +895,23 @@ export class TsDemuxer {
         // 半帧（PES 载荷极少恰好整除帧长）：留到下一个 PES 拼接，否则每段都丢一帧
         track.aacPending = data.slice(offset);
         break;
+      }
+      // 发射前链式确认：下一帧头必须合法且采样率/声道一致，否则当前是假帧
+      //（压缩载荷里的随机 0xFFFx，详见 findAdtsSync 注释）——不发射、不推进时间轴，
+      // 跳过伪头重新同步。
+      const nextOff = offset + frame.frameLength;
+      if (nextOff + 7 <= data.length) {
+        const nf = parseAdtsFrame(data, nextOff);
+        if (
+          !nf ||
+          nf.samplingFrequencyIndex !== frame.samplingFrequencyIndex ||
+          nf.channelConfig !== frame.channelConfig
+        ) {
+          const retry = findAdtsSync(data, offset + 7);
+          if (retry < 0) break;
+          offset = retry;
+          continue;
+        }
       }
 
       // 首帧确定采样率/声道，构造 esds

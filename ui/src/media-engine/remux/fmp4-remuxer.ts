@@ -530,7 +530,13 @@ export class Fmp4Remuxer {
         }
       }
       const run = buildRun(id, runSamples, this.lastDuration.get(id));
-      this.lastDuration.set(id, runSamples[runSamples.length - 1].dts - runSamples[Math.max(0, runSamples.length - 2)].dts || 1);
+      // 记录尾样本帧距供下段回退；**单样本 run 不覆盖**——此时无相邻帧距可算，
+      // 写 1 tick 会让下一段尾样本 duration≈0，MSE 视为不连续并拒收续切段。
+      const lastDts = runSamples[runSamples.length - 1].dts;
+      const prevDts = runSamples[runSamples.length - 2]?.dts;
+      if (prevDts !== undefined && lastDts > prevDts) {
+        this.lastDuration.set(id, lastDts - prevDts);
+      }
       runs.push(run);
       consumeMap.set(id, consume);
     }

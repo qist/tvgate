@@ -54,6 +54,14 @@ export function parseAdtsFrame(data: Uint8Array, offset: number): AdtsFrameInfo 
  * 也可能止于半帧。只看"载荷第 0 字节是不是 0xFFFx"会把整段丢掉（实测：江苏移动系
  * 流就是这样，整条音轨 0 样本 → 有画面没声音），所以必须扫同步字再逐帧切。
  * 只认同步字会被随机字节误判（概率约 1/2048），故连同采样率索引、声道、帧长一起校验。
+ *
+ * 链式验证：帧长末端必须也是一个帧头且采样率/声道与本头一致，否则视为假头继续扫。
+ * 起因（实测某 4K 轮播源）：AAC 压缩载荷里随机出现 `FF FE 62 69 04 E9` 序列，恰能
+ * 通过单头浅校验（声明 16kHz/单声道/帧长 1867），被当首帧锁进 esds —— 而真实帧是
+ * 48kHz LC 立体声。esds 声明 16kHz 后 MSE 解码器按错误配置解 48kHz 帧 →
+ * "scalefactor bands exceeds limit" 解码失败 → 音频 SB error → 元素 ERROR →
+ * 所有 append 被拒 → 起播卡死。真帧链相邻帧头参数恒定，链式验证不会误伤；
+ * 末端不足一个帧头（PES 尾半帧）放行，由调用方按半帧留 pending。
  */
 export function findAdtsSync(data: Uint8Array, from = 0): number {
   for (let i = Math.max(0, from); i + 7 <= data.length; i++) {
@@ -62,6 +70,16 @@ export function findAdtsSync(data: Uint8Array, from = 0): number {
     if (!frame) continue;
     if (frame.samplingFrequencyIndex > 12) continue; // 13/14 保留、15 为显式频率（本实现不支持）
     if (frame.channelConfig > 7) continue;
+    const next = i + frame.frameLength;
+    if (next + 7 > data.length) return i; // PES 尾半帧：头完整但帧链出界，交调用方 pending
+    const nf = parseAdtsFrame(data, next);
+    if (
+      !nf ||
+      nf.samplingFrequencyIndex !== frame.samplingFrequencyIndex ||
+      nf.channelConfig !== frame.channelConfig
+    ) {
+      continue; // 末端不是参数一致的合法帧头：假同步，继续扫
+    }
     return i;
   }
   return -1;
