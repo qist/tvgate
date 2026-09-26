@@ -91,7 +91,7 @@
 
 ## 六、当前 CI 状态（发布核对用，发布完成后勾选）
 
-- [ ] 服务端 Release（qist/tvgate · tag v3.3.5 → `f9743a5`）：20+ 平台二进制 + `.dgst` 校验文件
-- [ ] 安卓 Release（qist/tvgate-android · releases/latest）：3 个 APK 已上传（需空提交触发构建）
+- [x] 服务端 Release（qist/tvgate · tag v3.3.5 → `f9743a5`）：32 个平台包 + `.dgst` 校验文件（共 64 个资产）
+- [x] 安卓 Release（qist/tvgate-android · releases/latest · tag v3.3.5）：`TVGate-v3.3.5-arm64/arm/x86_64.apk` 三个 APK 已上传
 - [ ] 商店后台提交后回填提交时间与审核结果
 - [ ] 应用商店文案与本文件"一、二档"一致（版本号已改为 v3.3.5）

@@ -97,8 +97,8 @@ v3.3.5 — 管理后台手机端排版修复；任务页「添加」崩溃修复
 
 ## 五、发布核对清单
 
-- [ ] 服务端 Release：tag `v3.3.5` 已推送（指向 `f9743a5`），20+ 平台二进制 + `.dgst` 上传完成
-- [ ] Docker 镜像：`juestnow/tvgate:v3.3.5` 与 `ghcr.io/qist/tvgate:v3.3.5` 推送完成且 `latest` 已更新
-- [ ] Android Release：`releases/latest` 为 v3.3.5 且 3 个 APK 齐全（需在 tvgate-android 触发构建）
+- [x] 服务端 Release：tag `v3.3.5` 已推送（指向 `f9743a5`），32 个平台包 + 同名 `.dgst`（共 64 个资产）上传完成
+- [x] Docker 镜像：`juestnow/tvgate:v3.3.5` 与 `ghcr.io/qist/tvgate:v3.3.5` 推送完成且 `latest` 已更新
+- [x] Android Release：`releases/latest` 为 v3.3.5，`arm64` / `arm` / `x86_64` 三个 APK 齐全
+- [x] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.3.5
 - [ ] 商店：`doc/STORE-RELEASE-NOTES.md` 文案已在应用市场提交
-- [ ] 发布后抽查：任一平台二进制 `-version` 输出 v3.3.5；服务能正常启动并加载 config
