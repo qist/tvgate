@@ -93,9 +93,11 @@ v3.3.6 — 老设备上软解音频（MP2/AC-3/E-AC-3）「全程无声」修复
 
 ## 五、发布核对清单
 
-- [ ] 服务端 Release：tag `v3.3.6` 已推送（指向 `eb4c754`），平台包 + 同名 `.dgst` 上传完成
-- [ ] Docker 镜像：`juestnow/tvgate:v3.3.6` 与 `ghcr.io/qist/tvgate:v3.3.6` 推送完成且 `latest` 已更新
-- [ ] Android Release：`releases/latest` 为 v3.3.6，`arm64` / `arm` / `x86_64` 三个 APK 齐全
-- [ ] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.3.6
+- [x] 服务端 Release：tag `v3.3.6` 已推送（指向 `eb4c754`），64 个资产（32 平台包 + 32 `.dgst`）上传完成
+- [x] Docker 镜像：`juestnow/tvgate:v3.3.6` 与 `ghcr.io/qist/tvgate:v3.3.6` 推送完成且 `latest` 已更新（revision `eb4c754`）
+- [x] Android Release：`releases/latest` 为 v3.3.6，`arm64` / `arm` / `x86_64` 三个 APK 齐全
+- [x] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.3.6
+- [x] 发布后抽查：发布二进制内嵌的软解 WASM 为降级后产物（sha256 前 16 位 `9019e709fc2b83d4`，769200 字节，无 sign-ext 指令）
+- [x] GitHub Release 正文已填写（取自「二、精简版」）
 - [ ] 设备抽查：旧 WebView 设备上软解音轨频道恢复出声；安卓遥控器在播放页可操作
 - [ ] 商店：`doc/STORE-RELEASE-NOTES.md` 文案已在应用市场提交

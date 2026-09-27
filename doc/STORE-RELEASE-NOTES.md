@@ -88,8 +88,8 @@
 
 ## 六、当前 CI 状态（发布核对用，发布完成后勾选）
 
-- [ ] 服务端 Release（qist/tvgate · tag v3.3.6 → `eb4c754`）：32 个平台包 + `.dgst` 校验文件（共 64 个资产）
-- [ ] 安卓 Release（qist/tvgate-android · releases/latest · tag v3.3.6）：`TVGate-v3.3.6-arm64/arm/x86_64.apk` 三个 APK 已上传
+- [x] 服务端 Release（qist/tvgate · tag v3.3.6 → `eb4c754`）：32 个平台包 + `.dgst` 校验文件（共 64 个资产）
+- [x] 安卓 Release（qist/tvgate-android · releases/latest · tag v3.3.6）：`TVGate-v3.3.6-arm64/arm/x86_64.apk` 三个 APK 已上传
 - [ ] 实机验证：旧 WebView 设备软解音频恢复出声；安卓盒子遥控器在播放页可操作
 - [ ] 商店后台提交后回填提交时间与审核结果
-- [ ] 应用商店文案与本文件"一、二档"一致（版本号已改为 v3.3.6）
+- [x] 应用商店文案与本文件"一、二档"一致（版本号已改为 v3.3.6）
