@@ -302,26 +302,58 @@ func normalizeEPGDate(date string) string {
 	return time.Now().Format("20060102")
 }
 
+// isPlaceholderSchedule 判断节目单是否为「占位节目单」——EPG 源表示「我这儿没有这个台」
+// 的一种常见手法：结果非空，但整份只有一个标题、且从 00:00 一路铺到当天末尾。
+// 例：epg.112114.xyz 查未收录的「凤凰中文」返回 12 段同名「精彩节目」，覆盖
+// 00:00–23:59（段长 1–2 小时不等，中间还可能有洞）。真实节目单不会全天同名同起讫，
+// 据此把这类假数据当「该源没有这个台」，让另一类型来源的互补查询得以进行。
+// 判据刻意收紧（≥4 条 + 单一非空标题 + 00:00 起 + 末段 ≥23:50 收），避免误伤正常节目单。
+func isPlaceholderSchedule(progs []Program) bool {
+	if len(progs) < 4 {
+		return false
+	}
+	title := progs[0].Title
+	if title == "" {
+		return false
+	}
+	for _, p := range progs[1:] {
+		if p.Title != title {
+			return false
+		}
+	}
+	return epgClock(progs[0].Start) == "00:00" && epgClock(progs[len(progs)-1].Stop) >= "23:50"
+}
+
 // serveEPGQuery 查某频道某天的节目单（多来源合并）：
 // 主来源类型决定首选路径，另一类型（若配了）在首选**没查到该频道节目**时补齐——
 // 不同 EPG 服务覆盖的频道往往不同，互补比"整体切换"实用。
 //
 //   - 主来源为 template：先把全部模板来源按序请求合并（{name}/{date} 填充），
-//     全部为空再用整份 XMLTV 库（EPGBank）补齐；
+//     结果为空*或只是占位*时再用整份 XMLTV 库（EPGBank）补齐；
 //   - 主来源为 xml：先查 EPGBank（内部已合并全部 xml 来源），该频道为空时再用
 //     模板来源补齐（xml 从未加载成功 / 该频道不在 xml 里，都走这条）。
 func (h *Handler) serveEPGQuery(ctx context.Context, ch, name, date string) []Program {
 	es := h.mgr.EPGSource()
 	tpls := h.mgr.EPGTemplates()
 	if es.Type == "template" && len(tpls) > 0 && name != "" {
-		if progs := h.mergeTemplateEPGs(ctx, tpls, name, date); len(progs) > 0 {
+		progs := h.mergeTemplateEPGs(ctx, tpls, name, date)
+		// 模板源对未收录频道常回占位而非空，若直接采信就会短路掉 XMLTV 互补查询
+		// （另一个源明明有这个台却查不出来）。占位按无数据处理；XMLTV 也没有时
+		// 仍回原占位结果，至少不比修复前差。
+		if len(progs) > 0 && !isPlaceholderSchedule(progs) {
 			return progs
 		}
-		return h.bankPrograms(ch, name, date)
+		if bank := h.bankPrograms(ch, name, date); len(bank) > 0 {
+			return bank
+		}
+		return progs
 	}
 	progs := h.bankPrograms(ch, name, date)
 	if len(progs) == 0 && name != "" && len(tpls) > 0 {
-		progs = h.mergeTemplateEPGs(ctx, tpls, name, date)
+		// 模板补齐同样不采信占位：宁可回空，也不放假节目单。
+		if tpl := h.mergeTemplateEPGs(ctx, tpls, name, date); !isPlaceholderSchedule(tpl) {
+			progs = tpl
+		}
 	}
 	return progs
 }

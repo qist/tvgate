@@ -1338,6 +1338,114 @@ func TestServeEPGByNameStandard(t *testing.T) {
 	}
 }
 
+// TestIsPlaceholderSchedule 占位节目单识别（字段实测取自 epg.112114.xyz 查未收录频道）。
+func TestIsPlaceholderSchedule(t *testing.T) {
+	blocks := [][2]string{
+		{"00:00", "02:00"}, {"02:00", "04:00"}, {"06:00", "08:00"}, {"08:00", "10:06"},
+		{"10:06", "12:00"}, {"12:00", "14:00"}, {"14:00", "16:00"}, {"16:00", "18:00"},
+		{"18:00", "19:00"}, {"19:00", "20:00"}, {"20:00", "22:00"}, {"22:00", "23:59"},
+	}
+	sameTitle := func(title string, blocks [][2]string) []Program {
+		out := make([]Program, 0, len(blocks))
+		for _, b := range blocks {
+			out = append(out, Program{Title: title, Start: b[0], Stop: b[1]})
+		}
+		return out
+	}
+	// 同名但不铺满全天（只到 12:00）
+	halfDay := [][2]string{{"00:00", "03:00"}, {"03:00", "06:00"}, {"06:00", "09:00"}, {"09:00", "12:00"}}
+	// 同名铺满全天但首段不从 00:00 起
+	shifted := [][2]string{{"01:00", "07:00"}, {"07:00", "13:00"}, {"13:00", "19:00"}, {"19:00", "23:59"}}
+
+	// 正例：12 段同名、00:00 起 23:59 收（中间 04:00→06:00 有洞也算）
+	if !isPlaceholderSchedule(sameTitle("精彩节目", blocks)) {
+		t.Error("112114 的 12 段同名全占位节目单应被识别")
+	}
+	// XMLTV 数字串时间同样识别（xml 分支也会调用本判据）
+	xmltvSame := sameTitle("精彩节目", [][2]string{
+		{"20260927000000 +0800", "20260927060000 +0800"}, {"20260927060000 +0800", "20260927120000 +0800"},
+		{"20260927120000 +0800", "20260927180000 +0800"}, {"20260927180000 +0800", "20260927235900 +0800"}})
+	if !isPlaceholderSchedule(xmltvSame) {
+		t.Error("XMLTV 格式的整日同名节目单也应被识别")
+	}
+
+	// 反例：真实节目单不该被误判
+	for _, c := range []struct {
+		name  string
+		progs []Program
+	}{
+		{"标题不同", []Program{{Title: "A", Start: "00:00", Stop: "02:00"}, {Title: "B", Start: "02:00", Stop: "23:59"}}},
+		{"同名但只铺半天", sameTitle("精彩节目", halfDay)},
+		{"同名全天但非 00:00 起", sameTitle("精彩节目", shifted)},
+		{"条目过少", sameTitle("精彩节目", blocks[:3])},
+		{"标题为空", sameTitle("", blocks)},
+		{"空列表", nil},
+	} {
+		if isPlaceholderSchedule(c.progs) {
+			t.Errorf("%s 不应被判为占位: %+v", c.name, c.progs)
+		}
+	}
+}
+
+// TestServeEPGTemplatePlaceholderFallsBackToXMLTV 模板源回占位节目单时，必须让位给
+// 整份 XMLTV 里的真实节目单（线上问题：112114 没收录「凤凰中文」，回 12 段同名
+// 「精彩节目」，非空却把互补查询短路掉，51zmt 的真实节目单查不出来）。
+func TestServeEPGTemplatePlaceholderFallsBackToXMLTV(t *testing.T) {
+	const placeholder = `{"date":"2026-09-27","channel_name":"凤凰中文","url":"x","epg_data":[` +
+		`{"title":"精彩节目","start":"00:00","end":"02:00"},{"title":"精彩节目","start":"02:00","end":"04:00"},` +
+		`{"title":"精彩节目","start":"06:00","end":"08:00"},{"title":"精彩节目","start":"08:00","end":"10:06"},` +
+		`{"title":"精彩节目","start":"10:06","end":"12:00"},{"title":"精彩节目","start":"12:00","end":"14:00"},` +
+		`{"title":"精彩节目","start":"14:00","end":"16:00"},{"title":"精彩节目","start":"16:00","end":"18:00"},` +
+		`{"title":"精彩节目","start":"18:00","end":"19:00"},{"title":"精彩节目","start":"19:00","end":"20:00"},` +
+		`{"title":"精彩节目","start":"20:00","end":"22:00"},{"title":"精彩节目","start":"22:00","end":"23:59"}]}`
+	tpl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(placeholder))
+	}))
+	defer tpl.Close()
+
+	tplURL := tpl.URL + "?ch={name}&date={date}"
+	m := &Manager{
+		epgSource: EPGSource{Type: "template", URL: tplURL},
+		epgTpls:   []string{tplURL},
+		epg:       NewEPGBank(),
+	}
+	// 整份 XMLTV（51zmt 形态）：channel id=141 / display-name 凤凰中文
+	installXMLTV(t, m.epg, `<tv>`+
+		`<channel id="141"><display-name>凤凰中文</display-name></channel>`+
+		`<programme start="20260927090000 +0800" stop="20260927100000 +0800" channel="141"><title>凤凰早班车</title></programme>`+
+		`</tv>`)
+
+	h := NewHandler(m)
+	rr := httptest.NewRecorder()
+	h.ServeEPG(rr, httptest.NewRequest("GET", "/api/player/epg?ch="+url.QueryEscape("凤凰中文")+"&date=20260927", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("应 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		EPGData []epgStandardEntry `json:"epg_data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("epg 响应异常: %s", rr.Body.String())
+	}
+	if len(resp.EPGData) != 1 || resp.EPGData[0].Title != "凤凰早班车" || resp.EPGData[0].Start != "09:00" {
+		t.Fatalf("占位节目单应让位给 XMLTV 真实节目: %s", rr.Body.String())
+	}
+
+	// 反向：XMLTV 里也没有这个台时，仍回原占位结果（不比修复前差，避免整页空白）
+	rr3 := httptest.NewRecorder()
+	h.ServeEPG(rr3, httptest.NewRequest("GET", "/api/player/epg?ch="+url.QueryEscape("某个不存在的台")+"&date=20260927", nil))
+	if rr3.Code != http.StatusOK {
+		t.Fatalf("应 200, got %d: %s", rr3.Code, rr3.Body.String())
+	}
+	resp.EPGData = nil
+	if err := json.Unmarshal(rr3.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("epg 响应异常: %s", rr3.Body.String())
+	}
+	if len(resp.EPGData) != 12 || resp.EPGData[0].Title != "精彩节目" {
+		t.Fatalf("两源都没有时应保留占位结果: %s", rr3.Body.String())
+	}
+}
+
 // TestEPGClock 对外标准形态的时间归一：JSON 模板源直出的 "HH:MM" 原样保留，
 // XMLTV 数字串（带/不带时区后缀）与本地无时区的日期时间都换成当天本地 "HH:MM"，
 // 无法识别时原样返回。断言只取本地时区可确定的形式（带偏移的 ISO 随机器时区变化，不测）。
