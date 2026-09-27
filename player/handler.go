@@ -169,8 +169,8 @@ func (h *Handler) ServeChannels(w http.ResponseWriter, r *http.Request) {
 //	                     name= 为同义参数。按名字查，**不要求**是本机订阅里的频道。
 //
 // date 可省略（默认今天），容忍 YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD 三种写法。
-// 响应 {"programs":[{from,to,title}],"name":<查询名>,"date":<YYYYMMDD>}；ch=/name= 对外
-// 分支另附 112114 兼容形态（channel_name/url/epg_data，时间 "HH:MM"、date YYYY-MM-DD）。
+// 响应分两套：key= 回本机内部格式 {"programs":[{from,to,title}],"name":..,"date":YYYYMMDD}；
+// ch=/name= 回 112114 形态 {"date":"YYYY-MM-DD","channel_name":..,"url":..,"epg_data":[...]}。
 //
 // 数据来源见 serveEPGQuery：xml 型来源合并查询本地 EPGBank；template 型来源由服务端
 // 填 {name}/{date} 后拉取（规避前端跨域 CORS）；两类互为补齐。
@@ -206,15 +206,17 @@ func (h *Handler) ServeEPG(w http.ResponseWriter, r *http.Request) {
 		progs = []Program{}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	// key= 播放器内部用法：回本机内部格式（XMLTV 原样时间串），前端按此解析。
 	resp := map[string]interface{}{"programs": progs, "name": chanName, "date": date}
-	// ch=/name= 是对外标准查询：额外给出 112114 兼容形态（业界播放器通用——频道名在
-	// channel_name、节目在 epg_data、时间为当天本地 "HH:MM"、date 为 YYYY-MM-DD）。
-	// programs/name 作为超集保留，已有按本机格式对接的调用不受影响。
+	// ch=/name= 对外标准查询：只给 112114 形态（业界播放器通用——频道名在 channel_name、
+	// 节目在 epg_data、时间为当天本地 "HH:MM"、date 为 YYYY-MM-DD），不带本机内部格式。
 	if key == "" {
-		resp["date"] = epgStandardDate(date)
-		resp["channel_name"] = chanName
-		resp["url"] = r.Host
-		resp["epg_data"] = epgStandardData(progs)
+		resp = map[string]interface{}{
+			"date":         epgStandardDate(date),
+			"channel_name": chanName,
+			"url":          r.Host,
+			"epg_data":     epgStandardData(progs),
+		}
 	}
 	writeJSON(w, resp)
 }

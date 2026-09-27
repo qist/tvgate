@@ -109,7 +109,7 @@ logo=https://logo.example.com/{name}.png
 | `/pp`、`/pp/<key>` | 独立播放页入口（旧版地址保留）：直接服务播放页，**不跳转后台路径**，`/pp/<key>` 转为 `/pp#<key>` 深链 |
 | `/api/player/channels` | 频道列表 API：`{"list":[{key,name,group,scheme,tvgId,tvgName,tvgLogo,epgType}],"epgSource":{kind,template,logo}}` |
 | `/api/player/epg?key=<key>&date=YYYYMMDD` | EPG 节目单 API（播放器内部用法）：频道用不透明 `key`（与 `/player/<key>` 同源）定位，服务端内部换算 tvg-id/频道名查源；`{"programs":[{from,to,title}],"name":..,"date":..}`（`from`/`to` 为 XMLTV 原样时间串）。`date` 可省略（默认今天）且容忍 `YYYY-MM-DD` / `YYYY/MM/DD` / `YYYYMMDD`；key 未登记返回 `403`，`key`/`ch` 都缺返回 `400` |
-| `/api/player/epg?ch=<频道名或tvg-id>&date=YYYYMMDD` | EPG 节目单 API（**对外标准用法**）：按频道名（或 XMLTV channel id）查询，**不要求**是本机订阅里的频道，因此可把本机当 EPG 源提供给其它播放器/系统（`name=` 为同义参数）。响应含 **112114 兼容形态**：`channel_name`（回显查询名）、`url`（本机 Host）、`epg_data:[{title,start,end,desc}]`（时间为当天本地 `HH:MM`），`date` 为 `YYYY-MM-DD`；同时保留 `programs`/`name` 超集。受全局 token 保护（同其它 `/api`） |
+| `/api/player/epg?ch=<频道名或tvg-id>&date=YYYYMMDD` | EPG 节目单 API（**对外标准用法**）：按频道名（或 XMLTV channel id）查询，**不要求**是本机订阅里的频道，因此可把本机当 EPG 源提供给其它播放器/系统（`name=` 为同义参数）。响应为 112114 形态：`date`（`YYYY-MM-DD`）、`channel_name`（回显查询名）、`url`（本机 Host）、`epg_data:[{title,start,end,desc}]`（时间为当天本地 `HH:MM`）。受全局 token 保护（同其它 `/api`） |
 | `/api/player/catchup?key=<key>&from=<unix秒>&to=<unix秒>` | 回看 API（基于 EPG 节目单起止时间）：时间参数用 Unix 秒，服务端换算为源侧 `playseek` 的 `YmdHis` 串，返回 `{"play":"/player/<key>/<token>"}` |
 | `/player/<key>` | 播放流入口；HLS 分片走 `/player/<key>/<token>` 短路径 |
 | `/player/logo/` | 台标服务（`logo_dir` 本地台标经此输出） |
@@ -138,7 +138,7 @@ logo=https://logo.example.com/{name}.png
 | 播放器内部 | `/api/player/epg?key=<频道key>&date=YYYY-MM-DD` | 不透明 key 定位，服务端换算 tvg-id/频道名；响应 `programs`（`from`/`to` 为 XMLTV 原样时间串） |
 | **对外标准** | `/api/player/epg?ch=<频道名>&date=YYYYMMDD` | 按频道名（或 XMLTV channel id）查，不要求是本机订阅频道；`name=` 同义。响应为 112114 兼容形态（`channel_name`/`epg_data`，时间为 `HH:MM`），可直接给别的播放器当 EPG 源：`epg=http://<本机>/api/player/epg?ch={name}&date={date}` |
 
-`key=` 分支响应 `{"programs":[{from,to,title}],"name":<查询名>,"date":<YYYYMMDD>}`。`ch=`/`name=` 分支在同名字段之外附 112114 兼容形态——`channel_name`（回显查询名）、`url`（本机 Host）、`epg_data:[{title,start,end,desc}]`（时间为当天本地 `HH:MM`），此时 `date` 为 `YYYY-MM-DD`——因此第三方按 112114 标准解析即可直接用本机当 EPG 源。
+`key=` 分支响应 `{"programs":[{from,to,title}],"name":<查询名>,"date":<YYYYMMDD>}`（播放页内部用，`from`/`to` 为 XMLTV 原样时间串）。`ch=`/`name=` 分支只回 112114 标准形态——`date`（`YYYY-MM-DD`）、`channel_name`（回显查询名）、`url`（本机 Host）、`epg_data:[{title,start,end,desc}]`（时间为当天本地 `HH:MM`）——第三方按 112114 标准解析即可直接用本机当 EPG 源。
 
 ### 多来源合并
 

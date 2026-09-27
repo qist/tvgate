@@ -1234,7 +1234,7 @@ func TestServeEPGTemplateQualitySuffix(t *testing.T) {
 		t.Fatalf("应 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 	var resp struct {
-		Programs []Program `json:"programs"`
+		EPGData []epgStandardEntry `json:"epg_data"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("epg 响应异常: %s", rr.Body.String())
@@ -1242,8 +1242,8 @@ func TestServeEPGTemplateQualitySuffix(t *testing.T) {
 	if len(queries) != 1 || queries[0] != "CCTV1" {
 		t.Fatalf("应只按剥后名 CCTV1 查询, got %v", queries)
 	}
-	if len(resp.Programs) != 1 || resp.Programs[0].Title != "朝闻天下" {
-		t.Fatalf("剥后名节目不对: %+v", resp.Programs)
+	if len(resp.EPGData) != 1 || resp.EPGData[0].Title != "朝闻天下" {
+		t.Fatalf("剥后名节目不对: %+v", resp.EPGData)
 	}
 
 	// 场景2：剥后名无节目 → 回落原始全名 CCTV1-4K
@@ -1256,12 +1256,12 @@ func TestServeEPGTemplateQualitySuffix(t *testing.T) {
 	if len(queries) != 2 || queries[0] != "CCTV1" || queries[1] != "CCTV1-4K" {
 		t.Fatalf("应先剥后名再回落原始名, got %v", queries)
 	}
-	resp.Programs = nil
+	resp.EPGData = nil
 	if err := json.Unmarshal(rr2.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("回落响应异常: %s", rr2.Body.String())
 	}
-	if len(resp.Programs) != 1 || resp.Programs[0].Title != "4K 专属" {
-		t.Fatalf("回落原始名节目不对: %+v", resp.Programs)
+	if len(resp.EPGData) != 1 || resp.EPGData[0].Title != "4K 专属" {
+		t.Fatalf("回落原始名节目不对: %+v", resp.EPGData)
 	}
 }
 
@@ -1306,36 +1306,28 @@ func TestServeEPGByNameStandard(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("按名查询应 200, got %d: %s", rr.Code, rr.Body.String())
 	}
+	// 对外分支只回 112114 形态：不带本机内部格式（programs/name）
+	if strings.Contains(rr.Body.String(), `"programs"`) || strings.Contains(rr.Body.String(), `"name"`) {
+		t.Fatalf("对外响应不应含内部字段: %s", rr.Body.String())
+	}
 	var resp struct {
-		Programs    []Program `json:"programs"`
-		Name        string    `json:"name"`
-		Date        string    `json:"date"`
-		ChannelName string    `json:"channel_name"`
-		EPGData     []struct {
-			Title string `json:"title"`
-			Start string `json:"start"`
-			End   string `json:"end"`
-		} `json:"epg_data"`
+		Date        string             `json:"date"`
+		ChannelName string             `json:"channel_name"`
+		EPGData     []epgStandardEntry `json:"epg_data"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("epg 响应异常: %s", rr.Body.String())
 	}
-	if resp.Name != "北京卫视" {
-		t.Fatalf("name 回显不对: %q", resp.Name)
-	}
-	// 两个模板来源合并：08:00 取靠前来源(A)，10:00 来自 B；按时间排序
-	if len(resp.Programs) != 2 || resp.Programs[0].Title != "A 台节目" || resp.Programs[1].Title != "B 台独有节目" {
-		t.Fatalf("模板多来源合并不对: %+v", resp.Programs)
-	}
 	// 对外标准形态（112114 兼容）：channel_name 回显、date 为 YYYY-MM-DD、
-	// epg_data 时间为当天本地 "HH:MM"，与 programs 同序同量
+	// epg_data 时间为当天本地 "HH:MM"；两个模板来源合并：08:00 取靠前来源(A)，
+	// 10:00 来自 B，按时间排序
 	if resp.ChannelName != "北京卫视" || resp.Date != "2026-09-01" {
 		t.Fatalf("标准字段回显不对: %s", rr.Body.String())
 	}
 	if len(resp.EPGData) != 2 ||
 		resp.EPGData[0].Title != "A 台节目" || resp.EPGData[0].Start != "08:00" || resp.EPGData[0].End != "09:00" ||
 		resp.EPGData[1].Title != "B 台独有节目" || resp.EPGData[1].Start != "10:00" {
-		t.Fatalf("epg_data 转换不对: %+v", resp.EPGData)
+		t.Fatalf("模板多来源合并 / epg_data 转换不对: %+v", resp.EPGData)
 	}
 
 	// name= 同义：同上能查到（改查整份 XMLTV 分支需另配来源，这里只验证参数等效）
