@@ -30,6 +30,8 @@
 
 EMCC = emcc
 OUTPUT = avcodec_audio
+# emcc 直出产物（含 sign-ext 指令），降级后再生成 $(OUTPUT).wasm
+RAW = $(OUTPUT).raw.wasm
 
 # FFmpeg 裁剪静态库目录（可用 FFMPEG_LIB_DIR 覆盖）
 FFMPEG_LIB_DIR ?= /opt/ffmpeg-media
@@ -53,8 +55,21 @@ CFLAGS += -I$(FFMPEG_LIB_DIR)
 all: $(OUTPUT).wasm
 
 $(OUTPUT).wasm: $(SOURCES) $(LIBS)
-	$(EMCC) $(EMFLAGS) $(CFLAGS) $(SOURCES) $(LIBS) -o $(OUTPUT).wasm
+	$(EMCC) $(EMFLAGS) $(CFLAGS) $(SOURCES) $(LIBS) -o $(RAW)
+	# sign-ext 降级：emcc/LLVM 默认会发射 i32.extend8_s / i32.extend16_s /
+	# i64.extend32_s（WebAssembly sign-extension 操作符，需 Chrome 74+）。安卓 8
+	# 盒子的系统 WebView 常停在 Chrome 60~70，且很多盒子无 Play 商店无法升级，
+	# WebAssembly.instantiate 会直接 CompileError → 整个软解模块起不来，表现为
+	# MP2 / AC-3 / E-AC-3 全部无声（视频走原生 MSE 照常有画面）。
+	# wasm-opt 的 --signext-lowering 把这几条指令展开成等价的移位/与运算，产物
+	# 退回 MVP 指令集；实测降级前后 MP2 解码 PCM 逐样本一致。
+	wasm-opt --signext-lowering -O2 $(RAW) -o $(OUTPUT).wasm
+	@rm -f $(RAW)
+	# 门禁：产物若仍含非 MVP 特性，用 --mvp-features 校验会直接报错。老 WebView
+	# 能否加载全靠这一条，务必保留（曾因 sign-ext 导致安卓 8 全程无声）。
+	@wasm-opt --mvp-features $(OUTPUT).wasm -o /dev/null \
+		|| { echo "ERROR: $(OUTPUT).wasm 含非 MVP 特性，老 WebView 无法加载"; exit 1; }
 	@echo "Built $(OUTPUT).wasm ($$(wc -c < $(OUTPUT).wasm) bytes)"
 
 clean:
-	rm -f $(OUTPUT).wasm
+	rm -f $(OUTPUT).wasm $(RAW)

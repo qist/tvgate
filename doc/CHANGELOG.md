@@ -4,6 +4,21 @@
 
 ## Android (tvgate-android)
 
+### v3.3.6
+
+```
+1、遥控器在播放页完全无反应修复（安卓 8 盒子等老系统/老 WebView） — 遥控器按键桥
+   window.TVGateRemote 此前只在 WebView 支持 DOCUMENT_START_SCRIPT 特性时才注入，
+   且没有任何兜底；不支持该特性时按键仍被原生层无条件消费（dispatchKeyEvent 返回
+   true），于是「键被原生吃掉、H5 又没收到」→ 遥控器完全没反应（鼠标/空鼠始终正常，
+   因为走触摸）。现改为页面加载完成时用 evaluateJavascript 兜底注入（API 19+ 通用，
+   不依赖该特性）并回读确认；桥未就绪时不再吞键而是回退系统分发，避免按键进黑洞；
+   另加诊断日志（logcat tag=TVGate 打印 WebView 版本与 document-start 支持情况）
+2、内嵌服务端同步至 v3.3.6 — WASM 软解音频在老 WebView 上无声修复（详见服务端条目）
+3、App 侧除遥控器修复外无其它改动 — 内嵌同版本服务端二进制（含 /pp H5 播放器与
+   管理后台），覆盖安装即可升级
+```
+
 ### v3.3.5
 
 ```
@@ -210,6 +225,22 @@
 ---
 
 ## 服务端 (tvgate)
+
+### v3.3.6
+
+```
+1、WASM 软解音频在老旧 WebView 上「全程无声」修复 — 软解模块 avcodec_audio.wasm
+   （MP2/MP3/AC-3/E-AC-3/AAC 共用同一模块，WSOLA 变速也在其中）此前由 emcc 直接
+   产出，内含 WebAssembly sign-extension 指令（i32.extend8_s / i32.extend16_s /
+   i64.extend32_s，需 Chrome 74+）。而前端为兼容老设备本就压到 chrome49 编译，
+   于是 WebView 处于 Chrome 49~73 区间的设备上表现为「页面、视频、鼠标都正常，
+   软解音频全程无声」——WebAssembly.instantiate 直接 CompileError，整个软解模块
+   加载失败，视频因走原生 MSE 照常有画面
+   现用 wasm-opt --signext-lowering 把产物降级回 MVP 指令集（不重编 FFmpeg，直接
+   对产物做等价改写），实测降级前后 MP2 解码 PCM 逐样本一致、导入导出符号完全不变；
+   构建脚本 Makefile 已固化该步骤，并加「产物含非 MVP 特性即构建失败」门禁，防止
+   以后重建又退回 sign-ext
+```
 
 ### v3.3.5
 
