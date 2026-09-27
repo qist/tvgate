@@ -109,7 +109,7 @@ logo=https://logo.example.com/{name}.png
 | `/pp`、`/pp/<key>` | 独立播放页入口（旧版地址保留）：直接服务播放页，**不跳转后台路径**，`/pp/<key>` 转为 `/pp#<key>` 深链 |
 | `/api/player/channels` | 频道列表 API：`{"list":[{key,name,group,scheme,tvgId,tvgName,tvgLogo,epgType}],"epgSource":{kind,template,logo}}` |
 | `/api/player/epg?key=<key>&date=YYYYMMDD` | EPG 节目单 API（播放器内部用法）：频道用不透明 `key`（与 `/player/<key>` 同源）定位，服务端内部换算 tvg-id/频道名查源；`{"programs":[{from,to,title}],"name":..,"date":..}`（`from`/`to` 为 XMLTV 原样时间串）。`date` 可省略（默认今天）且容忍 `YYYY-MM-DD` / `YYYY/MM/DD` / `YYYYMMDD`；key 未登记返回 `403`，`key`/`ch` 都缺返回 `400` |
-| `/api/player/epg?ch=<频道名或tvg-id>&date=YYYYMMDD` | EPG 节目单 API（**对外标准用法**）：按频道名（或 XMLTV channel id）查询，**不要求**是本机订阅里的频道，因此可把本机当 EPG 源提供给其它播放器/系统（`name=` 为同义参数）。受全局 token 保护（同其它 `/api`） |
+| `/api/player/epg?ch=<频道名或tvg-id>&date=YYYYMMDD` | EPG 节目单 API（**对外标准用法**）：按频道名（或 XMLTV channel id）查询，**不要求**是本机订阅里的频道，因此可把本机当 EPG 源提供给其它播放器/系统（`name=` 为同义参数）。响应含 **112114 兼容形态**：`channel_name`（回显查询名）、`url`（本机 Host）、`epg_data:[{title,start,end,desc}]`（时间为当天本地 `HH:MM`），`date` 为 `YYYY-MM-DD`；同时保留 `programs`/`name` 超集。受全局 token 保护（同其它 `/api`） |
 | `/api/player/catchup?key=<key>&from=<unix秒>&to=<unix秒>` | 回看 API（基于 EPG 节目单起止时间）：时间参数用 Unix 秒，服务端换算为源侧 `playseek` 的 `YmdHis` 串，返回 `{"play":"/player/<key>/<token>"}` |
 | `/player/<key>` | 播放流入口；HLS 分片走 `/player/<key>/<token>` 短路径 |
 | `/player/logo/` | 台标服务（`logo_dir` 本地台标经此输出） |
@@ -129,23 +129,23 @@ logo=https://logo.example.com/{name}.png
 ## EPG 节目单
 
 - **M3U 订阅**：EPG 走头行 `x-tvg-url=` / `url-tvg=` 指定的 XMLTV 地址，服务端定时下载解析，`.gz` 自动解压；频道按 `tvg-id`（缺省回落 `tvg-name`）匹配节目。
-- **TXT 订阅**：EPG 走 `player.epg` 模板或订阅内 `epg=` 行，按 `{name}` / `{date}` 占位符逐频道请求；`http` 开头且不含 `{` 时视为整份 XMLTV 地址。
+- **TXT 订阅**：EPG 走 `player.epg` 模板或订阅内 `epg=` 行，按 `{name}` / `{date}` 占位符逐频道请求（`{date}` 填 `YYYY-MM-DD`，如 `https://epg.112114.xyz/?ch={name}&date={date}`——该源只认这种形态）；`http` 开头且不含 `{` 时视为整份 XMLTV 地址。
 
 查询接口：
 
 | 用法 | 地址 | 说明 |
 |---|---|---|
-| 播放器内部 | `/api/player/epg?key=<频道key>&date=YYYY-MM-DD` | 不透明 key 定位，服务端换算 tvg-id/频道名 |
-| **对外标准** | `/api/player/epg?ch=<频道名>&date=YYYYMMDD` | 按频道名（或 XMLTV channel id）查，不要求是本机订阅频道；`name=` 同义。可原样给别的播放器当 EPG 源：`epg=http://<本机>/api/player/epg?ch={name}&date={date}` |
+| 播放器内部 | `/api/player/epg?key=<频道key>&date=YYYY-MM-DD` | 不透明 key 定位，服务端换算 tvg-id/频道名；响应 `programs`（`from`/`to` 为 XMLTV 原样时间串） |
+| **对外标准** | `/api/player/epg?ch=<频道名>&date=YYYYMMDD` | 按频道名（或 XMLTV channel id）查，不要求是本机订阅频道；`name=` 同义。响应为 112114 兼容形态（`channel_name`/`epg_data`，时间为 `HH:MM`），可直接给别的播放器当 EPG 源：`epg=http://<本机>/api/player/epg?ch={name}&date={date}` |
 
-响应 `{"programs":[{from,to,title}],"name":<查询名>,"date":<YYYYMMDD>}`。
+`key=` 分支响应 `{"programs":[{from,to,title}],"name":<查询名>,"date":<YYYYMMDD>}`。`ch=`/`name=` 分支在同名字段之外附 112114 兼容形态——`channel_name`（回显查询名）、`url`（本机 Host）、`epg_data:[{title,start,end,desc}]`（时间为当天本地 `HH:MM`），此时 `date` 为 `YYYY-MM-DD`——因此第三方按 112114 标准解析即可直接用本机当 EPG 源。
 
 ### 多来源合并
 
 EPG 来源可配多个（订阅内嵌来源 → `player.epg` → `player.epgs`，**按书写顺序即优先级**）：
 
 - **整份 XMLTV（xml 型）**：全部拉到服务端解析并存多份数据，查询时逐个来源解析该频道后**按开始时间并集**，同一时段（`start` 相同）取靠前来源那条；某个来源拉取/解析失败或内容为空只少它那份数据，其余来源照常生效，全部失败才保留上一次成功的数据。来源 301/302 跳转自动跟随（如 `http://epg.51zmt.top:8000/e1.xml.gz` → CDN 域名）。
-- **模板（template 型）**：按序逐个请求（填 `{name}` / `{date}`）后同样按时间并集。
+- **模板（template 型）**：按序逐个请求（填 `{name}` / `{date}`，`{date}` 为 `YYYY-MM-DD`）后同样按时间并集。
 - **跨类型互补**：主类型查不到该频道节目时，用另一类型补齐——整份 XMLTV 里没有的频道会用模板源补，模板源查空则回落整份 XMLTV。不同服务商覆盖的频道不同，这比"整体切换"更实用；同一频道在两个来源里 channel id 不同、但 display-name 一致时照样能对上并合并。
 
 ```yaml

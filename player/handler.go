@@ -169,7 +169,8 @@ func (h *Handler) ServeChannels(w http.ResponseWriter, r *http.Request) {
 //	                     name= 为同义参数。按名字查，**不要求**是本机订阅里的频道。
 //
 // date 可省略（默认今天），容忍 YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD 三种写法。
-// 响应 {"programs":[{from,to,title}],"name":<查询名>,"date":<YYYYMMDD>}。
+// 响应 {"programs":[{from,to,title}],"name":<查询名>,"date":<YYYYMMDD>}；ch=/name= 对外
+// 分支另附 112114 兼容形态（channel_name/url/epg_data，时间 "HH:MM"、date YYYY-MM-DD）。
 //
 // 数据来源见 serveEPGQuery：xml 型来源合并查询本地 EPGBank；template 型来源由服务端
 // 填 {name}/{date} 后拉取（规避前端跨域 CORS）；两类互为补齐。
@@ -205,7 +206,84 @@ func (h *Handler) ServeEPG(w http.ResponseWriter, r *http.Request) {
 		progs = []Program{}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	writeJSON(w, map[string]interface{}{"programs": progs, "name": chanName, "date": date})
+	resp := map[string]interface{}{"programs": progs, "name": chanName, "date": date}
+	// ch=/name= 是对外标准查询：额外给出 112114 兼容形态（业界播放器通用——频道名在
+	// channel_name、节目在 epg_data、时间为当天本地 "HH:MM"、date 为 YYYY-MM-DD）。
+	// programs/name 作为超集保留，已有按本机格式对接的调用不受影响。
+	if key == "" {
+		resp["date"] = epgStandardDate(date)
+		resp["channel_name"] = chanName
+		resp["url"] = r.Host
+		resp["epg_data"] = epgStandardData(progs)
+	}
+	writeJSON(w, resp)
+}
+
+// epgStandardEntry 对外标准（112114 兼容）节目条目：时间为当天本地时刻 "HH:MM"。
+type epgStandardEntry struct {
+	Title string `json:"title"`
+	Start string `json:"start"`
+	End   string `json:"end"`
+	Desc  string `json:"desc"`
+}
+
+// epgStandardDate YYYYMMDD → YYYY-MM-DD（112114 的 date 形态）。
+func epgStandardDate(date string) string {
+	if len(date) != 8 {
+		return date
+	}
+	return date[:4] + "-" + date[4:6] + "-" + date[6:8]
+}
+
+// epgStandardData 内部节目 → 标准条目；时间无法识别时原样保留，避免整条丢失。
+func epgStandardData(progs []Program) []epgStandardEntry {
+	out := make([]epgStandardEntry, 0, len(progs))
+	for _, p := range progs {
+		out = append(out, epgStandardEntry{
+			Title: p.Title,
+			Start: epgClock(p.Start),
+			End:   epgClock(p.Stop),
+		})
+	}
+	return out
+}
+
+// epgClock 任意 EPG 时间串 → 当天本地时刻 "HH:MM"：
+//   - 已是 "HH:MM" 原样返回（JSON 模板源如 112114 直出就是这种）；
+//   - XMLTV 数字串 YYYYMMDD[HH[MM[SS]]]（可带 " +0800" 等后缀：后缀忽略、按本地时区
+//     解释，与前端 parseEpgTime 同一约定）；
+//   - ISO / 空格或斜杠分隔的日期时间。
+//
+// 全部失败时原样返回：宁可把原始串交给调用方容错，也不丢条目。
+func epgClock(v string) string {
+	s := strings.TrimSpace(v)
+	if s == "" {
+		return ""
+	}
+	if len(s) == 5 && s[2] == ':' {
+		return s
+	}
+	digits := s
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			digits = s[:i]
+			break
+		}
+	}
+	if len(digits) >= 8 && len(digits) <= 14 {
+		for len(digits) < 14 {
+			digits += "0"
+		}
+		if t, err := time.ParseInLocation("20060102150405", digits, time.Local); err == nil {
+			return t.Format("15:04")
+		}
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006/01/02 15:04:05"} {
+		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+			return t.In(time.Local).Format("15:04")
+		}
+	}
+	return s
 }
 
 // normalizeEPGDate 归一日期：容忍 YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD，空则取今天（本地时区）。
@@ -288,10 +366,12 @@ func (h *Handler) mergeTemplateEPGs(ctx context.Context, tpls []string, name, da
 	return out
 }
 
-// fillEpgURL 把 EPG 模板里的 {name}/{date} 占位符填充为实际值（name 用 URL 转义，date 原样）。
+// fillEpgURL 把 EPG 模板里的 {name}/{date} 占位符填充为实际值（name 用 URL 转义）。
+// {date} 填 YYYY-MM-DD（业内标准形态）：epg.112114.xyz 只认这种——填 20260927 会返回
+// 一整份通用占位「精彩节目」而非真实节目单；epg.cdn.loc.cc 与本机 /api/player/epg 两种都认。
 func fillEpgURL(tpl, name, date string) string {
 	u := strings.ReplaceAll(tpl, "{name}", url.PathEscape(name))
-	return strings.ReplaceAll(u, "{date}", date)
+	return strings.ReplaceAll(u, "{date}", epgStandardDate(date))
 }
 
 // fetchTemplateEPG 服务端拉取 txt 模板 EPG（规避 CORS），尽量解析 XMLTV <programme> 或 JSON。

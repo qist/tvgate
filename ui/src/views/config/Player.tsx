@@ -185,7 +185,7 @@ export function PlayerPage() {
               placeholder={"php://xxx.php?id=all\n/opt/tvgate/tv2.txt\n/www/tv/"}
             />
           </Field>
-          <Field label="txt 订阅的 EPG 模板（可选）" hint="含 {name}=频道名、{date}=日期；也可填固定 XMLTV URL（如 xxx.xml.gz，整份节目单按频道名匹配、gzip 自动识别、301/302 自动跟随）；多项用换行/分号/逗号分隔或填下方「多 EPG 来源」；M3U 订阅用 x-tvg-url 的 XMLTV，无需填此项">
+          <Field label="txt 订阅的 EPG 模板（可选）" hint="含 {name}=频道名、{date}=日期（按 YYYY-MM-DD 填充，如 epg.112114.xyz 只认这种）；也可填固定 XMLTV URL（如 xxx.xml.gz，整份节目单按频道名匹配、gzip 自动识别、301/302 自动跟随）；多项用换行/分号/逗号分隔或填下方「多 EPG 来源」；M3U 订阅用 x-tvg-url 的 XMLTV，无需填此项">
             <Input
               className="font-mono"
               value={cfg.epg}
@@ -207,7 +207,7 @@ export function PlayerPage() {
           </Field>
           <Field
             label="对外 EPG 接口（可填到其它播放器当 EPG 源）"
-            hint={`本机同时提供标准查询接口：${epgEndpoint}（key= 为播放器内部用法；ch= 可填频道名或 tvg-id，第三方无需知道订阅格式）。接口受全局 token 保护（与其它 /api 一致）。`}
+            hint={`本机同时提供标准查询接口：${epgEndpoint}（key= 为播放器内部用法；ch= 可填频道名或 tvg-id，第三方无需知道订阅格式）。响应为 112114 兼容形态（channel_name/epg_data，时间为 HH:MM）。接口受全局 token 保护（与其它 /api 一致）。`}
           >
             <Input className="font-mono" readOnly value={epgEndpoint} onFocus={(e) => e.currentTarget.select()} />
           </Field>

@@ -1210,9 +1210,9 @@ func TestServeEPGTemplateQualitySuffix(t *testing.T) {
 		date := r.URL.Query().Get("date")
 		queries = append(queries, ch)
 		switch {
-		case ch == "CCTV1" && date == "20260901": // 剥后名有节目（常见：外源只收录主频道名）
+		case ch == "CCTV1" && date == "2026-09-01": // 剥后名有节目（常见：外源只收录主频道名）
 			w.Write([]byte(`{"epg_data":[{"start":"08:00","end":"09:00","title":"朝闻天下"}]}`))
-		case ch == "CCTV1-4K" && date == "20260902": // 原始全名也有节目（源只收录变体全名时走回落）
+		case ch == "CCTV1-4K" && date == "2026-09-02": // 原始全名也有节目（源只收录变体全名时走回落）
 			w.Write([]byte(`<tv><programme start="20260902100000 +0800" stop="20260902110000 +0800" channel="1"><title>4K 专属</title></programme></tv>`))
 		default: // 未收录：返回空（diyp 形态的空 epg_data）
 			w.Write([]byte(`{"epg_data":[]}`))
@@ -1277,6 +1277,10 @@ func TestServeEPGByNameStandard(t *testing.T) {
 		if got := r.URL.Query().Get("ch"); got != "北京卫视" {
 			t.Errorf("模板 A {name} 填充不对: %q", got)
 		}
+		// {date} 必须填 YYYY-MM-DD：epg.112114.xyz 只认这种，填紧凑串只会拿到通用占位节目单
+		if got := r.URL.Query().Get("date"); got != "2026-09-01" {
+			t.Errorf("模板 A {date} 应填 YYYY-MM-DD: %q", got)
+		}
 		w.Write([]byte(`<tv><programme start="20260901080000 +0800" stop="20260901090000 +0800" channel="1"><title>A 台节目</title></programme></tv>`))
 	}))
 	defer tplA.Close()
@@ -1303,8 +1307,15 @@ func TestServeEPGByNameStandard(t *testing.T) {
 		t.Fatalf("按名查询应 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 	var resp struct {
-		Programs []Program `json:"programs"`
-		Name     string    `json:"name"`
+		Programs    []Program `json:"programs"`
+		Name        string    `json:"name"`
+		Date        string    `json:"date"`
+		ChannelName string    `json:"channel_name"`
+		EPGData     []struct {
+			Title string `json:"title"`
+			Start string `json:"start"`
+			End   string `json:"end"`
+		} `json:"epg_data"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("epg 响应异常: %s", rr.Body.String())
@@ -1316,11 +1327,41 @@ func TestServeEPGByNameStandard(t *testing.T) {
 	if len(resp.Programs) != 2 || resp.Programs[0].Title != "A 台节目" || resp.Programs[1].Title != "B 台独有节目" {
 		t.Fatalf("模板多来源合并不对: %+v", resp.Programs)
 	}
+	// 对外标准形态（112114 兼容）：channel_name 回显、date 为 YYYY-MM-DD、
+	// epg_data 时间为当天本地 "HH:MM"，与 programs 同序同量
+	if resp.ChannelName != "北京卫视" || resp.Date != "2026-09-01" {
+		t.Fatalf("标准字段回显不对: %s", rr.Body.String())
+	}
+	if len(resp.EPGData) != 2 ||
+		resp.EPGData[0].Title != "A 台节目" || resp.EPGData[0].Start != "08:00" || resp.EPGData[0].End != "09:00" ||
+		resp.EPGData[1].Title != "B 台独有节目" || resp.EPGData[1].Start != "10:00" {
+		t.Fatalf("epg_data 转换不对: %+v", resp.EPGData)
+	}
 
 	// name= 同义：同上能查到（改查整份 XMLTV 分支需另配来源，这里只验证参数等效）
 	rr2 := httptest.NewRecorder()
 	h.ServeEPG(rr2, httptest.NewRequest("GET", "/api/player/epg?name="+url.QueryEscape("北京卫视")+"&date=20260901", nil))
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("name= 应同义, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+}
+
+// TestEPGClock 对外标准形态的时间归一：JSON 模板源直出的 "HH:MM" 原样保留，
+// XMLTV 数字串（带/不带时区后缀）与本地无时区的日期时间都换成当天本地 "HH:MM"，
+// 无法识别时原样返回。断言只取本地时区可确定的形式（带偏移的 ISO 随机器时区变化，不测）。
+func TestEPGClock(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"08:00", "08:00"},
+		{" 08:00 ", "08:00"},
+		{"20260901080000 +0800", "08:00"},
+		{"20260901103000", "10:30"},
+		{"2026-09-01 10:30:00", "10:30"},
+		{"2026/09/01 10:30:00", "10:30"},
+		{"", ""},
+		{"未知", "未知"},
+	} {
+		if got := epgClock(c.in); got != c.want {
+			t.Fatalf("epgClock(%q)=%q，期望 %q", c.in, got, c.want)
+		}
 	}
 }
