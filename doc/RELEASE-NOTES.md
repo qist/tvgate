@@ -7,33 +7,34 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | **v3.3.6** |
-| 发布日期 | 2026-09-27 |
-| 发布提交 | `eb4c754` · tag `v3.3.6` |
-| 距上一版 | v3.3.5（2026-09-26）以来 3 个提交 |
+| 版本 | **v3.3.7** |
+| 发布日期 | 2026-10-02 |
+| 发布提交 | `5616a4a` · tag `v3.3.7` |
+| 距上一版 | v3.3.6（2026-09-27）以来 10 个提交 |
 | 平台 | Linux / Windows / macOS / Android 共 32 个平台包 |
 | 资产 | `TVGate-<平台>-<架构>.zip` + 同名 `.dgst`（MD5/SHA1/SHA256/SHA512） |
-| Docker | `docker.io/juestnow/tvgate:v3.3.6`、`ghcr.io/qist/tvgate:v3.3.6`（同时打 `latest`） |
+| Docker | `docker.io/juestnow/tvgate:v3.3.7`、`ghcr.io/qist/tvgate:v3.3.7`（同时打 `latest`） |
 
 ---
 
 ## 一、GitHub Release 标题 / 一句话摘要
 
 ```
-v3.3.6 — 老设备上软解音频（MP2/AC-3/E-AC-3）「全程无声」修复；安卓遥控器在播放页无反应修复
+v3.3.7 — phpgo 解释器系列修复（参数解析/GCM加密/字符串语义/PATH_INFO路由）；播放页状态栏沉浸修复
 ```
 
 ## 二、GitHub Releases 正文 · 精简版（用户可读）
 
 ```
-### v3.3.6 更新内容
-1. 老设备「有画面没声音」修复 — 系统 WebView 较旧的设备（如安卓 8 盒子）上，
-   MP2 / AC-3 / E-AC-3 音轨的频道此前只出画面不出声：本地音频解码模块用到了
-   较新的 WebAssembly 指令，旧 WebView 加载不了整个模块。现已降级为通用指令集，
-   旧设备也能正常出声（实测新旧产物解码结果逐样本一致，音质不受影响）
-2. 安卓遥控器修复 — 播放页里遥控器完全没反应（鼠标/空鼠始终正常）已修复：
-   按键此前被系统层吃掉、没送到页面，现在按键传递有了兜底路径
-3. 其它设备不受影响 — 新老设备一视同仁，功能与音质无变化
+### v3.3.7 更新内容
+1. 内嵌 PHP（phpgo）解释器多处修复 — 修复部分 PHP 直播源脚本在本机直接执行时报错：
+   「函数参数须为变量」「openssl_encrypt 后 GCM 解密失败」「字符串内容被误改」以及
+   「/PHP脚本.php/子路径」路由 403 等问题；常见源脚本（4gtv.php/ysptp.php 等）
+   现在可正常请求与执行
+2. 安卓播放页状态栏沉浸修复 — 弹窗/切后台后状态栏常驻不再自动收回，导致播放页布局
+   被顶偏；现改为瞬态行为 + 焦点恢复时主动压回，布局不再被推偏
+3. /debug/pprof 端点改为编译标签控制 — 常规构建（Docker / 二进制）不再包含 pprof，
+   彻底消除内存/性能 profile 泄露面；调试时加 `-tags pprof` 编译即可恢复
 
 升级：下载对应平台压缩包，解压覆盖后重启服务即可；Docker 用户重新拉取镜像；
 安卓盒子/电视直接覆盖安装新版 APK（App 内也支持在线更新）。旧配置文件可直接使用，无需修改。
@@ -42,41 +43,53 @@ v3.3.6 — 老设备上软解音频（MP2/AC-3/E-AC-3）「全程无声」修复
 ## 三、完整版（用于发布公告 / 论坛 / 通知，用户可读）
 
 ```
-## TVGate v3.3.6（2026-09-27）
+## TVGate v3.3.7（2026-10-02）
 
-本次修复两类"只在特定设备上出现"的问题：一类是旧设备上软解音频全程无声，
-一类是安卓播放页遥控器完全无反应。新老设备功能与音质均无变化。
+本次主要修复内嵌 PHP 解释器导致部分直播源脚本本机执行失败的问题，
+以及安卓播放页状态栏沉浸行为导致的布局推偏。
 
-### 一、旧设备软解音频「全程无声」修复
-- 现象：系统 WebView 较旧的设备（典型是安卓 8 电视盒子）上，播放 MP2 / AC-3 /
-  E-AC-3 音轨的频道时画面正常、进度正常、鼠标操作正常，但一点声音都没有
-- 原因：本地软解音频模块（MP2/AC-3/E-AC-3/AAC 共用同一个 WASM 模块）编译时
-  用到了 WebAssembly 的 sign-extension 指令，需要 Chrome 74 及以上；而本项目前端
-  为兼容老设备本就是按 Chrome 49 编译的，于是 Chrome 49~73 区间出现"页面能跑、
-  解码模块加载失败"的组合
-- 修复：把该模块降级回通用（MVP）指令集，不重编 FFmpeg、只做等价改写；
-  实测降级前后 MP2 解码输出逐样本一致（样本数、峰值、PCM 校验和完全相同），
-  导入导出符号不变，音质不受任何影响
-- 防回归：构建脚本已固化该步骤，并加入"产物含非通用特性即构建失败"的门禁
+### 一、内嵌 PHP（phpgo）解释器修复
 
-### 二、安卓遥控器在播放页无反应修复（随新版 APK 发布）
-- 现象：安卓盒子/电视上进入播放页后，遥控器方向键、OK、数字键全部没反应
-  （接鼠标或空鼠则一切正常）
-- 原因：遥控器按键需要先注入页面一个"按键桥"，此前该桥只在系统 WebView 支持
-  某个较新特性时才注入、没有兜底；不支持时按键仍被系统层无条件消费，形成
-  "系统吃掉键、页面收不到"的黑洞
-- 修复：改为页面加载完成时兜底注入（不依赖该特性）并回读确认；桥未就绪时
-  不再吞掉按键，而是交回系统分发，杜绝按键进黑洞
+此前使用「内嵌执行」方式（本机直接跑 PHP 脚本、不走 HTTP 回环）时，
+下列源脚本会直接报错或得到错误输出：
+
+- 函数参数「类型提示 + 引用」解析失败（如 array &$id）：报错「函数参数须为变量」
+- 字符串下标赋值语义错误：$s[$i] = 'x' 字节修改被误作数组操作，
+  整串数据损坏成字面量 "Array"（加密 nonce 等字段直接不可用）
+- openssl_encrypt GCM 模式未写回 $tag：认证标签丢失，
+  服务端回传 403 或解密失败
+- PATH_INFO 路由（/ysptp.php/cctv1.m3u8）返回 403：此前找不到文件直接拒绝，
+  现前缀探测脚本文件 + 剩余路径作 PATH_INFO 传入
+
+以上修复覆盖 4gtv.php / ysptp.php 等常见 PHP 直播源脚本，
+本类源现可请求即回 M3U8，与外网 PHP 环境执行结果一致。
+
+### 二、安卓播放页状态栏沉浸修复（随新版 APK 发布）
+
+- 现象：安卓播放页弹窗（权限/更新）或切到后台后再回来，状态栏常驻不消失，
+  H5 顶部安全区随之持续存在，把播放页布局（含底部控制条）反复顶偏
+- 原因：进入沉浸模式时未声明系统栏行为；状态栏被带出后无法自动收回
+- 修复：Android 11+（API 30+）声明 BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+  （边缘下滑系统栏只短暂悬浮、几秒后自动收回）；同时补回
+  onWindowFocusChanged 重新进入沉浸，焦点恢复时主动把状态栏压回
+
+### 三、/debug/pprof 安全收敛
+
+- /debug/pprof/ 端点此前注册在所有端口（含公网），可无鉴权访问进程堆、
+  goroutine 栈、CPU profile 等，存在信息泄露风险
+- 现改为编译期控制：常规 `go build` 完全不编译 pprof 相关代码进 binary
+  （符号表中 0 个 pprof 符号），发行版无任何暴露面
+- 需要性能诊断时用 `go build -tags pprof` 编译即可恢复原有能力
 
 ### 兼容性与升级
 - 配置文件向后兼容：旧 config.yaml 可直接使用，无需改动
 - 二进制：下载对应平台压缩包，解压覆盖后重启服务（systemd：systemctl restart tvgate）
-- Docker：docker pull juestnow/tvgate:v3.3.6（或 ghcr.io/qist/tvgate:v3.3.6），重建容器
-- Android：安装 v3.3.6 版 APK 覆盖即可（App 内也支持在线更新）
+- Docker：docker pull juestnow/tvgate:v3.3.7（或 ghcr.io/qist/tvgate:v3.3.7），重建容器
+- Android：安装 v3.3.7 版 APK 覆盖即可（App 内也支持在线更新）
 
 ### 发布校验
 - 每个压缩包附 .dgst 校验文件（MD5/SHA1/SHA256/SHA512），下载后可比对
-- 版本核对：./TVGate-linux-64 -version → v3.3.6
+- 版本核对：./TVGate-linux-64 -version → v3.3.7
 - 完整改动清单：doc/CHANGELOG.md（含 Android 段落）
 ```
 
@@ -87,17 +100,17 @@ v3.3.6 — 老设备上软解音频（MP2/AC-3/E-AC-3）「全程无声」修复
 | 部署方式 | 获取方式 | 升级步骤 |
 |---|---|---|
 | 裸机二进制 | Releases 页 `TVGate-<平台>-<架构>.zip` | 解压覆盖 → 重启服务（`systemctl restart tvgate`） |
-| Docker | `juestnow/tvgate:v3.3.6` / `ghcr.io/qist/tvgate:v3.3.6` | 拉取新镜像 → 重建容器（config 挂载不变） |
-| Android App | Releases 页 `TVGate-v3.3.6-{arm64,arm,x86_64}.apk` | 覆盖安装，或 App 内在线更新 |
-| 源码 | tag `v3.3.6` | `make linux-64`（自动构建 Web UI） |
+| Docker | `juestnow/tvgate:v3.3.7` / `ghcr.io/qist/tvgate:v3.3.7` | 拉取新镜像 → 重建容器（config 挂载不变） |
+| Android App | Releases 页 `TVGate-v3.3.7-{arm64,arm,x86_64}.apk` | 覆盖安装，或 App 内在线更新 |
+| 源码 | tag `v3.3.7` | `make linux-64`（自动构建 Web UI） |
 
 ## 五、发布核对清单
 
-- [x] 服务端 Release：tag `v3.3.6` 已推送（指向 `eb4c754`），64 个资产（32 平台包 + 32 `.dgst`）上传完成
-- [x] Docker 镜像：`juestnow/tvgate:v3.3.6` 与 `ghcr.io/qist/tvgate:v3.3.6` 推送完成且 `latest` 已更新（revision `eb4c754`）
-- [x] Android Release：`releases/latest` 为 v3.3.6，`arm64` / `arm` / `x86_64` 三个 APK 齐全
-- [x] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.3.6
-- [x] 发布后抽查：发布二进制内嵌的软解 WASM 为降级后产物（sha256 前 16 位 `9019e709fc2b83d4`，769200 字节，无 sign-ext 指令）
-- [x] GitHub Release 正文已填写（取自「二、精简版」）
-- [ ] 设备抽查：旧 WebView 设备上软解音轨频道恢复出声；安卓遥控器在播放页可操作
+- [ ] 服务端 Release：tag `v3.3.7` 已推送（指向 `5616a4a`），64 个资产（32 平台包 + 32 `.dgst`）上传完成
+- [ ] Docker 镜像：`juestnow/tvgate:v3.3.7` 与 `ghcr.io/qist/tvgate:v3.3.7` 推送完成且 `latest` 已更新
+- [ ] Android Release：`releases/latest` 为 v3.3.7，`arm64` / `arm` / `x86_64` 三个 APK 齐全
+- [ ] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.3.7
+- [ ] 发布后抽查：发行版 binary 用 `go tool nm` 确认 0 个 pprof 符号
+- [ ] GitHub Release 正文已填写（取自「二、精简版」）
+- [ ] 设备抽查：安卓播放页弹窗/切后台后状态栏浸入正常；PHP 直播源脚本可本机执行
 - [ ] 商店：`doc/STORE-RELEASE-NOTES.md` 文案已在应用市场提交
