@@ -153,10 +153,10 @@ func init() {
 	}
 	// openssl
 	builtins["openssl_encrypt"] = func(e *Env, a []Value) (Value, error) {
-		return opensslCipher(a, true)
+		return opensslCipher(e, a, true)
 	}
 	builtins["openssl_decrypt"] = func(e *Env, a []Value) (Value, error) {
-		return opensslCipher(a, false)
+		return opensslCipher(e, a, false)
 	}
 	// header（捕获到 env.headers）
 	builtins["header"] = func(e *Env, a []Value) (Value, error) {
@@ -456,7 +456,7 @@ func parseHTTPStatusHeader(h string) (int, bool) {
 // 4gtv.php 使用 OPENSSL_RAW_DATA（=1），PHP 默认 padding = PKCS7。
 // ---------------------------------------------------------------------------
 
-func opensslCipher(a []Value, encrypt bool) (Value, error) {
+func opensslCipher(e *Env, a []Value, encrypt bool) (Value, error) {
 	if len(a) < 3 {
 		return NewString(""), fmt.Errorf("openssl: 参数不足")
 	}
@@ -474,7 +474,7 @@ func opensslCipher(a []Value, encrypt bool) (Value, error) {
 	case "AES-256-ECB", "AES-128-ECB", "aes-128-ecb", "aes-256-ecb":
 		return opensslAESECB(a, data, key, encrypt)
 	case "aes-256-gcm", "AES-256-GCM", "aes-128-gcm", "AES-128-GCM":
-		return opensslGCM(a, data, key, iv, encrypt)
+		return opensslGCM(e, a, data, key, iv, encrypt)
 	case "des-ede3", "DES-EDE3", "des-ede3-ecb", "DES-EDE3-ECB":
 		return opensslTripleDESECB(a, data, key, encrypt)
 	case "des-ede3-cbc", "DES-EDE3-CBC":
@@ -537,7 +537,7 @@ func opensslCBC(a []Value, data, key, iv []byte, encrypt bool) (Value, error) {
 // PHP: openssl_encrypt($data, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, $aad)
 //
 //	openssl_decrypt($data, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, $aad)
-func opensslGCM(a []Value, data, key, iv []byte, encrypt bool) (Value, error) {
+func opensslGCM(e *Env, a []Value, data, key, iv []byte, encrypt bool) (Value, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return NewString(""), err
@@ -574,7 +574,12 @@ func opensslGCM(a []Value, data, key, iv []byte, encrypt bool) (Value, error) {
 		tagLen := gcm.Overhead()
 		ct := enc[:len(enc)-tagLen]
 		tagBytes := enc[len(enc)-tagLen:]
-		_ = tagBytes // PHP 中 $tag 是引用参数，简化不写回
+		// PHP 语义：openssl_encrypt 的 $tag 是**引用输出参数**，调用后必须写回认证标签。
+		// 脚本（如 ysptp.php 的 aes_gcm_encrypt_b64）依赖 $tag 拼出 nonce+ct+tag 载荷，
+		// 不写回会导致发给服务端的 GCM 载荷缺 tag 而解密失败。
+		if len(a) >= 6 {
+			writeRef(e, a[5], NewString(string(tagBytes)))
+		}
 		if raw {
 			return NewString(string(ct)), nil
 		}

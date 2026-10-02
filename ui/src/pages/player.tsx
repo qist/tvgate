@@ -1072,10 +1072,15 @@ function PlayerScreen() {
           <div
             className={clsx(
               VIDEO_STAGE_CLASSES,
-              // 手机非全屏：高度由 16:9 比例给出。视频舞台是"尺寸容器"（container-type:size，
-              // 见 styles/index.css），自身高度不再计入父级；这里若仍靠内容撑高，外层会塌成 0 高，
-              // 下方面板（flex-1）会顶到屏幕最上沿、把画面整个盖住。
-              !isFullscreenActive && "aspect-video md:aspect-auto",
+              // 手机非全屏：高度 = 16:9 比例 + 顶部安全区。VideoPlayer 外层带
+              // pt-[env(safe-area-inset-top)]（状态栏/刘海出现时非 0，见 video-player.tsx），
+              // 若这里只按 aspect-video 预留 16:9 高度，画面连同底部控制条会被安全区内边距
+              // 顶出舞台下沿 ~一个状态栏的高度，被下方面板盖住——表现为"状态栏一出现，
+              // 控制条上的最大化/音量按钮就看不见"。高度显式并入安全区，两者始终对齐。
+              // 视频舞台是"尺寸容器"（container-type:size，见 styles/index.css），自身高度
+              // 不再计入父级；这里若仍靠内容撑高，外层会塌成 0 高，下方面板（flex-1）会顶到
+              // 屏幕最上沿、把画面整个盖住。
+              !isFullscreenActive && "h-[calc(56.25vw_+_env(safe-area-inset-top))] md:aspect-auto md:h-auto",
               // 手机全屏时视频区铺满整屏（flex-1 拿到确定高度）；平时按内容高（16:9 横条）
               isFullscreenActive ? "min-h-0 flex-1" : "shrink-0",
             )}

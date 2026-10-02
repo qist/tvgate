@@ -144,30 +144,52 @@ func Handler() http.HandlerFunc {
 		rel := strings.Trim(p, "/")
 		// rel 为空时访问 docroot 根目录（后面由目录逻辑处理 index 查找）
 		scriptPath := filepath.Join(docRoot, rel)
+		// pathInfo：PHP PATH_INFO 路由（/ysptp.php/cctv1.m3u8）剥离出的子路径
+		pathInfo := ""
 		// 防目录穿越：必须是 docRoot 本身或其子路径（边界判断，避免同前缀兄弟目录误放行）
 		if scriptPath != docRoot && !strings.HasPrefix(scriptPath, docRoot+string(filepath.Separator)) {
 			w.WriteHeader(http.StatusForbidden)
 			logger.LogPHPRequest(r, rel, http.StatusForbidden, 0)
 			return
 		}
+
+		fi, err := os.Stat(scriptPath)
+		if err != nil {
+			// 整体不存在：可能是 PHP PATH_INFO 路由（/ysptp.php/cctv1.m3u8）。
+			// 从最深一级开始往前找"已存在的文件前缀"作为脚本文件，剩余部分作为
+			// PATH_INFO 传给脚本（如 → /www/ysptp.php 执行 + PATH_INFO=/cctv1.m3u8）。
+			// 注意此类路径 Stat 会返回 ENOTDIR（ysptp.php 是文件而非目录），
+			// 不能直接当"不存在"或"禁止"处理。
+			if parts := strings.Split(rel, "/"); len(parts) > 1 {
+				for i := len(parts) - 1; i >= 1; i-- {
+					cand := filepath.Join(docRoot, filepath.Join(parts[:i]...))
+					cfi, cerr := os.Stat(cand)
+					if cerr != nil || cfi.IsDir() {
+						continue
+					}
+					scriptPath = cand
+					pathInfo = "/" + strings.Join(parts[i:], "/")
+					fi = cfi
+					break
+				}
+			}
+			if fi == nil {
+				w.WriteHeader(http.StatusNotFound)
+				logger.LogPHPRequest(r, rel, http.StatusNotFound, 0)
+				return
+			}
+		}
 		// 防符号链接逃逸：真实路径必须仍落在 docRoot 内
 		// （www 内若存在指向外部的 symlink，可被读取/执行，必须拒绝）
-		if real, err := filepath.EvalSymlinks(scriptPath); err == nil {
+		if real, rerr := filepath.EvalSymlinks(scriptPath); rerr == nil {
 			if real != resolvedDocRoot && !strings.HasPrefix(real, resolvedDocRoot+string(filepath.Separator)) {
 				w.WriteHeader(http.StatusForbidden)
 				logger.LogPHPRequest(r, rel, http.StatusForbidden, 0)
 				return
 			}
-		} else if !os.IsNotExist(err) {
+		} else if !os.IsNotExist(rerr) {
 			w.WriteHeader(http.StatusForbidden)
 			logger.LogPHPRequest(r, rel, http.StatusForbidden, 0)
-			return
-		}
-		// 目录访问：尝试 index 文件，否则 403 禁止目录列表
-		fi, err := os.Stat(scriptPath)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			logger.LogPHPRequest(r, rel, http.StatusNotFound, 0)
 			return
 		}
 		if fi.IsDir() {
@@ -240,9 +262,20 @@ func Handler() http.HandlerFunc {
 			remoteIP = h
 		}
 		env.SetServer("REMOTE_ADDR", remoteIP)
-		env.SetServer("SCRIPT_NAME", r.URL.Path)
-		env.SetServer("SCRIPT_FILENAME", scriptPath)
-		env.SetServer("PHP_SELF", r.URL.Path)
+		if pathInfo != "" {
+			// PATH_INFO 路由：SCRIPT_NAME 是 URL 中脚本部分（去掉子路径），
+			// PHP_SELF 保持完整 URL 路径，PATH_INFO 单独暴露。
+			// 例如 /php/ysptp.php/cctv1.m3u8 → SCRIPT_NAME=/php/ysptp.php, PATH_INFO=/cctv1.m3u8
+			scriptName := strings.TrimSuffix(r.URL.Path, pathInfo)
+			env.SetServer("SCRIPT_NAME", scriptName)
+			env.SetServer("SCRIPT_FILENAME", scriptPath)
+			env.SetServer("PATH_INFO", pathInfo)
+			env.SetServer("PHP_SELF", r.URL.Path)
+		} else {
+			env.SetServer("SCRIPT_NAME", r.URL.Path)
+			env.SetServer("SCRIPT_FILENAME", scriptPath)
+			env.SetServer("PHP_SELF", r.URL.Path)
+		}
 		env.SetServer("QUERY_STRING", r.URL.RawQuery)
 		env.SetServer("REQUEST_URI", r.URL.RequestURI())
 		// HTTP headers → $_SERVER（PHP 风格：HTTP_ 前缀 + 大写 + 下划线）

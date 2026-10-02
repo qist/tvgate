@@ -2020,6 +2020,8 @@ func (e *Env) callFunc(name string, args []Expr) (Value, error) {
 			"preg_replace_callback_array": {3: true},
 			"parse_str":                   {1: true},
 			"curl_multi_exec":             {1: true},
+			// openssl_encrypt 的 GCM 模式第 6 参 $tag 是引用输出（调用后写回认证标签）
+			"openssl_encrypt": {5: true},
 			// stream/fsockopen 的 errno/errstr 出参
 			"stream_socket_client": {1: true, 2: true},
 			"fsockopen":            {2: true, 3: true},

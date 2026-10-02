@@ -4,6 +4,26 @@
 
 ## Android (tvgate-android)
 
+### v3.3.7
+
+```
+1、内嵌服务端同步至 v3.3.7 — phpgo 解释器系列修复（详见服务端条目）：函数参数类型提示+
+   引用解析、字符串下标赋值语义、openssl_encrypt GCM $tag 写回、PATH_INFO 路由；
+   /debug/pprof 端点改为编译标签控制（发行版不编译进 binary，零泄露）；详见服务端条目
+2、App 原生改动 — 沉浸式全屏行为修复：Android 11+（API 30+）进入沉浸模式时声明
+   BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE，让边缘下滑呼出的系统栏为"瞬态"（悬浮几秒
+   自动收回、不占据布局）；此前一旦被弹窗/权限申请/切后台带出，状态栏常驻不动，H5 顶部
+   安全区随之持续存在、把播放页布局反复顶偏；同时补回 onWindowFocusChanged 重新进入沉浸
+   （焦点从弹窗/后台恢复时主动把状态栏压回去），两者协同让状态栏只在需要时短暂出现
+3、App 前端改动 — 手机端播放页视频区高度并入顶部 safe-area：此前只用 aspect-video
+   按 16:9 算高度，未计入 env(safe-area-inset-top)，安卓状态栏/刘海出现时视频连同底部
+   控制条被顶出舞台下沿约一个状态栏高度（最大化/音量按钮看不见、被下方面板盖住）；现
+   改为 h-[calc(56.25vw_+_env(safe-area-inset-top))]，舞台高度与安全区始终对齐，lg 起仍
+   用 aspect-auto
+4、App 整体发版 — 内嵌同版本服务端二进制 + App 原生沉浸修复 + App 前端 UI 修复，覆盖
+   安装即可升级
+```
+
 ### v3.3.6
 
 ```
@@ -225,6 +245,32 @@
 ---
 
 ## 服务端 (tvgate)
+
+### v3.3.7
+
+```
+1、phpgo 解释器 — 函数参数「类型提示 + 引用」解析：此前 `array &$id` 等带类型提示的
+   引用参数被当成两个独立 token 直接报"函数参数须为变量"，现识别 `&` 前驱为类型提示时
+   正确标记 ByRef（修复 4gtv.php 等脚本执行即解析报错）
+2、phpgo 解释器 — 字符串下标赋值语义：`$s[$i] = $char` 此前把字符串值当作数组键设置，
+   整串数据损坏成字面量 "Array"（X-Nonce 等变量直接不可用）；现按 PHP 语义修改第 i
+   个字节（idx≥len 按用 0x20 填充的规则补位），与 PHP 行为一致
+3、phpgo 解释器 — openssl_encrypt GCM 模式 $tag 引用写回：此前加密后未把认证标签写回
+   $tag 参数，导致脚本（如 ysptp.php）拼出的 nonce+ct+tag 载荷缺 tag，GCM 解密时
+   "message authentication failed"；现通过 Env 引用通道写回正确 tag
+4、phpgo 解释器 — 内置函数签名扩展：openssl/hash/file_put_contents 等需要环境上下文的
+   内置函数统一传入 *Env，配合引用输出、header 捕获等能力对齐 PHP 运行时
+5、PHP 模块 PATH_INFO 路由：请求 `/php/ysptp.php/cctv1.m3u8` 此前 404/403（找不到
+   文件）；现前缀探测——从最深一级往前找到实际存在的脚本文件、剩余路径作 PATH_INFO
+   注入 SCRIPT_NAME / PATH_INFO 环境变量，兼容常规 PHP 路由写法
+6、/debug/pprof 端点改为编译标签控制（build tag `pprof`）：发行版 `go build` 不再
+   编译 pprof 代码进 binary（0 符号），彻底消除内存/profile 泄露面；调试时
+   `go build -tags pprof` 编译即可恢复原有诊断能力
+7、播放页手机端视频区高度修复：`aspect-video` 单一 cálculo 未计入顶部安全区，安卓
+   状态栏/刘海出现时视频连同底部控制条被顶出舞台下沿约一个状态栏高度；改为
+   `h-[calc(56.25vw_+_env(safe-area-inset-top))] md:aspect-auto`，舞台高度与 safe-area
+   始终对齐，最大化/音量按钮始终可见
+```
 
 ### v3.3.6
 

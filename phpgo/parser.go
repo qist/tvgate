@@ -120,8 +120,8 @@ func (p *Parser) parseFuncParams() ([]FuncParam, error) {
 		}
 		// tArray 也可能作为类型提示（如 array $params）
 		for (p.at(tIdent) || p.at(tArray)) && !p.atVal("true") && !p.atVal("false") && !p.atVal("null") {
-			// 检查下一个 token 是否是 $var，如果是则当前 token 是类型提示
-			if p.peekN(1).Kind == tVar {
+			// 检查下一个 token 是否是 $var 或 &$var（按引用），如果是则当前 token 是类型提示
+			if p.peekN(1).Kind == tVar || p.peekN(1).Kind == tAmp {
 				p.adv() // 跳过类型提示
 				break
 			}
@@ -130,6 +130,11 @@ func (p *Parser) parseFuncParams() ([]FuncParam, error) {
 				break
 			}
 			p.adv() // 跳过命名空间前缀等
+		}
+		// 类型提示后的引用标记（如 array &$x）：参数名前的 & 一律记为 ByRef
+		if p.at(tAmp) {
+			p.adv()
+			param.ByRef = true
 		}
 		// 跳过可变参数标记 ...
 		if p.atVal("...") {

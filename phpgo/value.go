@@ -254,6 +254,35 @@ func (v Value) ArrayGet(key Value) Value {
 
 // ArraySet 设置数组元素（维护插入序）
 func (v *Value) ArraySet(key Value, val Value) {
+	// PHP 字符串下标赋值语义：$str[$i] = $char 修改第 i 个字节。
+	// 越界时用空格(0x20)填充到该位置；idx==len 时直接追加。
+	// 这是 uuid4() 等 `$d[6] = chr(...)` 字节修改的基础，若按数组处理整个串会丢成 "Array"。
+	if v.Kind == KindString {
+		s := []byte(v.Str)
+		idx := int(key.ToInt())
+		if idx < 0 {
+			return
+		}
+		c := val.ToString()
+		if c == "" {
+			// PHP: Cannot assign an empty string to a string offset（此处保守忽略）
+			return
+		}
+		b := c[0]
+		switch {
+		case idx < len(s):
+			s[idx] = b
+		case idx == len(s):
+			s = append(s, b)
+		default:
+			for len(s) < idx {
+				s = append(s, ' ')
+			}
+			s = append(s, b)
+		}
+		v.Str = string(s)
+		return
+	}
 	if v.Kind != KindArray {
 		v.Kind = KindArray
 		v.Arr = map[string]Value{}
