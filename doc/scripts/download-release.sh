@@ -12,8 +12,9 @@
 # 多个平台会打包到同一个 7z 中
 #
 # 依赖: curl, jq, 7z (p7zip-full)
+# 环境变量: GITHUB_TOKEN (可选，提供后限流 5000 次/小时)
 # ============================================================
-set -euo pipefail
+set -uo pipefail
 
 # 检查依赖
 for cmd in curl jq 7z; do
@@ -32,6 +33,15 @@ REPO="qist/tvgate"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUT_DIR="${ROOT_DIR}/download"
+
+# 构建 curl 认证参数
+CURL_AUTH=()
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    CURL_AUTH=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+    echo "认证: 使用 GITHUB_TOKEN (限流 5000 次/小时)"
+else
+    echo "认证: 匿名 (限流 60 次/小时)"
+fi
 
 # 解析参数
 VERSION=""
@@ -57,7 +67,7 @@ fi
 # 去掉 v 前缀（7z 文件名用纯数字）
 VERSION_NUM="${VERSION#v}"
 
-# 全部平台列表（与 Makefile 一致）
+# 全部平台列表（Makefile 产物名一种即可，*-amd64 等兼容名不重复下载）
 ALL_PLATFORMS=(
     linux-64
     linux-arm64-v8a
@@ -98,16 +108,46 @@ mkdir -p "${TMP_DIR}"
 # 确保退出时清理临时目录
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-# 下载每个平台的 release zip
+# ---------- 单次 API 预取所有 asset ----------
+PREFETCH_FAILED=0
+echo "正在获取 release asset 列表..."
+RELEASE_JSON=$(curl -sL "${CURL_AUTH[@]}" "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}" 2>/dev/null)
+
+if echo "$RELEASE_JSON" | jq -e '.assets' &>/dev/null; then
+    echo "$RELEASE_JSON" > "${TMP_DIR}/.release_${VERSION_NUM}.json"
+    ASSET_COUNT=$(jq '.assets | length' "${TMP_DIR}/.release_${VERSION_NUM}.json")
+    echo "预取成功 (${ASSET_COUNT} 个 asset)"
+else
+    PREFETCH_FAILED=1
+    # 探测是否限流
+    RATE_REMAINING=$(curl -sLI "${CURL_AUTH[@]}" "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}" 2>/dev/null | grep -i "x-ratelimit-remaining" | tr -d '\r' | awk '{print $2}')
+    RATE_RESET=$(curl -sLI "${CURL_AUTH[@]}" "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}" 2>/dev/null | grep -i "x-ratelimit-reset" | tr -d '\r' | awk '{print $2}')
+    if [ -n "${RATE_RESET:-}" ] && [ "${RATE_RESET}" != "0" ]; then
+        RESET_STR=$(date -d @"${RATE_RESET}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "${RATE_RESET}")
+        echo "⚠ 预取失败! GitHub API 限流: 剩余 ${RATE_REMAINING:-0}, 重置 ${RESET_STR}"
+    else
+        echo "⚠ 预取失败 (response 无 assets 字段)"
+    fi
+fi
+echo ""
+
+# ---------- 下载 ----------
 SUCCESS_COUNT=0
 FAIL_COUNT=0
 
 for PLATFORM in "${PLATFORMS[@]}"; do
     ASSET_NAME="TVGate-${PLATFORM}.zip"
-    ASSET_URL=$(curl -sL "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}" \
-        | jq -r ".assets[] | select(.name == \"${ASSET_NAME}\") | .browser_download_url")
 
-    if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
+    # 优先从本地缓存的 release JSON 查找；否则降级单次 API
+    if [ -f "${TMP_DIR}/.release_${VERSION_NUM}.json" ]; then
+        ASSET_URL=$(jq -r ".assets[] | select(.name == \"${ASSET_NAME}\") | .browser_download_url" "${TMP_DIR}/.release_${VERSION_NUM}.json" 2>/dev/null || echo "null")
+    elif [ "${PREFETCH_FAILED}" -eq 1 ]; then
+        ASSET_URL=$(curl -sL "${CURL_AUTH[@]}" "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}" | jq -r ".assets[] | select(.name == \"${ASSET_NAME}\") | .browser_download_url" 2>/dev/null || echo "null")
+    else
+        ASSET_URL="null"
+    fi
+
+    if [ -z "${ASSET_URL:-}" ] || [ "$ASSET_URL" = "null" ]; then
         echo "  跳过: ${PLATFORM} (未找到 ${ASSET_NAME})"
         FAIL_COUNT=$((FAIL_COUNT + 1))
         continue
@@ -115,16 +155,15 @@ for PLATFORM in "${PLATFORMS[@]}"; do
 
     echo "  下载: ${ASSET_NAME}"
     if curl -L -s -o "${TMP_DIR}/${ASSET_NAME}" "$ASSET_URL"; then
-        echo "  解压: ${ASSET_NAME}"
+        sleep 0.3
         # 解压，只提取二进制文件（TVGate-*），跳过 README.md 和 TVGate.service
         if 7z x -o"${TMP_DIR}" "${TMP_DIR}/${ASSET_NAME}" "TVGate-*" -y &>/dev/null; then
             echo "  完成: ${PLATFORM}"
             SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
         else
-            echo "  失败: ${PLATFORM} (解压失败)"
+            echo "  跳过: ${PLATFORM} (解压失败，可能与脚本平台列表不匹配)"
             FAIL_COUNT=$((FAIL_COUNT + 1))
         fi
-        # 删除 zip 包
         rm -f "${TMP_DIR}/${ASSET_NAME}"
     else
         echo "  失败: ${ASSET_NAME}"
@@ -138,24 +177,32 @@ echo "下载完成: 成功 ${SUCCESS_COUNT}, 失败/跳过 ${FAIL_COUNT}"
 if [ $SUCCESS_COUNT -eq 0 ]; then
     echo "没有成功下载任何文件，退出"
     rm -rf "${TMP_DIR}"
+    trap - EXIT
     exit 1
 fi
 
-# 7z 压缩
+# ---------- 7z 压缩 ----------
+trap - EXIT
+
 ARCHIVE_NAME="TVGate-${VERSION_NUM}.7z"
 ARCHIVE_PATH="${OUT_DIR}/${ARCHIVE_NAME}"
 
-echo ""
-echo "正在压缩 ${ARCHIVE_NAME} ..."
+FILE_COUNT=$(find "${TMP_DIR}" -type f 2>/dev/null | wc -l)
+if [ "$FILE_COUNT" -eq 0 ]; then
+    echo "没有文件可压缩"
+    rm -rf "${TMP_DIR}"
+    exit 0
+fi
 
-# 如果已存在则先删除
+echo ""
+echo "正在压缩 ${ARCHIVE_NAME} (${FILE_COUNT} 个文件) ..."
+
 rm -f "${ARCHIVE_PATH}"
 
 cd "${TMP_DIR}"
 7z a -t7z -mx=9 -mmt=on "../${ARCHIVE_NAME}" ./*
 cd "${ROOT_DIR}"
 
-# 清理临时目录
 rm -rf "${TMP_DIR}"
 
 ARCHIVE_SIZE=$(du -h "${ARCHIVE_PATH}" | cut -f1)
