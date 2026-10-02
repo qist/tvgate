@@ -409,9 +409,8 @@ html[class*="panel-alpha-"] .player-performance-media-badge {
     --player-dock-w: 34rem;
   }
 
-  html .player-performance-dock-open .player-performance-controls-position {
-    left: var(--player-dock-w);
-  }
+  /* 展开三列时的宽度见上；控制条不再随浮层右移，保持整幅铺满并从浮层后面穿过
+     （浮层 z-20 盖在控制条 z-10 之上，透明度档位下透出亚克力质感）。 */
 }
 
 @media (min-width: 1024px) {

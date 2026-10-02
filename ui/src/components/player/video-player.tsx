@@ -827,6 +827,9 @@ function VideoPlayerShell({
       if (eventTimeStamp !== undefined && eventTimeStamp < pending.startedAt) return false;
       pending.backend.stop();
       discardPendingHandover();
+      // 无缝接管失败 → 退回原槽硬加载：这时旧画面即将被就地替换，补上换流遮罩，
+      // 等本槽 canplay 再撤（与普通硬切同一套观感）。
+      if (autoplayIntentRef.current) setSwitchMaskVisible(true);
       ingestSegments(segments, true);
       return true;
     },
@@ -1228,12 +1231,13 @@ function VideoPlayerShell({
 
     if (channel) lastStreamIdentityRef.current = { channelId: channel.id, sourceIndex: activeSourceIndex };
 
-    // 换流瞬间立刻上遮罩（两条路都上）：旧管线的画面从这一刻起已经不能代表"正在播什么"，
-    // 与其把旧台最后一帧留在屏上（慢源上要挂到 15s，用户会以为切台没生效/还在放旧台），
-    // 不如明确告诉他"正在切"。遮罩一直盖到新流真正上屏（硬切：本槽 canplay/playing；
-    // 无缝换台：commitHandover 原子接管那一刻）。首次起播不上遮罩（isStreamSwitch=false），
-    // 那时屏上本来就没有画面；用户暂停时也不上（autoplayIntent=false，切完停在首帧更合适）。
-    if (isStreamSwitch && autoplayIntentRef.current) setSwitchMaskVisible(true);
+    // 遮罩只在"旧画面确实要退场"的硬切路上上：同槽重灌会立刻拆掉旧 MediaSource，
+    // 与其把黑屏/不可再代表当前频道的旧帧留在屏上，不如明确显示"正在切"。
+    // 无缝换台路**绝不上遮罩**——旧台画面+声音继续播到新流原子接管（commitHandover），
+    // 这正是"无感换台"的观感；上了遮罩就等于把旧台盖死、"点一下换台就停播等下一个"。
+    // 首次起播不上遮罩（isStreamSwitch=false，屏上本来就没画面）；
+    // 用户暂停时也不上（autoplayIntent=false，切完停在首帧更合适）。
+    if (isStreamSwitch && autoplayIntentRef.current && !canHandoverSeamlessly) setSwitchMaskVisible(true);
 
     if (!canHandoverSeamlessly) {
       abortPendingHandover();
@@ -1251,6 +1255,8 @@ function VideoPlayerShell({
     const pendingBackend = buildBackendForSlot(pendingSlot);
     const pendingVideo = videoRefOf(pendingSlot).current;
     if (!pendingBackend || !pendingVideo) {
+      // 想无缝但承接槽建不出来（极少见）：退回原槽硬加载，补上遮罩。
+      if (autoplayIntentRef.current) setSwitchMaskVisible(true);
       reloadInPlace(activeBackendInstance, activeSlot, newSegments);
       return;
     }
@@ -1259,11 +1265,9 @@ function VideoPlayerShell({
       pendingBackend.setVolume(activeState.volume);
       pendingBackend.setMuted(true);
     }
-    // 切台即断流：旧路立刻停 —— 停拉流（worker 作废）、拆软解音频链、拆掉元素上的 MediaSource。
-    // 旧频道/线路的声音一个采样也不许跟进过渡期（这是"绝不放错台声音"的底线，也省掉
-    // "过渡期临时静音"那套音量隔离）；屏上的黑/旧帧由上面的换流遮罩负责遮住，
-    // 新流在承接槽起播后原子接管。
-    activeBackendInstance.stop();
+    // 无缝换台：过渡期当前显示槽（旧路）画面+声音照常播放，绝不提前断流/静音——
+    // 新流在承接槽以 muted 起播，commitHandover 原子接管的那一刻才 stop 旧路，画面与声音一起切。
+    // 旧台声音跟进过渡期是符合预期的（屏上此刻正是旧台），不存在"放错台声音"。
 
     const handover: HandoverTicket = { generation, slotTag: pendingSlot, backend: pendingBackend, startedAt: performance.now() };
     pendingHandoverRef.current = handover;
@@ -2265,7 +2269,6 @@ function VideoPlayerShell({
       role="toolbar"
       className={clsx(
         "player-performance-controls-position player-performance-motion absolute bottom-0 left-[calc(0px_-_env(safe-area-inset-left))] right-[calc(0px_-_env(safe-area-inset-right))] z-10 transition-opacity duration-300",
-        showSidebar && "md:left-0",
         controlsVisible
           ? "opacity-100"
           : "opacity-0 pointer-events-none has-focus-visible:opacity-100 has-focus-visible:pointer-events-auto",
