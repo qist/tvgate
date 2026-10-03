@@ -2056,52 +2056,62 @@ func (h *StreamHub) smoothRejoinMulticast() {
 	default:
 	}
 
-	logger.LogPrintf("🔄 平滑刷新 IGMP 组播成员关系(make-before-break): %v", h.AddrList)
+	logger.LogPrintf("🔄 平滑刷新 IGMP 组播成员关系: %v", h.AddrList)
 
-	// 关键：旧实现是同一 socket 上 LeaveGroup→JoinGroup（先断后建），
-	// 中间会收不到包——HEVC/4K 下一个包丢失就花一片。改为先建后断：
-	// 新建 socket 并加入同一组 → 起新读循环 → 替换 → 关旧 socket，
-	// 全程不断流（短暂双收的重复包由 RTP 去重丢弃）。
-	for i, oldConn := range h.UdpConns {
-		if oldConn == nil {
-			continue
-		}
-		hubAddr := h.AddrList[i%len(h.AddrList)]
-		udpAddr, err := net.ResolveUDPAddr("udp", hubAddr)
-		if err != nil || udpAddr.IP == nil || !isMulticast(udpAddr.IP) {
+	for _, conn := range h.UdpConns {
+		if conn == nil {
 			continue
 		}
 
-		var newConn *net.UDPConn
-		if len(h.ifaces) == 0 {
-			newConn, err = listenMulticast(udpAddr, nil)
-		} else {
-			for _, name := range h.ifaces {
-				iface, ierr := net.InterfaceByName(name)
-				if ierr != nil {
-					continue
+		p := ipv4.NewPacketConn(conn)
+
+		for _, addr := range h.AddrList {
+			udpAddr, err := net.ResolveUDPAddr("udp", addr)
+			if err != nil {
+				continue
+			}
+
+			groupIP := udpAddr.IP
+			if !isMulticast(groupIP) {
+				continue
+			}
+
+			// 1️⃣ Leave（即使失败也没关系）
+			if len(h.ifaces) == 0 {
+				_ = p.LeaveGroup(nil, &net.UDPAddr{IP: groupIP})
+			} else {
+				for _, ifname := range h.ifaces {
+					iface, err := net.InterfaceByName(ifname)
+					if err != nil {
+						continue
+					}
+					_ = p.LeaveGroup(iface, &net.UDPAddr{IP: groupIP})
 				}
-				newConn, err = listenMulticast(udpAddr, []*net.Interface{iface})
-				if err == nil {
-					break
+			}
+
+			// 2️⃣ Join（触发内核发送 IGMP Report）
+			if len(h.ifaces) == 0 {
+				if err := p.JoinGroup(nil, &net.UDPAddr{IP: groupIP}); err != nil {
+					logger.LogPrintf("⚠️ JoinGroup 失败 %v: %v", groupIP, err)
+				}
+			} else {
+				for _, ifname := range h.ifaces {
+					iface, err := net.InterfaceByName(ifname)
+					if err != nil {
+						continue
+					}
+					if err := p.JoinGroup(iface, &net.UDPAddr{IP: groupIP}); err != nil {
+						logger.LogPrintf(
+							"⚠️ JoinGroup %v@%s 失败: %v",
+							groupIP, iface.Name, err,
+						)
+					}
 				}
 			}
 		}
-		if newConn == nil || err != nil {
-			logger.LogPrintf("⚠️ 重建组播 socket 失败(保留旧 socket，本轮不刷新) %s: %v", hubAddr, err)
-			continue
-		}
-
-		h.UdpConns[i] = newConn
-		conn := newConn
-		addr := hubAddr
-		h.Wg.Go(func() {
-			h.readLoop(conn, addr)
-		})
-		_ = oldConn.Close() // 旧读循环随之退出（Close 读到错误即返回）
 	}
 
-	logger.LogPrintf("✅ IGMP 成员关系已刷新（make-before-break，无收包中断）")
+	logger.LogPrintf("✅ IGMP 成员关系已刷新（未中断 socket）")
 }
 
 // sendInitialToClient 为特定客户端发送初始数据
