@@ -483,33 +483,36 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 	pconn := ipv4.NewPacketConn(conn)
 	_ = pconn.SetControlMessage(ipv4.FlagDst, true)
 
+	// 读取缓冲：大块(64KB)复用，兼容 jumbo/大 RTP 包（v2.1.4 用 64KB 读缓冲）。
+	// 不能把整块大缓冲直接交给零拷贝引用——否则缓存/客户端会长期持有 64KB/帧；
+	// 按实际长度拷入池化缓冲后再广播（既不被 2KB 池缓冲截断，也不放大驻留内存）。
+	readBuf := make([]byte, 64*1024)
 	for {
 		// 先尝试读取数据（阻塞），只有在读取成功后才检查上下文
-		buf := h.BufPool.Get().([]byte)
-		n, cm, _, err := pconn.ReadFrom(buf)
+		n, cm, _, err := pconn.ReadFrom(readBuf)
 		if err != nil {
-			h.BufPool.Put(buf)
 			if !errors.Is(err, net.ErrClosed) {
 				logger.LogPrintf("❌ UDP 读取错误: %v", err)
 			}
 			return
 		}
+		if n <= 0 {
+			continue
+		}
 
 		// 读取成功后检查上下文
 		select {
 		case <-h.ctx.Done():
-			h.BufPool.Put(buf)
 			return
 		default:
 		}
 
 		// 直接比较 IP 字节，避免 cm.Dst.String() 每包创建字符串
 		if cm != nil && !cm.Dst.Equal(dstIP) {
-			h.BufPool.Put(buf)
 			continue
 		}
 
-		inRef := NewPooledBufferRef(buf, buf[:n], h.BufPool)
+		inRef := h.newReadRef(readBuf[:n])
 		inRef.Source = SourceMulticast
 
 		// 用 Closed channel 非阻塞检查，避免每包 RLock/RUnlock
@@ -532,6 +535,20 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 		// 广播后归还缓冲
 		h.broadcastRef(outRef)
 	}
+}
+
+// newReadRef 把读缓冲中的实际数据按长度拷入池化缓冲，返回零拷贝引用。
+// 用池化缓冲承载 n 字节（而非直接引用 64KB 读缓冲），避免大缓冲被缓存长期占用；
+// 同时保证 jumbo/大 RTP 包不被池默认小缓冲截断。
+func (h *StreamHub) newReadRef(data []byte) *BufferRef {
+	buf := h.BufPool.Get().([]byte)
+	if cap(buf) < len(data) {
+		h.BufPool.Put(buf)
+		buf = make([]byte, len(data))
+	}
+	view := buf[:len(data)]
+	copy(view, data)
+	return NewPooledBufferRef(buf, view, h.BufPool)
 }
 
 // ====================
@@ -678,15 +695,15 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	// --- CC检查 + TS拷贝（在同一 procMu 锁内完成） ---
 	ccArr := &h.lastCCArr
 
-	// 预分配输出缓冲区：最坏情况每个TS包后插3个null包
+	// 输出缓冲区：最坏情况每个 TS 包后插 3 个 null 包。
+	// 池默认缓冲不够大（一包常含 7 个 TS）时换一个够大的，但**绝不直接把 chunk 交出去**：
+	// chunk 指向会被下一包 append 覆盖的 h.rtpBuffer，直接返回会让客户端读到被覆写的
+	// 撕裂 TS（花屏/绿屏）；v2.1.4 对 chunk 做了脱离处理，这里必须保持一致。
 	maxOutSize := alignedSize + (alignedSize/188)*3*188
 	poolBuf := h.BufPool.Get().([]byte)
 	if cap(poolBuf) < maxOutSize {
-		// 池缓冲区不够大，直接用 chunk 作为输出（零拷贝）
-		h.procMu.Unlock()
-		outRef := NewBufferRef(chunk)
-		outRef.Source = inRef.Source
-		return outRef
+		h.BufPool.Put(poolBuf)
+		poolBuf = make([]byte, maxOutSize)
 	}
 	out := poolBuf[:0]
 

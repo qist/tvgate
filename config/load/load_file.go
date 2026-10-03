@@ -30,14 +30,29 @@ func LoadConfig(configPath string) error {
 		return fmt.Errorf("配置校验失败: %w", err)
 	}
 
+	// 旧版兼容：组播网卡曾位于 server.multicast_ifaces，配置段已迁移到
+	// multicast.multicast_ifaces。用户沿用旧配置未改字段时，这里迁移过来，
+	// 避免网卡列表丢失导致部分组播（新频道/新 VLAN）接收不到（0KB/绿屏）。
+	if len(newCfg.Multicast.MulticastIfaces) == 0 {
+		var legacy struct {
+			Server struct {
+				MulticastIfaces []string `yaml:"multicast_ifaces"`
+			} `yaml:"server"`
+		}
+		if err := yaml.Unmarshal(yamlData, &legacy); err == nil && len(legacy.Server.MulticastIfaces) > 0 {
+			newCfg.Multicast.MulticastIfaces = legacy.Server.MulticastIfaces
+			logger.LogPrintf("🔧 检测到旧版 server.multicast_ifaces，已迁移到 multicast.multicast_ifaces: %v", legacy.Server.MulticastIfaces)
+		}
+	}
+
 	// trim iface names
-	cleaned := make([]string, 0, len(config.Cfg.Multicast.MulticastIfaces))
-	for _, n := range config.Cfg.Multicast.MulticastIfaces {
+	cleaned := make([]string, 0, len(newCfg.Multicast.MulticastIfaces))
+	for _, n := range newCfg.Multicast.MulticastIfaces {
 		if n != "" {
 			cleaned = append(cleaned, n)
 		}
 	}
-	config.Cfg.Multicast.MulticastIfaces = cleaned
+	newCfg.Multicast.MulticastIfaces = cleaned
 
 	config.LogConfigMutex.Lock()
 	defer config.LogConfigMutex.Unlock()
