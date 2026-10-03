@@ -53,6 +53,9 @@ type Channel struct {
 	Scheme  string      `json:"scheme"` // udp / rtp / rtsp / http / https
 	RawURL  string      `json:"-"`      // 真实源，不外露
 	UA      string      `json:"-"`      // 每条源的服务端 UA（如需要）
+	Proxies []string    `json:"-"`      // 每条源的内联上游代理（socks5/http/https/socks4），多节点按 fastest 选最快
+	Referer string      `json:"-"`      // 每条源的上游 Referer 请求头（订阅内配置；未配置忽略）
+	Origin  string      `json:"-"`      // 每条源的上游 Origin 请求头（订阅内配置；未配置忽略）
 	TVGID   string      `json:"tvgId"`
 	TVGName string      `json:"tvgName"`
 	TVGLogo string      `json:"tvgLogo"`

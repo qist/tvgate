@@ -93,9 +93,16 @@ func NewHandler(mgr *Manager) *Handler {
 		if len(via) >= 10 {
 			return fmt.Errorf("too many redirects")
 		}
-		// 剥离 Referer：Go 会自动把上一跳 URL 设为 Referer，
-		// 带 Referer 访问部分 CDN（如腾讯云直播防盗链）会 403，且泄露中间解析链
-		req.Header.Del("Referer")
+		// 剥离 Go 自动带上的 Referer（等于上一跳 URL）：带 Referer 访问部分 CDN
+		// （如腾讯云直播防盗链）会 403，且泄露中间解析链。
+		// 订阅内显式配置的 Referer（referer=）不在此列，按原样透传保留。
+		prev := ""
+		if n := len(via); n > 0 && via[n-1].URL != nil {
+			prev = via[n-1].URL.String()
+		}
+		if ref := req.Header.Get("Referer"); ref == "" || ref == prev {
+			req.Header.Del("Referer")
+		}
 		return nil
 	}
 	sc.Timeout = 0
@@ -738,6 +745,13 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 	}
 	hdr := http.Header{}
 	hdr.Set("User-Agent", ua)
+	// 订阅内 referer=/origin=：按原样透传给源站；未配置即忽略（不修改默认行为）。
+	if ch.Referer != "" {
+		hdr.Set("Referer", ch.Referer)
+	}
+	if ch.Origin != "" {
+		hdr.Set("Origin", ch.Origin)
+	}
 
 	// 302 解析型源（abs 为频道原始地址，如 gdlt.php）：优先用缓存的最终地址，
 	// m3u8 刷新不再每次重复执行解析脚本；缓存地址失效时回退重新解析。
@@ -750,17 +764,25 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 
 	doFetch := func(u string) (*http.Response, error) {
 		// 优先走代理组拉流（与 /https:// 原生转发同一机制）：
+		//   0) 订阅内 proxy= 指定的内联代理组（多节点按 fastest 选最快）——优先于域名规则
 		//   1) 该频道此前成功用过的代理组（分片 CDN 是 IP/内网地址时规则匹配不上，需沿用同一出口）
 		//   2) 否则按域名规则匹配代理组
 		// 都未命中或屡次选不到节点（返回 nil resp）→ 直连兜底（h.stream 服务端跟随重定向）。
-		resp, usedPg, perr := handler.FetchViaProxyGroup(ctx, u, hdr, true, h.getSegGroup(ch.Key))
+		preferred := h.getSegGroup(ch.Key)
+		inline := inlineProxyGroup(ch.Proxies)
+		if inline != nil {
+			preferred = inline
+		}
+		resp, usedPg, perr := handler.FetchViaProxyGroup(ctx, u, hdr, true, preferred)
 		if perr != nil {
 			if !errors.Is(perr, context.Canceled) {
 				logger.LogPrintf("[player] proxy fetch error key=%s abs=%s err=%v", ch.Key, u, perr)
 			}
 			return nil, perr
 		}
-		if resp != nil && usedPg != nil {
+		// 内联代理组自身即频道级缓存，无需写入 segGroups；否则订阅里删掉 proxy=
+		// 后旧组会在 segGroups 的 TTL 内继续生效。
+		if resp != nil && usedPg != nil && inline == nil {
 			h.storeSegGroup(ch.Key, usedPg)
 		}
 		if resp == nil {

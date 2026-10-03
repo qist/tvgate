@@ -54,6 +54,15 @@ func FetchViaProxyGroup(ctx context.Context, targetURL string, header http.Heade
 	}
 	retryDelay := pg.RetryDelay
 
+	// 调用方显式配置的 Referer/Origin（如订阅内 referer=/origin=）：跟随重定向时保留，
+	// 只剥离 Go 自动带上的 Referer（防盗链 CDN 见外站 Referer 403，且泄露解析链）。
+	presetReferer := ""
+	presetOrigin := ""
+	if header != nil {
+		presetReferer = header.Get("Referer")
+		presetOrigin = header.Get("Origin")
+	}
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		forceTest := attempt > 0
 
@@ -105,8 +114,16 @@ func FetchViaProxyGroup(ctx context.Context, targetURL string, header http.Heade
 				}
 			}
 			logger.LogPrintf("[proxyfetch] ↪️ 跟随重定向: %v -> %v", prev, req.URL)
-			// 剥离 Referer：防盗链 CDN 会因外站 Referer 403，且泄露中间解析链
-			req.Header.Del("Referer")
+			// 剥离自动 Referer：防盗链 CDN 会因外站 Referer 403，且泄露中间解析链。
+			// 调用方显式配置的 Referer/Origin 原样保留（仅透传不改动）。
+			if presetReferer != "" {
+				req.Header.Set("Referer", presetReferer)
+			} else {
+				req.Header.Del("Referer")
+			}
+			if presetOrigin != "" {
+				req.Header.Set("Origin", presetOrigin)
+			}
 			return nil
 		}
 

@@ -89,6 +89,67 @@ func TestParseM3UUA(t *testing.T) {
 	}
 }
 
+func TestParseTXTProxyRefererOrigin(t *testing.T) {
+	// proxy=/referer=/origin= 与 ua= 并列：组/文件级默认作用于后续频道，进入新分组重置；
+	// 频道行可用 `,key=value` 覆盖，proxy= 值可含逗号（约定放行尾）。
+	content := []byte("蜀小果,#genre#\n" +
+		"proxy=socks5://127.0.0.1:7890,http://127.0.0.1:8080\n" +
+		"referer=https://v.example.com/\n" +
+		"origin=https://v.example.com\n" +
+		"CCTV1,http://192.0.2.1/live/a.m3u8\n" +
+		"CCTV2,http://192.0.2.1/live/b.m3u8,proxy=socks5://192.0.2.9:1080\n" +
+		"CCTV3,http://192.0.2.1/live/c.m3u8,referer=https://b.example.com/,origin=https://b.example.com,proxy=http://192.0.2.10:3128\n" +
+		"百视通,#genre#\n" +
+		"CCTV4,http://192.0.2.1/live/d.m3u8\n")
+	chans, _ := parseSubscription(content, "sub")
+	if len(chans) != 4 {
+		t.Fatalf("期望 4 频道, got %d", len(chans))
+	}
+	// 组级默认：多代理 + Referer/Origin
+	if len(chans[0].Proxies) != 2 || chans[0].Proxies[0] != "socks5://127.0.0.1:7890" || chans[0].Proxies[1] != "http://127.0.0.1:8080" {
+		t.Fatalf("组级 proxy 未生效: %+v", chans[0].Proxies)
+	}
+	if chans[0].Referer != "https://v.example.com/" || chans[0].Origin != "https://v.example.com" {
+		t.Fatalf("组级 referer/origin 未生效: %+v", chans[0])
+	}
+	// 频道级 proxy 覆盖，referer/origin 继承组级
+	if len(chans[1].Proxies) != 1 || chans[1].Proxies[0] != "socks5://192.0.2.9:1080" {
+		t.Fatalf("频道级 proxy 未覆盖: %+v", chans[1].Proxies)
+	}
+	if chans[1].Referer != "https://v.example.com/" {
+		t.Fatalf("频道级未配置 referer 应继承组级: %+v", chans[1])
+	}
+	// 频道级 referer/origin/proxy 全部覆盖
+	if chans[2].Referer != "https://b.example.com/" || chans[2].Origin != "https://b.example.com" {
+		t.Fatalf("频道级 referer/origin 未覆盖: %+v", chans[2])
+	}
+	if len(chans[2].Proxies) != 1 || chans[2].Proxies[0] != "http://192.0.2.10:3128" {
+		t.Fatalf("频道级 proxy 未覆盖: %+v", chans[2].Proxies)
+	}
+	// 新分组重置：未配置回落空
+	if len(chans[3].Proxies) != 0 || chans[3].Referer != "" || chans[3].Origin != "" {
+		t.Fatalf("新分组应重置 proxy/referer/origin: %+v", chans[3])
+	}
+}
+
+func TestParseM3UProxyRefererOrigin(t *testing.T) {
+	content := []byte("#EXTM3U\n" +
+		"#EXTINF:-1 proxy=\"socks5://127.0.0.1:7890,http://127.0.0.1:8080\" referer=\"https://v.example.com/\" origin=\"https://v.example.com\",CCTV1\n" +
+		"http://x/live/a.m3u8\n" +
+		"#EXTINF:-1,CCTV2\n" +
+		"http://x/live/b.m3u8\n")
+	chans, _ := parseSubscription(content, "sub")
+	if len(chans) != 2 {
+		t.Fatalf("期望 2 频道, got %d", len(chans))
+	}
+	if len(chans[0].Proxies) != 2 || chans[0].Referer != "https://v.example.com/" || chans[0].Origin != "https://v.example.com" {
+		t.Fatalf("M3U proxy/referer/origin 属性解析不对: %+v", chans[0])
+	}
+	if len(chans[1].Proxies) != 0 || chans[1].Referer != "" || chans[1].Origin != "" {
+		t.Fatalf("无属性频道应为空: %+v", chans[1])
+	}
+}
+
 func TestResolveSub(t *testing.T) {
 	abs, ok := resolveSub("https://a.com/live/master.m3u8?token=1", "dir/seg1.ts")
 	if !ok || abs != "https://a.com/live/dir/seg1.ts" {

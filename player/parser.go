@@ -73,6 +73,10 @@ func parseEXTINF(line string) *Channel {
 	c.TVGLogo = attrValue(attrs, "tvg-logo")
 	c.Group = attrValue(attrs, "group-title")
 	c.UA = attrValue(attrs, "ua")
+	// 与 ua 属性并列：内联上游代理列表（多个用逗号分隔，按 fastest 选最快）/ Referer / Origin。
+	c.Proxies = splitProxyList(attrValue(attrs, "proxy"))
+	c.Referer = attrValue(attrs, "referer")
+	c.Origin = attrValue(attrs, "origin")
 	if c.TVGName == "" {
 		c.TVGName = c.TVGID
 	}
@@ -94,6 +98,11 @@ func parseTXT(content []byte, src string) ([]*Channel, EPGSource) {
 	es := EPGSource{Type: "none"}
 	group := ""
 	curUA := "" // 当前生效的组/文件级 UA（ua= 行设置，作用于后续频道；空 = 回落 player.ua 默认）
+	// 当前生效的组/文件级内联代理（proxy= 行，逗号/分号分隔多个，作用于后续频道；空 = 不限）。
+	// 与 ua= 并列：未配置即忽略，走既有的域名规则代理组逻辑。
+	curProxies := []string(nil)
+	curReferer := "" // 当前生效的组/文件级上游 Referer（referer= 行；空 = 忽略）
+	curOrigin := ""  // 当前生效的组/文件级上游 Origin（origin= 行；空 = 忽略）
 	lines := strings.Split(string(content), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
@@ -105,9 +114,12 @@ func parseTXT(content []byte, src string) ([]*Channel, EPGSource) {
 		}
 		if strings.HasSuffix(line, "#genre#") {
 			group = strings.Trim(strings.TrimSuffix(line, "#genre#"), " ,")
-			// 组边界重置 UA：ua= 只作用于所在分组，未配置的分组回落 player.ua 全局默认，
-			// 避免上一个分组的 ua= 泄漏到未配置 UA 的后续分组
+			// 组边界重置 UA/代理/Referer/Origin：只作用于所在分组，未配置的分组回落
+			// player.ua / 域名规则代理，避免上一个分组的配置泄漏到后续分组
 			curUA = ""
+			curProxies = nil
+			curReferer = ""
+			curOrigin = ""
 			continue
 		}
 		// EPG：epg=... 含占位符 {name}/{date} → template；否则若为 http 固定文件 → xml（整份 XMLTV）
@@ -139,11 +151,44 @@ func parseTXT(content []byte, src string) ([]*Channel, EPGSource) {
 			curUA = strings.TrimSpace(strings.TrimPrefix(line, "ua="))
 			continue
 		}
-		// 每频道可选 UA：`名称,URL,ua=okhttp/3.8.1`（行尾 ua= 段，优先于组级 ua=）
+		// 组/文件级内联上游代理：`proxy=socks5://127.0.0.1:7890,http://127.0.0.1:8080`
+		// （逗号/分号分隔多个，多节点按 fastest 选最快；重复 proxy= 行累积；空值清空）。
+		// 作用于后续频道，未配置即忽略（回落域名规则代理组）。
+		if strings.HasPrefix(line, "proxy=") {
+			if v := strings.TrimSpace(strings.TrimPrefix(line, "proxy=")); v != "" {
+				curProxies = append(curProxies, splitProxyList(v)...)
+			} else {
+				curProxies = nil
+			}
+			continue
+		}
+		// 组/文件级上游 Referer/Origin：按原样透传给源站；未配置即忽略。
+		if strings.HasPrefix(line, "referer=") {
+			curReferer = strings.TrimSpace(strings.TrimPrefix(line, "referer="))
+			continue
+		}
+		if strings.HasPrefix(line, "origin=") {
+			curOrigin = strings.TrimSpace(strings.TrimPrefix(line, "origin="))
+			continue
+		}
+		// 每频道可选覆盖：`名称,URL[,key=value]...`，key ∈ ua / proxy / referer / origin。
+		// 从行尾逐个剥离 `,key=` 段，故顺序无关，且 proxy= 的值可含逗号（多代理）。
+		line, kv := extractChannelKV(line, []string{"ua", "proxy", "referer", "origin"})
 		cUA := curUA
-		if i := strings.LastIndex(line, ",ua="); i >= 0 {
-			cUA = strings.TrimSpace(line[i+4:])
-			line = line[:i]
+		if v, ok := kv["ua"]; ok {
+			cUA = v
+		}
+		cReferer := curReferer
+		if v, ok := kv["referer"]; ok {
+			cReferer = v
+		}
+		cOrigin := curOrigin
+		if v, ok := kv["origin"]; ok {
+			cOrigin = v
+		}
+		cProxies := curProxies
+		if v, ok := kv["proxy"]; ok {
+			cProxies = splitProxyList(v)
 		}
 		comma := strings.LastIndex(line, ",")
 		if comma <= 0 {
@@ -161,10 +206,52 @@ func parseTXT(content []byte, src string) ([]*Channel, EPGSource) {
 			Scheme:  sch,
 			RawURL:  u,
 			UA:      cUA,
+			Proxies: cProxies,
+			Referer: cReferer,
+			Origin:  cOrigin,
 			EpgType: "txt",
 		})
 	}
 	return chans, es
+}
+
+// extractChannelKV 从频道行尾部逐个剥离 `,key=value` 段（key 限定为 keys），
+// 返回剩余行与解析出的键值。总是剥最右侧的标记，故 key 顺序任意；
+// proxy= 的值可含逗号——只要它不是最右标记，后面的 key 会先被剥掉，值自然截断正确。
+func extractChannelKV(line string, keys []string) (string, map[string]string) {
+	out := make(map[string]string, len(keys))
+	for {
+		last, lastKey := -1, ""
+		for _, k := range keys {
+			if i := strings.LastIndex(line, ","+k+"="); i > last {
+				last, lastKey = i, k
+			}
+		}
+		if last < 0 {
+			break
+		}
+		out[lastKey] = strings.TrimSpace(line[last+len(lastKey)+2:])
+		line = line[:last]
+	}
+	return line, out
+}
+
+// splitProxyList 把 proxy= 值拆成多个代理地址（逗号/分号/空白分隔，去空去重保序）。
+// 元素形如 socks5://user:pass@127.0.0.1:7890、http://127.0.0.1:8080、https://...
+func splitProxyList(s string) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, part := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	}) {
+		part = strings.TrimSpace(part)
+		if part == "" || seen[part] {
+			continue
+		}
+		seen[part] = true
+		out = append(out, part)
+	}
+	return out
 }
 
 func schemeOf(u string) string {
