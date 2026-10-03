@@ -41,11 +41,11 @@ NPM_STAMP := $(UI_DIR)/node_modules/.install-stamp
 $(NPM_STAMP): $(UI_DIR)/package.json $(UI_DIR)/package-lock.json
 	@mkdir -p $(UI_DIR)/node_modules
 	@if command -v npm >/dev/null 2>&1; then \
-		cd $(UI_DIR) && npm install && touch $@; \
+		cd $(UI_DIR) && npm install; \
 	else \
 		echo "⚠️ 未检测到 npm，跳过前端依赖安装（沿用已提交的 web/dist 占位）"; \
-		touch $@; \
 	fi
+	@touch $@
 
 .PHONY: web-ui ui-install go-only
 web-ui: $(DIST_STAMP)
@@ -53,11 +53,11 @@ web-ui: $(DIST_STAMP)
 $(DIST_STAMP): $(UI_SRCS) $(NPM_STAMP)
 	@mkdir -p web/dist
 	@if command -v npm >/dev/null 2>&1; then \
-		cd $(UI_DIR) && npm run build && touch $@; \
+		cd $(UI_DIR) && npm run build; \
 	else \
 		echo "⚠️ 未检测到 npm，跳过前端构建（沿用已提交的 web/dist 占位）"; \
-		touch $@; \
 	fi
+	@touch $@
 
 ui-install: $(NPM_STAMP)
 	@cd $(UI_DIR) && npm install && touch $(NPM_STAMP)
