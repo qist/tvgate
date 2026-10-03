@@ -1,7 +1,6 @@
 package stream
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/md5"
@@ -1424,19 +1423,13 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	ctx := r.Context()
 	bufferedBytes := 0
 	lastDrops := uint64(0)
-	const maxBufferSize = 16 * 1024 // 16KB：4K 高码率下进一步降低单次 flush 延迟
+	const maxBufferSize = 128 * 1024 // 128KB（对齐 v2.1.4）
 
 	flushTicker := time.NewTicker(50 * time.Millisecond)
 	defer flushTicker.Stop()
 
 	activeTicker := time.NewTicker(5 * time.Second)
 	defer activeTicker.Stop()
-
-	// 批量写出缓冲：将多个 RTP 包攒成一块再交给底层 ResponseWriter，
-	// 避免每个包都单独触发一次 TLS 记录边界与一次 write() 系统调用。
-	// 针对 CPU 热点 crypto/tls.writeRecordLocked / Syscall6 的关键优化。
-	bw := bufio.NewWriterSize(w, maxBufferSize)
-	defer bw.Flush()
 
 	// 发送初始数据
 	h.sendInitialToClient(client)
@@ -1463,58 +1456,21 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 				continue
 			}
 
-			// 写入第一个包
-			n, err := bw.Write(ref.data)
+			// 与 v2.1.4 一致：每包直接写 ResponseWriter（不经 app 级 bufio），
+			// 数据经 net/http 自身缓冲即时下发，降低 4K 高码率下的延迟/抖动。
+			n, err := w.Write(ref.data)
 			ref.Put()
 			if err != nil {
 				logger.LogPrintf("写入响应失败: %v", err)
 				return
 			}
 			bufferedBytes += n
-
-			// 批量非阻塞读取：尽量多读多写，减少系统调用
-			// 每批最多 8 个包：4K 下更快 flush，降低延迟/抖动
-			batchCount := 0
-			for bufferedBytes < maxBufferSize && batchCount < 8 {
-				select {
-				case ref2, ok := <-ch:
-					if !ok {
-						return
-					}
-					if ref2 == nil {
-						continue
-					}
-					n2, err := bw.Write(ref2.data)
-					ref2.Put()
-					if err != nil {
-						logger.LogPrintf("写入响应失败: %v", err)
-						return
-					}
-					bufferedBytes += n2
-					batchCount++
-				default:
-					// 没有更多数据了
-					goto batchDone
-				}
-			}
-
-		batchDone:
-			// 有数据就 flush，不要等 128KB 才发
-			// 批量 Write 只是减少 select 次数，flush 必须及时
-			if bufferedBytes > 0 {
-				if ferr := bw.Flush(); ferr != nil {
-					logger.LogPrintf("写入响应失败: %v", ferr)
-					return
-				}
+			if bufferedBytes >= maxBufferSize {
 				flusher.Flush()
 				bufferedBytes = 0
 			}
 		case <-flushTicker.C:
 			if flusher != nil && bufferedBytes > 0 {
-				if ferr := bw.Flush(); ferr != nil {
-					logger.LogPrintf("写入响应失败: %v", ferr)
-					return
-				}
 				flusher.Flush()
 				bufferedBytes = 0
 			}
@@ -1544,9 +1500,8 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 			h.RemoveCh <- connID
 			return
 		case <-h.ctx.Done():
-			// Hub 关闭，客户端可能还连着，刷出 bw 残留数据
+			// Hub 关闭，客户端可能还连着，刷出残留数据
 			if bufferedBytes > 0 {
-				_ = bw.Flush()
 				flusher.Flush()
 			}
 			return
