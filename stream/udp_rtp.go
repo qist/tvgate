@@ -1030,6 +1030,17 @@ func (h *StreamHub) run() {
 		case <-h.ctx.Done():
 			return
 		case client := <-h.AddCh:
+			// 竞态防护：客户端可能在加入前就已返回并发出了 RemoveCh（run 先处理 RemoveCh，
+			// 此时它还不在 Clients 里）。若已标记 closed 则不再加入并关闭通道，
+			// 否则会永远留在 Clients、hub 永不释放（内存/socket 泄漏）。
+			client.mu.Lock()
+			alreadyClosed := client.closed
+			client.mu.Unlock()
+			if alreadyClosed {
+				safeCloseRefChan(client.ch)
+				continue
+			}
+
 			h.Mu.Lock()
 			h.Clients[client.connID] = client
 			h.Mu.Unlock()
@@ -1208,6 +1219,28 @@ func (h *StreamHub) run() {
 	}
 }
 
+// markClientClosed 标记客户端已关闭（幂等）。
+func markClientClosed(client *hubClient) {
+	if client == nil {
+		return
+	}
+	client.mu.Lock()
+	client.closed = true
+	client.mu.Unlock()
+}
+
+// removeClientNonBlocking 请求移除客户端；hub 已关闭（run 退出）时直接放弃，
+// 避免 // 发送方永远阻塞在 RemoveCh 上导致 goroutine 泄漏。
+func removeClientNonBlocking(h *StreamHub, connID string) {
+	if h == nil {
+		return
+	}
+	select {
+	case h.RemoveCh <- connID:
+	case <-h.ctx.Done():
+	}
+}
+
 func safeCloseRefChan(ch chan *BufferRef) {
 	if ch == nil {
 		return
@@ -1383,8 +1416,13 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 		}
 	}
 
-	// 添加客户端到hub
-	h.AddCh <- client
+	// 添加客户端到hub（hub 已关闭则直接返回，避免永久阻塞）
+	select {
+	case h.AddCh <- client:
+	case <-h.ctx.Done():
+		http.Error(w, "Hub closed", http.StatusServiceUnavailable)
+		return
+	}
 
 	// 设置响应头
 	hdr := w.Header()
@@ -1403,8 +1441,9 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	if !h.WaitForPlaying(r.Context()) {
 		logger.LogPrintf("等待Hub播放状态超时或失败: %s", connID)
 		http.Error(w, "Service timeout", http.StatusServiceUnavailable)
-		// 从hub中移除客户端
-		h.RemoveCh <- connID
+		// 从hub中移除客户端（非阻塞，hub 已关闭时不卡住）
+		markClientClosed(client)
+		removeClientNonBlocking(h, connID)
 		return
 	}
 
@@ -1413,7 +1452,8 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	if !ok {
 		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
 		// 从hub中移除客户端
-		h.RemoveCh <- connID
+		markClientClosed(client)
+		removeClientNonBlocking(h, connID)
 		return
 	}
 
@@ -1436,10 +1476,8 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 	defer func() {
 		if !removed {
 			// 客户端断开连接，立即标记为关闭
-			client.mu.Lock()
-			client.closed = true
-			client.mu.Unlock()
-			h.RemoveCh <- connID
+			markClientClosed(client)
+			removeClientNonBlocking(h, connID)
 		}
 	}()
 
@@ -1494,7 +1532,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 				logger.LogPrintf("客户端 %s 断开，期间丢弃 %d 个旧包（慢客户端缓冲追赶）", connID, dropCount)
 			}
 			// 从hub中移除客户端
-			h.RemoveCh <- connID
+			removeClientNonBlocking(h, connID)
 			return
 		case <-h.ctx.Done():
 			// Hub 关闭，客户端可能还连着，刷出残留数据

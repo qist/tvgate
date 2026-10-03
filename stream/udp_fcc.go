@@ -100,6 +100,8 @@ func (b *BufferRef) Put() {
 func NewBufferRef(data []byte) *BufferRef {
 	b := bufferRefPool.Get().(*BufferRef)
 	b.data = data
+	b.backing = nil // 不绑定池，避免复用结构体时残留旧 backing 被误回收
+	b.pool = nil
 	b.next = nil
 	b.refCount = 1
 	b.Source = SourceUnknown
