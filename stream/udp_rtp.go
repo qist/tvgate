@@ -75,7 +75,7 @@ type rtpSeqEntry struct {
 }
 
 const (
-	rtpSequenceWindow = 64
+	rtpSequenceWindow = 200
 	rtpSSRCExpire     = 30 * time.Second // 超过30秒未收到包就清理
 
 	// rtpLastActiveRefresh 为 SSRC lastActive 时间戳的刷新间隔。
@@ -623,12 +623,9 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 		h.rtpSequenceMap[ssrc] = entry
 	}
 
-	// 快速检查重复（只检查最近的几个序列号）
+	// 快速检查重复（与 v2.1.4 一致：在整个窗口内查，不截断到最近若干）
 	duplicate := false
 	checkCount := entry.seqCount
-	if checkCount > 8 {
-		checkCount = 8
-	}
 	startPos := entry.seqPos - checkCount
 	if startPos < 0 {
 		startPos += rtpSequenceWindow
