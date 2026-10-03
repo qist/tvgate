@@ -56,6 +56,16 @@ var (
 	}
 )
 
+// nullTSPacket 预生成的 TS 空包（PID 0x1FFF），用于 CC 缺口补齐，避免每次 make。
+var nullTSPacket = func() [188]byte {
+	var ts [188]byte
+	ts[0], ts[1], ts[2], ts[3] = 0x47, 0x1F, 0xFF, 0x10
+	for i := 4; i < 188; i++ {
+		ts[i] = 0xFF
+	}
+	return ts
+}()
+
 type rtpSeqEntry struct {
 	seq        [rtpSequenceWindow]uint16
 	seqCount   int
@@ -693,8 +703,9 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	// 输出缓冲区：独立分配（v2.1.4 语义）。绝不把指向会被下一包 append 覆盖的
 	// h.rtpBuffer 的 chunk 直接广播，也不入池复用——直接 make 后交给 BufferRef，
 	// 生命周期由引用计数 + GC 管理，彻底避免重复/撕裂 TS（高码率/4K 花屏根因）。
-	maxOutSize := alignedSize + (alignedSize/188)*3*188
-	out := make([]byte, 0, maxOutSize)
+	// 容量按实际对齐长度分配（不是最坏情况 maxOutSize），避免 4K 高包率下的 GC 抖动；
+	// 仅在 CC 有缺口补 null 时按需增长。
+	out := make([]byte, 0, alignedSize)
 
 	for i := 0; i < len(chunk); i += 188 {
 		ts := chunk[i : i+188]
@@ -730,26 +741,14 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 						nullCount = 3
 					}
 					for j := 0; j < nullCount; j++ {
-						// 内联 appendNullTS 避免函数调用开销
-						pos := len(out)
-						out = out[:pos+188]
-						out[pos] = 0x47
-						out[pos+1] = 0x1F
-						out[pos+2] = 0xFF
-						out[pos+3] = 0x10
-						for k := pos + 4; k < pos+188; k++ {
-							out[k] = 0xFF
-						}
+						out = append(out, nullTSPacket[:]...)
 					}
 				}
 			}
 			ccArr[pid] = tsCC
 		}
 
-		// 直接 copy 替代 append，减少边界检查
-		pos := len(out)
-		out = out[:pos+188]
-		copy(out[pos:pos+188], ts)
+		out = append(out, ts...)
 	}
 	h.procMu.Unlock()
 
@@ -1425,7 +1424,7 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 
 	ctx := r.Context()
 	bufferedBytes := 0
-	const maxBufferSize = 256 * 1024 // 256KB缓冲区，减少高频 flush
+	const maxBufferSize = 64 * 1024 // 64KB：4K 高码率下降低单次 flush 延迟，避免卡顿
 
 	flushTicker := time.NewTicker(50 * time.Millisecond)
 	defer flushTicker.Stop()
@@ -1474,9 +1473,9 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 			bufferedBytes += n
 
 			// 批量非阻塞读取：尽量多读多写，减少系统调用
-			// 限制每批最多读 64 个包，防止长时间不检查 ctx
+			// 限制每批最多读 32 个包，防止长时间不检查 ctx / 单次 flush 过大
 			batchCount := 0
-			for bufferedBytes < maxBufferSize && batchCount < 64 {
+			for bufferedBytes < maxBufferSize && batchCount < 32 {
 				select {
 				case ref2, ok := <-ch:
 					if !ok {
