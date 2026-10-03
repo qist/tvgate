@@ -56,11 +56,13 @@ var (
 	}
 )
 
-// nullTSPacket 预生成的 TS 空包（PID 0x1FFF），用于 CC 缺口补齐，避免每次 make。
+// nullTSPacket 预生成的 TS 空包（PID 0x1FFF），与 v2.1.4 makeNullTS 字节完全一致：
+// 0x47 0x1F 0xFF 0x10，适配字段长 0x07、标志 0x00，其余 0xFF。用于 CC 缺口补齐。
 var nullTSPacket = func() [188]byte {
 	var ts [188]byte
 	ts[0], ts[1], ts[2], ts[3] = 0x47, 0x1F, 0xFF, 0x10
-	for i := 4; i < 188; i++ {
+	ts[4], ts[5] = 0x07, 0x00
+	for i := 6; i < 188; i++ {
 		ts[i] = 0xFF
 	}
 	return ts
@@ -736,11 +738,8 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 			if last != 0xFF {
 				diff := (int(tsCC) - int(last) + 16) & 0x0F
 				if diff > 1 {
-					nullCount := diff - 1
-					if nullCount > 3 {
-						nullCount = 3
-					}
-					for j := 0; j < nullCount; j++ {
+					// 与 v2.1.4 一致：补 diff-1 个 null 包（不设 3 个上限）
+					for j := 1; j < diff; j++ {
 						out = append(out, nullTSPacket[:]...)
 					}
 				}
@@ -1424,7 +1423,8 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 
 	ctx := r.Context()
 	bufferedBytes := 0
-	const maxBufferSize = 64 * 1024 // 64KB：4K 高码率下降低单次 flush 延迟，避免卡顿
+	lastDrops := uint64(0)
+	const maxBufferSize = 16 * 1024 // 16KB：4K 高码率下进一步降低单次 flush 延迟
 
 	flushTicker := time.NewTicker(50 * time.Millisecond)
 	defer flushTicker.Stop()
@@ -1473,9 +1473,9 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 			bufferedBytes += n
 
 			// 批量非阻塞读取：尽量多读多写，减少系统调用
-			// 限制每批最多读 32 个包，防止长时间不检查 ctx / 单次 flush 过大
+			// 每批最多 8 个包：4K 下更快 flush，降低延迟/抖动
 			batchCount := 0
-			for bufferedBytes < maxBufferSize && batchCount < 32 {
+			for bufferedBytes < maxBufferSize && batchCount < 8 {
 				select {
 				case ref2, ok := <-ch:
 					if !ok {
@@ -1521,6 +1521,14 @@ func (h *StreamHub) ServeHTTP(w http.ResponseWriter, r *http.Request, contentTyp
 		case <-activeTicker.C:
 			if updateActive != nil {
 				updateActive()
+			}
+			// 诊断：下游慢导致客户端缓冲丢弃（4K 卡顿排查）
+			client.mu.Lock()
+			drops := client.dropCount
+			client.mu.Unlock()
+			if drops > lastDrops {
+				logger.LogPrintf("客户端 %s 5s 内丢弃 %d 个包（下游慢）", connID, drops-lastDrops)
+				lastDrops = drops
 			}
 		case <-ctx.Done():
 			// 客户端断开连接，立即标记为关闭，停止接收数据
