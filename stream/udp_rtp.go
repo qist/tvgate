@@ -297,7 +297,7 @@ func NewStreamHub(addrs []string, ifaces []string) (*StreamHub, error) {
 		UdpConns:    make([]*net.UDPConn, 0, len(addrs)),
 		CacheBuffer: nil, // 懒分配：有客户端连接时才创建
 		Closed:      make(chan struct{}),
-		BufPool:     &sync.Pool{New: func() any { return make([]byte, 2048) }},
+		BufPool:     &sync.Pool{New: func() any { return make([]byte, 64*1024) }},
 		AddrList:    addrs,
 		state:       atomic.Int32{}, // zero = StateStopped
 		// lastCCArr 初始化为 0xFF（表示未见过该 PID）
@@ -537,18 +537,13 @@ func (h *StreamHub) readLoop(conn *net.UDPConn, hubAddr string) {
 	}
 }
 
-// newReadRef 把读缓冲中的实际数据按长度拷入池化缓冲，返回零拷贝引用。
-// 用池化缓冲承载 n 字节（而非直接引用 64KB 读缓冲），避免大缓冲被缓存长期占用；
-// 同时保证 jumbo/大 RTP 包不被池默认小缓冲截断。
+// newReadRef 返回读数据的**独立副本**（v2.1.4 语义：不入池、不共享）。
+// 读缓冲本身是 64KB 大块复用，但广播出去的必须是本次数据自己的副本——
+// 既不会被 2KB 池缓冲截断，也不会被后续 RTP 包 append 覆盖。
 func (h *StreamHub) newReadRef(data []byte) *BufferRef {
-	buf := h.BufPool.Get().([]byte)
-	if cap(buf) < len(data) {
-		h.BufPool.Put(buf)
-		buf = make([]byte, len(data))
-	}
-	view := buf[:len(data)]
-	copy(view, data)
-	return NewPooledBufferRef(buf, view, h.BufPool)
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	return NewBufferRef(buf)
 }
 
 // ====================
@@ -695,17 +690,11 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	// --- CC检查 + TS拷贝（在同一 procMu 锁内完成） ---
 	ccArr := &h.lastCCArr
 
-	// 输出缓冲区：最坏情况每个 TS 包后插 3 个 null 包。
-	// 池默认缓冲不够大（一包常含 7 个 TS）时换一个够大的，但**绝不直接把 chunk 交出去**：
-	// chunk 指向会被下一包 append 覆盖的 h.rtpBuffer，直接返回会让客户端读到被覆写的
-	// 撕裂 TS（花屏/绿屏）；v2.1.4 对 chunk 做了脱离处理，这里必须保持一致。
+	// 输出缓冲区：独立分配（v2.1.4 语义）。绝不把指向会被下一包 append 覆盖的
+	// h.rtpBuffer 的 chunk 直接广播，也不入池复用——直接 make 后交给 BufferRef，
+	// 生命周期由引用计数 + GC 管理，彻底避免重复/撕裂 TS（高码率/4K 花屏根因）。
 	maxOutSize := alignedSize + (alignedSize/188)*3*188
-	poolBuf := h.BufPool.Get().([]byte)
-	if cap(poolBuf) < maxOutSize {
-		h.BufPool.Put(poolBuf)
-		poolBuf = make([]byte, maxOutSize)
-	}
-	out := poolBuf[:0]
+	out := make([]byte, 0, maxOutSize)
 
 	for i := 0; i < len(chunk); i += 188 {
 		ts := chunk[i : i+188]
@@ -764,7 +753,7 @@ func (h *StreamHub) processRTPPacketRef(inRef *BufferRef) *BufferRef {
 	}
 	h.procMu.Unlock()
 
-	outRef := NewPooledBufferRef(poolBuf, out, h.BufPool)
+	outRef := NewBufferRef(out)
 	outRef.Source = inRef.Source
 	return outRef
 }
