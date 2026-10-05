@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { getPlayer, savePlayer, type PlayerConfig } from "@/api/player";
+import { appendGlobalToken, getGlobalAuth, type AuthConfig } from "@/api/globalauth";
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -33,11 +34,27 @@ export function PlayerPage() {
   const [epgsText, setEpgsText] = useState("");
   const [notice, setNotice] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  // 全局授权配置：启用 global_auth 后，/pp 与 /api/player/* 都要带令牌，
+  // 分享出去的外链不带令牌就是 403，所以这里按配置的参数名补签。
+  const [globalAuth, setGlobalAuth] = useState<AuthConfig | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getGlobalAuth()
+      .then((c) => {
+        if (alive) setGlobalAuth(c);
+      })
+      .catch(() => {
+        // 读不到就按未启用处理：此时服务端也不校验令牌
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
   // 独立播放入口外链（跟随当前访问的 host:port）。只展示 /pp——
   // 它是不暴露后台路径的公开地址，可直接分享给电视/手机/其他播放器。
-  const externalLink = `${window.location.origin}/pp`;
+  const externalLink = appendGlobalToken(`${window.location.origin}/pp`, globalAuth);
   // 对外 EPG 接口地址：可原样填到别的播放器当 EPG 源（{name} 由对方按频道名填充）
-  const epgEndpoint = `${window.location.origin}/api/player/epg?ch={name}&date={date}`;
+  const epgEndpoint = appendGlobalToken(`${window.location.origin}/api/player/epg?ch={name}&date={date}`, globalAuth);
 
   const copyExternal = async () => {
     // HTTP 局域网环境无 navigator.clipboard（非安全上下文），退化为 execCommand
@@ -108,7 +125,7 @@ export function PlayerPage() {
             {copied ? "已复制" : "复制外链"}
           </button>
           <a
-            href="player"
+            href={appendGlobalToken("player", globalAuth)}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-violet-700 text-sm transition-colors hover:bg-violet-500/20 dark:border-violet-300/30 dark:bg-violet-300/10 dark:text-violet-200 dark:hover:bg-violet-300/20"

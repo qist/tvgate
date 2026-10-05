@@ -24,6 +24,7 @@ import type {
   StreamStatus,
 } from "@/api/publisher";
 import * as api from "@/api/publisher";
+import { appendGlobalToken, getGlobalAuth, type AuthConfig } from "@/api/globalauth";
 
 function getNested(obj: any, path: string): any {
   return path.split(".").reduce((acc: any, k) => (acc && acc[k] !== undefined ? acc[k] : undefined), obj);
@@ -224,10 +225,32 @@ export function PublisherPage() {
     }
   };
 
+  // 全局授权配置：/pp 播放页在 global_auth 启用后同样要带令牌，
+  // 否则从后台点开的预览/回放地址直接 403。走后台接口（cookieAuth 保护）读取，
+  // 只在管理端本地补签，不改变分享出去的地址语义。
+  const [globalAuth, setGlobalAuth] = useState<AuthConfig | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getGlobalAuth()
+      .then((c) => {
+        if (alive) setGlobalAuth(c);
+      })
+      .catch(() => {
+        // 读不到就按未启用处理：此时服务端也不校验令牌
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // 独立播放入口地址：live 编码原地址；授权启用时按配置的参数名补签静态令牌。
+  const ppUrl = (live: string) =>
+    appendGlobalToken(`${window.location.origin}/pp?live=${encodeURIComponent(live)}`, globalAuth);
+
   // 同源播放：跳转独立播放入口（/pp）并注入 live 参数，播放器页直接用浏览器播放该 FLV/HLS。
   // 只在 /pp 公开入口打开，不经过 web.path，也不泄露后台路径。
   const playDirect = (url: string) => {
-    window.open(window.location.origin + "/pp?live=" + encodeURIComponent(url), "_blank", "noopener");
+    window.open(ppUrl(url), "_blank", "noopener");
   };
 
   return (
@@ -342,7 +365,7 @@ export function PublisherPage() {
                       <dd className="flex min-w-0 items-center gap-1.5">
                         <a
                           className="truncate text-primary hover:underline"
-                          href={window.location.origin + "/pp?live=" + encodeURIComponent(flvRaw)}
+                          href={ppUrl(flvRaw)}
                           target="_blank"
                           rel="noreferrer"
                           title="点击用浏览器播放（同源，不经 TVGate 转发）"
@@ -385,7 +408,7 @@ export function PublisherPage() {
                       <dd className="flex min-w-0 items-center gap-1.5">
                         <a
                           className="truncate text-primary hover:underline"
-                          href={window.location.origin + "/pp?live=" + encodeURIComponent(hlsRaw)}
+                          href={ppUrl(hlsRaw)}
                           target="_blank"
                           rel="noreferrer"
                           title="点击用浏览器播放（同源，不经 TVGate 转发）"
@@ -510,7 +533,7 @@ export function PublisherPage() {
                         const e = toSeek(pbEnd);
                         if (!s || !e) return;
                         const m3u8 = `${window.location.origin}${pubBase}play/${playName}.m3u8?playseek=${s}-${e}`;
-                        window.open(window.location.origin + "/pp?live=" + encodeURIComponent(m3u8), "_blank", "noopener");
+                        window.open(ppUrl(m3u8), "_blank", "noopener");
                       }}
                     >
                       <MonitorPlay className="mr-1 h-4 w-4" /> 打开回放

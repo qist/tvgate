@@ -134,7 +134,9 @@ func (h *Handler) requireToken(w http.ResponseWriter, r *http.Request) bool {
 	if gt == nil {
 		return true
 	}
-	token := r.URL.Query().Get(gt.TokenParamName)
+	// auth.ExtractToken：按配置的 token_param_name 取，取不到回落 my_token。
+	// 直接 Get(gt.TokenParamName) 在参数名没配时会永远取到空串 → 所有请求恒 403。
+	token := auth.ExtractToken(r, gt)
 	clientIP := monitor.GetClientIP(r)
 	connID := clientIP + "_" + md5sum(r.URL.Path)
 	if !gt.ValidateToken(token, r.URL.Path, connID) {
@@ -148,6 +150,13 @@ func (h *Handler) requireToken(w http.ResponseWriter, r *http.Request) bool {
 func md5sum(s string) string {
 	h := md5.Sum([]byte(s))
 	return hex.EncodeToString(h[:])
+}
+
+// signPlayerPath 给服务端签发的 /player/ 站内地址补授权参数（未启用授权时原样返回）。
+// m3u8 分片行、EXT-X-KEY/EXT-X-MAP 的 URI、回看 play 地址都由客户端直接取，
+// 不会经过页面的 withAccessToken，不签就 403。auth.TokenManager 为 nil 时直接透传。
+func signPlayerPath(p string) string {
+	return auth.GetGlobalTokenManager().SignURL(p)
 }
 
 // ServeChannels GET /api/player/channels → 频道列表（含 key/tvg 属性）。
@@ -537,7 +546,8 @@ func (h *Handler) ServeCatchup(w http.ResponseWriter, r *http.Request) {
 	tok := shortHash(u)
 	h.storeResources(key, map[string]string{tok: u})
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	writeJSON(w, map[string]interface{}{"play": "/player/" + key + "/" + tok})
+	// play 地址自带授权：调用方（含第三方）拿到 JSON 直接请求，不会像页面那样补令牌
+	writeJSON(w, map[string]interface{}{"play": signPlayerPath("/player/" + key + "/" + tok)})
 }
 
 // catchupURL 在源地址上拼 playseek=<start>-<end>（回看参数，源侧处理时差）。
@@ -661,13 +671,12 @@ func (h *Handler) servePHPRaw(w http.ResponseWriter, r *http.Request, ch *Channe
 			query = q
 		}
 	}
-	// 剔除 token 参数，避免进入脚本 $_GET
+	// 剔除 token 参数，避免进入脚本 $_GET（配置名与默认名都剥，两个名字都可能被携带）
 	if gt := auth.GetGlobalTokenManager(); gt != nil {
-		param := gt.TokenParamName
-		if param == "" {
-			param = "my_token"
+		query.Del(gt.EffectiveParamName())
+		if gt.EffectiveParamName() != auth.DefaultTokenParamName {
+			query.Del(auth.DefaultTokenParamName)
 		}
-		query.Del(param)
 	}
 
 	status, hdr, body, err := php.Capture(rel, query)
@@ -1174,7 +1183,8 @@ func rewrittenM3U8(body io.Reader, baseStr, key string) ([]byte, string, map[str
 					abs := seg.String()
 					tok := shortHash(abs)
 					tokens[tok] = abs
-					return `URI="/player/` + key + `/` + tok + `"`
+					// URI（EXT-X-KEY/EXT-X-MAP/EXT-X-MEDIA）同样是客户端直取，必须带授权
+					return `URI="` + signPlayerPath("/player/"+key+"/"+tok) + `"`
 				})
 			}
 			out.WriteString(line + "\n")
@@ -1195,7 +1205,7 @@ func rewrittenM3U8(body io.Reader, baseStr, key string) ([]byte, string, map[str
 		abs := seg.String()
 		tok := shortHash(abs)
 		tokens[tok] = abs
-		out.WriteString("/player/" + key + "/" + tok + "\n")
+		out.WriteString(signPlayerPath("/player/"+key+"/"+tok) + "\n")
 	}
 	if origin == "" && base.Host != "" {
 		origin = base.Scheme + "://" + base.Host

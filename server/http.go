@@ -331,8 +331,10 @@ func RegisterJXAndProxyMux(mux *http.ServeMux, cfg *config.Config) {
 		// 公开路径，HTML 中不出现任何 web.path；/pp/<key> → /pp#<key> 深链
 		mux.Handle("/pp/assets/", SecurityHeaders(http.StripPrefix("/pp/assets/", web.ServePublicAssets())))
 		ppPage := web.ServeStandalonePlayer()
-		mux.Handle("/pp", SecurityHeaders(ppPage))
-		mux.Handle("/pp/", SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 播放页本体也走 global_auth：接口侧早由 player.requireToken 挡住，页面此前是裸放行。
+		// global_auth 未启用时 globalAuth 直接透传，行为与从前完全一致。
+		mux.Handle("/pp", SecurityHeaders(globalAuth(ppPage)))
+		mux.Handle("/pp/", SecurityHeaders(globalAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := strings.Trim(strings.TrimPrefix(r.URL.Path, "/pp/"), "/")
 			if key == "" {
 				ppPage(w, r)
@@ -340,12 +342,12 @@ func RegisterJXAndProxyMux(mux *http.ServeMux, cfg *config.Config) {
 			}
 			target := "/pp"
 			if r.URL.RawQuery != "" {
-				// query 必须在 fragment 之前，否则 my_token 进不了 location.search
+				// query 必须在 fragment 之前，否则 token 参数进不了 location.search
 				target += "?" + r.URL.RawQuery
 			}
 			target += "#" + key
 			http.Redirect(w, r, target, http.StatusFound)
-		})))
+		}))))
 		if cfg.Player.LogoDir != "" {
 			// 台标文件补显式缓存头：图片内容基本不变，浏览器 4h 内直接复用本地副本，
 			// 过期后凭 FileServer 的 Last-Modified 条件校验（304 不重传）。

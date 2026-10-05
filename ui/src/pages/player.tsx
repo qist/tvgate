@@ -120,22 +120,48 @@ interface ServerChannelsEnvelope {
 }
 
 // ---------------------------------------------------------------------------
-// 访问令牌：页面 URL 携带 ?my_token=，模块加载时读取一次并补签到所有出站请求上。
+// 访问令牌：页面 URL 携带 ?<token-param>=，模块加载时读取一次并补签到所有出站请求上
+// （频道列表 / EPG / 回看 / 换台后的 /player/<key> 全覆盖，换台不需要用户重新输入）。
 // ---------------------------------------------------------------------------
 
-function readAccessToken(): string {
+/**
+ * 令牌的查询参数名由服务端注入（<meta name="tvgate-token-param">，取自 global_auth.token_param_name）。
+ * 服务端两个名字都认（配置名 + 历史默认名），所以：
+ *   - 配置了自定义参数名（如 ouyyt）的部署，前端不会再写死 my_token 导致全部 403；
+ *   - 老的 ?my_token= 分享链接仍然可用；
+ *   - 拿不到 meta（没开 global_auth、或直开 dist 产物）时回落 my_token，与服务端默认一致。
+ */
+function readTokenParamName(): string {
   try {
-    return new URLSearchParams(window.location.search).get("my_token") ?? "";
+    const name = document.querySelector('meta[name="tvgate-token-param"]')?.getAttribute("content")?.trim();
+    if (name) return name;
+  } catch {
+    // 无 DOM / 老 WebView：回落默认名
+  }
+  return "my_token";
+}
+
+function readAccessToken(param: string): string {
+  try {
+    const query = new URLSearchParams(window.location.search);
+    const value = query.get(param);
+    if (value) return value;
+    // 兼容另一名字（配置名与默认名互为备份）
+    return param === "my_token" ? "" : (query.get("my_token") ?? "");
   } catch {
     return "";
   }
 }
 
-const ACCESS_TOKEN = readAccessToken();
+const ACCESS_TOKEN_PARAM = readTokenParamName();
+const ACCESS_TOKEN = readAccessToken(ACCESS_TOKEN_PARAM);
 
 function withAccessToken(url: string): string {
   if (!ACCESS_TOKEN) return url;
-  return url + (url.includes("?") ? "&" : "?") + "my_token=" + encodeURIComponent(ACCESS_TOKEN);
+  // 服务端签发的地址（m3u8 分片行、回看 play）已自带令牌，重复追加会产生
+  // 同名参数——多数解析器取首个值虽无害，但仍是脏 URL，这里直接跳过。
+  if (url.includes(`${ACCESS_TOKEN_PARAM}=`) || url.includes("my_token=")) return url;
+  return url + (url.includes("?") ? "&" : "?") + ACCESS_TOKEN_PARAM + "=" + encodeURIComponent(ACCESS_TOKEN);
 }
 
 // ---------------------------------------------------------------------------

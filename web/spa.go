@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/qist/tvgate/auth"
+	"github.com/qist/tvgate/config"
 )
 
 //go:embed all:dist
@@ -16,6 +19,29 @@ var distFS embed.FS
 
 const spaIndexPath = "dist/index.html"
 const playerIndexPath = "dist/player.html"
+
+// injectTokenParamMeta 把全局 token 的查询参数名写进播放页 <head>。
+//
+// 播放页要知道「URL 上哪个参数是令牌」才能把它补签到频道列表 / EPG / 换台 / 拉流
+// 等所有出站请求上：服务端认的是配置里的 token_param_name（如 ouyyt），
+// 前端若写死 my_token，两端对不上 → 页面能打开但所有接口 403。
+// global_auth 未启用时不注入，前端回落到默认名，服务端也不校验，无影响。
+func injectTokenParamMeta(page string) string {
+	if !config.Cfg.GlobalAuth.TokensEnabled {
+		return page
+	}
+	param := config.Cfg.GlobalAuth.TokenParamName
+	if param == "" {
+		param = auth.DefaultTokenParamName
+	}
+	// 参数名来自配置文件，按属性值转义后再拼进标签
+	esc := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;").Replace(param)
+	meta := "<meta name=\"tvgate-token-param\" content=\"" + esc + "\">"
+	if !strings.Contains(page, "</head>") {
+		return page
+	}
+	return strings.Replace(page, "</head>", meta+"\n</head>", 1)
+}
 
 // serveEmbeddedHTMLPage 返回内嵌 dist 下的独立 HTML 入口。
 // 页面随二进制内嵌更新，必须禁缓存，避免浏览器用旧版页面。
@@ -27,7 +53,7 @@ func serveEmbeddedHTMLPage(w http.ResponseWriter, r *http.Request, name string) 
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store, must-revalidate")
-	_, _ = w.Write(data)
+	_, _ = w.Write([]byte(injectTokenParamMeta(string(data))))
 }
 
 // serveSPA 返回前端 SPA 入口（hash 路由，无需服务端 history fallback）。
@@ -71,7 +97,7 @@ func ServeStandalonePlayer() http.HandlerFunc {
 		html := strings.ReplaceAll(string(data), "./assets/", standaloneAssetsPrefix)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store, must-revalidate")
-		_, _ = w.Write([]byte(html))
+		_, _ = w.Write([]byte(injectTokenParamMeta(html)))
 	}
 }
 
