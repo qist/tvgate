@@ -120,6 +120,13 @@ func (h *ConfigBackupHandler) handleListBackups(w http.ResponseWriter, r *http.R
 
 // handleDeleteBackup 删除指定备份
 func (h *ConfigBackupHandler) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
+	// 与 handleBatchDeleteBackups/handleCreateManualBackup 一致：删除是状态变更，拒绝 GET，
+	// 否则 <img src=...> 之类即可触发（cookieAuth 的同源校验只对非安全方法生效）。
+	if r.Method != http.MethodPost {
+		http.Error(w, "只支持 POST 请求", http.StatusMethodNotAllowed)
+		return
+	}
+
 	file := r.URL.Query().Get("file")
 	if file == "" {
 		http.Error(w, "参数 file 必须提供", http.StatusBadRequest)
@@ -148,6 +155,12 @@ func (h *ConfigBackupHandler) handleDeleteBackup(w http.ResponseWriter, r *http.
 	relPath, err := filepath.Rel(normalizedDir, absFile)
 	if err != nil || strings.HasPrefix(relPath, "..") {
 		http.Error(w, "不允许删除目录外的文件", http.StatusForbidden)
+		return
+	}
+
+	// 只允许删除备份文件：防止删掉 config.yaml 本体（重启会回退到内嵌 admin/admin）
+	if !strings.Contains(filepath.Base(absFile), ".backup.") {
+		http.Error(w, "只能删除备份文件", http.StatusBadRequest)
 		return
 	}
 
@@ -336,6 +349,12 @@ func (h *ConfigBackupHandler) handleBatchDeleteBackups(w http.ResponseWriter, r 
 		// 使用 strings.HasPrefix 并确保路径边界安全
 		relPath, err := filepath.Rel(normalizedDir, absFile)
 		if err != nil || strings.HasPrefix(relPath, "..") {
+			errorCount++
+			continue
+		}
+
+		// 与单个删除一致：只允许删除备份文件，防止删掉 config.yaml 本体
+		if !strings.Contains(filepath.Base(absFile), ".backup.") {
 			errorCount++
 			continue
 		}

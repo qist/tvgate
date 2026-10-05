@@ -204,8 +204,8 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	// 配置备份管理路由
 	backupHandler := &ConfigBackupHandler{}
 	mux.HandleFunc(webPath+"config/backup/list", h.cookieAuth(backupHandler.handleListBackups))
-	mux.HandleFunc(webPath+"config/backup/delete", h.cookieAuth(backupHandler.handleDeleteBackup))
-	mux.HandleFunc(webPath+"config/backup/batch-delete", h.cookieAuth(backupHandler.handleBatchDeleteBackups))
+	mux.HandleFunc(webPath+"config/backup/delete", h.cookieAuth(h.requireElevated(backupHandler.handleDeleteBackup)))
+	mux.HandleFunc(webPath+"config/backup/batch-delete", h.cookieAuth(h.requireElevated(backupHandler.handleBatchDeleteBackups)))
 	mux.HandleFunc(webPath+"config/backup/restore", h.cookieAuth(h.requireElevated(backupHandler.handleRestoreBackup)))
 	mux.HandleFunc(webPath+"config/backup/download", h.cookieAuth(h.requireElevated(backupHandler.handleDownloadBackup)))
 	mux.HandleFunc(webPath+"config/backup/create", h.cookieAuth(backupHandler.handleCreateManualBackup))
@@ -239,8 +239,8 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	// 备份文件中心（下载/恢复敏感：需二次授权）
 	mux.HandleFunc(webPath+"api/backup/list", h.cookieAuth(h.handleBackupList))
 	mux.HandleFunc(webPath+"api/backup/restore", h.cookieAuth(h.requireElevated(h.handleBackupRestore)))
-	mux.HandleFunc(webPath+"api/backup/delete", h.cookieAuth(h.handleBackupDelete))
-	mux.HandleFunc(webPath+"api/backup/batch-delete", h.cookieAuth(h.handleBackupBatchDelete))
+	mux.HandleFunc(webPath+"api/backup/delete", h.cookieAuth(h.requireElevated(h.handleBackupDelete)))
+	mux.HandleFunc(webPath+"api/backup/batch-delete", h.cookieAuth(h.requireElevated(h.handleBackupBatchDelete)))
 	mux.HandleFunc(webPath+"api/backup/download", h.cookieAuth(h.requireElevated(h.handleBackupDownload)))
 	mux.HandleFunc(webPath+"api/backup/cleanup", h.cookieAuth(h.handleBackupCleanup))
 
@@ -463,6 +463,13 @@ func (h *ConfigHandler) generateAuthCookieValue(username string) string {
 
 // validateAuthCookie 验证认证cookie值
 func (h *ConfigHandler) validateAuthCookie(cookieValue string) bool {
+	// 空口令 fail-closed：口令为空时 sha256(数据+"") 对攻击者完全可算，Cookie 可任意伪造。
+	// 登录(config_handler.go)、保存(config_handler_web.go)、二次授权(elevate.go)三个入口
+	// 已各自拦截空口令，此处兜底堵住「直接编辑 config.yaml 清空 password」这一文件层路径。
+	if h.webConfig.Password == "" {
+		return false
+	}
+
 	// log.Printf("验证Cookie值: %s", cookieValue)
 	parts := strings.Split(cookieValue, "|")
 	if len(parts) != 3 {

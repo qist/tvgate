@@ -91,25 +91,30 @@ export function BackupCenterPage() {
 
   const doDelete = async (it: BackupItem) => {
     if (!window.confirm("确定删除此备份文件？")) return;
-    try {
-      const msg = await api.remove(it.name);
-      notify("ok", msg);
-      load();
-    } catch (e) {
-      notify("err", "删除失败: " + (e as Error).message);
-    }
+    // 二次验证：删除已挂 requireElevated，未授权先弹窗，通过后重试
+    await ensureThen(async () => {
+      try {
+        const msg = await api.remove(it.name);
+        notify("ok", msg);
+        load();
+      } catch (e) {
+        notify("err", "删除失败: " + (e as Error).message);
+      }
+    });
   };
 
   const doBatchDelete = async () => {
     if (selected.size === 0) return;
     if (!window.confirm(`确定删除选中的 ${selected.size} 个备份文件？`)) return;
-    try {
-      const msg = await api.batchDelete(Array.from(selected));
-      notify("ok", msg);
-      load();
-    } catch (e) {
-      notify("err", "批量删除失败: " + (e as Error).message);
-    }
+    await ensureThen(async () => {
+      try {
+        const msg = await api.batchDelete(Array.from(selected));
+        notify("ok", msg);
+        load();
+      } catch (e) {
+        notify("err", "批量删除失败: " + (e as Error).message);
+      }
+    });
   };
 
   const doCleanup = async () => {
