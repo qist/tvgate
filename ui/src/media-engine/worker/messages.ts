@@ -55,6 +55,8 @@ export type WorkerEvent =
       trackIds: number[];
     }
   | { type: "media-info"; info: PlayerMediaInfo }
+  /** 容器声明总时长（Matroska Info.Duration，秒）：点播进度条/时长展示用；直播不发。 */
+  | { type: "duration"; seconds: number }
   /** PMT 声明的轨道布局：主线程据此在 append 前建齐 SourceBuffer。 */
   | { type: "stream-layout"; layout: { video: boolean; mseAudio: boolean } }
   /** 软解后的交错 PCM（已在 worker 内归一化到 MSE 时间轴）。 */

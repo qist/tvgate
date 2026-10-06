@@ -4,6 +4,14 @@
  * 直播连续源只有一条不结束的 URL；点播源为有限分段列表；HLS 源另见 hls-source.ts。
  */
 
+import type { ByteRange } from "../io/fetch-loader";
+
+/**
+ * 分段引用：纯 URL（历史形态，无 Range 语义）或带可选字节区间（Matroska seek 重载的
+ * 「cue 定位 Cluster 偏移」等场景——同一条直链按 Range 分段交付）。
+ */
+export type SegmentRef = string | { url: string; range?: ByteRange };
+
 export interface SegmentSource {
   /** 是否为直播（持续产生新分段）。 */
   readonly live: boolean;
@@ -12,7 +20,7 @@ export interface SegmentSource {
    * - 返回 null 表示不再有分段（点播结束 / 直播已停止）。
    * - 直播场景下允许阻塞等待新分段产生。
    */
-  next(): Promise<string | null>;
+  next(): Promise<SegmentRef | null>;
   destroy(): void;
   /**
    * 分段批次失效通知（可选实现）：分片连续不可用（如整点切换后旧序列分片被删、新分片未就绪）时，

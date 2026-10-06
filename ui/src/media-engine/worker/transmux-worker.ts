@@ -500,6 +500,8 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
               postMergedLayout();
             },
             onSoftAudioData: (chunk) => soft?.handle(chunk),
+            // 容器声明总时长（Matroska Info.Duration）：live 模式不会收到，无害
+            onDuration: (seconds) => post({ type: "duration", seconds }),
             onLoadingComplete: () => post({ type: "loading-complete" }),
             onIOError: (info) =>
               post({ type: "error", error: { category: "io", code: info.code, info: info.msg, url: info.url } }),

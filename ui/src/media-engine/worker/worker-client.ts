@@ -22,6 +22,8 @@ export interface WorkerClientCallbacks {
   /** 软解 PCM 全链路丢弃计数（诊断用）。 */
   onPcmAudioStats?(stats: PcmWorkerStats): void;
   onLoadingComplete?(): void;
+  /** 容器声明总时长（Matroska Info.Duration，秒）；直播流不上报。 */
+  onDuration?(seconds: number): void;
   onError?(error: PlayerError): void;
 }
 
@@ -51,7 +53,7 @@ export class TransmuxWorkerClient {
    */
   private disposed = false;
 
-  constructor(private readonly callbacks: WorkerClientCallbacks = {}) {}
+  constructor(private readonly callbacks: WorkerClientCallbacks = {}) { }
 
   private ensureWorker(): Worker {
     if (this.worker) return this.worker;
@@ -143,6 +145,9 @@ export class TransmuxWorkerClient {
         break;
       case "loading-complete":
         this.callbacks.onLoadingComplete?.();
+        break;
+      case "duration":
+        this.callbacks.onDuration?.(event.seconds);
         break;
       case "error":
         this.callbacks.onError?.(event.error);

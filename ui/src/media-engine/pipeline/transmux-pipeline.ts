@@ -16,8 +16,9 @@ import {
   type ResumeMode,
 } from "../io/fetch-loader";
 import { FlvDemuxer } from "../demux/flv-demuxer";
-import { TsDemuxer, type TrackInfo, type TsDemuxerCallbacks } from "../demux/ts-demuxer";
+import { TsDemuxer, type TrackInfo } from "../demux/ts-demuxer";
 import { AdtsDemuxer, probeAdtsStream } from "../demux/adts-demuxer";
+import { MatroskaDemuxer, matroskaProbe, type MatroskaDemuxerCallbacks } from "../demux/matroska-demuxer";
 import { workerDebugWarn } from "../worker/debug";
 import type { SegmentSource } from "../hls/segment-source";
 import {
@@ -43,6 +44,8 @@ export interface PipelineCallbacks {
   /** PMT 声明的轨道布局：下游用于在任何 init append 前建齐 SourceBuffer / 判定纯视频。 */
   onStreamLayout?(layout: { video: boolean; mseAudio: boolean }): void;
   onMediaInfo?(info: PlayerMediaInfo): void;
+  /** 容器声明总时长（Matroska Info.Duration）：点播进度条/seekable 用；直播流不发。 */
+  onDuration?(seconds: number): void;
   /** 需要软解的音频（ac3/eac3/mp2/mp3）原始样本。 */
   onSoftAudioData?(chunk: SoftAudioChunk): void;
   onLoadingComplete?(): void;
@@ -83,6 +86,13 @@ export interface PipelineConfig {
   separateAudio?: boolean;
   /** 仅音频流水线：不向 MSE remuxer 加任何轨（不产生 MSE init/media），只走软解。 */
   audioOnly?: boolean;
+  /**
+   * Matroska seek 重载：预载轨道（由文件头探测解析出的 TrackInfo 直接注入——重载流从
+   * cue 定位的 Cluster 字节偏移开始，容器头不在流内）。
+   */
+  matroskaTracks?: TrackInfo[];
+  /** Matroska seek 门限（毫秒）：绝对时间码低于该值的块整体丢弃（cue 定位点常早于目标）。 */
+  matroskaSeekGateMs?: number;
   /**
    * 抑制本流水线的全部音频输出（软解与 MSE 均不发）。
    * 声画分流场景下主视频流水线必须置位：其 TS 内可能仍带与独立音轨同内容的音频，
@@ -179,13 +189,13 @@ export class TransmuxPipeline {
   private loader: FetchStreamLoader | null = null;
   private readonly ioController: IOController;
   /**
-   * 数据源解复用器：首块字节探测决定（FLV / MPEG-TS），两者输出协议同形。
+   * 数据源解复用器：首块字节探测决定（FLV / MPEG-TS / Matroska / 裸 ADTS），输出协议同形。
    * 见 feedDemuxer()。HTTP-FLV（直播）与连续 TS 直链都走静态 URL 列表这条路径。
    */
-  private demuxer: TsDemuxer | FlvDemuxer | AdtsDemuxer | null = null;
+  private demuxer: TsDemuxer | FlvDemuxer | AdtsDemuxer | MatroskaDemuxer | null = null;
   /** 探测期暂存（首块不足 3 字节时等更多数据再判）。 */
   private demuxProbeBuffer: Uint8Array | null = null;
-  private readonly demuxerCallbacks: TsDemuxerCallbacks;
+  private readonly demuxerCallbacks: MatroskaDemuxerCallbacks;
   private readonly remuxer: Fmp4Remuxer;
   private stopped = false;
   private paused = false;
@@ -281,6 +291,7 @@ export class TransmuxPipeline {
       onTracks: (tracks) => this.handleTracks(tracks),
       onSamples: (samples) => this.handleSamples(samples),
       onError: (msg) => this.callbacks.onDemuxError?.(msg),
+      onDuration: (seconds) => this.callbacks.onDuration?.(seconds),
       onStreamLayout: (layout) => {
         // C2：muxed TS + 软解音轨 → 给 MSE 挂一条静音 AAC 假音轨（video 有音轨 → 后台
         // 不被 UA 冻结）。布局必须**在任何 init append 前**就把 audio 轨算上：Chromium
@@ -302,10 +313,13 @@ export class TransmuxPipeline {
   }
 
   /**
-   * 首块探测 FLV / 裸 ADTS / MPEG-TS 并惰性创建解复用器。
+   * 首块探测 FLV / 裸 ADTS / Matroska / MPEG-TS 并惰性创建解复用器。
    * FLV 魔数 "FLV"（HTTP-FLV 直播）→ FlvDemuxer；连得上两个 ADTS 帧头（广播源的
-   * `.hls.ts` 其实是裸 AAC）→ AdtsDemuxer；其余一律按连续 MPEG-TS（TsDemuxer）。
+   * `.hls.ts` 其实是裸 AAC）→ AdtsDemuxer；EBML 魔数（网盘/直链 MKV，典型 4K HEVC +
+   * E-AC-3）→ MatroskaDemuxer；其余一律按连续 MPEG-TS（TsDemuxer）。
    * ADTS 判定必须早于 TS 兜底：否则裸 AAC 交给 TsDemuxer 会被当"不同步数据"静默丢弃。
+   * Matroska 判定同样早于 TS 兜底：EBML 魔数 0x1A45DFA3 的首字节不可能与 TS 同步字(0x47)、
+   * FLV("FLV") 冲突，且只发生在流首（新连接首块），直播流零影响。
    */
   private feedDemuxer(chunk: Uint8Array): void {
     if (this.demuxer) {
@@ -324,14 +338,26 @@ export class TransmuxPipeline {
       this.demuxProbeBuffer = data;
       return;
     }
-    this.demuxProbeBuffer = null;
     if (probeAdtsStream(data)) {
+      this.demuxProbeBuffer = null;
       this.demuxer = new AdtsDemuxer(this.demuxerCallbacks);
-    } else {
-      this.demuxer = probe.match
-        ? new FlvDemuxer(this.demuxerCallbacks)
-        : new TsDemuxer(this.demuxerCallbacks);
+      this.demuxer.push(data);
+      return;
     }
+    const mkv = matroskaProbe(data);
+    if (mkv.needMoreData) {
+      this.demuxProbeBuffer = data;
+      return;
+    }
+    this.demuxProbeBuffer = null;
+    this.demuxer = probe.match
+      ? new FlvDemuxer(this.demuxerCallbacks)
+      : mkv.match
+        ? new MatroskaDemuxer(this.demuxerCallbacks, {
+          preloadedTracks: this.config.matroskaTracks,
+          seekGateMs: this.config.matroskaSeekGateMs,
+        })
+        : new TsDemuxer(this.demuxerCallbacks);
     this.demuxer.push(data);
   }
 
@@ -346,9 +372,9 @@ export class TransmuxPipeline {
       while (!this.stopped) {
         // 缓冲领先门：直播下缓冲领先播放头超限时在此等待（hidden/时基过期自行放行）
         if (!(await this.waitForBufferLead())) return;
-        const url = await this.config.source.next();
+        const seg = await this.config.source.next();
         if (this.stopped) break;
-        if (!url) {
+        if (!seg) {
           // 直播没有新分段：分段间隔内轮询重试，而非结束（否则会触发 endOfStream/重载）。
           // 轮询节奏由源给出（HLS = 目标时长整拍/半拍）：固定 1 秒会把播放列表请求刷成
           // 十几倍（实测同一分片间隔内刷十几次 /player/<key>，白白穿透上游）。
@@ -359,7 +385,9 @@ export class TransmuxPipeline {
           }
           break; // VOD 已播完
         }
-        const ok = await this.loadUrl(url);
+        // 分段引用：纯 URL（HLS/直播）或带 Range 的对象（Matroska seek 重载等）
+        const ref = typeof seg === "string" ? { url: seg } : seg;
+        const ok = await this.loadUrl(ref.url, ref.range);
         if (this.stopped) break;
         if (!ok && this.config.source.live) {
           // 分片不可用（如整点切换：旧序列分片被删、新分片尚未就绪）：丢弃该批次的其余旧分段，
@@ -384,11 +412,12 @@ export class TransmuxPipeline {
   }
 
   /** 拉取一个 URL（分片或连续流）。返回是否成功拉到内容（false 表示该 URL 不可用/被掐断）。 */
-  private async loadUrl(url: string): Promise<boolean> {
+  private async loadUrl(url: string, initialRange?: { from: number; to?: number }): Promise<boolean> {
     this.eofReconnects = 0;
     this.eofBarrenStreak = 0;
     let attempt = 0;
-    let range: { from: number; to?: number } | undefined;
+    // 初始 Range：仅首个连接生效（Matroska seek 重载的 cue 定位偏移）；其后按断点续传推进
+    let range: { from: number; to?: number } | undefined = initialRange;
     // 分段源（HLS）：分片是「可替换」的——失败即由 start() 丢弃整批旧分段并刷新播放列表
     // （见 SEGMENT_MAX_ATTEMPTS 注释），这里只做 1 次短重试覆盖瞬时抖动，绝不长退避；
     // 连续流（直连 TS/FLV）：直播自愈重连（更大预算 + 退避 + 无数据看门狗）；点播/回看维持原行为。
@@ -490,8 +519,8 @@ export class TransmuxPipeline {
         this.demuxProbeBuffer = null;
         workerDebugWarn(
           `[PIPELINE] 直播连接 EOF（本次 ${(loader.bytesReceived / 1024).toFixed(0)}KB）→ ` +
-            `重锚到 ${continueAtSec.toFixed(1)}s（已发末端 ` +
-            `${this.remuxer.emittedEndSec.toFixed(1)}s / 播放头 ${playheadSec.toFixed(1)}s）→ ${delay}ms 后重连`,
+          `重锚到 ${continueAtSec.toFixed(1)}s（已发末端 ` +
+          `${this.remuxer.emittedEndSec.toFixed(1)}s / 播放头 ${playheadSec.toFixed(1)}s）→ ${delay}ms 后重连`,
         );
         await sleep(delay);
         if (this.stopped) return false;
@@ -519,7 +548,7 @@ export class TransmuxPipeline {
         const delay = Math.min(RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), RETRY_MAX_DELAY_MS);
         workerDebugWarn(
           `[PIPELINE] 直播流中断（code=${code}${loader.dataStalled ? " 无数据看门狗" : ""}）→ ` +
-            `${delay}ms 后重连 ${attempt}/${maxAttempts}`,
+          `${delay}ms 后重连 ${attempt}/${maxAttempts}`,
         );
         await sleep(delay);
         if (this.stopped) return false;

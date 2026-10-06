@@ -407,8 +407,16 @@ export class MediaSourceController {
     const state = this.tracks.get(track);
     if (!state) return;
     state.updating = false;
-
-    const ranges = this.readRanges(state.buffer);
+    // 回调可能在 SB 被拆除/MS 已关闭（外部 detach、destroy 竞态）后才派发：
+    // 读 removed SourceBuffer 的 buffered 会抛 InvalidStateError 且无人捕获，
+    // 直接变成「启动错误」面板 —— 必须 guard + try 双保险。
+    if (!this.hasBuffer(state.buffer)) return;
+    let ranges: BufferedRange[];
+    try {
+      ranges = this.readRanges(state.buffer);
+    } catch {
+      return;
+    }
     this.callbacks.onBufferUpdated?.(track, ranges);
 
     // 回收已播放区间，控制内存（低端设备重要，也避免缓冲无界增长）
@@ -422,7 +430,13 @@ export class MediaSourceController {
     const t = this.video.currentTime;
     for (const state of this.tracks.values()) {
       if (state.updating) continue;
-      const b = state.buffer.buffered;
+      let b: TimeRanges;
+      try {
+        if (!this.hasBuffer(state.buffer)) continue;
+        b = state.buffer.buffered;
+      } catch {
+        continue;
+      }
       if (b.length === 0) continue;
       if (t - b.start(0) > this.keepBehind + 5) {
         try {
