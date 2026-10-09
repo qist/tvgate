@@ -7,7 +7,7 @@ require (
 	github.com/andybalholm/brotli v1.2.6
 	github.com/asticode/go-astits v1.16.0
 	github.com/bluenviron/gortsplib/v5 v5.6.6
-	github.com/bluenviron/mediacommon/v2 v2.9.5
+	github.com/bluenviron/mediacommon/v2 v2.9.6
 	github.com/cloudflare/tableflip v1.2.3
 	github.com/dlclark/regexp2 v1.12.0
 	github.com/fsnotify/fsnotify v1.10.1
