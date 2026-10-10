@@ -278,7 +278,12 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 // --------------------
 func downloadFile(url, dst string) error {
 	client := &http.Client{Timeout: 300 * time.Second}
-	resp, err := client.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "TVGate-Updater")
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
