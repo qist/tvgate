@@ -40,6 +40,7 @@ const base: TranslationDict = {
   clickToPlay: "Click here to play",
   autoplayBlocked: "The browser blocks autoplay until you interact with the page",
   playingInPictureInPicture: "Playback continues in the Picture-in-Picture window",
+  openChannelList: "Open channel list",
 
   // 错误类文案
   failedToLoadPlaylist: "Could not load the playlist",
@@ -189,6 +190,7 @@ const zhHans: TranslationDict = {
   clickToPlay: "点击开始播放",
   autoplayBlocked: "浏览器限制了自动播放，请先与页面进行交互",
   playingInPictureInPicture: "画面已在画中画小窗中继续播放",
+  openChannelList: "打开频道列表",
 
   // 错误类文案
   failedToLoadPlaylist: "播放列表加载失败",
@@ -339,6 +341,7 @@ const zhHant: TranslationDict = {
   clickToPlay: "點擊開始播放",
   autoplayBlocked: "瀏覽器限制了自動播放，請先與頁面互動",
   playingInPictureInPicture: "畫面已在畫中畫小窗中繼續播放",
+  openChannelList: "開啟頻道列表",
 
   // 錯誤類文案
   failedToLoadPlaylist: "播放列表載入失敗",

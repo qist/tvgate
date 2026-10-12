@@ -505,7 +505,7 @@ self.onmessage = (ev: MessageEvent<WorkerCommand>) => {
             onLoadingComplete: () => post({ type: "loading-complete" }),
             onIOError: (info) =>
               post({ type: "error", error: { category: "io", code: info.code, info: info.msg, url: info.url } }),
-            onDemuxError: (msg) => post({ type: "error", error: { category: "demux", info: msg } }),
+            onDemuxError: (msg, detail) => post({ type: "error", error: { category: "demux", info: msg, detail } }),
           },
         );
         void pipeline.start().catch((e: unknown) => {

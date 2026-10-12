@@ -21,7 +21,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { clsx } from "clsx";
-import { CircleAlert, Play, X } from "lucide-react";
+import { CircleAlert, ListVideo, Play, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { usePlayerTouchGestures } from "../../hooks/use-player-touch-gestures";
 import { usePlayerTranslation } from "../../hooks/use-player-translation";
@@ -40,6 +40,7 @@ import {
 } from "../../lib/document-picture-in-picture";
 import {
   builtinWasmDecoders,
+  createNativePlaybackBackend,
   createPlaybackBackend,
   defaultConfig,
   getPlaybackBackendKind,
@@ -92,6 +93,8 @@ interface PlayerShellProps {
   nextChannel?: Channel | null;
   showSidebar?: boolean;
   onToggleSidebar?: () => void;
+  /** 是否为紧凑（手机）布局：错误面板据此决定是否给"频道列表"入口。 */
+  compactLayout?: boolean;
   /** 单击播放画面（含视频区）时上报：宿主据此实现"点屏幕出/收侧边栏"。 */
   onSurfaceClick?: () => void;
   isFullscreen: boolean;
@@ -401,6 +404,7 @@ function VideoPlayerShell({
   nextChannel = null,
   showSidebar = false,
   onToggleSidebar,
+  compactLayout = false,
   onSurfaceClick,
   isFullscreen,
   onFullscreenToggle,
@@ -416,7 +420,39 @@ function VideoPlayerShell({
   dockControlsHost = null,
 }: PlayerShellProps) {
   const tr = usePlayerTranslation(locale);
-  const backendKind = getPlaybackBackendKind();
+  // MSE 转封装管线只有 TS/FLV/Matroska/ADTS 解复用器：渐进式 MP4（ISO BMFF）会被它判
+  // FORMAT_UNSUPPORTED，而浏览器 <video> 原生就能播。置位后本组件改用原生后端并重灌该流。
+  const [forceNativeBackend, setForceNativeBackend] = useState(false);
+  const switchToNativePendingRef = useRef(false);
+  // 直播起播前探首段容器形态：MSE 转封装管线没有 ISO BMFF（渐进式 MP4）解复用器，命中
+  // 就直接选原生后端（不走"报错再切换"）。写 ref 供 buildBackendForSlot 立即读取，避开
+  // setState 未提交的竞态。上限 1.5s；探不到/超时按默认（MSE，TS/HLS/FLV/MKV 都能解）。
+  const streamKindRef = useRef<"native" | "mse" | null>(null);
+  const [streamKind, setStreamKind] = useState<"native" | "mse" | null>(null);
+  const probeStreamKind = useEffectEvent(async (url: string): Promise<"native" | "mse" | null> => {
+    const ctrl = new AbortController();
+    const timer = window.setTimeout(() => ctrl.abort(), 1500);
+    try {
+      const res = await fetch(url, { headers: { Range: "bytes=0-15" }, cache: "no-store", signal: ctrl.signal });
+      const ct = String(res.headers.get("content-type") || "").toLowerCase();
+      let head = "";
+      const reader = res.body?.getReader();
+      if (reader) {
+        const { value } = await reader.read();
+        if (value) head = new TextDecoder().decode(value.subarray(0, 8));
+        await reader.cancel().catch(() => { });
+      }
+      if (ct.includes("mp4") || head.startsWith("ftyp", 4) || head.startsWith("styp", 4) || head.startsWith("moov", 4)) return "native";
+      if (ct.includes("mpegurl") || ct.includes("mp2t") || ct.includes("matroska") || ct.includes("flv") || head.startsWith("#EXTM3U") || head.startsWith("FLV")) return "mse";
+      return null;
+    } catch {
+      return null;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  });
+  // 渲染用的后端类型：强制原生或探测到 MP4 时显示 native（供控制条外置等 UI 判断一致）。
+  const backendKind = forceNativeBackend || streamKind === "native" ? "native" : getPlaybackBackendKind();
   // 原生解码 + 手机（紧凑布局才会传宿主）：控制条外置到视频区下方。
   // 接管型内核会把叠在视频上的控制条/徽标整块盖掉、点击也被它吃掉；
   // 视频区外的常规文档流不受影响，播放/音量/换线路始终可见可点。
@@ -940,6 +976,21 @@ function VideoPlayerShell({
       });
       return;
     }
+    // MSE 转封装管线啃不动 ISO BMFF（渐进式 MP4），但 <video> 原生可解：改走原生后端重灌，
+    // 而不是走常规恢复（那会反复重试同一条 MSE 路，最终弹错误面板）。只对 MP4/BMFF 生效，
+    // 其它 FORMAT_UNSUPPORTED（如加密不支持）仍走恢复流程。backendKind 守卫保证只切一次。
+    if (
+      playerError.detail === PlayerErrors.FORMAT_UNSUPPORTED &&
+      backendKind === "mse" &&
+      /iso bmff|mp4/i.test(playerError.info ?? "")
+    ) {
+      debugWarn("MP4/ISO BMFF 流 → 改走原生后端重灌");
+      switchToNativePendingRef.current = true;
+      setForceNativeBackend(true);
+      setNotice(null);
+      setFailure(null);
+      return;
+    }
     recoverFromBackendError(playerError, slot);
   });
 
@@ -959,6 +1010,12 @@ function VideoPlayerShell({
       channel != null &&
       lastStreamIdentityRef.current != null &&
       (channel.id !== lastStreamIdentityRef.current.channelId || activeSourceIndex !== lastStreamIdentityRef.current.sourceIndex);
+
+    // 换频道/换线路：撤销「该流走原生」的结论，新流重新按 MSE 起播（下一条未必是 MP4）。
+    if (isStreamIdentityChange) {
+      switchToNativePendingRef.current = false;
+      if (forceNativeBackend) setForceNativeBackend(false);
+    }
 
     if (recoverySeekFlagRef.current && !isStreamIdentityChange) recoverySeekFlagRef.current = false;
     else {
@@ -981,11 +1038,13 @@ function VideoPlayerShell({
   /** 为指定槽创建（或复用）后端实例并接好全部事件；同槽同类型实例直接复用。 */
   const buildBackendForSlot = useEffectEvent((slot: SlotTag): PlaybackBackend | null => {
     const video = videoRefOf(slot).current;
-    if (!video || (backendKind === "mse" && !isMSEPlaybackSupported())) return null;
+    // 有效后端类型：强制原生 > 首段探测结果（MP4→native）> 设备能力默认。
+    const kind = forceNativeBackend ? "native" : (streamKindRef.current ?? getPlaybackBackendKind());
+    if (!video || (kind === "mse" && !isMSEPlaybackSupported())) return null;
 
     const existing = backendRefOf(slot).current;
     if (existing) {
-      if (existing.kind !== backendKind) {
+      if (existing.kind !== kind) {
         existing.destroy();
         backendRefOf(slot).current = null;
       } else {
@@ -993,13 +1052,16 @@ function VideoPlayerShell({
       }
     }
 
-    const backend = createPlaybackBackend(video, {
+    const backendConfig = {
       softDecoderUrls: builtinWasmDecoders,
       paintCanvas: canvasRefOf(slot).current ?? undefined,
       deinterlaceAuto: autoDeinterlace,
       enhancePicture: pictureEnhancement,
       pcmChannelMix: audioChannelMode,
-    });
+    };
+    const backend = kind === "native"
+      ? createNativePlaybackBackend(video, backendConfig)
+      : createPlaybackBackend(video, backendConfig);
     backend.setVolume(volumeLevel);
     backend.setMuted(mutedState);
     // 事件回调一律以"实例仍挂在槽上"为闸门：已被替换/销毁的实例不得再驱动 UI。
@@ -1200,7 +1262,10 @@ function VideoPlayerShell({
     if (!newSegments.length) return;
 
     const activeSlot = currentSlotId();
-    const activeBackendInstance = backendRefOf(activeSlot).current ?? buildBackendForSlot(activeSlot);
+    // 一律走 buildBackendForSlot：有效后端类型可能已变（如 MP4/ISO BMFF 回退原生），
+    // 它会在类型不符时销毁旧实例并重建、类型一致时原样复用。若这里用 `?? 旧实例`，
+    // MP4 回退时仍复用原 MSE 实例重灌 → 再次报 FormatUnsupported（刷新才按探测结果走原生）。
+    const activeBackendInstance = buildBackendForSlot(activeSlot);
     if (!activeBackendInstance) return;
 
     if (playbackStabilityTimerRef.current) {
@@ -1291,6 +1356,19 @@ function VideoPlayerShell({
   /** 错误恢复专用重灌：绕过换流判断，直接走 ingestSegments。 */
   const queueRetryReload = useEffectEvent((newSegments: PlayerSegment[]) => ingestSegments(newSegments));
 
+  // 「MP4 改走原生后端」的执行点：等 forceNativeBackend 生效（本次渲染 backendKind 已为 native）
+  // 后再重灌，buildBackendForSlot 才会把 MSE 实例换成原生实例。放 effect 里是为了避开在同一
+  // 事件里 setState 尚未提交、仍按旧 backendKind 重建的竞态。
+  useEffect(() => {
+    if (!forceNativeBackend || !switchToNativePendingRef.current) return;
+    switchToNativePendingRef.current = false;
+    setAttemptCount(0);
+    setAttemptFloor(0);
+    recoverySeekFlagRef.current = true;
+    setIsLoadingStream(true);
+    queueRetryReload(segmentsForRetry());
+  }, [forceNativeBackend]);
+
   // 卸载：丢弃换台记录并销毁两个槽。
   useEffect(() => {
     return () => {
@@ -1341,7 +1419,22 @@ function VideoPlayerShell({
       suppressNextLoadRef.current = false;
       return;
     }
-    ingestSegments(segments);
+    // 先探首段形态再起播：MP4/ISO BMFF 直接走原生后端（MSE 管线没有对应解复用器）。
+    const url = segments[0]?.url;
+    if (!url) {
+      ingestSegments(segments);
+      return;
+    }
+    let cancelled = false;
+    void probeStreamKind(url).then((kind) => {
+      if (cancelled) return;
+      streamKindRef.current = kind;
+      setStreamKind(kind);
+      ingestSegments(segments);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [segments]);
 
   const previousPlayModeRef = useRef(playMode);
@@ -1752,7 +1845,14 @@ function VideoPlayerShell({
   const onSurfaceActivated = useCallback(
     (event: ReactMouseEvent) => {
       const target = event.target as HTMLElement;
-      if (target !== event.currentTarget && target.tagName !== "VIDEO" && !("playerSurfaceHit" in target.dataset)) return;
+      // 画面命中层与错误面板都带 data-player-surface-hit：点它们等同点画面。
+      // 用 closest 兼容面板内部元素，避免"点错误面板没反应、无法唤出频道列表"。
+      if (
+        target !== event.currentTarget &&
+        target.tagName !== "VIDEO" &&
+        !target.closest("[data-player-surface-hit]")
+      )
+        return;
       if (consumeSuppressedClick()) return;
       if (controlsVisible) concealControls();
       else revealControls();
@@ -2183,7 +2283,9 @@ function VideoPlayerShell({
   );
 
   const errorPanel = failure && (
-    <div className="player-performance-error-backdrop player-performance-overlay-background absolute inset-0 z-10 flex items-center justify-center bg-[radial-gradient(circle_at_center,rgba(76,20,55,0.46),rgba(2,6,23,0.96)_72%)] p-3 backdrop-blur-[3px] md:p-4">
+    <div
+      data-player-surface-hit=""
+      className="player-performance-error-backdrop player-performance-overlay-background absolute inset-0 z-10 flex items-center justify-center bg-[radial-gradient(circle_at_center,rgba(76,20,55,0.46),rgba(2,6,23,0.96)_72%)] p-3 backdrop-blur-[3px] md:p-4">
       <div
         className={clsx(
           PLAYER_OVERLAY_SURFACE_CLASS,
@@ -2226,6 +2328,20 @@ function VideoPlayerShell({
             <div className="font-medium text-amber-100">{tr("suggestedAction")}</div>
             <div className="mt-0.5 text-amber-50/70">{failure.suggestion}</div>
           </div>
+        )}
+        {/* 错误面板不阻断选台：桌面点击侧栏按钮即可展开频道列表换台，不至于卡在这条流上。 */}
+        {!compactLayout && onToggleSidebar && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleSidebar();
+            }}
+            className="player-performance-motion mt-3 inline-flex items-center gap-1.5 rounded-lg border border-violet-200/25 bg-violet-500/15 px-3 py-1.5 font-medium text-violet-50 text-xs transition-colors hover:bg-violet-500/25 md:text-sm"
+          >
+            <ListVideo className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {tr("openChannelList")}
+          </button>
         )}
       </div>
     </div>

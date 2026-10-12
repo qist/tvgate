@@ -19,6 +19,7 @@ import { FlvDemuxer } from "../demux/flv-demuxer";
 import { TsDemuxer, type TrackInfo } from "../demux/ts-demuxer";
 import { AdtsDemuxer, probeAdtsStream } from "../demux/adts-demuxer";
 import { MatroskaDemuxer, matroskaProbe, type MatroskaDemuxerCallbacks } from "../demux/matroska-demuxer";
+import { PlayerErrors, type PlayerErrorDetail } from "../errors";
 import { workerDebugWarn } from "../worker/debug";
 import type { SegmentSource } from "../hls/segment-source";
 import {
@@ -50,7 +51,8 @@ export interface PipelineCallbacks {
   onSoftAudioData?(chunk: SoftAudioChunk): void;
   onLoadingComplete?(): void;
   onIOError?(info: LoaderErrorInfo): void;
-  onDemuxError?(message: string): void;
+  /** 解复用失败；detail 携带语义化错误码（见 errors.ts），上层据此区分处理。 */
+  onDemuxError?(message: string, detail?: PlayerErrorDetail): void;
 }
 
 export interface PipelineConfig {
@@ -185,6 +187,22 @@ function mergeDefined<T extends object>(current: T | undefined, update: T): T {
   return merged as T;
 }
 
+/**
+ * ISO BMFF（MP4）首盒探测：盒头 = 4 字节大端 boxSize + 4 字节 boxType，
+ * 首盒是 ftyp（分片化/分段流的首盒为 styp）。
+ *
+ * 与其余判据天然不相交 —— TS 同步字恒在 offset 0 且为 0x47、FLV 为 "FLV"、
+ * ADTS 为 0xFF、Matroska 为 0x1A45DFA3，而 ftyp 的 offset 0 是盒子长度、
+ * offset 4 才是 "ftyp"，故命中即可判定，不存在互相误吞。
+ *
+ * 返回 "need-more"：字节不足以读满盒头（8 字节），等下一块合并后再判。
+ */
+function probeIsoBmff(data: Uint8Array): "need-more" | "mp4" | "other" {
+  if (data.byteLength < 8) return "need-more";
+  const boxType = String.fromCharCode(data[4], data[5], data[6], data[7]);
+  return boxType === "ftyp" || boxType === "styp" ? "mp4" : "other";
+}
+
 export class TransmuxPipeline {
   private loader: FetchStreamLoader | null = null;
   private readonly ioController: IOController;
@@ -193,6 +211,8 @@ export class TransmuxPipeline {
    * 见 feedDemuxer()。HTTP-FLV（直播）与连续 TS 直链都走静态 URL 列表这条路径。
    */
   private demuxer: TsDemuxer | FlvDemuxer | AdtsDemuxer | MatroskaDemuxer | null = null;
+  /** 已判定为转封装管线不支持的容器（如渐进式 MP4）：只上报一次错误，后续字节直接丢。 */
+  private demuxUnsupported = false;
   /** 探测期暂存（首块不足 3 字节时等更多数据再判）。 */
   private demuxProbeBuffer: Uint8Array | null = null;
   private readonly demuxerCallbacks: MatroskaDemuxerCallbacks;
@@ -316,12 +336,14 @@ export class TransmuxPipeline {
    * 首块探测 FLV / 裸 ADTS / Matroska / MPEG-TS 并惰性创建解复用器。
    * FLV 魔数 "FLV"（HTTP-FLV 直播）→ FlvDemuxer；连得上两个 ADTS 帧头（广播源的
    * `.hls.ts` 其实是裸 AAC）→ AdtsDemuxer；EBML 魔数（网盘/直链 MKV，典型 4K HEVC +
-   * E-AC-3）→ MatroskaDemuxer；其余一律按连续 MPEG-TS（TsDemuxer）。
+   * E-AC-3）→ MatroskaDemuxer；ISO BMFF 首盒（ftyp/styp，渐进式 MP4 直链）→ 本流水线
+   * 没有 mp4 解封装器，上报 FORMAT_UNSUPPORTED 并吞掉后续字节；其余一律按连续 MPEG-TS。
    * ADTS 判定必须早于 TS 兜底：否则裸 AAC 交给 TsDemuxer 会被当"不同步数据"静默丢弃。
-   * Matroska 判定同样早于 TS 兜底：EBML 魔数 0x1A45DFA3 的首字节不可能与 TS 同步字(0x47)、
+   * Matroska / MP4 判定同样早于 TS 兜底：EBML 魔数/mp4 fourcc 不可能与 TS 同步字(0x47)、
    * FLV("FLV") 冲突，且只发生在流首（新连接首块），直播流零影响。
    */
   private feedDemuxer(chunk: Uint8Array): void {
+    if (this.demuxUnsupported) return; // 已判为不支持的容器：只报过一次，后续字节直接丢
     if (this.demuxer) {
       this.demuxer.push(chunk);
       return;
@@ -347,6 +369,25 @@ export class TransmuxPipeline {
     const mkv = matroskaProbe(data);
     if (mkv.needMoreData) {
       this.demuxProbeBuffer = data;
+      return;
+    }
+    // MP4（ISO BMFF）：渐进式单体是 ftyp+moov+mdat，本流水线既没有 mp4 demuxer，
+    // 单体盒子也无法喂给 SourceBuffer。原先「其余一律按连续 MPEG-TS」会把它交给
+    // TsDemuxer —— mp4 首字节是盒子长度、不是 0x47 同步字，永远等不到同步，整条流被
+    // **静默丢弃**（黑屏且没有任何错误，与裸 AAC 掉进 TS 兜底是同一类坑）。这里显式
+    // 识别并上报，交上层改走原生后端或明确失败。
+    const bmff = probeIsoBmff(data);
+    if (bmff === "need-more") {
+      this.demuxProbeBuffer = data;
+      return;
+    }
+    if (bmff === "mp4") {
+      this.demuxProbeBuffer = null;
+      this.demuxUnsupported = true;
+      this.callbacks.onDemuxError?.(
+        "MP4（ISO BMFF）流：转封装流水线没有对应解封装器，需改用原生后端播放",
+        PlayerErrors.FORMAT_UNSUPPORTED,
+      );
       return;
     }
     this.demuxProbeBuffer = null;

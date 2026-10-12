@@ -1128,6 +1128,7 @@ function PlayerScreen() {
                 nextChannel={nextInOrder}
                 showSidebar={isPanelShown}
                 onToggleSidebar={flipPanelVisibility}
+                compactLayout={isCompactLayout}
                 onSurfaceClick={handleStageTap}
                 isFullscreen={isFullscreenActive}
                 onFullscreenToggle={toggleImmersiveView}

@@ -339,3 +339,72 @@ describe("分段源分片失效恢复（整点切换）", () => {
     expect(errors).toEqual([]); // 分片失败不上报（不把整点切换当成播放错误）
   });
 });
+
+describe("TransmuxPipeline 首块容器探测（MP4 不落 TS 兜底）", () => {
+  /** 最小 ISO BMFF 文件头：boxSize(4) + boxType(4) + major_brand(4)。 */
+  const mp4Header = (boxType = "ftyp"): Uint8Array => {
+    const bytes = new Uint8Array(64);
+    bytes.set([0x00, 0x00, 0x00, 0x20], 0);
+    for (let i = 0; i < 4; i++) bytes[4 + i] = boxType.charCodeAt(i);
+    bytes.set([0x69, 0x73, 0x6f, 0x6d], 8); // "isom"
+    return bytes;
+  };
+
+  /** 一个 MPEG-TS 包（188 字节，首字节同步字 0x47）。 */
+  const tsPacket = (): Uint8Array => {
+    const bytes = new Uint8Array(188);
+    bytes[0] = 0x47;
+    return bytes;
+  };
+
+  // biome-ignore lint/suspicious/noExplicitAny: 私有方法仅测试内调用
+  const feed = (pipeline: TransmuxPipeline): ((chunk: Uint8Array) => void) => (pipeline as any).feedDemuxer.bind(pipeline);
+  // biome-ignore lint/suspicious/noExplicitAny: 私有字段仅测试内读取
+  const demuxerOf = (pipeline: TransmuxPipeline): any => (pipeline as any).demuxer;
+
+  it("渐进式 MP4 首块上报 FORMAT_UNSUPPORTED，不再被当 TS 静默吞掉", () => {
+    const errors: Array<{ info?: string; detail?: string }> = [];
+    const pipeline = new TransmuxPipeline(
+      { urls: [] },
+      { onDemuxError: (info, detail) => errors.push({ info, detail }) },
+    );
+    const push = feed(pipeline);
+
+    push(mp4Header());
+    expect(errors).toHaveLength(1);
+    expect(errors[0].detail).toBe("FormatUnsupported");
+    // 未落到任何 demuxer：既不会喂给 TsDemuxer，也不会逐块重复上报
+    expect(demuxerOf(pipeline)).toBeNull();
+    push(mp4Header());
+    expect(errors).toHaveLength(1);
+  });
+
+  it("首块读不满盒头（<8 字节）先缓存，补齐后再判", () => {
+    const errors: string[] = [];
+    const pipeline = new TransmuxPipeline({ urls: [] }, { onDemuxError: (info) => errors.push(info) });
+    const push = feed(pipeline);
+
+    push(new Uint8Array([0x00, 0x00, 0x00, 0x20, 0x66])); // 只到 "f"，boxType 读不全
+    expect(errors).toHaveLength(0);
+    expect(demuxerOf(pipeline)).toBeNull();
+
+    push(new Uint8Array([0x74, 0x79, 0x70])); // 补齐 → "ftyp"
+    expect(errors).toHaveLength(1);
+    expect(demuxerOf(pipeline)).toBeNull();
+  });
+
+  it("分段化流首盒 styp 同样识别", () => {
+    const errors: string[] = [];
+    const pipeline = new TransmuxPipeline({ urls: [] }, { onDemuxError: (info) => errors.push(info) });
+    feed(pipeline)(mp4Header("styp"));
+    expect(errors).toHaveLength(1);
+  });
+
+  it("TS 同步字流照旧落 TsDemuxer（MP4 探测不误吞）", () => {
+    const errors: string[] = [];
+    const pipeline = new TransmuxPipeline({ urls: [] }, { onDemuxError: (info) => errors.push(info) });
+    feed(pipeline)(tsPacket());
+    expect(errors).toHaveLength(0);
+    expect(demuxerOf(pipeline)?.constructor.name).toBe("TsDemuxer");
+  });
+});
