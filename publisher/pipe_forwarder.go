@@ -26,6 +26,10 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
+// streamDataActiveWindow：转发器最近多久内有数据到达，即认定为"正在推流"。
+// 略大于最慢源的帧间隔，既能反映真实的持续供流，又能在停流后及时熄灯。
+const streamDataActiveWindow = 15 * time.Second
+
 // StreamHub 管理流的生命周期和客户端连接
 
 // stderrTail 捕获进程 stderr 的尾部（最多 max 字节），用于失败诊断。
@@ -322,6 +326,10 @@ type PipeForwarder struct {
 
 	// RTMP 推流累计字节（供 FFmpeg 运行统计/码率展示）
 	pushBytes atomic.Uint64
+
+	// 最近一次读到流数据的时间（UnixNano）。本地模式没有 FFmpeg 推流统计，
+	// 「运行状态」靠它判定转发器是否真的在供流（有流数据即视为正在推流）。
+	lastDataAt atomic.Int64
 
 	ffmpegCmd *exec.Cmd
 
@@ -1092,6 +1100,9 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 				// chunk 是每次 Read 后独立 make 的副本，不会被复用，可直接共享引用（零拷贝）。
 				pf.hub.BroadcastNoCopy(chunk)
 
+				// 记录数据到达时间（原子写，无锁热路径）：本地模式无推流进程时以它判定"正在推流"
+				pf.markData()
+
 				// 仅在开始时通知 StreamHub 已接收到数据（避免循环内每次抢全局写锁）
 				if chunkCount <= 10 {
 					streamHub := GetStreamHub(pf.streamName)
@@ -1186,6 +1197,9 @@ func (pf *PipeForwarder) forwardDataFromPipe() {
 							}
 						}
 					}
+
+					// 数据在流转（转发实例）：同样刷新"最近有数据"时间
+					pf.markData()
 
 					// 广播到 hub（确保数据能被其他客户端接收）
 					// pf.hub.Broadcast(chunk)
@@ -1570,6 +1584,17 @@ func (pf *PipeForwarder) IsRunning() bool {
 	return pf.isRunning
 }
 
+// markData 记录一次数据到达（读循环热路径，原子写无需加锁）。
+func (pf *PipeForwarder) markData() {
+	pf.lastDataAt.Store(time.Now().UnixNano())
+}
+
+// HasRecentData 判断最近 window 内是否读到过流数据。
+func (pf *PipeForwarder) HasRecentData(window time.Duration) bool {
+	t := pf.lastDataAt.Load()
+	return t != 0 && time.Since(time.Unix(0, t)) <= window
+}
+
 // IsHealthy 检查 PipeForwarder 是否健康运行
 func (pf *PipeForwarder) IsHealthy() bool {
 	pf.mutex.Lock()
@@ -1913,6 +1938,14 @@ func (sh *StreamHub) HLSViewers() int {
 		return 0
 	}
 	return sh.hlsManager.HLSViewers()
+}
+
+// IsLive 报告该流当前是否真的有数据在流动（本地推流/转发正在供流）。
+// 本地模式没有主推流进程（无 FFmpeg 推流统计条目），「运行状态」用它兜底：
+// 转发器在跑且最近有数据到达，即视为"正在推流"，而不是停在"等待启动"。
+func (sh *StreamHub) IsLive() bool {
+	pf := sh.GetActiveForwarder()
+	return pf != nil && pf.IsRunning() && pf.HasRecentData(streamDataActiveWindow)
 }
 
 // PeekStreamHub 仅查询 StreamHub（不存在返回 nil，不创建）。

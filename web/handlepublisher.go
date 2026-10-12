@@ -32,6 +32,8 @@ func (h *ConfigHandler) handlePublisherStats(w http.ResponseWriter, r *http.Requ
 		HasManager bool                          `json:"has_manager"`
 		FlvViewers int                           `json:"flv_viewers"`
 		HlsViewers int                           `json:"hls_viewers"`
+		// 本地模式（无主推流进程）下，转发器确有流数据在流动（见 StreamHub.IsLive）。
+		Pushing bool `json:"pushing"`
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -66,6 +68,8 @@ func (h *ConfigHandler) handlePublisherStats(w http.ResponseWriter, r *http.Requ
 		if sh := publisher.PeekStreamHub(name); sh != nil {
 			st.FlvViewers = sh.FLVViewers()
 			st.HlsViewers = sh.HLSViewers()
+			// 无推流统计但有流数据：本地模式转发器正在供流，视为正在推流。
+			st.Pushing = sh.IsLive()
 		}
 		streams = append(streams, st)
 	}

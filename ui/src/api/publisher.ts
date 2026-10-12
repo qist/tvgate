@@ -93,6 +93,8 @@ export interface StreamStatus {
   primary?: ProcessStats;
   flv_viewers?: number;
   hls_viewers?: number;
+  /** 本地模式（无主推流进程）下转发器确有流数据在流动，视为正在推流。 */
+  pushing?: boolean;
 }
 
 const base = () => resolveBase() + "api/publisher";

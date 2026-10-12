@@ -92,6 +92,7 @@ export function PublisherPage() {
   const [path, setPath] = useState("");
   const [note, setNote] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
   const [editing, setEditing] = useState<{ name: string; isNew: boolean } | null>(null);
+  const [nameDraft, setNameDraft] = useState("");
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [draft, setDraft] = useState<StreamItem>(defaultStream());
 
@@ -169,24 +170,28 @@ export function PublisherPage() {
   const openEdit = (name?: string) => {
     if (name) {
       setEditing({ name, isNew: false });
+      setNameDraft(name);
       setDraft(deepClone(cfg[name]));
     } else {
       setEditing({ name: "", isNew: true });
+      setNameDraft("");
       setDraft(defaultStream());
     }
   };
 
   const saveStream = async () => {
     if (!editing) return;
-    let name = editing.name;
-    if (editing.isNew) {
-      name = (name || "").trim();
-      if (!name) return notify("err", "请输入推流名称");
-      if (!/^[a-zA-Z0-9_-]+$/.test(name)) return notify("err", "推流名称只能包含字母、数字、下划线和连字符");
-      if (cfg[name]) return notify("err", "已存在同名推流: " + name);
+    const name = nameDraft.trim();
+    if (!name) return notify("err", "请输入推流名称");
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) return notify("err", "推流名称只能包含字母、数字、下划线和连字符");
+    // 新建或改名后与既有节点重名都要拦下（改名不能覆盖另一条推流）
+    if (cfg[name] && (editing.isNew || name !== editing.name)) {
+      return notify("err", "已存在同名推流: " + name);
     }
     if (!getNested(draft, "stream.source.url")) return notify("err", "源地址 URL 不能为空");
-    const next = { ...cfg, [name]: deepClone(draft) } as Record<string, any>;
+    const next = { ...cfg } as Record<string, any>;
+    if (!editing.isNew && name !== editing.name) delete next[editing.name];
+    next[name] = deepClone(draft);
     await saveAll(next);
     setEditing(null);
   };
@@ -469,7 +474,21 @@ export function PublisherPage() {
                   )}
                   <div className="flex gap-2">
                     <dt className="w-20 shrink-0 text-muted-foreground">运行状态</dt>
-                    <dd>{!st ? "-" : !st.has_manager ? "Publisher 未初始化" : !p ? (item.enabled ? "等待启动" : "未启用") : p.running ? `运行中 (PID ${p.pid})` : "未运行"}</dd>
+                    <dd>
+                      {!st
+                        ? "-"
+                        : !st.has_manager
+                          ? "Publisher 未初始化"
+                          : p?.running
+                            ? `运行中 (PID ${p.pid})`
+                            : st.pushing
+                              ? "正在推流"
+                              : p
+                                ? "未运行"
+                                : item.enabled
+                                  ? "等待启动"
+                                  : "未启用"}
+                    </dd>
                   </div>
                   {p && (
                     <>
@@ -570,6 +589,16 @@ export function PublisherPage() {
               </Button>
             </div>
             <div className="flex-1 space-y-4 overflow-y-auto p-4">
+              {editing.isNew && (
+                <Field label="推流名称" hint="仅支持字母、数字、下划线和连字符，创建后不可修改">
+                  <Input
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    placeholder="如：cam01"
+                    autoFocus
+                  />
+                </Field>
+              )}
               <StreamForm draft={draft} setDraft={setDraft} />
             </div>
             <div className="flex justify-end gap-2 border-t px-4 py-3">
