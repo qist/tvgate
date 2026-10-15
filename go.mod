@@ -6,7 +6,7 @@ require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
 	github.com/andybalholm/brotli v1.2.6
 	github.com/asticode/go-astits v1.16.0
-	github.com/bluenviron/gortsplib/v5 v5.6.6
+	github.com/bluenviron/gortsplib/v5 v5.6.7
 	github.com/bluenviron/mediacommon/v2 v2.9.6
 	github.com/cloudflare/tableflip v1.2.3
 	github.com/dlclark/regexp2 v1.12.0
@@ -36,10 +36,10 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/pion/logging v0.2.4 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
-	github.com/pion/rtcp v1.2.17 // indirect
+	github.com/pion/rtcp v1.2.19 // indirect
 	github.com/pion/sdp/v3 v3.0.20 // indirect
-	github.com/pion/srtp/v3 v3.0.15 // indirect
-	github.com/pion/transport/v4 v4.1.0 // indirect
+	github.com/pion/srtp/v3 v3.1.3 // indirect
+	github.com/pion/transport/v5 v5.1.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
