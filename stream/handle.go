@@ -618,16 +618,34 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 	// 拼接结果
 	result := strings.Join(resultLines, "\n") + "\n"
 
+	// 播放列表正文已被重写（分片/密钥行都加了代理前缀），长度与源站不再一致：上游对
+	// "Range: bytes=0-" 常回 206 + Content-Range（CDN 常见），必须归一为 200 全量并清掉
+	// 范围头，否则严格遵守 Content-Range 的客户端（ffmpeg / ijk 等）只读到源站长度、
+	// 把重写后的正文截断在分片名中间 → parse_playlist error / 刷新列表失败 → 几秒即停。
+	if proxyResp.StatusCode == http.StatusPartialContent {
+		proxyResp.StatusCode = http.StatusOK
+	}
 	CopyHeader(w.Header(), proxyResp.Header, r.ProtoMajor)
 	w.Header().Del("Content-Length")
+	w.Header().Del("Content-Range")
+	w.Header().Del("Accept-Ranges")
 	w.WriteHeader(proxyResp.StatusCode)
 	_, _ = w.Write([]byte(result))
 }
 
-// joinBaseWithFullURL 拼接 baseURL 和完整 URL，不做任何 encode
+// joinBaseWithFullURL 拼接 baseURL 和完整 URL，不做任何 encode。
+//
+// 目标 URL 的 "://" 收紧为 ":/"（/https://x → /https:/x），与用户直接访问的入口形式一致，
+// 并绕开 http.ServeMux 对含 "//" 路径的 cleanPath 规范化跳转（307 → 单斜杠）。
+// 该跳转对分片行通常无害（播放器多会跟随重定向），但 EXT-X-KEY 的 key 请求一旦被跳转，
+// 不跟随重定向的播放器（部分安卓 ijk 内核）会把 86 字节的跳转页当成 16 字节 AES key，
+// 解密失败、画面出不来。收紧后代理直接命中，无需额外一跳。
 func joinBaseWithFullURL(baseURL, fullURL string) string {
 	baseURL = strings.TrimRight(baseURL, "/")
 	fullURL = strings.TrimLeft(fullURL, "/")
+	// 调用点已保证 fullURL 以 http(s):// 开头，替换首个 "://" 即收紧 scheme，
+	// 不会误改 query 中的内容。
+	fullURL = strings.Replace(fullURL, "://", ":/", 1)
 	return baseURL + "/" + fullURL
 }
 
@@ -665,12 +683,21 @@ func SetConnectionCloseFraming(w http.ResponseWriter, resp *http.Response, urlPa
 }
 
 // PrepareProxyHeaders 在 WriteHeader 之前准备响应头：
-//   - TS/直播流：必须移除 Content-Length（流式边下边发，长度不定），
-//     否则后端的 Content-Length 会在 WriteHeader 时被提交，与实际下发字节不符
+//   - 直播流：必须移除 Content-Length（持续推流，长度不定），走 chunked
+//   - TS 分片：开启 TS 缓存（关键帧对齐）时正文可能被裁剪而变短，必须移除 CL；
+//     未开启缓存时是 1:1 原样转发，上游 CL 与实际下发字节一致，保留为定长响应。
+//     这样 TS 分片是 200 + Content-Length，与旧代理一致——部分播放器（不认 chunked、
+//     或依赖 Content-Length 计算进度/判完整）在 chunked 下会卡住或反复重连。
 //   - 普通响应：保留 Content-Length 走 keep-alive；后端未提供 CL 时走连接关闭帧避免 chunked
 func PrepareProxyHeaders(w http.ResponseWriter, resp *http.Response, urlPath string) {
-	if IsTSRequest(urlPath) || isLiveStream(urlPath) {
+	if isLiveStream(urlPath) {
 		w.Header().Del("Content-Length")
+		return
+	}
+	if IsTSRequest(urlPath) {
+		if isStreamFeatureEnabled() {
+			w.Header().Del("Content-Length")
+		}
 		return
 	}
 	SetConnectionCloseFraming(w, resp, urlPath)

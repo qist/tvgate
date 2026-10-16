@@ -1018,7 +1018,16 @@ func (dm *DomainMapper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 仅 m3u8（内容会被重写）移除 Content-Length；其余由 PrepareProxyHeaders 按路径处理：
 	// TS/直播流移除 CL，普通响应保留并处理连接关闭帧
 	if isM3U8 {
+		// m3u8 正文会被重写（分片/密钥行加前端 host），长度与源站不再一致：上游对
+		// "Range: bytes=0-" 常回 206 + Content-Range，必须归一为 200 全量并清掉范围头，
+		// 否则严格遵守 Content-Range 的客户端（ffmpeg / ijk 等）只读到源站长度、把重写后
+		// 的正文截断在分片名中间 → parse_playlist error / 刷新列表失败 → 几秒即停。
+		if resp.StatusCode == http.StatusPartialContent {
+			resp.StatusCode = http.StatusOK
+		}
 		w.Header().Del("Content-Length")
+		w.Header().Del("Content-Range")
+		w.Header().Del("Accept-Ranges")
 	} else {
 		stream.PrepareProxyHeaders(w, resp, originalReqURL.Path)
 	}
