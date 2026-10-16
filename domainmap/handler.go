@@ -396,6 +396,21 @@ func (dm *DomainMapper) replaceSpecialNestedURLClean(
 				uri := domainURIRegex.FindStringSubmatch(match)[1]
 				newURI := uri
 
+				// 内嵌 URI（EXT-X-KEY/EXT-X-MAP/EXT-X-MEDIA 等）若为绝对地址，必须与分片行一样
+				// 改写成前端 source host：否则客户端会直连上游源站（未经域名映射/代理、
+				// 泄露真实源地址；被墙或防盗链时 key/map 拉取失败，表现为解密失败、画面出不来）。
+				if strings.HasPrefix(newURI, "http://") || strings.HasPrefix(newURI, "https://") {
+					if u, err := url.Parse(newURI); err == nil {
+						u.Scheme = frontendScheme
+						u.Host = sourceHost
+						// 手动拼接，避免 url.String() 对 query 做百分号编码
+						newURI = u.Scheme + "://" + u.Host + u.Path
+						if u.RawQuery != "" {
+							newURI += "?" + u.RawQuery
+						}
+					}
+				}
+
 				// 生成 token
 				token := ""
 				if tm != nil && tm.Enabled {

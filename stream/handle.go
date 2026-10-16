@@ -563,6 +563,11 @@ func handleSpecialContent(w http.ResponseWriter, r *http.Request, proxyResp *htt
 							newURI += "?" + tokenParam + "=" + token
 						}
 					}
+					// 内嵌 URI（EXT-X-KEY/EXT-X-MAP/EXT-X-MEDIA 等）与分片行一样必须套本站代理前缀，
+					// 否则客户端会直连源站（key/map 未经代理、泄露源地址，被墙或防盗链时解密失败）。
+					if strings.HasPrefix(newURI, "http://") || strings.HasPrefix(newURI, "https://") {
+						newURI = joinBaseWithFullURL(baseURL, newURI)
+					}
 					return fmt.Sprintf(`URI="%s"`, newURI)
 				})
 			}
