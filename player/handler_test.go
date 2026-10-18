@@ -1465,3 +1465,101 @@ func TestEPGClock(t *testing.T) {
 		}
 	}
 }
+
+// TestUpstreamFailCircuit 验证跨请求失败熔断：单请求内的重试上限只保证「一次请求
+// 不放大」，客户端反复重拉同一个坏地址时，必须由跨请求的失败计数止停——
+// 熔断后不再穿透上游、不再打 upstream invalid 日志。
+func TestUpstreamFailCircuit(t *testing.T) {
+	b := false
+	config.Cfg.HTTP.InsecureSkipVerify = &b
+	config.Cfg.HTTP.DisableKeepAlives = &b
+
+	var hits atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "", http.StatusBadRequest) // 上游 400：与线上那条日志同形
+	}))
+	defer upstream.Close()
+
+	sub := newTServer(func(string) (string, string) {
+		return "text/plain", "央视,#genre#\nCCTV1," + upstream.URL + "/live/master.m3u8\n"
+	})
+	defer sub.Close()
+
+	setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: sub.URL}, t)
+	mgr := NewManager(&config.Cfg.Player)
+	mgr.httpClient = sub.Client()
+	mgr.Reload()
+	chans := mgr.Channels()
+	if len(chans) != 1 {
+		t.Fatalf("期望 1 频道, got %d", len(chans))
+	}
+	key := chans[0].Key
+
+	h := NewHandler(mgr)
+	h.httpClient = upstream.Client()
+	h.stream = upstream.Client()
+
+	// 频道原始地址（解析型源）：一次请求内重试 maxUpstreamAttempts 次后熔断。
+	rr := req(h, "GET", "/player/"+key, "")
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("上游 400 应转 502, got %d", rr.Code)
+	}
+	if n := hits.Load(); n != maxUpstreamAttempts {
+		t.Fatalf("首次请求应重试 %d 次上游, got %d", maxUpstreamAttempts, n)
+	}
+
+	// 熔断期内：再来多少次都不得穿透上游。
+	for i := 0; i < 3; i++ {
+		rr = req(h, "GET", "/player/"+key, "")
+		if rr.Code != http.StatusBadGateway {
+			t.Fatalf("熔断期应 502, got %d", rr.Code)
+		}
+	}
+	if n := hits.Load(); n != maxUpstreamAttempts {
+		t.Fatalf("熔断期不应再打上游, got %d", n)
+	}
+	if ra := rr.Header().Get("Retry-After"); ra == "" {
+		t.Fatal("熔断响应应带 Retry-After")
+	}
+
+	// 分片类地址（origin != RawURL）：只重试 1 次，首次失败即熔断。
+	var segHits atomic.Int64
+	segUp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		segHits.Add(1)
+		http.Error(w, "", http.StatusBadRequest)
+	}))
+	defer segUp.Close()
+	sub2 := newTServer(func(string) (string, string) {
+		return "text/plain", "央视,#genre#\nCCTV1," + segUp.URL + "/live/master.m3u8\n"
+	})
+	defer sub2.Close()
+	setTestPlayer(config.PlayerConfig{Enabled: true, Subscription: sub2.URL}, t)
+	mgr2 := NewManager(&config.Cfg.Player)
+	mgr2.httpClient = sub2.Client()
+	mgr2.Reload()
+	key2 := mgr2.Channels()[0].Key
+	h2 := NewHandler(mgr2)
+	h2.httpClient = segUp.Client()
+	h2.stream = segUp.Client()
+
+	segPath := "/player/" + key2 + "/bad.ts"
+	if rr := req(h2, "GET", segPath, ""); rr.Code != http.StatusBadGateway {
+		t.Fatalf("分片 400 应 502, got %d", rr.Code)
+	}
+	if n := segHits.Load(); n != 1 {
+		t.Fatalf("分片类应只打 1 次上游, got %d", n)
+	}
+	if rr := req(h2, "GET", segPath, ""); rr.Code != http.StatusBadGateway {
+		t.Fatalf("分片熔断应 502, got %d", rr.Code)
+	}
+	if n := segHits.Load(); n != 1 {
+		t.Fatalf("分片熔断期不应再打上游, got %d", n)
+	}
+
+	// 成功一次即清零：换一个可用地址请求后，原地址不再被熔断记录拖住。
+	h2.noteUpstreamSuccess(key2, segUp.URL+"/live/master.m3u8")
+	if h2.upstreamBlocked(key2, segUp.URL+"/live/master.m3u8") != 0 {
+		t.Fatal("成功应清空该地址的熔断记录")
+	}
+}

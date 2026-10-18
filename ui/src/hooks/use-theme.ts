@@ -5,7 +5,12 @@ export type ThemeMode = "light" | "dark" | "auto";
 const STORAGE_KEY = "tvgate.theme";
 
 function getSystemDark(): boolean {
-  return typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches === true;
+  try {
+    return typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches === true;
+  } catch {
+    // 极老/裁剪内核可能不支持 prefers-color-scheme，按浅色处理
+    return false;
+  }
 }
 
 function resolveDark(mode: ThemeMode, systemDark: boolean): boolean {
@@ -35,16 +40,26 @@ export function useTheme() {
 
   useEffect(() => {
     apply(mode);
-    localStorage.setItem(STORAGE_KEY, mode);
+    try {
+      localStorage.setItem(STORAGE_KEY, mode);
+    } catch {
+      // 隐私模式 / 存储禁用：只丢记忆，不影响当前主题
+    }
   }, [mode, apply]);
 
   // 跟随系统深浅切换（auto 模式）
   useEffect(() => {
     if (mode !== "auto") return;
+    if (typeof window.matchMedia !== "function") return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = () => apply("auto", media.matches);
-    media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
+    // 旧内核只支持 addListener/removeListener
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", onChange);
+      return () => media.removeEventListener("change", onChange);
+    }
+    media.addListener(onChange);
+    return () => media.removeListener(onChange);
   }, [mode, apply]);
 
   return useMemo(() => ({ theme: mode, setTheme: setMode }), [mode]);

@@ -14,11 +14,15 @@ const PREFERS_DARK_QUERY = "(prefers-color-scheme: dark)";
 
 /** 读一次系统偏好。SSR 或无 matchMedia 的环境按"浅色"处理，属安全默认。 */
 function readSystemDarkPreference(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia(PREFERS_DARK_QUERY).matches
-  );
+  try {
+    return (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia(PREFERS_DARK_QUERY).matches
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** 把最终生效的主题写到根元素：类给样式选择器用，color-scheme 给浏览器原生部件用。 */
@@ -46,8 +50,13 @@ export function useTheme(storageKey: string) {
     const handleSystemChange = (event: MediaQueryListEvent) => {
       if (theme === "auto") syncDocumentTheme("auto", event.matches);
     };
-    media.addEventListener("change", handleSystemChange);
-    return () => media.removeEventListener("change", handleSystemChange);
+    // 旧内核（X5/U4 等）只有 addListener/removeListener
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", handleSystemChange);
+      return () => media.removeEventListener("change", handleSystemChange);
+    }
+    media.addListener(handleSystemChange);
+    return () => media.removeListener(handleSystemChange);
   }, [theme]);
 
   return useMemo(() => ({ theme, setTheme }), [theme, setTheme]);

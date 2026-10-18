@@ -61,9 +61,19 @@ export class TransmuxWorkerClient {
     try {
       worker = new Worker(new URL("./transmux-worker.ts", import.meta.url), { type: "module" });
     } catch (e) {
-      // 极少数环境不支持 module worker：上报而非崩溃
-      this.callbacks.onError?.({ category: "io", info: e instanceof Error ? e.message : "无法创建 worker" });
-      throw e;
+      // 不支持 module worker 的旧内核（X5/U4、Chrome<80 等）在这里直接抛，
+      // 且 MSE 后端没有 worker→native 的自动回退：一旦抛出，整条播放链路即瘫痪
+      // （表现为"点了没反应/黑屏无错误"）。Vite 会为 classic worker 目标额外产出
+      // 可执行副本，这里退一级用 classic 语义再试一次。
+      try {
+        worker = new Worker(new URL("./transmux-worker-classic.ts", import.meta.url));
+      } catch (fallbackError) {
+        this.callbacks.onError?.({
+          category: "io",
+          info: e instanceof Error ? e.message : "无法创建 worker（module）",
+        });
+        throw fallbackError;
+      }
     }
     worker.onmessage = (ev: MessageEvent<WorkerEvent>) => {
       // 仅处理当前活跃 worker 的消息：崩溃/重建替换后，旧 worker 在途的残留消息

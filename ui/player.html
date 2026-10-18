@@ -34,10 +34,16 @@
         const weakAndroid = android && ((memory !== undefined && memory <= 4) || (cores !== undefined && cores <= 4));
         root.dataset.performanceTier = webOS || androidTV || weakAndroid ? "constrained" : "capable";
 
-        const inStandalone =
-          typeof navigator.standalone === "boolean"
-            ? navigator.standalone
-            : window.matchMedia("(display-mode: standalone)").matches;
+        // 独立窗口判定：老内核可能没有 matchMedia，缺失时按非独立窗口处理
+        let inStandalone = false;
+        try {
+          inStandalone =
+            typeof navigator.standalone === "boolean"
+              ? navigator.standalone
+              : typeof window.matchMedia === "function" && window.matchMedia("(display-mode: standalone)").matches;
+        } catch (error) {
+          inStandalone = false;
+        }
         root.classList.toggle("player-standalone", inStandalone);
 
         // 外观：与 lib/appearance.ts、use-appearance.ts 共用同一存储键与类名契约，
@@ -58,7 +64,10 @@
         try {
           const saved = localStorage.getItem("tvgate-player-theme");
           const mode = saved === "light" || saved === "dark" ? saved : "auto";
-          const dark = mode === "dark" || (mode === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          // 老内核（X5/U4 等）可能没有 prefers-color-scheme，缺失时按浅色处理
+          const systemDark =
+            typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches;
+          const dark = mode === "dark" || (mode === "auto" && systemDark);
           root.classList.toggle("dark", dark);
           root.style.colorScheme = dark ? "dark" : "light";
         } catch (error) {
@@ -89,16 +98,28 @@
         window.addEventListener(
           "error",
           function (e) {
-            // 带 target 的资源加载错误（script/link 加载失败）没有 message，由下方兜底提示覆盖
-            if (e && e.target && e.target.tagName && !e.message) return;
+            // 资源加载失败（script/link 404 或被拦截）没有 message，单独上报
+            if (e && e.target && e.target.tagName && !e.message) {
+              var t = e.target;
+              if (t.tagName === "SCRIPT" || t.tagName === "LINK") {
+                show("资源加载失败: " + (t.src || t.href || "(未知)"));
+              }
+              return;
+            }
             var m = e && e.message ? e.message + " @" + (e.filename || "") + ":" + (e.lineno || 0) : String(e);
+            // 噪音过滤：UC/X5 内核把布局自限错误（ResizeObserver loop limit exceeded）
+            // 当真实 error 事件派发（Chrome 只在 console 记录、不触发 window.onerror）。
+            // 该错误非阻断：内核抛完继续正常渲染/播放，上屏只会误导排障。
+            if (/resizeobserver (?:loop|callback)/i.test(m)) return;
             show(m);
           },
           true,
         );
         window.addEventListener("unhandledrejection", function (e) {
           var r = e && (e.reason || e.detail);
-          show("Promise 拒绝: " + (r && r.stack ? String(r.stack).slice(0, 500) : String(r)));
+          var s = r && r.stack ? String(r.stack).slice(0, 500) : String(r);
+          if (/resizeobserver (?:loop|callback)/i.test(s)) return;
+          show("Promise 拒绝: " + s);
         });
         setTimeout(function () {
           var root = document.getElementById("root");

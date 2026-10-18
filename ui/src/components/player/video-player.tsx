@@ -426,24 +426,34 @@ function VideoPlayerShell({
   const switchToNativePendingRef = useRef(false);
   // 直播起播前探首段容器形态：MSE 转封装管线没有 ISO BMFF（渐进式 MP4）解复用器，命中
   // 就直接选原生后端（不走"报错再切换"）。写 ref 供 buildBackendForSlot 立即读取，避开
-  // setState 未提交的竞态。上限 1.5s；探不到/超时按默认（MSE，TS/HLS/FLV/MKV 都能解）。
-  const streamKindRef = useRef<"native" | "mse" | null>(null);
-  const [streamKind, setStreamKind] = useState<"native" | "mse" | null>(null);
-  const probeStreamKind = useEffectEvent(async (url: string): Promise<"native" | "mse" | null> => {
-    const ctrl = new AbortController();
-    const timer = window.setTimeout(() => ctrl.abort(), 1500);
+  // setState 未提交的竞态。上限 1.5s。
+  //
+  // 探测结果**只能把后端"抬"成 native，绝不能反过来压低设备能力**：小米 UC（X5）等内核
+  // 的 MediaSource.isTypeSupported 探测不过，getPlaybackBackendKind() 已判 native；若这里
+  // 用探测到的 "mse" 覆盖它，buildBackendForSlot 会因 !isMSEPlaybackSupported() 返回 null，
+  // 整条播放链路静默不启动（黑屏、点了没反应）。故只区分"必须原生"与"未知/走默认"。
+  const streamKindRef = useRef<"native" | null>(null);
+  const [streamKind, setStreamKind] = useState<"native" | null>(null);
+  const probeStreamKind = useEffectEvent(async (url: string): Promise<"native" | null> => {
+    // 老内核（X5/U4）可能没有 AbortController：整体兜住，探测失败一律按"未知"放行起播。
+    let timer = 0;
     try {
-      const res = await fetch(url, { headers: { Range: "bytes=0-15" }, cache: "no-store", signal: ctrl.signal });
+      const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+      timer = window.setTimeout(() => ctrl?.abort(), 1500);
+      const res = await fetch(url, {
+        headers: { Range: "bytes=0-15" },
+        cache: "no-store",
+        signal: ctrl?.signal,
+      });
       const ct = String(res.headers.get("content-type") || "").toLowerCase();
       let head = "";
-      const reader = res.body?.getReader();
+      const reader = res.body?.getReader?.();
       if (reader) {
         const { value } = await reader.read();
         if (value) head = new TextDecoder().decode(value.subarray(0, 8));
         await reader.cancel().catch(() => { });
       }
       if (ct.includes("mp4") || head.startsWith("ftyp", 4) || head.startsWith("styp", 4) || head.startsWith("moov", 4)) return "native";
-      if (ct.includes("mpegurl") || ct.includes("mp2t") || ct.includes("matroska") || ct.includes("flv") || head.startsWith("#EXTM3U") || head.startsWith("FLV")) return "mse";
       return null;
     } catch {
       return null;
@@ -1011,10 +1021,14 @@ function VideoPlayerShell({
       lastStreamIdentityRef.current != null &&
       (channel.id !== lastStreamIdentityRef.current.channelId || activeSourceIndex !== lastStreamIdentityRef.current.sourceIndex);
 
-    // 换频道/换线路：撤销「该流走原生」的结论，新流重新按 MSE 起播（下一条未必是 MP4）。
+    // 换频道/换线路：撤销「该流走原生」的结论，新流重新按设备能力起播（下一条未必是 MP4）。
+    // 首段探测结论（streamKind）同样作废：上一台探成 native 后若留着，下一台 TS/HLS 会被
+    // 强制锁在原生后端，MSE 链路白丢（徽标/软解/追边全部失效）。
     if (isStreamIdentityChange) {
       switchToNativePendingRef.current = false;
+      streamKindRef.current = null;
       if (forceNativeBackend) setForceNativeBackend(false);
+      if (streamKind) setStreamKind(null);
     }
 
     if (recoverySeekFlagRef.current && !isStreamIdentityChange) recoverySeekFlagRef.current = false;
@@ -1038,8 +1052,9 @@ function VideoPlayerShell({
   /** 为指定槽创建（或复用）后端实例并接好全部事件；同槽同类型实例直接复用。 */
   const buildBackendForSlot = useEffectEvent((slot: SlotTag): PlaybackBackend | null => {
     const video = videoRefOf(slot).current;
-    // 有效后端类型：强制原生 > 首段探测结果（MP4→native）> 设备能力默认。
-    const kind = forceNativeBackend ? "native" : (streamKindRef.current ?? getPlaybackBackendKind());
+    // 有效后端类型：强制原生 / 首段探测为 MP4 → native；其余一律听设备能力。
+    // 探测结果不得覆盖 getPlaybackBackendKind()（它才是 MSE 不可用时的兜底判据）。
+    const kind = forceNativeBackend || streamKindRef.current === "native" ? "native" : getPlaybackBackendKind();
     if (!video || (kind === "mse" && !isMSEPlaybackSupported())) return null;
 
     const existing = backendRefOf(slot).current;
@@ -1047,6 +1062,11 @@ function VideoPlayerShell({
       if (existing.kind !== kind) {
         existing.destroy();
         backendRefOf(slot).current = null;
+        // 换后端类型必须同时复位渲染状态：MSE 的 WebGL canvas 由 painter-state 点亮，
+        // 而旧实例 destroy() 后不会再发事件，canvas 会一直显示并保留最后一张 HLS 静帧，
+        // 把下面真正在播的原生 <video>（MP4 线路）整块盖住 —— 表现为"切到 MP4 画面定格，
+        // 刷新才恢复"（刷新时槽位从 IDLE_RENDER_STATE 起算）。
+        applyRenderStateIfChanged(slot, IDLE_RENDER_STATE);
       } else {
         return existing;
       }
@@ -1426,12 +1446,15 @@ function VideoPlayerShell({
       return;
     }
     let cancelled = false;
-    void probeStreamKind(url).then((kind) => {
+    // 探测只影响后端选择，绝不能挡住起播：任何失败（老内核无 fetch/AbortController、
+    // 网络异常、promise 拒绝）都按"未知"放行，交给设备能力默认值决定后端。
+    const start = (kind: "native" | null) => {
       if (cancelled) return;
       streamKindRef.current = kind;
       setStreamKind(kind);
       ingestSegments(segments);
-    });
+    };
+    void probeStreamKind(url).then(start, () => start(null));
     return () => {
       cancelled = true;
     };

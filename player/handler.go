@@ -47,7 +47,49 @@ type Handler struct {
 	// redirects: 每个频道 302 解析型源（如 gdlt.php）的最终地址缓存。m3u8 刷新
 	// 直接访问真实源，不再每次重复执行解析脚本；失效时回退重新解析。
 	redirects sync.Map // key -> *redirectCache
+	// failures: 每个频道上游地址的连续失败计数（跨请求），用于失败熔断：
+	// 同一地址连续失败到上限后进入冷却期，冷却期内直接返回错误、不再打上游。
+	// 客户端反复重拉同一个坏分片时（14s 一轮、永不放弃），这层是唯一的止停点。
+	failures sync.Map // "key|地址" -> *failStreak
 }
+
+// failStreak 记录同一「频道 + 上游地址」的连续失败次数与冷却截止时刻。
+// 任何一次成功都会立即清零（整条记录删除）；冷却期内只读不写（避免心跳式刷新续期）。
+type failStreak struct {
+	mu     sync.Mutex
+	count  int           // 本轮连续失败次数（冷却到期后清零重计）
+	cool   time.Duration // 上次熔断使用的冷却时长（再次熔断时翻倍）
+	until  time.Time     // 冷却截止时刻
+	lastAt time.Time     // 最近一次失败时刻（清扫用）
+}
+
+// 上游失败熔断参数：
+//
+//	upstreamFailThreshold：同一地址连续失败达到该次数即熔断（1 = 首次失败就熔断）。
+//	upstreamFailCooldown：首次熔断的冷却时长。
+//	upstreamFailCooldownMax：冷却时长翻倍的上限。
+//
+// 分片类地址（含 token 的解析后地址）本身可能只是一次性失效，取「1 次 + 短冷却」：
+// 前端刷新播放列表就会换到新 token，不会因此被长期挡住。频道原始地址（解析型源）
+// 允许重试，取「3 次 + 长冷却」。
+//
+// 冷却必须长于客户端的重拉节奏（播放器按播放列表 targetDuration 轮询，实测约 14s），
+// 否则每次重拉刚好落在冷却之外 → 熔断形同虚设。因此熔断后每再触发一次冷却就翻倍，
+// 直到上限：持续坏的地址最终变成几分钟才打一次上游，恢复时靠半开探测自动放行。
+const (
+	// maxUpstreamAttempts：单次请求内对「解析型源」的上游重试上限。
+	maxUpstreamAttempts = 3
+	// 解析型源（频道原始地址，每次失败会重跑 302 解析链）：连败 3 次熔断 30s。
+	upstreamFailThreshold = 3
+	upstreamFailCooldown  = 30 * time.Second
+	// 分片/解析后地址：一次性失效居多，首次失败即熔断 30s（前端刷新播放列表换新 token 即恢复）。
+	upstreamFailThresholdOnce = 1
+	upstreamFailCooldownOnce  = 30 * time.Second
+	// 冷却翻倍上限：持续坏的地址最多每 5 分钟才穿透一次上游。
+	upstreamFailCooldownMax = 5 * time.Minute
+	// 失败表条目超过该数量时顺带清扫已过期项，常态零开销。
+	upstreamFailSweepThreshold = 512
+)
 
 // redirectCache 记录某频道解析型源的最终拉流地址与最近使用时刻。
 // 仅活跃会话（连续轮询间隔内）复用：换台/回看/返回直播等间隔较久的访问重新解析。
@@ -848,14 +890,26 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 			return ok, resp.StatusCode, string(head), final
 		}
 	}
-	const maxUpstreamAttempts = 3
 	// 重试仅对解析型源（origin == ch.RawURL）有意义：会丢弃缓存地址、回到频道原始地址
 	// 重跑 302 解析链。非解析型（HLS 分片、解析后的最终地址）重试只是重复请求同一地址：
 	// 分片在整点切换时上游要数十秒才产出可用分片，本地重试毫无帮助，且把日志成倍放大——
 	// 改由前端「丢批次 + 刷新播放列表取新分片」消化（见 media-engine 分段源恢复）。
 	attemptLimit := maxUpstreamAttempts
+	// 熔断参数：解析型源（会重跑 302 解析链）允许连败 3 次；分片/解析后地址
+	// 一次性失效居多，首次失败即熔断，避免为一条死分片反复穿透上游。
+	failThreshold := upstreamFailThreshold
+	failCooldown := upstreamFailCooldown
 	if origin != ch.RawURL {
 		attemptLimit = 1
+		failThreshold = upstreamFailThresholdOnce
+		failCooldown = upstreamFailCooldownOnce
+	}
+	// 熔断冷却期内直接失败：不打上游、不打日志。客户端（播放器按播放列表节奏
+	// 反复重拉）会持续收到 502，但服务端与上游都安静下来，冷却到期自动放行一次探测。
+	if left := h.upstreamBlocked(ch.Key, origin); left > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(left.Seconds())+1))
+		http.Error(w, "upstream stream unavailable", http.StatusBadGateway)
+		return
 	}
 	var resp *http.Response
 	for attempt := 0; attempt < attemptLimit; attempt++ {
@@ -876,10 +930,15 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 				return // 客户端断开
 			}
 			logger.LogPrintf("[player] upstream fetch error key=%s abs=%s err=%v", ch.Key, abs, err)
+			if h.noteUpstreamFailure(ch.Key, origin, failThreshold, failCooldown) {
+				logger.LogPrintf("[player] upstream 连续失败达上限，熔断 %s key=%s origin=%s",
+					failCooldown, ch.Key, origin)
+			}
 			http.Error(w, "upstream fetch failed: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 		if ok, code, head, final := usable(resp); ok {
+			h.noteUpstreamSuccess(ch.Key, origin)
 			break
 		} else {
 			logger.LogPrintf("[player] upstream invalid key=%s 状态=%d 内容=%q 最终=%s", ch.Key, code, head, final)
@@ -893,6 +952,7 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 					if altErr == nil {
 						if ok2, _, _, _ := usable(altResp); ok2 {
 							logger.LogPrintf("[player] 分片跨小时目录回退命中 key=%s alt=%s", ch.Key, alt)
+							h.noteUpstreamSuccess(ch.Key, origin)
 							resp = altResp
 							abs = alt
 							break
@@ -908,9 +968,14 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<20))
 		resp.Body.Close()
 		resp = nil
+		// 累计连续失败；达到阈值只记一条熔断日志，之后的请求在冷却期内静默返回。
+		if h.noteUpstreamFailure(ch.Key, origin, failThreshold, failCooldown) {
+			h.sweepUpstreamFailures()
+			logger.LogPrintf("[player] upstream 连续失败达上限，熔断 %s key=%s origin=%s",
+				failCooldown, ch.Key, origin)
+		}
 	}
 	if resp == nil {
-		logger.LogPrintf("[player] upstream invalid after %d attempts key=%s origin=%s", attemptLimit, ch.Key, origin)
 		http.Error(w, "upstream stream unavailable", http.StatusBadGateway)
 		return
 	}
@@ -1071,6 +1136,113 @@ func (h *Handler) storeRedirect(key, finalURL string) {
 
 // clearRedirect 清除某频道解析型源的最终地址缓存（失效回退时调用）。
 func (h *Handler) clearRedirect(key string) { h.redirects.Delete(key) }
+
+// ---------------------------------------------------------------------------
+// 上游失败熔断（跨请求）
+//
+// 单次请求内的重试上限（maxUpstreamAttempts / 分片类 1 次）只能保证「一次请求
+// 不放大」。真正让日志无限刷屏的是**客户端**：播放器拿到坏地址后按播放列表
+// 节奏（约 targetDuration）反复重拉，服务端每次都是一次全新请求，重试预算
+// 也随之重置 → 上游被永久打，日志 14 秒一组永不停止。
+//
+// 这里按「频道 + 上游地址」记连续失败：达到阈值后进入冷却期，冷却期内的请求
+// 直接 502 返回，不再穿透上游、也不再打 upstream invalid 日志。成功一次即清零，
+// 地址换了（新 token）也是新条目，不影响前端换片续播。
+// ---------------------------------------------------------------------------
+
+// upstreamFailKey 拼熔断表键。地址含签名 query（每次刷新都会变），但同一个坏
+// 分片在一轮轮询里是同一个 URL，所以按整串比对才能命中；长度截断避免表键过大。
+func upstreamFailKey(chKey, addr string) string {
+	if len(addr) > 512 {
+		addr = addr[:512]
+	}
+	return chKey + "|" + addr
+}
+
+// upstreamBlocked 判断该地址是否处于熔断冷却期。返回剩余冷却时长（0 = 未熔断）。
+func (h *Handler) upstreamBlocked(chKey, addr string) time.Duration {
+	v, ok := h.failures.Load(upstreamFailKey(chKey, addr))
+	if !ok {
+		return 0
+	}
+	fs := v.(*failStreak)
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.until.IsZero() {
+		return 0
+	}
+	if left := time.Until(fs.until); left > 0 {
+		return left
+	}
+	return 0
+}
+
+// noteUpstreamFailure 记一次失败。达到阈值时开启冷却并返回 true（本次刚熔断）。
+// baseCooldown 由调用方按地址类型给出（解析型源 vs 分片）；冷却时长在连续熔断时
+// 逐次翻倍（上限 upstreamFailCooldownMax），让持续坏的地址穿透上游的间隔越来越长。
+func (h *Handler) noteUpstreamFailure(chKey, addr string, threshold int, baseCooldown time.Duration) bool {
+	now := time.Now()
+	fk := upstreamFailKey(chKey, addr)
+	actual, _ := h.failures.LoadOrStore(fk, &failStreak{})
+	fs := actual.(*failStreak)
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	// 冷却已结束：从零重新计数（半开状态，允许一次探测）
+	if !fs.until.IsZero() && now.After(fs.until) {
+		fs.count = 0
+		fs.until = time.Time{}
+	}
+	fs.count++
+	fs.lastAt = now
+	if fs.count < threshold || !fs.until.IsZero() {
+		return false
+	}
+	// 连续熔断：冷却翻倍（首次用 baseCooldown）
+	cool := baseCooldown
+	if fs.cool > 0 {
+		cool = fs.cool * 2
+	}
+	if cool > upstreamFailCooldownMax {
+		cool = upstreamFailCooldownMax
+	}
+	fs.cool = cool
+	fs.until = now.Add(cool)
+	return true
+}
+
+// noteUpstreamSuccess 清掉该地址的失败记录（成功即恢复）。
+func (h *Handler) noteUpstreamSuccess(chKey, addr string) {
+	h.failures.Delete(upstreamFailKey(chKey, addr))
+}
+
+// sweepUpstreamFailures 惰性清扫：久未再失败、且冷却已过的条目直接丢弃，避免表随
+// 频道/分片（分片地址带签名 query，每次刷新都不同）无限增长。只在条目数超阈值时触发。
+func (h *Handler) sweepUpstreamFailures() {
+	if n := syncMapLen(&h.failures); n < upstreamFailSweepThreshold {
+		return
+	}
+	now := time.Now()
+	h.failures.Range(func(k, v any) bool {
+		fs := v.(*failStreak)
+		fs.mu.Lock()
+		// 未熔断条目：距上次失败超过一个冷却周期即视为陈旧；
+		// 已熔断条目：冷却结束很久（再留一个周期）才丢，保留翻倍状态。
+		stale := now.Sub(fs.lastAt) > upstreamFailCooldown &&
+			(fs.until.IsZero() || now.Sub(fs.until) > upstreamFailCooldown)
+		fs.mu.Unlock()
+		if stale {
+			h.failures.Delete(k)
+		}
+		return true
+	})
+}
+
+// syncMapLen 统计 sync.Map 条目数（标准库无 Len，Range 计数）。
+func syncMapLen(m *sync.Map) int {
+	n := 0
+	m.Range(func(any, any) bool { n++; return true })
+	return n
+}
 
 // storeResources 登记某频道的 token->上游URL 映射（带过期，超量时惰性清理）。
 // 用 LoadOrStore + 每 key 一把锁，保证并发登记/读取同一频道不产生 map 数据竞争。

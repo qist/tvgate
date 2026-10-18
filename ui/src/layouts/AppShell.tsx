@@ -99,13 +99,25 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   // 认证守卫：未认证前不渲染任何子页面，统一跳登录
   const [authed, setAuthed] = useState<boolean | null>(null);
+  // 认证状态请求卡住/失败时的显式提示：不能一直停在"加载中…"（视觉上等同白屏）
+  const [authError, setAuthError] = useState("");
+  const [authAttempt, setAuthAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    fetch(new URL("auth-status", window.location.href.split("#")[0]).toString(), { credentials: "same-origin" })
+    let timedOut = false;
+    setAuthError("");
+    const url = new URL("auth-status", window.location.href.split("#")[0]).toString();
+    // 旧内核/弱网/被劫持的网络下 fetch 可能长时间不返回，超时后给出可重试的提示
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      timedOut = true;
+      setAuthError("连接服务器超时，请检查网络后重试");
+    }, 12000);
+    fetch(url, { credentials: "same-origin", cache: "no-store" })
       .then((r) => r.json())
       .then((j: { authenticated?: boolean }) => {
-        if (cancelled) return;
+        if (cancelled || timedOut) return;
         if (j && j.authenticated === true) {
           setAuthed(true);
         } else {
@@ -114,12 +126,36 @@ export function AppShell() {
         }
       })
       .catch(() => {
-        if (!cancelled) navigate("/login", { replace: true });
-      });
+        if (cancelled || timedOut) return;
+        // 请求失败时也进登录页（后端不可达时登录页会给出明确错误）
+        navigate("/login", { replace: true });
+      })
+      .finally(() => window.clearTimeout(timer));
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
-  }, [navigate]);
+  }, [navigate, authAttempt]);
+
+  if (authError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-6">
+        <div className="w-full max-w-sm space-y-3 rounded-[var(--radius-lg)] border border-destructive/30 bg-destructive/10 p-5 text-center">
+          <p className="text-sm font-semibold text-destructive">无法连接服务器</p>
+          <p className="text-xs text-muted-foreground">{authError}</p>
+          <Button
+            size="sm"
+            onClick={() => {
+              setAuthed(null);
+              setAuthAttempt((n) => n + 1);
+            }}
+          >
+            重试
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (authed !== true) {
     return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">加载中…</div>;
