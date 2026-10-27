@@ -14,7 +14,7 @@ require (
 	github.com/jedisct1/go-dnsstamps v0.0.0-20240423203910-07a0735c7774
 	github.com/libp2p/go-reuseport v0.4.0
 	github.com/miekg/dns v1.1.73
-	github.com/pion/rtp v1.10.5
+	github.com/pion/rtp v1.10.6
 	github.com/quic-go/quic-go v0.64.1
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/crypto v0.58.0
