@@ -4,6 +4,16 @@
 
 ## Android (tvgate-android)
 
+### v3.4.2
+
+```
+1、内嵌服务端同步至 v3.4.2 — 安全修复：TCP 端口监听默认禁用 MPTCP（CVE-2026-98432），
+   所有监听路径显式回落普通 TCP，go.mod 全局 godebug multipathtcp=0 兜底；监听复用
+   语义与旧行为一致，无 MPTCP 内核上行为不变（详见服务端 v3.4.2 条目）
+2、App 前端无改动 — 本次为纯安全版本，App 侧仅随内嵌服务端重新打包
+3、App 整体发版 — 内嵌同版本服务端二进制，覆盖安装即可升级
+```
+
 ### v3.4.1
 
 ```
@@ -293,6 +303,26 @@
 ---
 
 ## 服务端 (tvgate)
+
+### v3.4.2
+
+```
+1、安全修复 CVE-2026-98432 — TCP 端口监听默认禁用 MPTCP。新版 Go 标准库把监听器默认
+   MPTCP 改为开启（defaultMPTCPEnabledListen=true）：凡零值 net.ListenConfig 创建的
+   TCP 监听，在支持 MPTCP 的内核上会静默以 IPPROTO_MPTCP 监听端口，与「仅普通 TCP」
+   预期不符；无 MPTCP 的内核上无法察觉，换到新内核（OpenWrt/新发行版）行为即改变。
+   本项目两处命中：HTTP 监听回退路径（go-reuseport 内部零值配置）、热升级器
+   tableflip 未传 ListenConfig 时的默认值
+2、三层防护（任一层单独即可生效）— go.mod 新增 godebug multipathtcp=0（官方全局默认
+   机制，覆盖标准库与第三方库的全部监听/拨号）；HTTP 监听改自建 ListenConfig 显式
+   SetMultipathTCP(false)，三态标记优先于 GODEBUG=multipathtcp 环境变量，强开环境也
+   不会回潮；tableflip 两处 Upgrader 注入 MPTCP 禁用配置，覆盖热升级重新监听路径
+3、行为兼容 — 监听保留 SO_REUSEADDR/SO_REUSEPORT 复用语义（Control 自实现，移除
+   go-reuseport 依赖），无 MPTCP 内核上 socket 选项与 v3.4.1 完全一致；旧配置直接可用
+4、回归测试 — server/mptcp_regression_test.go：断言 MultipathTCP() 恒 false、socket
+   协议为普通 TCP（SO_PROTOCOL）、SO_REUSEPORT 保留；GODEBUG=multipathtcp=1 强开环境
+   下同样通过，实证漏洞根源与修复有效性
+```
 
 ### v3.4.1
 
