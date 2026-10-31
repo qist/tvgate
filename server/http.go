@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/cloudflare/tableflip"
-	"github.com/libp2p/go-reuseport"
 	"github.com/qist/tvgate/auth"
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/domainmap"
@@ -35,6 +34,18 @@ var (
 	h3servers = make(map[string]*http3.Server)
 	serverWg  tsync.WaitGroup
 )
+
+// tcpListenConfig 用于创建 TCP 监听。
+// CVE-2026-98432: 新版 Go 标准库的 ListenConfig 默认在支持 MPTCP 的内核上
+// 启用 Multipath TCP 监听，此处显式关闭 MPTCP（SetMultipathTCP(false) 优先于
+// GODEBUG=multipathtcp 环境变量），仅使用普通 TCP；Control 保留原有
+// go-reuseport 的 SO_REUSEADDR/SO_REUSEPORT 复用语义，行为不变。
+var tcpListenConfig net.ListenConfig
+
+func init() {
+	tcpListenConfig.Control = reusePortControl
+	tcpListenConfig.SetMultipathTCP(false)
+}
 
 // CloseAllServers 关闭所有正在运行的服务器
 func CloseAllServers() {
@@ -99,11 +110,11 @@ func StartHTTPServerWithConfig(ctx context.Context, addr string, upgrader *table
 	if upgrader != nil {
 		ln, err = upgrader.Listen("tcp", addr)
 		if err != nil {
-			// fallback reuseport
-			ln, err = reuseport.Listen("tcp", addr)
+			// fallback 复用端口监听（已显式禁用 MPTCP）
+			ln, err = tcpListenConfig.Listen(context.Background(), "tcp", addr)
 		}
 	} else {
-		ln, err = reuseport.Listen("tcp", addr)
+		ln, err = tcpListenConfig.Listen(context.Background(), "tcp", addr)
 	}
 	if err != nil {
 		return fmt.Errorf("❌ 创建 TCP listener 失败: %w", err)

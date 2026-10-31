@@ -2,20 +2,21 @@ package upgrade
 
 import (
 	"io"
+	"net"
 	"runtime"
 
 	// "log"
-	"os"
-	"os/exec"
-	"os/signal"
-	"strings"
-	"sync"
-	"syscall"
-	"path/filepath"
 	"github.com/cloudflare/tableflip"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/stream"
 	tsync "github.com/qist/tvgate/utils/sync"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
 )
 
 var upgradeWg tsync.WaitGroup
@@ -53,7 +54,11 @@ func Init() {
 			return
 		}
 		var err error
-		upgrader, err = tableflip.New(tableflip.Options{})
+		// CVE-2026-98432: 显式禁用 MPTCP 监听，避免新版 Go 标准库
+		// 在支持 MPTCP 的内核上默认以 MPTCP 创建端口监听。
+		listenCfg := &net.ListenConfig{}
+		listenCfg.SetMultipathTCP(false)
+		upgrader, err = tableflip.New(tableflip.Options{ListenConfig: listenCfg})
 		if err != nil {
 			logger.LogPrintf("创建升级器失败: %v", err)
 		}

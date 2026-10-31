@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"runtime"
@@ -76,7 +77,11 @@ func main() {
 	var err error
 	isWindows := runtime.GOOS == "windows"
 	if !isWindows {
-		upg, err = tableflip.New(tableflip.Options{})
+		// CVE-2026-98432: 显式禁用 MPTCP 监听，避免新版 Go 标准库
+		// 在支持 MPTCP 的内核上默认以 MPTCP 创建端口监听。
+		listenCfg := &net.ListenConfig{}
+		listenCfg.SetMultipathTCP(false)
+		upg, err = tableflip.New(tableflip.Options{ListenConfig: listenCfg})
 		if err != nil {
 			log.Fatalf("无法创建升级器: %v", err)
 		}

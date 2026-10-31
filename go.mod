@@ -2,6 +2,10 @@ module github.com/qist/tvgate
 
 go 1.26.0
 
+// CVE-2026-98432: 全局默认关闭 MPTCP（监听与拨号均回落普通 TCP），
+// 覆盖标准库及第三方库内部创建的 ListenConfig/Dialer。
+godebug multipathtcp=0
+
 require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
 	github.com/andybalholm/brotli v1.2.7
@@ -12,7 +16,6 @@ require (
 	github.com/dlclark/regexp2 v1.12.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jedisct1/go-dnsstamps v0.0.0-20240423203910-07a0735c7774
-	github.com/libp2p/go-reuseport v0.4.0
 	github.com/miekg/dns v1.1.73
 	github.com/pion/rtp v1.10.6
 	github.com/quic-go/quic-go v0.64.1
@@ -20,6 +23,7 @@ require (
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.61.0
 	golang.org/x/sync v0.24.0
+	golang.org/x/sys v0.49.0
 	golang.org/x/text v0.43.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
@@ -47,5 +51,4 @@ require (
 	github.com/tklauser/numcpus v0.10.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
-	golang.org/x/sys v0.49.0 // indirect
 )
