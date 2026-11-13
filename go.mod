@@ -8,7 +8,7 @@ godebug multipathtcp=0
 
 require (
 	github.com/ameshkov/dnscrypt/v2 v2.4.0
-	github.com/andybalholm/brotli v1.2.8
+	github.com/andybalholm/brotli v1.3.0
 	github.com/asticode/go-astits v1.17.0
 	github.com/bluenviron/gortsplib/v5 v5.6.7
 	github.com/bluenviron/mediacommon/v2 v2.9.7
