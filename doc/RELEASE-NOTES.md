@@ -7,35 +7,36 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | **v3.4.2** |
-| 发布日期 | 2026-10-31 |
-| 发布提交 | 见 tag `v3.4.2` |
-| 距上一版 | v3.4.1（2026-10-18）以来 16 个提交 |
-| 平台 | Linux / Windows / macOS / Android 共 32 个平台包 |
-| 资产 | `TVGate-<平台>-<架构>.zip` + 同名 `.dgst`（MD5/SHA1/SHA256/SHA512） |
-| Docker | `docker.io/juestnow/tvgate:v3.4.2`、`ghcr.io/qist/tvgate:v3.4.2`（同时打 `latest`） |
+| 版本 | **v3.4.3** |
+| 发布日期 | 2026-11-14 |
+| 发布提交 | 见 tag `v3.4.3` |
+| 距上一版 | v3.4.2（2026-10-31）以来 19 个提交 |
+| 平台 | Linux / Windows / macOS / Android 共 33 个平台包（新增 Android ARM32 v7） |
+| 资产 | `TVGate-<平台>-<架构>.zip` + 同名 `.dgst`（MD5/SHA1/SHA256/SHA512），共 66 个 |
+| Docker | `docker.io/juestnow/tvgate:v3.4.3`、`ghcr.io/qist/tvgate:v3.4.3`（同时打 `latest`） |
 
 ---
 
 ## 一、GitHub Release 标题 / 一句话摘要
 
 ```
-v3.4.2 — 安全修复 CVE-2026-98432：TCP 端口监听默认禁用 MPTCP，一律回落普通 TCP
+v3.4.3 — 新增 Android ARM32 v7 服务端包、Android 构建独立脚本化、后台文档查找高亮修复
 ```
 
 ## 二、GitHub Releases 正文 · 精简版（用户可读）
 
 ```
-### v3.4.2 更新内容
-1. 安全修复 CVE-2026-98432 — 新版 Go 标准库把「监听器默认走 MPTCP」打开了：凡是零值
-   ListenConfig 创建的 TCP 监听，在支持 MPTCP 的内核上会静默改用 Multipath TCP 协议监听
-   端口，与预期「仅普通 TCP」不符，且在无 MPTCP 的内核上完全无法察觉
-2. 现已三层收紧：go.mod 全局 godebug multipathtcp=0（覆盖标准库与第三方库的全部监听/
-   拨号）、HTTP 监听显式 SetMultipathTCP(false)（优先级高于 GODEBUG 环境变量）、
-   热升级（tableflip）重新监听路径同样显式禁用
-3. 行为兼容 — 监听仍保留 SO_REUSEPORT 复用语义，无 MPTCP 内核上行为完全不变；
-   旧配置文件可直接使用，客户端无需任何改动
-4. 新增回归测试 — 即使运行环境强制 GODEBUG=multipathtcp=1，监听也保持普通 TCP
+### v3.4.3 更新内容
+1. 新增 Android ARM32 v7（armeabi-v7a）服务端包 — 仍在服役的 32 位安卓盒子/电视可直接原生
+   运行，下载 TVGate-android-arm32-v7a.zip 即可，与 64 位包同源同版本
+2. Android 构建独立化 — 新增 scripts/build-android.sh，走 NDK clang + CGO 外部链接生成 PIE；
+   make android / make android-arm32-v7a / make android-arm64-v8a 直接转发。Android 不再参与
+   make all，没装 NDK 的机器也能正常编译其他平台
+3. 后台「编辑文档」查找高亮修复 — 打开查找面板后全部匹配实时高亮，当前项用更醒目的颜色区分，
+   编辑与滚动时高亮同步跟随，不再出现"搜得到却看不见"
+4. 文档补齐 — doc/MULTICAST.md 新增「播放地址中启用 FCC」：支持 fcc=<IP>:<端口>、
+   operator=telecom|huawei、fcc=false，可按频道单独开关
+5. 依赖更新 — quic-go 0.65.0、golang.org/x/net 0.62.0、golang.org/x/text 0.44.0、brotli 1.3.0 等
 
 升级：下载对应平台压缩包，解压覆盖后重启服务即可；Docker 用户重新拉取镜像；
 安卓盒子/电视直接覆盖安装新版 APK（App 内也支持在线更新）。旧配置文件可直接使用，无需修改。
@@ -44,58 +45,68 @@ v3.4.2 — 安全修复 CVE-2026-98432：TCP 端口监听默认禁用 MPTCP，�
 ## 三、完整版（用于发布公告 / 论坛 / 通知，用户可读）
 
 ```
-## TVGate v3.4.2（2026-10-31）
+## TVGate v3.4.3（2026-11-14）
 
-本次为安全版本：修复 CVE-2026-98432 —— TCP 端口监听在新版 Go 工具链下会默认改用
-Multipath TCP（MPTCP）协议，现已在所有监听路径上显式禁用，一律回落普通 TCP。
-不影响任何功能与配置，建议所有用户升级。
+本次为构建与体验版本：新增 Android 32 位 ARM 服务端包，把 Android 交叉编译从主 Makefile
+独立出来，并修复后台编辑器里查找结果不高亮的问题。协议与服务行为无破坏性变更，可直接升级。
 
-### 一、CVE-2026-98432：端口监听默认禁用 MPTCP（本次核心修复）
+### 一、新增 Android ARM32 v7（armeabi-v7a）服务端包
 
-背景：Go 标准库从某版本起，将监听器的 MPTCP 默认值改为开启（defaultMPTCPEnabledListen =
-true）。凡是使用「零值 net.ListenConfig」创建 TCP 监听的代码——包括大量第三方库——
-只要内核支持 MPTCP，端口就会以 IPPROTO_MPTCP 协议监听，而不是普通 TCP。
+- 发布产物新增 TVGate-android-arm32-v7a.zip，面向仍在服役的 32 位安卓盒子 / 电视
+- 与 arm64 包完全同源（同一提交、同一版本号），差异仅在 ABI
+- 产物为 PIE 可执行文件，最低 API 21（Android 5.0），解释器 /system/bin/linker
+- 说明：android/arm 必须外部链接（CGO）才能生成 PIE，因此它与 Linux/Windows 的
+  静态链接产物构建方式不同，走 NDK clang 单独构建
 
-影响：
-- 监听协议与预期不符：安全设备、防火墙、抓包与连接复用等链路对 MPTCP 的处理
-  未必与普通 TCP 一致，扩大了排查面与攻击面
-- 隐蔽性强：在无 MPTCP 的内核上（多数旧内核、WSL2 等）完全无法复现，
-  一旦换到支持 MPTCP 的内核（较新 Linux、OpenWrt 等）行为即发生改变
+### 二、Android 构建独立脚本化
 
-根因（本项目两处命中）：
-- HTTP 监听回退路径原先经 go-reuseport 创建，其内部使用零值 ListenConfig（仅挂
-  SO_REUSEPORT Control，未显式声明 MPTCP 偏好）
-- 热升级器 tableflip 在未显式传入 ListenConfig 时同样使用零值配置
+- 新增 scripts/build-android.sh，支持 arm64-v8a / arm32-v7a / all 三种参数
+- 脚本内部固定 CGO_ENABLED=1 并调用 NDK clang 生成 PIE，不再套用主 Makefile 的
+  CGO_ENABLED=0 + -extldflags '-static' 通用规则（此前会直接报
+  "android/arm requires external (cgo) linking, but cgo is not enabled"）
+- NDK 探测顺序：ANDROID_NDK_HOME → ANDROID_NDK_ROOT → ANDROID_HOME → ANDROID_SDK_ROOT
+  → ~/Android/Sdk/ndk/* → /opt/android-sdk/ndk/*；全部缺失时给出安装示例
+- make android / make android-arm64-v8a / make android-arm32-v7a 仅作转发；Android 已从
+  make all 移除，无 NDK 环境下 make all 不会再整体失败
+- CI：release.yml 的 android-* 矩阵统一安装 NDK r25c，由脚本完成交叉编译后按平台名打包
 
-修复（三层防护，任一层单独即可生效）：
-1. go.mod 增加 godebug multipathtcp=0 —— Go 官方的全局默认值机制，覆盖标准库与
-   全部第三方库创建的监听与拨号
-2. HTTP 监听改为自建 ListenConfig，显式 SetMultipathTCP(false)。该标记为三态，
-   优先级高于 GODEBUG=multipathtcp 环境变量，即使运行环境被强制开启也不会回潮；
-   Control 保留原 SO_REUSEADDR/SO_REUSEPORT 复用语义，并移除 go-reuseport 依赖
-3. 热升级（tableflip）两处 Upgrader 创建点注入 MPTCP 禁用的 ListenConfig，
-   覆盖热升级后重新监听的路径
+### 三、后台「编辑文档内容」查找高亮修复
 
-### 二、回归测试
+- 现象：在管理后台编辑文档时，查找面板能定位光标、显示匹配计数，但正文里看不到任何高亮
+- 原因：编辑器使用原生 textarea，无法在文本内部渲染高亮区间
+- 修复：新增与 textarea 完全同字体 / 内边距 / 行高 / 换行模式的镜像层，匹配区间以 <mark>
+  渲染在 textarea 下方（textarea 背景透明），全部匹配实时高亮，当前项用琥珀色与其余
+  紫色区分；textarea 滚动时镜像层同步滚动，编辑后高亮随内容即时刷新
+- 查找遮罩背景由 bg-black/30 降为 bg-black/10，减少对正文的遮挡
 
-- 新增 server/mptcp_regression_test.go：断言监听配置 MultipathTCP() 恒为 false、
-  socket 协议为普通 TCP（SO_PROTOCOL）、SO_REUSEPORT 语义保留
-- 在 GODEBUG=multipathtcp=1 强制开启的环境下同样通过，实证零值配置确实默认启用
-  MPTCP（漏洞根源）、显式禁用可完全覆盖环境变量
+### 四、文档补齐：播放地址内联 FCC
+
+- doc/MULTICAST.md 新增「播放地址中启用 FCC」一节：
+  - fcc=<IP>:<端口> 按频道指定 FCC 单播服务器
+  - operator=telecom|huawei 覆盖全局 fcc_type
+  - fcc=true/1 仅启用开关；fcc=false/0 对该频道显式关闭
+- 参数只影响当次请求所属频道，未带参频道继续沿用 multicast 段配置
+
+### 五、依赖更新
+
+- github.com/quic-go/quic-go 0.64.1 → 0.65.0
+- golang.org/x/net 0.61.0 → 0.62.0、golang.org/x/text 0.43.0 → 0.44.0
+- golang.org/x/sync 0.24.0 → 0.25.0、golang.org/x/sys 0.49.0 → 0.50.0
+- github.com/andybalholm/brotli 1.2.7 → 1.3.0
+- github.com/asticode/go-astits 1.16.0 → 1.17.0
 
 ### 兼容性与升级
 
 - 配置文件向后兼容：旧 config.yaml 可直接使用，无需改动
-- 对无 MPTCP 的内核，监听行为与 v3.4.1 完全一致（字节级相同的 socket 选项）
-- 客户端（浏览器、播放器、拨号侧）无需任何改动
+- 除 Web 管理后台编辑器查找高亮外，服务端行为与 v3.4.2 一致
 - 二进制：下载对应平台压缩包，解压覆盖后重启服务（systemd：systemctl restart tvgate）
-- Docker：docker pull juestnow/tvgate:v3.4.2（或 ghcr.io/qist/tvgate:v3.4.2），重建容器
-- Android：安装 v3.4.2 版 APK 覆盖即可（App 内也支持在线更新）
+- Docker：docker pull juestnow/tvgate:v3.4.3（或 ghcr.io/qist/tvgate:v3.4.3），重建容器
+- Android：安装 v3.4.3 版 APK 覆盖即可（App 内也支持在线更新）
 
 ### 发布校验
 
 - 每个压缩包附 .dgst 校验文件（MD5/SHA1/SHA256/SHA512），下载后可比对
-- 版本核对：./TVGate-linux-64 -version → v3.4.2
+- 版本核对：./TVGate-linux-64 -version → v3.4.3
 - 完整改动清单：doc/CHANGELOG.md（含 Android 段落）
 ```
 
@@ -106,16 +117,17 @@ true）。凡是使用「零值 net.ListenConfig」创建 TCP 监听的代码—
 | 部署方式 | 获取方式 | 升级步骤 |
 |---|---|---|
 | 裸机二进制 | Releases 页 `TVGate-<平台>-<架构>.zip` | 解压覆盖 → 重启服务（`systemctl restart tvgate`） |
-| Docker | `juestnow/tvgate:v3.4.2` / `ghcr.io/qist/tvgate:v3.4.2` | 拉取新镜像 → 重建容器（config 挂载不变） |
-| Android App | Releases 页 `TVGate-v3.4.2-{arm64,arm,x86_64}.apk` | 覆盖安装，或 App 内在线更新 |
-| 源码 | tag `v3.4.2` | `make linux-64`（自动构建 Web UI） |
+| Docker | `juestnow/tvgate:v3.4.3` / `ghcr.io/qist/tvgate:v3.4.3` | 拉取新镜像 → 重建容器（config 挂载不变） |
+| Android App | Releases 页 `TVGate-v3.4.3-{arm64,arm,x86_64}.apk` | 覆盖安装，或 App 内在线更新 |
+| 源码 | tag `v3.4.3` | `make linux-64`（自动构建 Web UI） |
 
 ## 五、发布核对清单
 
-- [ ] 服务端 Release：tag `v3.4.2` 已推送，64 个资产（32 平台包 + 32 `.dgst`）上传完成
-- [ ] Docker 镜像：`juestnow/tvgate:v3.4.2` 已推送（Docker Hub 已可见），`latest` 随 tag 更新
-- [ ] Android Release：`releases/latest` 为 v3.4.2，`arm64` / `arm` / `x86_64` 三个 APK 齐全
-- [ ] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.2
-- [ ] 发布后抽查：`ss -tlnp` 确认监听 socket 为普通 TCP（不出现在 `ss -M` 中）
+- [ ] 服务端 Release：tag `v3.4.3` 已推送，66 个资产（33 平台包 + 33 `.dgst`）上传完成
+- [ ] Android ARM32 v7 资产存在：`TVGate-android-arm32-v7a.zip` 与 `.dgst`
+- [ ] Docker 镜像：`juestnow/tvgate:v3.4.3` 已推送（Docker Hub 已可见），`latest` 随 tag 更新
+- [ ] Android Release：`releases/latest` 为 v3.4.3，`arm64` / `arm` / `x86_64` 三个 APK 齐全
+- [ ] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.3
+- [ ] 发布后抽查：Android 包 `file` 显示 PIE + `for Android 21`
 - [ ] GitHub Release 正文已填写（取自「二、精简版」）
 - [ ] 商店：`doc/STORE-RELEASE-NOTES.md` 文案已在应用市场提交

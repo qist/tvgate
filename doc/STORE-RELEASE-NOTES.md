@@ -9,12 +9,12 @@
 | 项 | 值 |
 |---|---|
 | 应用 | TVGate（Android） |
-| 版本 | v3.4.2（versionName 与内嵌服务端一致） |
-| versionCode | 7 |
-| 日期 | 2026-10-31 |
+| 版本 | v3.4.3（versionName 与内嵌服务端一致） |
+| versionCode | 8 |
+| 日期 | 2026-11-14 |
 | 包名 | com.tvgate.app |
 | 适配 | Android 5.0 (API 21) 及以上；arm64-v8a / armeabi-v7a / x86_64 |
-| 产物 | TVGate-v3.4.2-arm64.apk、TVGate-v3.4.2-arm.apk、TVGate-v3.4.2-x86_64.apk（已签名） |
+| 产物 | TVGate-v3.4.3-arm64.apk、TVGate-v3.4.3-arm.apk、TVGate-v3.4.3-x86_64.apk（已签名） |
 
 ---
 
@@ -22,47 +22,50 @@
 
 ```
 【本次更新】
-1. 安全更新：端口监听协议收紧，默认禁用 MPTCP、一律使用标准 TCP
-2. 监听行为与兼容性不变，旧配置可直接使用，无需任何设置改动
-3. 本次为纯安全版本，App 功能与界面无变化，建议尽快升级
-4. 建议 App 与 Web 管理后台使用同一版本
+1. 内嵌服务端同步至 v3.4.3，新增 Android ARM32 v7 服务端包，老 32 位设备同样原生运行
+2. 修复 Web 管理后台「编辑文档」查找结果不高亮：匹配项实时高亮并随滚动同步
+3. 文档补充播放地址内联 FCC 参数说明，按频道单独开关更灵活
+4. App 前端无改动，仅随内嵌服务端重新打包，覆盖安装即可升级
 ```
 
 ## 二、商店更新说明 · 标准版（≤ 800 字符）
 
 ```
-【v3.4.2 更新内容】
-1. 安全修复（CVE-2026-98432）— 新版编译工具链下，TCP 端口监听会在支持 MPTCP 的
-   系统上静默改用 Multipath TCP 协议，与预期的「仅普通 TCP」不符，且在旧内核上
-   完全无法察觉；现已在所有监听路径显式禁用 MPTCP，一律回落标准 TCP
-2. 三层收紧 — 全局默认值关闭 + HTTP 监听与热升级监听路径显式禁用，即使运行环境
-   被强制开启也不会回潮
-3. 行为兼容 — 端口复用语义与旧版完全一致，旧配置文件直接可用，无需任何改动；
-   客户端与播放器无需调整
-4. 本次为纯安全版本，App 功能与界面无变化；建议 App 与 Web 管理后台使用同一版本
+【v3.4.3 更新内容】
+1. 内嵌服务端同步至 v3.4.3 — 新增 Android ARM32 v7（armeabi-v7a）服务端包，32 位老
+   盒子/电视可原生运行，与 arm64 包同源同版本；同时把 Android 交叉编译独立为脚本，
+   NDK clang + CGO 外部链接生成 PIE，构建更稳定
+2. 后台编辑器查找高亮修复 — Web 管理后台编辑文档时，查找面板打开后全部匹配实时高亮，
+   当前项用更醒目的颜色区分，编辑与滚动时高亮同步跟随，不再"搜得到却看不见"
+3. 文档补齐 — 播放地址新增内联 FCC 参数（fcc=<IP>:<端口>、operator=telecom|huawei、
+   fcc=false），可按频道单独开关，未带参频道继续沿用全局配置
+4. App 前端无改动 — 本次仅随内嵌服务端重新打包，覆盖安装即可升级
 ```
 
 ## 三、商店更新说明 · 详细版（无字数限制，用于官网 / 论坛 / Release Notes）
 
 ```
-## v3.4.2（2026-10-31）
+## v3.4.3（2026-11-14）
 
 ### 本次亮点
-- 安全修复 CVE-2026-98432：端口监听默认禁用 MPTCP，一律使用标准 TCP
-- 纯安全版本：App 功能与界面无变化，无任何配置迁移
+- 内嵌服务端同步至 v3.4.3：新增 Android ARM32 v7 服务端包，Android 构建独立脚本化
+- 修复 Web 管理后台「编辑文档」查找结果不高亮
+- App 前端无改动，覆盖安装即可升级
 
 ### 功能与改进
-- TCP 端口监听协议收紧：新版 Go 编译工具链会把「监听器默认走 MPTCP」打开，
-  在支持 MPTCP 的系统上端口会静默改用 Multipath TCP 监听；该行为与预期不符，
-  且在无 MPTCP 的内核上完全无法察觉。现已在所有监听路径显式禁用：
-  全局默认值（godebug multipathtcp=0）、HTTP 监听（显式 SetMultipathTCP(false)、
-  优先级高于环境变量）、热升级重新监听路径三层一并收紧
-- 行为兼容：端口复用（SO_REUSEPORT）语义与旧版完全一致；在无 MPTCP 的系统上
-  socket 选项与上一版本逐字节相同；旧配置文件直接使用，无需修改
+- Android ARM32 v7（armeabi-v7a）服务端包：面向仍在服役的 32 位安卓盒子/电视，
+  与 arm64 包同源同版本，产物为 PIE，最低 API 21
+- Android 构建独立化：新增 scripts/build-android.sh，内部固定 CGO_ENABLED=1 并调用
+  NDK clang 生成 PIE，不再套用 CGO_ENABLED=0 + 静态链接的通用规则；NDK 路径多级自动
+  探测，Android 也不再参与 make all
+- 后台编辑器查找高亮：新增与编辑器同字体/行高/换行的镜像层，匹配区间实时以背景色
+  高亮，当前项颜色更醒目，滚动与编辑时同步刷新
+- 文档补齐：播放地址支持内联 FCC 参数（fcc=<IP>:<端口>、operator=telecom|huawei、
+  fcc=false），按频道单独开关
 
 ### 说明
 - 支持 Android 5.0 及以上；arm64-v8a / armeabi-v7a / x86_64
-- 内嵌服务端同步至 v3.4.2（versionCode 7，可覆盖安装升级）
+- 内嵌服务端同步至 v3.4.3（versionCode 8，可覆盖安装升级）
 - 建议 App 与 Web 管理后台使用同一版本
 - 完整改动见 doc/CHANGELOG.md（Android 与 服务端 两段）
 ```
@@ -89,9 +92,9 @@
 
 ## 六、当前 CI 状态（发布核对用，发布完成后勾选）
 
-- [ ] 服务端 Release（qist/tvgate · tag v3.4.2）：32 个平台包 + `.dgst` 校验文件（共 64 个资产）
-- [ ] 安卓 Release（qist/tvgate-android · releases/latest）：`TVGate-v3.4.2-arm64/arm/x86_64.apk` 三个 APK 已上传
-- [ ] Docker 镜像：`juestnow/tvgate:v3.4.2` 已推送（Docker Hub 可见）
-- [ ] 实机验证：`ss -tlnp` 确认监听为普通 TCP（不出现在 `ss -M` 的 MPTCP 列表）
+- [ ] 服务端 Release（qist/tvgate · tag v3.4.3）：33 个平台包 + `.dgst` 校验文件（共 66 个资产）
+- [ ] 安卓 Release（qist/tvgate-android · releases/latest）：`TVGate-v3.4.3-arm64/arm/x86_64.apk` 三个 APK 已上传
+- [ ] Docker 镜像：`juestnow/tvgate:v3.4.3` 已推送（Docker Hub 可见）
+- [ ] 实机验证：`./TVGate-linux-64 -version` 输出 v3.4.3；Android 包 `file` 显示 PIE + `for Android 21`
 - [ ] 商店后台提交后回填提交时间与审核结果
-- [ ] 应用商店文案与本文件"一、二档"一致（版本号已改为 v3.4.2）
+- [ ] 应用商店文案与本文件"一、二档"一致（版本号已改为 v3.4.3）

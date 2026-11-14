@@ -4,6 +4,17 @@
 
 ## Android (tvgate-android)
 
+### v3.4.3
+
+```
+1、内嵌服务端同步至 v3.4.3 — 新增 Android ARM32 v7（armeabi-v7a）服务端包，32 位老盒子/
+   电视可原生运行；Android 交叉编译独立为脚本（NDK clang + CGO 外部链接生成 PIE）；
+   修复 Web 管理后台「编辑文档」查找结果不高亮；补齐播放地址内联 FCC 参数说明
+   （详见服务端 v3.4.3 条目）
+2、App 前端无改动 — 本次仅随内嵌服务端重新打包，versionCode 7→8
+3、App 整体发版 — 内嵌同版本服务端二进制，覆盖安装即可升级
+```
+
 ### v3.4.2
 
 ```
@@ -303,6 +314,31 @@
 ---
 
 ## 服务端 (tvgate)
+
+### v3.4.3
+
+```
+1、新增 Android ARM32 v7（armeabi-v7a）服务端包 — 发布 TVGate-android-arm32-v7a.zip，
+   32 位安卓盒子/电视可原生运行，与 arm64 包同源同版本；产物为 PIE，最低 API 21
+2、Android 构建独立化 — 新增 scripts/build-android.sh（支持 arm64-v8a / arm32-v7a / all），
+   内部固定 CGO_ENABLED=1 并调用 NDK clang 生成 PIE，不再套用主 Makefile 的
+   CGO_ENABLED=0 + -extldflags '-static' 规则（此前 android/arm 直接报
+   "requires external (cgo) linking"）；NDK 多级自动探测（ANDROID_NDK_HOME /
+   ANDROID_NDK_ROOT / ANDROID_HOME / ANDROID_SDK_ROOT / ~/Android/Sdk/ndk/*
+   / /opt/android-sdk/ndk/*）；make android / android-arm32-v7a / android-arm64-v8a
+   仅作转发，Android 从 make all 移除，无 NDK 环境不再整体构建失败
+3、CI — release.yml 的 android-* 矩阵统一安装 NDK r25c 并导出 ANDROID_NDK_HOME，
+   交叉编译交给脚本，产物按平台名打包；CGO_ENABLED 仅对非 Android 平台置 0
+4、Web 管理后台编辑器查找高亮修复 — 原生 textarea 无法在文本内部渲染高亮，新增与其
+   同字体/内边距/行高/换行模式的镜像层，匹配区间以 <mark> 渲染在 textarea 下方
+   （textarea 背景透明）：全部匹配实时高亮、当前项琥珀色区分、滚动同步、编辑即时刷新；
+   查找遮罩背景 bg-black/30 降为 bg-black/10
+5、文档 — doc/MULTICAST.md 新增「播放地址中启用 FCC」：fcc=<IP>:<端口>、
+   operator=telecom|huawei、fcc=true/1、fcc=false/0，按频道单独覆盖全局配置
+6、依赖更新 — quic-go 0.65.0、golang.org/x/net 0.62.0、golang.org/x/text 0.44.0、
+   golang.org/x/sync 0.25.0、golang.org/x/sys 0.50.0、brotli 1.3.0、
+   go-astits 1.17.0
+```
 
 ### v3.4.2
 
