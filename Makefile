@@ -5,6 +5,7 @@
 #   make linux-arm64-v8a       # 只编译 linux-arm64-v8a
 #   make windows-64            # 只编译 windows-64
 #   make android-arm64-v8a     # 只编译 android-arm64-v8a
+#   make android-arm32-v7a     # 只编译 android-arm32-v7a
 #   make list                  # 列出所有可用的编译目标
 #   make VERSION=v1.2.3        # 手动指定版本号
 #   make clean                 # 清理 build 目录
@@ -19,6 +20,9 @@ LDFLAGS := -s -w -extldflags '-static' -X '$(MODULE)/config.Version=$(VERSION)'
 GCFLAGS := -trimpath
 ASMFLAGS := -trimpath
 BUILD    = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) $(if $(3),GOARM=$(3) )go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .
+
+# Android 目标独立在外（scripts/build-android.sh）：android/arm 必须走 NDK clang
+# 外部链接生成 PIE，不能套用上面的 CGO_ENABLED=0 + -static 规则。
 
 # PHP 模块：纯 Go 自研 runtime（phpgo），不依赖 CGO / FrankenPHP / 外部 PHP 库。
 # 单一静态二进制，PHP 脚本从磁盘读取（默认 www，相对配置文件所在目录，见 config.PHP.DocRoot）。
@@ -172,12 +176,19 @@ $(OUT_DIR)/TVGate-macos-arm64-v8a: $(GO_SRCS) $(DIST_STAMP)
 	@mkdir -p $(OUT_DIR)
 	$(call BUILD,darwin,arm64)
 
-# ==================== Android ====================
+# ==================== Android（独立脚本）====================
+# 使用 scripts/build-android.sh：NDK clang + CGO_ENABLED=1 外部链接。
+# 需要 ANDROID_NDK_HOME（或 ANDROID_HOME/ANDROID_SDK_ROOT）指向 NDK。
+# 注意：Android 不参与 make all，避免无 NDK 环境下整体构建失败。
 
-android-arm64-v8a: $(OUT_DIR)/TVGate-android-arm64-v8a
-$(OUT_DIR)/TVGate-android-arm64-v8a: $(GO_SRCS) $(DIST_STAMP)
-	@mkdir -p $(OUT_DIR)
-	$(call BUILD,android,arm64)
+android: 
+	@./scripts/build-android.sh all
+
+android-arm64-v8a:
+	@./scripts/build-android.sh arm64-v8a
+
+android-arm32-v7a:
+	@./scripts/build-android.sh arm32-v7a
 
 # ==================== 汇总 ====================
 
@@ -187,7 +198,7 @@ ALL_TARGETS := \
 	linux-mips64le linux-ppc64 linux-ppc64le linux-riscv64 linux-s390x \
 	windows-64 windows-32 windows-arm64-v8a \
 	macos-64 macos-arm64-v8a \
-	android-arm64-v8a
+	android android-arm64-v8a android-arm32-v7a
 
 all: web-ui $(OUT_DIR)/TVGate-linux-64 \
 	$(OUT_DIR)/TVGate-linux-arm64-v8a \
@@ -208,8 +219,7 @@ all: web-ui $(OUT_DIR)/TVGate-linux-64 \
 	$(OUT_DIR)/TVGate-windows-32.exe \
 	$(OUT_DIR)/TVGate-windows-arm64-v8a.exe \
 	$(OUT_DIR)/TVGate-macos-64 \
-	$(OUT_DIR)/TVGate-macos-arm64-v8a \
-	$(OUT_DIR)/TVGate-android-arm64-v8a
+	$(OUT_DIR)/TVGate-macos-arm64-v8a
 	@echo "全部编译完成，版本号: $(VERSION)，文件在 $(OUT_DIR)/"
 
 # 列出所有可用目标
@@ -217,6 +227,7 @@ list:
 	@echo "可用编译目标:"
 	@echo "  make all                 # 编译全部平台"
 	@for t in $(ALL_TARGETS); do echo "  make $$t"; done
+	@echo "  注: android* 由 scripts/build-android.sh 独立编译，需要 Android NDK（ANDROID_NDK_HOME）"
 	@echo "  make clean               # 清理 build 目录"
 	@echo "  make list                # 列出所有可用目标"
 

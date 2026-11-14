@@ -93,6 +93,7 @@
 | macOS 64-bit | `TVGate-macos-64.zip` |
 | macOS ARM64 | `TVGate-macos-arm64-v8a.zip` |
 | Android ARM64 | `TVGate-android-arm64-v8a.zip` |
+| Android ARM32 v7 | `TVGate-android-arm32-v7a.zip` |
 
 <details>
 <summary>查看全部支持的平台</summary>
@@ -115,8 +116,12 @@
 - macos-64 / darwin-amd64
 - macos-arm64-v8a / darwin-arm64
 - android-arm64-v8a / android-arm64
+- android-arm32-v7a / armeabi-v7a
 
 </details>
+
+> Android 目标使用 NDK clang 外部链接生成 PIE，需单独构建：
+> `ANDROID_NDK_HOME=<NDK 路径> make android`（或 `make android-arm32-v7a` / `make android-arm64-v8a`）。
 
 ### 安卓客户端
 

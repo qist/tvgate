@@ -37,6 +37,7 @@ jobs:
           - macos-64
           - macos-arm64-v8a
           - android-arm64-v8a
+          - android-arm32-v7a
           # ==================== 旧命名 (兼容旧版本升级) ====================
           - linux-amd64
           - linux-arm64
@@ -69,6 +70,20 @@ jobs:
       - name: Build Web UI (React SPA)
         run: make web-ui
 
+      - name: Setup Android NDK
+        if: startsWith(matrix.platform, 'android-')
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r25c
+          add-to-path: false
+
+      # Android 统一由 scripts/build-android.sh 编译（NDK clang + CGO 外部链接），
+      # 不使用主 Makefile 的 CGO_ENABLED=0 + -static 通用规则。
+      - name: Configure Android NDK toolchain
+        if: startsWith(matrix.platform, 'android-')
+        run: echo "ANDROID_NDK_HOME=${{ steps.ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+
       - name: Set environment variables
         run: |
           VERSION=$(cat config/version 2>/dev/null || echo "latest")
@@ -94,7 +109,8 @@ jobs:
             windows-arm64-v8a) GOOS=windows; GOARCH=arm64;   PACKAGE_OS=windows; PACKAGE_ARCH=arm64-v8a ;;
             macos-64)          GOOS=darwin; GOARCH=amd64;    PACKAGE_OS=macos;   PACKAGE_ARCH=64 ;;
             macos-arm64-v8a)   GOOS=darwin; GOARCH=arm64;    PACKAGE_OS=macos;   PACKAGE_ARCH=arm64-v8a ;;
-            android-arm64-v8a) GOOS=android; GOARCH=arm64;   PACKAGE_OS=android; PACKAGE_ARCH=arm64-v8a ;;
+            android-arm64-v8a) GOOS=android; GOARCH=arm64; PACKAGE_OS=android; PACKAGE_ARCH=arm64-v8a ;;
+            android-arm32-v7a) GOOS=android; GOARCH=arm; GOARM=7; PACKAGE_OS=android; PACKAGE_ARCH=arm32-v7a ;;
             # ==================== 旧命名 ====================
             linux-amd64)       GOOS=linux; GOARCH=amd64;     PACKAGE_OS=linux;   PACKAGE_ARCH=amd64 ;;
             linux-arm64)       GOOS=linux; GOARCH=arm64;     PACKAGE_OS=linux;   PACKAGE_ARCH=arm64 ;;
@@ -114,14 +130,25 @@ jobs:
           echo "PACKAGE_OS=$PACKAGE_OS" >> $GITHUB_ENV
           echo "PACKAGE_ARCH=$PACKAGE_ARCH" >> $GITHUB_ENV
           [ -n "$GOARM" ] && echo "GOARM=$GOARM" >> $GITHUB_ENV
-          echo "CGO_ENABLED=0" >> $GITHUB_ENV
+          # Android 由 scripts/build-android.sh 内部指定 CGO_ENABLED=1，这里不再覆盖
+          [ "$GOOS" != "android" ] && echo "CGO_ENABLED=0" >> $GITHUB_ENV || true
 
       - name: Build TVGate
         run: |
           mkdir -p build
           OUTPUT="build/TVGate-${PACKAGE_OS}-${PACKAGE_ARCH}"
           [ "$GOOS" = "windows" ] && OUTPUT="$OUTPUT.exe"
-          go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'" -o $OUTPUT .
+          if [ "$GOOS" = "android" ]; then
+            case "$GOARCH" in
+              arm64) ABI=arm64-v8a ;;
+              arm)   ABI=arm32-v7a ;;
+              *)     echo "Unsupported android GOARCH: $GOARCH" >&2; exit 1 ;;
+            esac
+            ./scripts/build-android.sh "$ABI"
+            cp "build/TVGate-android-${ABI}" "$OUTPUT"
+          else
+            go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'" -o $OUTPUT .
+          fi
           echo "OUTPUT=$OUTPUT" >> $GITHUB_ENV
 
       - name: Prepare packaging
