@@ -83,6 +83,33 @@ function findMatches(text: string, needle: string, caseFold: boolean, isRegex: b
   return out;
 }
 
+/** 把匹配区间渲染为 <mark>：textarea 背景透明，高亮由下层镜像层透出 */
+function renderHighlights(text: string, matches: Match[], cur: number): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  const active = matches.length ? ((cur % matches.length) + matches.length) % matches.length : -1;
+  let last = 0;
+  matches.forEach((m, i) => {
+    if (m.idx < last || m.idx >= text.length) return;
+    const end = Math.min(m.idx + m.len, text.length);
+    parts.push(text.slice(last, m.idx));
+    parts.push(
+      <mark
+        key={i}
+        className={
+          i === active
+            ? "rounded-sm bg-amber-400/70 text-transparent"
+            : "rounded-sm bg-violet-400/40 text-transparent"
+        }
+      >
+        {text.slice(m.idx, end)}
+      </mark>,
+    );
+    last = end;
+  });
+  parts.push(text.slice(last));
+  return parts;
+}
+
 // ================= 页面 =================
 
 /** 超过该体积的文件视为大文件：关闭软换行（wrap=off），避免每次光标/
@@ -101,8 +128,11 @@ export function CodePage() {
   const [busy, setBusy] = useState("");
   const [findOpen, setFindOpen] = useState<null | { focusReplace: boolean; initialFind: string; findOnly: boolean }>(null);
   const [replOpen, setReplOpen] = useState(false);
+  /** 编辑器高亮：查找当前打开时由 FindReplace 回传，镜像层据此渲染全部匹配 */
+  const [highlight, setHighlight] = useState<{ matches: Match[]; cur: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const mirrorRef = useRef<HTMLDivElement>(null);
 
   /** 编辑器当前文本：以 DOM 为真相源（打字不走 React state，超大文件不卡） */
   const textNow = useCallback((): string => taRef.current?.value ?? content, [content]);
@@ -380,6 +410,24 @@ export function CodePage() {
     setFindOpen({ focusReplace, initialFind: sel && !sel.includes("\n") ? sel : "", findOnly });
   };
 
+  const onHighlight = useCallback((matches: Match[], cur: number) => {
+    setHighlight({ matches, cur });
+  }, []);
+
+  /** 镜像层与 textarea 的滚动完全同步（字体/内边距/行高一致，才能对齐高亮） */
+  const syncMirror = useCallback(() => {
+    const ta = taRef.current;
+    const mirror = mirrorRef.current;
+    if (!ta || !mirror) return;
+    mirror.scrollTop = ta.scrollTop;
+    mirror.scrollLeft = ta.scrollLeft;
+  }, []);
+
+  // 打开查找或高亮刷新时先对齐一次，避免编辑器已滚动时高亮错位
+  useEffect(() => {
+    if (highlight) syncMirror();
+  }, [highlight, syncMirror]);
+
   // 快捷键
   const onEditorKeyDown = (e: React.KeyboardEvent) => {
     const mod = e.ctrlKey || e.metaKey;
@@ -560,16 +608,30 @@ export function CodePage() {
                 </Button>
               </div>
             </div>
-            <textarea
-              key={current}
-              ref={taRef}
-              className="min-h-0 w-full flex-1 resize-none bg-background p-3 font-mono text-sm leading-relaxed"
-              wrap={isBigFile ? "off" : "soft"}
-              defaultValue={content}
-              onChange={() => setDirty(true)}
-              onKeyDown={onEditorKeyDown}
-              spellCheck={false}
-            />
+            <div className="relative min-h-0 flex-1">
+              {/* 镜像层：与 textarea 完全同字体/内边距/行高/换行模式，只渲染匹配背景色；
+                  textarea 背景透明，透出下方 <mark>，实现查找结果高亮 */}
+              <div
+                ref={mirrorRef}
+                aria-hidden
+                className={`pointer-events-none absolute inset-0 overflow-hidden p-3 font-mono text-sm leading-relaxed text-transparent [scrollbar-gutter:stable] ${
+                  isBigFile ? "whitespace-pre" : "whitespace-pre-wrap break-words"
+                }`}
+              >
+                {highlight ? renderHighlights(textNow(), highlight.matches, highlight.cur) : null}
+              </div>
+              <textarea
+                key={current}
+                ref={taRef}
+                className="absolute inset-0 h-full w-full resize-none overflow-auto bg-transparent p-3 font-mono text-sm leading-relaxed [scrollbar-gutter:stable]"
+                wrap={isBigFile ? "off" : "soft"}
+                defaultValue={content}
+                onChange={() => setDirty(true)}
+                onScroll={syncMirror}
+                onKeyDown={onEditorKeyDown}
+                spellCheck={false}
+              />
+            </div>
           </>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col">
@@ -656,7 +718,11 @@ export function CodePage() {
           initialFind={findOpen.initialFind}
           findOnly={findOpen.findOnly}
           onContent={applyContent}
-          onClose={() => setFindOpen(null)}
+          onHighlight={onHighlight}
+          onClose={() => {
+            setFindOpen(null);
+            setHighlight(null);
+          }}
         />
       )}
 
@@ -687,6 +753,7 @@ function FindReplace({
   initialFind,
   findOnly,
   onContent,
+  onHighlight,
   onClose,
 }: {
   content: string;
@@ -695,6 +762,7 @@ function FindReplace({
   initialFind: string;
   findOnly: boolean;
   onContent: (c: string) => void;
+  onHighlight: (matches: Match[], cur: number) => void;
   onClose: () => void;
 }) {
   const [find, setFind] = useState(initialFind);
@@ -706,6 +774,11 @@ function FindReplace({
   const findInputRef = useRef<HTMLInputElement>(null);
 
   const matches = useMemo(() => findMatches(content, find, !matchCase, isRegex), [content, find, matchCase, isRegex]);
+
+  // 把匹配结果回传给编辑器镜像层，实时高亮全部匹配（当前项用更醒目的颜色）
+  useEffect(() => {
+    onHighlight(matches, cur);
+  }, [matches, cur, onHighlight]);
 
   useEffect(() => {
     setCur(0);
@@ -778,7 +851,7 @@ function FindReplace({
 
   return (
     // 点击遮罩不关闭：查找/替换需要持续可用（换词、逐个跳转），仅 Esc / × 关闭
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 p-4 pt-20">
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/10 p-4 pt-20">
       <div className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold">{findOnly ? "查找" : "查找 / 替换"}</h3>
