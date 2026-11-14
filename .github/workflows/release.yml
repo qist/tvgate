@@ -145,7 +145,10 @@ jobs:
               *)     echo "Unsupported android GOARCH: $GOARCH" >&2; exit 1 ;;
             esac
             ./scripts/build-android.sh "$ABI"
-            cp "build/TVGate-android-${ABI}" "$OUTPUT"
+            # 脚本产物名与 $OUTPUT 可能同名（如 android-arm32-v7a），同名时不能再 cp
+            if [ "build/TVGate-android-${ABI}" != "$OUTPUT" ]; then
+              cp "build/TVGate-android-${ABI}" "$OUTPUT"
+            fi
           else
             go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'" -o $OUTPUT .
           fi
