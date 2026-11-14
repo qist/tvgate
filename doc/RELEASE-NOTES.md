@@ -123,11 +123,11 @@ v3.4.3 — 新增 Android ARM32 v7 服务端包、Android 构建独立脚本化�
 
 ## 五、发布核对清单
 
-- [ ] 服务端 Release：tag `v3.4.3` 已推送，66 个资产（33 平台包 + 33 `.dgst`）上传完成
-- [ ] Android ARM32 v7 资产存在：`TVGate-android-arm32-v7a.zip` 与 `.dgst`
-- [ ] Docker 镜像：`juestnow/tvgate:v3.4.3` 已推送（Docker Hub 已可见），`latest` 随 tag 更新
-- [ ] Android Release：`releases/latest` 为 v3.4.3，`arm64` / `arm` / `x86_64` 三个 APK 齐全
-- [ ] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.3
-- [ ] 发布后抽查：Android 包 `file` 显示 PIE + `for Android 21`
-- [ ] GitHub Release 正文已填写（取自「二、精简版」）
+- [x] 服务端 Release：tag `v3.4.3` 已推送，66 个资产（33 平台包 + 33 `.dgst`）上传完成
+- [x] Android ARM32 v7 资产存在：`TVGate-android-arm32-v7a.zip` 与 `.dgst`
+- [x] Docker 镜像：`juestnow/tvgate:v3.4.3` 已推送（Docker Hub 已可见），`latest` 随 tag 更新
+- [x] Android Release：`releases/latest` 为 v3.4.3，`arm64` / `arm` / `x86_64` 三个 APK 齐全
+- [x] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.3
+- [x] 发布后抽查：Android 包 `file` 显示 PIE + `for Android 21`
+- [x] GitHub Release 正文已填写（取自「二、精简版」）
 - [ ] 商店：`doc/STORE-RELEASE-NOTES.md` 文案已在应用市场提交
