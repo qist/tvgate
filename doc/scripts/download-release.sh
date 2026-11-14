@@ -90,6 +90,7 @@ ALL_PLATFORMS=(
     macos-64
     macos-arm64-v8a
     android-arm64-v8a
+    android-arm32-v7a
 )
 
 # 如果没有指定平台，下载全部
