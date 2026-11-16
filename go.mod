@@ -20,7 +20,7 @@ require (
 	github.com/pion/rtp v1.10.6
 	github.com/quic-go/quic-go v0.65.0
 	github.com/shirou/gopsutil/v3 v3.24.5
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.25.0
 	golang.org/x/sys v0.50.0
