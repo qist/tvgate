@@ -10,7 +10,7 @@
 |---|---|
 | 版本 | **v3.4.5** |
 | 发布日期 | 2026-11-17 |
-| 发布提交 | `待填`（tag `v3.4.5`） |
+| 发布提交 | `f5f087c`（tag `v3.4.5`） |
 | 距上一版 | v3.4.4（2026-11-17，同日补丁） |
 | 平台 | Linux / Windows / macOS / Android 共 33 个平台包 |
 | 资产 | `TVGate-<平台>-<架构>.zip` + 同名 `.dgst`（MD5/SHA1/SHA256/SHA512），共 66 个 |
@@ -97,9 +97,9 @@ web-initial-password.txt 的界面，随机化会让用户既不知道账号也�
 
 ## 五、发布核对清单
 
-- [ ] 服务端 Release：tag `v3.4.5` 已推送，66 个资产（33 平台包 + 33 `.dgst`）上传完成
-- [ ] Docker 镜像：`juestnow/tvgate:v3.4.5` 已推送，`latest` 随 tag 更新
-- [ ] Android Release：`tvgate-android` v3.4.7 已发布，`arm64` / `arm` / `x86_64` APK 齐全
-- [ ] 发布后抽查：Release 二进制实测 `-version` 输出 v3.4.5
-- [ ] GitHub Release 标题与正文已填写（取自「一」「二」精简版）
+- [x] 服务端 Release：tag `v3.4.5` 已推送，66 个资产（33 平台包 + 33 `.dgst`）上传完成
+- [x] Docker 镜像：`juestnow/tvgate:v3.4.5` 已推送，`latest` 随 tag 更新
+- [x] Android Release：`tvgate-android` v3.4.7 已发布，`arm64` / `arm` / `x86_64` APK 齐全（versionCode 12）
+- [x] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.5；APK 内嵌 `libtvgate.so` 含 v3.4.5 版本串
+- [x] GitHub Release 标题与正文已填写（取自「一」「二」精简版）
 - [ ] 商店：`doc/STORE-RELEASE-NOTES.md` 文案已在应用市场提交
