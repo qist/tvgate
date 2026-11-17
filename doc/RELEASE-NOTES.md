@@ -9,7 +9,7 @@
 |---|---|
 | 版本 | **v3.4.4** |
 | 发布日期 | 2026-11-17 |
-| 发布提交 | 见 tag `v3.4.4` |
+| 发布提交 | `dbc7e41`（tag `v3.4.4`） |
 | 距上一版 | v3.4.3（2026-11-14） |
 | 平台 | Linux / Windows / macOS / Android 共 33 个平台包 |
 | 资产 | `TVGate-<平台>-<架构>.zip` + 同名 `.dgst`（MD5/SHA1/SHA256/SHA512），共 66 个 |
@@ -115,9 +115,9 @@ v3.4.4 — 后台安全加固、PHP 多目录与 curl 兼容性改进、代码�
 
 ## 五、发布核对清单
 
-- [ ] 服务端 Release：tag `v3.4.4` 已推送，66 个资产（33 平台包 + 33 `.dgst`）上传完成
+- [x] 服务端 Release：tag `v3.4.4` 已推送，66 个资产（33 平台包 + 33 `.dgst`）上传完成
 - [ ] Docker 镜像：`juestnow/tvgate:v3.4.4` 已推送，`latest` 随 tag 更新
 - [ ] Android Release：`releases/latest` 指向 v3.4.4，`arm64` / `arm` / `x86_64` APK 齐全
-- [ ] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.4
-- [ ] GitHub Release 正文已填写（取自「二、精简版」）
+- [x] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.4
+- [x] GitHub Release 标题与正文已填写（取自「一」「二」精简版）
 - [ ] 商店：`doc/STORE-RELEASE-NOTES.md` 文案已在应用市场提交
