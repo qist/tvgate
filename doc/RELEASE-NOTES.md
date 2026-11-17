@@ -37,7 +37,7 @@ v3.4.5 — Android 端保持默认后台凭据，修复内嵌 APK 无法登录�
    首次登录后请立即在「服务 → Web 设置」修改密码
 
 升级：下载对应平台压缩包解压覆盖后重启；Docker 用户重新拉取镜像；旧配置文件可直接使用。
-Android 用户请同步更新 APK（tvgate-android v3.4.7），新内核才会生效。
+Android 用户请同步更新 APK（tvgate-android v3.4.5），新内核才会生效。
 ```
 
 ## 三、完整版（用于发布公告 / 论坛 / 通知，用户可读）
@@ -75,7 +75,7 @@ web-initial-password.txt 的界面，随机化会让用户既不知道账号也�
 - 配置文件向后兼容：旧 config.yaml 可直接使用，无需修改
 - 二进制：下载对应平台压缩包，解压覆盖后重启服务（systemd：systemctl restart tvgate）
 - Docker：docker pull juestnow/tvgate:v3.4.5（或 ghcr.io/qist/tvgate:v3.4.5），重建容器
-- Android：需更新 APK（tvgate-android v3.4.7）才会内嵌 v3.4.5 内核，App 内支持在线更新
+- Android：需更新 APK（tvgate-android v3.4.5）才会内嵌 v3.4.5 内核，App 内支持在线更新
 
 ### 发布校验
 
@@ -92,14 +92,14 @@ web-initial-password.txt 的界面，随机化会让用户既不知道账号也�
 |---|---|---|
 | 裸机二进制 | Releases 页 `TVGate-<平台>-<架构>.zip` | 解压覆盖 → 重启服务（`systemctl restart tvgate`） |
 | Docker | `juestnow/tvgate:v3.4.5` / `ghcr.io/qist/tvgate:v3.4.5` | 拉取新镜像 → 重建容器（config 挂载不变） |
-| Android App | tvgate-android Releases 页 `TVGate-v3.4.7-{arm64,arm,x86_64}.apk` | 覆盖安装，或 App 内在线更新 |
+| Android App | tvgate-android Releases 页 `TVGate-v3.4.5-{arm64,arm,x86_64}.apk` | 覆盖安装，或 App 内在线更新 |
 | 源码 | tag `v3.4.5` | `make linux-64`（自动构建 Web UI） |
 
 ## 五、发布核对清单
 
 - [x] 服务端 Release：tag `v3.4.5` 已推送，66 个资产（33 平台包 + 33 `.dgst`）上传完成
 - [x] Docker 镜像：`juestnow/tvgate:v3.4.5` 已推送，`latest` 随 tag 更新
-- [x] Android Release：`tvgate-android` v3.4.7 已发布，`arm64` / `arm` / `x86_64` APK 齐全（versionCode 12）
+- [x] Android Release：`tvgate-android` v3.4.5 已发布，`arm64` / `arm` / `x86_64` APK 齐全（versionCode 13）
 - [x] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.5；APK 内嵌 `libtvgate.so` 含 v3.4.5 版本串
 - [x] GitHub Release 标题与正文已填写（取自「一」「二」精简版）
 - [ ] 商店：`doc/STORE-RELEASE-NOTES.md` 文案已在应用市场提交
