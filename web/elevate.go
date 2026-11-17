@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 )
+
 // 二次授权（elevated session）：查看/下载/保存整份配置、备份下载/恢复等
 // 敏感操作前需重输登录密码，授权以独立短 TTL Cookie 承载（默认 10 分钟）。
 
@@ -51,6 +52,10 @@ func (h *ConfigHandler) handleElevate(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case http.MethodPost:
+		// 二次授权同样限制失败次数：避免已登录会话被用来在线爆破登录密码
+		if !h.acquireAuthAttempt(w, r, "elevate") {
+			return
+		}
 		var req struct {
 			Password string `json:"password"`
 		}
@@ -62,9 +67,11 @@ func (h *ConfigHandler) handleElevate(w http.ResponseWriter, r *http.Request) {
 		if h.webConfig.Password == "" ||
 			req.Password == "" ||
 			subtle.ConstantTimeCompare([]byte(req.Password), []byte(h.webConfig.Password)) != 1 {
+			h.recordAuthFailure(r, "elevate", h.webConfig.Username)
 			http.Error(w, "密码错误", http.StatusUnauthorized)
 			return
 		}
+		h.resetAuthFailures(r, "elevate")
 
 		http.SetCookie(w, &http.Cookie{
 			Name:     elevateCookieName,

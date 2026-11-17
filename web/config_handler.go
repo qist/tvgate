@@ -96,6 +96,12 @@ func (h *ConfigHandler) cookieAuth(handler http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// 弱口令保护：默认/弱密码下锁定高危操作（改密码接口除外），
+		// 避免公开的默认口令直接拿到 RCE/文件管理能力。
+		if !h.checkWeakPasswordGuard(w, r) {
+			return
+		}
+
 		handler(w, r)
 	}
 }
@@ -225,24 +231,25 @@ func (h *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	// mux.HandleFunc(webPath+"api/globalauth/config/save", h.handleGlobalAuthConfigSave)
 
 	// 代码文件管理（针对 docroot /www 等 PHP 脚本目录）
-	mux.HandleFunc(webPath+"api/code/list", h.cookieAuth(h.handleCodeList))
-	mux.HandleFunc(webPath+"api/code/read", h.cookieAuth(h.handleCodeRead))
-	mux.HandleFunc(webPath+"api/code/save", h.cookieAuth(h.handleCodeSave))
-	mux.HandleFunc(webPath+"api/code/new", h.cookieAuth(h.handleCodeNew))
-	mux.HandleFunc(webPath+"api/code/rename", h.cookieAuth(h.handleCodeRename))
-	mux.HandleFunc(webPath+"api/code/delete", h.cookieAuth(h.handleCodeDelete))
-	mux.HandleFunc(webPath+"api/code/upload", h.cookieAuth(h.handleCodeUpload))
-	mux.HandleFunc(webPath+"api/code/download", h.cookieAuth(h.handleCodeDownload))
-	mux.HandleFunc(webPath+"api/code/check", h.cookieAuth(h.handleCodeCheck))
-	mux.HandleFunc(webPath+"api/code/unzip", h.cookieAuth(h.handleCodeUnzip))
+	mux.HandleFunc(webPath+"api/code/roots", h.cookieAuth(h.requireSafeDocRoot(h.handleCodeRoots)))
+	mux.HandleFunc(webPath+"api/code/list", h.cookieAuth(h.requireSafeDocRoot(h.handleCodeList)))
+	mux.HandleFunc(webPath+"api/code/read", h.cookieAuth(h.requireSafeDocRoot(h.handleCodeRead)))
+	mux.HandleFunc(webPath+"api/code/save", h.cookieAuth(h.requireSafeDocRoot(h.handleCodeSave)))
+	mux.HandleFunc(webPath+"api/code/new", h.cookieAuth(h.requireSafeDocRoot(h.handleCodeNew)))
+	mux.HandleFunc(webPath+"api/code/rename", h.cookieAuth(h.requireSafeDocRoot(h.handleCodeRename)))
+	mux.HandleFunc(webPath+"api/code/delete", h.cookieAuth(h.requireSafeDocRoot(h.handleCodeDelete)))
+	mux.HandleFunc(webPath+"api/code/upload", h.cookieAuth(h.requireSafeDocRoot(h.handleCodeUpload)))
+	mux.HandleFunc(webPath+"api/code/download", h.cookieAuth(h.requireSafeDocRoot(h.handleCodeDownload)))
+	mux.HandleFunc(webPath+"api/code/check", h.cookieAuth(h.requireSafeDocRoot(h.handleCodeCheck)))
+	mux.HandleFunc(webPath+"api/code/unzip", h.cookieAuth(h.requireSafeDocRoot(h.handleCodeUnzip)))
 
 	// 备份文件中心（下载/恢复敏感：需二次授权）
-	mux.HandleFunc(webPath+"api/backup/list", h.cookieAuth(h.handleBackupList))
-	mux.HandleFunc(webPath+"api/backup/restore", h.cookieAuth(h.requireElevated(h.handleBackupRestore)))
-	mux.HandleFunc(webPath+"api/backup/delete", h.cookieAuth(h.requireElevated(h.handleBackupDelete)))
-	mux.HandleFunc(webPath+"api/backup/batch-delete", h.cookieAuth(h.requireElevated(h.handleBackupBatchDelete)))
-	mux.HandleFunc(webPath+"api/backup/download", h.cookieAuth(h.requireElevated(h.handleBackupDownload)))
-	mux.HandleFunc(webPath+"api/backup/cleanup", h.cookieAuth(h.handleBackupCleanup))
+	mux.HandleFunc(webPath+"api/backup/list", h.cookieAuth(h.requireSafeDocRoot(h.handleBackupList)))
+	mux.HandleFunc(webPath+"api/backup/restore", h.cookieAuth(h.requireElevated(h.requireSafeDocRoot(h.handleBackupRestore))))
+	mux.HandleFunc(webPath+"api/backup/delete", h.cookieAuth(h.requireElevated(h.requireSafeDocRoot(h.handleBackupDelete))))
+	mux.HandleFunc(webPath+"api/backup/batch-delete", h.cookieAuth(h.requireElevated(h.requireSafeDocRoot(h.handleBackupBatchDelete))))
+	mux.HandleFunc(webPath+"api/backup/download", h.cookieAuth(h.requireElevated(h.requireSafeDocRoot(h.handleBackupDownload))))
+	mux.HandleFunc(webPath+"api/backup/cleanup", h.cookieAuth(h.requireSafeDocRoot(h.handleBackupCleanup)))
 
 }
 
@@ -297,7 +304,10 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// POST请求处理登录
 	if r.Method == http.MethodPost {
-		// log.Printf("处理登录表单提交")
+		// 暴力破解防护：同一 IP 失败过多时直接 429（在解析/校验密码前拦截）
+		if !h.acquireAuthAttempt(w, r, "login") {
+			return
+		}
 
 		// 解析请求体
 		var credentials struct {
@@ -323,6 +333,8 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			credentials.Password != "" &&
 			subtle.ConstantTimeCompare([]byte(credentials.Username), []byte(h.webConfig.Username)) == 1 &&
 			subtle.ConstantTimeCompare([]byte(credentials.Password), []byte(h.webConfig.Password)) == 1 {
+			// 认证成功，清除该 IP 的失败计数
+			h.resetAuthFailures(r, "login")
 			// 认证成功，设置会话cookie
 			// log.Printf("认证成功，设置认证Cookie")
 			http.SetCookie(w, &http.Cookie{
@@ -341,7 +353,7 @@ func (h *ConfigHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// 认证失败
-		// log.Printf("认证失败")
+		h.recordAuthFailure(r, "login", credentials.Username)
 		http.Error(w, "用户名或密码错误", http.StatusUnauthorized)
 		return
 	}
@@ -400,12 +412,23 @@ func (h *ConfigHandler) handleAuthStatus(w http.ResponseWriter, r *http.Request)
 
 	// log.Printf("认证状态: %t, 用户名: %s", isAuthenticated, username)
 
-	// 返回认证状态
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	// 返回认证状态；弱口令标记只对已登录会话返回（不向匿名请求暴露后台口令强度）
+	resp := map[string]interface{}{
 		"authenticated": isAuthenticated,
 		"username":      username,
-	})
+	}
+	if isAuthenticated {
+		if weak, hint := weakPasswordState(); weak {
+			resp["weak_password"] = true
+			resp["weak_password_hint"] = hint
+		}
+		// 仍在使用启动时自动生成的初始口令：前端提示尽快改密
+		if config.InitialPasswordFileExists() {
+			resp["initial_password"] = true
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // isAuthenticated 检查用户是否已认证

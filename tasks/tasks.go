@@ -103,6 +103,9 @@ func Start(c *config.Config) {
 	}
 	managers = nil
 
+	// 记录当前 docroot：危险命令判定时禁止任务直接删除整个脚本目录
+	SetDocRoot(c.PHP.DocRoot)
+
 	if len(c.Tasks) == 0 {
 		return
 	}
@@ -113,6 +116,11 @@ func Start(c *config.Config) {
 		}
 		if _, err := parseCron(entry.Cron); err != nil {
 			logger.LogPrintf("⚠️ [tasks] 任务 %q 的 cron 表达式无效已跳过: %v", taskLabel(entry), err)
+			continue
+		}
+		// 安全策略：危险命令不启动调度（防止手工改配置文件绕过 Web 端保存校验）
+		if err := ValidateCommand(entry.Command); err != nil {
+			logger.LogPrintf("⛔ [tasks] 任务 %q 命令被安全策略拒绝，已跳过: %v", taskLabel(entry), err)
 			continue
 		}
 		ctx, cancel := context.WithCancel(config.ServerCtx)
@@ -238,6 +246,11 @@ func ExecuteOnce(command string, timeout time.Duration) (output string, duration
 //
 // 注意：phpgo 执行为同步调用，timeout 仅能在整体上等待，无法中断运行中的脚本。
 func runCommand(ctx context.Context, command string) ([]byte, error) {
+	// 统一安全闸门：定时触发与「立即执行」都经过这里，
+	// 危险命令直接拒绝，不进入 shell。
+	if err := ValidateCommand(command); err != nil {
+		return nil, err
+	}
 	if strings.HasPrefix(command, "php://") {
 		return phpCommand(command)
 	}

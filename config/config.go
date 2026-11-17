@@ -136,6 +136,11 @@ type PHPConfig struct {
 	Index      []string `yaml:"index"`       // 目录索引文件列表，如 [index.php, index.html]
 	WorkerMode bool     `yaml:"worker_mode"` // 是否启用 Worker 常驻模式
 	Workers    int      `yaml:"workers"`     // Worker 进程数（worker_mode 为 true 时生效）
+	// AllowedRoots 额外允许的目录（多目录）：
+	//   - 代码文件管理器可直接浏览、编辑这些目录；
+	//   - php docroot 内指向这些目录的软链接可被 PHP 服务（否则会被防 symlink 逃逸拒绝）。
+	// 同样受 docroot 安全校验约束（禁止根目录/系统敏感目录）。
+	AllowedRoots []string `yaml:"allowed_roots"`
 }
 
 // PlayerConfig 表示 H5 播放器的订阅源配置
@@ -144,11 +149,11 @@ type PlayerConfig struct {
 	Subscription string `yaml:"subscription"` // 订阅源：HTTP(S) URL，或本地路径（绝对路径 / file:// / php://相对docroot / docroot相对路径）；可指向文件或目录（目录递归收集 .txt/.m3u/.m3u8 合并解析）。支持换行/逗号/分号分隔的多个源（等价于 subscriptions，按序合并）
 	// Subscriptions 多订阅源：追加在 Subscription 之后的 URL/本地路径/目录列表。
 	// 与 Subscription 合并解析（先 Subscription，再本列表），同源去重；单个源失败只跳过该源。
-	Subscriptions  []string      `yaml:"subscriptions,omitempty"`
-	Epg            string        `yaml:"epg"`             // 逗号TXT 订阅的 EPG 模板（含 {name}/{date} 占位符）；也可填固定 XMLTV URL（xml.gz，整份节目单按频道名匹配，gzip 自动识别）。支持换行/分号/逗号分隔的多个来源（同类型合并，见 Epgs）
+	Subscriptions []string `yaml:"subscriptions,omitempty"`
+	Epg           string   `yaml:"epg"` // 逗号TXT 订阅的 EPG 模板（含 {name}/{date} 占位符）；也可填固定 XMLTV URL（xml.gz，整份节目单按频道名匹配，gzip 自动识别）。支持换行/分号/逗号分隔的多个来源（同类型合并，见 Epgs）
 	// Epgs 多 EPG 来源：追加在 Epg 之后，按序编号越靠前优先级越高。
 	// 同类型来源（xml 全部 / template 全部）节目单合并；另一类型在首选无结果时补齐。
-	Epgs []string `yaml:"epgs,omitempty"`
+	Epgs           []string      `yaml:"epgs,omitempty"`
 	Logo           string        `yaml:"logo"`            // 逗号TXT 订阅的台标模板（含 {name} 占位符），如 https://logo.<your-domain>/{name}.png
 	LogoDir        string        `yaml:"logo_dir"`        // 本地台标目录（如 /opt/TVLogo），频道 logo 用该目录下 <频道名>.png，经 /player/logo/ 服务
 	UpdateInterval time.Duration `yaml:"update_interval"` // 订阅定时刷新间隔，默认 2h；整份 XMLTV EPG（epg 填固定 xml/xml.gz URL）的刷新与订阅共用同一时钟，每周期随 Reload 一起重拉
@@ -603,17 +608,32 @@ func (c *Config) SetDefaults() {
 	if c.PHP.DocRoot == "" {
 		c.PHP.DocRoot = "www" // 默认相对路径（相对配置文件所在目录）
 	}
-	// 支持 ~ / ~/ 家目录写法（安卓 Termux、移动端用户常用，cwd 不可靠）
-	c.PHP.DocRoot = expandHome(c.PHP.DocRoot)
-	if !filepath.IsAbs(c.PHP.DocRoot) {
-		// 相对路径：基准为配置文件所在目录（而非进程 cwd），跨平台一致
-		if *ConfigFilePath != "" {
-			c.PHP.DocRoot = filepath.Join(filepath.Dir(expandHome(*ConfigFilePath)), c.PHP.DocRoot)
+	// 解析 ~ / ~/ 家目录写法与相对路径（基准为配置文件所在目录，跨平台一致），
+	// 并归一化尾斜杠/多余分隔符：否则 docroot 带尾斜杠时，docroot+"/" 会拼成
+	// "/apps/www//" 双斜杠，导致边界判断把正常脚本误判为越权（403/非法路径）。
+	// 安全性校验（禁止根目录/系统目录）在 php.Init 与保存接口中执行：
+	// SetDefaults 无错误返回值，不能在这里让程序启动失败。
+	c.PHP.DocRoot = ResolveDocRoot(c.PHP.DocRoot)
+	// 额外代码目录（多目录）：同样按配置文件目录解析并归一化，去掉空值与重复项
+	if len(c.PHP.AllowedRoots) > 0 {
+		seen := make(map[string]struct{}, len(c.PHP.AllowedRoots))
+		roots := make([]string, 0, len(c.PHP.AllowedRoots))
+		for _, raw := range c.PHP.AllowedRoots {
+			if strings.TrimSpace(raw) == "" {
+				continue
+			}
+			p := ResolveDocRoot(raw)
+			if p == "" {
+				continue
+			}
+			if _, ok := seen[p]; ok {
+				continue
+			}
+			seen[p] = struct{}{}
+			roots = append(roots, p)
 		}
+		c.PHP.AllowedRoots = roots
 	}
-	// 归一化尾斜杠/多余分隔符：否则 docroot 带尾斜杠时，docroot+"/" 会拼成
-	// "/apps/www//" 双斜杠，导致边界判断把正常脚本误判为越权（403/非法路径）
-	c.PHP.DocRoot = filepath.Clean(c.PHP.DocRoot)
 	if len(c.PHP.Index) == 0 {
 		c.PHP.Index = []string{"index.php", "index.html"}
 	}

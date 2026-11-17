@@ -54,6 +54,14 @@ var (
 	// resolvedDocRoot 是 docRoot 解析符号链接后的真实绝对路径，用于防 symlink 逃逸。
 	// Android 下 docRoot 本身可能含 symlink（如 /data/user/0 -> /data/data）。
 	resolvedDocRoot string
+	// docRootErr 记录 docroot 安全校验失败的原因（如被设为 / 或系统目录）。
+	// 非空时拒绝所有 PHP 请求与内部调用，避免 docroot 指向根目录后
+	// 任意脚本/静态文件被读取、或被 PHP 脚本的绝对路径文件操作破坏系统。
+	docRootErr error
+	// allowedRoots / resolvedAllowedRoots 额外允许的目录（多目录）：
+	// docroot 内指向这些目录的软链接可被正常服务，否则仍按 symlink 逃逸拒绝。
+	allowedRoots         []string
+	resolvedAllowedRoots []string
 )
 
 // Init 初始化纯 Go PHP 模块。
@@ -76,12 +84,82 @@ func Init(c *config.Config) error {
 		// 兜底与配置默认一致：相对路径（相对配置文件所在目录）
 		docRoot = "www"
 	}
+	// 安全校验：禁止把根目录/系统目录作为 docroot（否则 /php/ 可读取任意文件，
+	// 代码管理页也可删除任意文件）。校验失败时不挂载请求，仅记录错误。
+	docRootErr = config.ValidateDocRoot(docRoot)
+	if docRootErr != nil {
+		logger.LogPrintf("❌ [php] docroot 不安全，PHP 模块已禁用: %v", docRootErr)
+		resolvedDocRoot = ""
+		return nil
+	}
 	// 预解析 docRoot 的真实路径，避免每次请求重复 EvalSymlinks
 	resolvedDocRoot = docRoot
 	if rr, err := filepath.EvalSymlinks(docRoot); err == nil {
 		resolvedDocRoot = rr
 	}
+
+	// 额外允许目录（多目录）：逐项做与 docroot 相同的安全校验，
+	// 不安全的项只跳过并记录，不影响主 docroot。
+	allowedRoots = nil
+	resolvedAllowedRoots = nil
+	for _, raw := range cfg.AllowedRoots {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		if err := config.ValidateDocRoot(raw); err != nil {
+			logger.LogPrintf("⚠️ [php] 忽略不安全的 allowed_roots 项 %q: %v", raw, err)
+			continue
+		}
+		allowedRoots = append(allowedRoots, raw)
+		real := raw
+		if rr, err := filepath.EvalSymlinks(raw); err == nil {
+			real = rr
+		}
+		resolvedAllowedRoots = append(resolvedAllowedRoots, real)
+	}
+	if len(allowedRoots) > 0 {
+		logger.LogPrintf("📂 [php] 额外允许目录: %v", allowedRoots)
+	}
 	return nil
+}
+
+// isBlockedPHPPath 判断 URL 路径是否属于禁止通过 /php/ 访问的目录/文件：
+// 备份文件（*.bak.<时间戳>，仍含 PHP 代码会被执行）与隐藏文件（.git/.env 等）。
+// .well-known 例外，保留 ACME 等标准用途。
+func isBlockedPHPPath(rel string) bool {
+	for _, seg := range strings.Split(rel, "/") {
+		if seg == "" {
+			continue
+		}
+		if strings.Contains(seg, ".bak.") {
+			return true
+		}
+		if strings.HasPrefix(seg, ".") && seg != ".well-known" {
+			return true
+		}
+	}
+	return false
+}
+
+// withinServedRoot 判断真实路径是否落在 docroot 或任一 allowed_roots 内。
+func withinServedRoot(real string) bool {
+	if pathWithin(real, resolvedDocRoot) {
+		return true
+	}
+	for _, r := range resolvedAllowedRoots {
+		if pathWithin(real, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathWithin 判断 p 是否为 root 本身或其子路径（边界安全，避免同前缀兄弟目录误判）。
+func pathWithin(p, root string) bool {
+	if root == "" || p == "" {
+		return false
+	}
+	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
 }
 
 // Shutdown 释放资源（目前无状态，预留接口）
@@ -98,6 +176,13 @@ func ResolvedDocRoot() string {
 // 执行磁盘脚本并将 echo/header/exit 映射为 HTTP 响应。
 func Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// docroot 未通过安全校验（如被配置为 / 或系统目录）时一律拒绝，
+		// 避免任意文件被当成静态资源读取、或执行越权脚本。
+		if docRootErr != nil {
+			w.WriteHeader(http.StatusForbidden)
+			logger.LogPHPRequest(r, r.URL.Path, http.StatusForbidden, 0)
+			return
+		}
 		clientIP := r.RemoteAddr
 		if h, _, err := net.SplitHostPort(clientIP); err == nil {
 			clientIP = h
@@ -142,6 +227,14 @@ func Handler() http.HandlerFunc {
 			p = strings.TrimPrefix(p, cfg.Path)
 		}
 		rel := strings.Trim(p, "/")
+		// 禁止通过 /php/ 访问备份文件与隐藏文件：
+		// 代码管理器保存时生成 xxx.php.bak.<ts>（仍含 PHP 代码，被请求会执行）；
+		// .git/.env/.htaccess 等也不应暴露。.well-known 保留（ACME 验证等）。
+		if isBlockedPHPPath(rel) {
+			w.WriteHeader(http.StatusNotFound)
+			logger.LogPHPRequest(r, rel, http.StatusNotFound, 0)
+			return
+		}
 		// rel 为空时访问 docroot 根目录（后面由目录逻辑处理 index 查找）
 		scriptPath := filepath.Join(docRoot, rel)
 		// pathInfo：PHP PATH_INFO 路由（/ysptp.php/cctv1.m3u8）剥离出的子路径
@@ -179,10 +272,10 @@ func Handler() http.HandlerFunc {
 				return
 			}
 		}
-		// 防符号链接逃逸：真实路径必须仍落在 docRoot 内
+		// 防符号链接逃逸：真实路径必须落在 docroot 或 allowed_roots 内
 		// （www 内若存在指向外部的 symlink，可被读取/执行，必须拒绝）
 		if real, rerr := filepath.EvalSymlinks(scriptPath); rerr == nil {
-			if real != resolvedDocRoot && !strings.HasPrefix(real, resolvedDocRoot+string(filepath.Separator)) {
+			if !withinServedRoot(real) {
 				w.WriteHeader(http.StatusForbidden)
 				logger.LogPHPRequest(r, rel, http.StatusForbidden, 0)
 				return

@@ -28,6 +28,8 @@ multicast:
 # 配置文件编辑接口
 web:
     enabled: true
+    # 仅当口令仍是 admin/空时启动才会初始化（口令换随机值，用户名/路径仅在自身是默认值时随机化），
+    # 新凭据记录到 <配置目录>/web-initial-password.txt（0600）
     username: admin
     password: admin
     path: /web/ # 自定义路径
@@ -40,6 +42,9 @@ php:
   enabled: false          # 是否启用 PHP 模块（独立模块，可单独开关）
   path: /php/             # 访问路径前缀
   docroot: www            # PHP 脚本根目录（从磁盘读取，相对配置文件所在目录）
+  # allowed_roots:        # 额外目录（多目录）：代码管理器可直接浏览；docroot 内指向这些目录的软链接可被 PHP 服务
+  #   - tvbox             # 相对配置文件所在目录，也可写绝对路径（如 /data/tvbox）
+  #   - /data/backup
   index:                  # 目录索引文件列表
     - index.php
     - index.html

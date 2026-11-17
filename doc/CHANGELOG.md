@@ -315,6 +315,28 @@
 
 ## 服务端 (tvgate)
 
+### v3.4.4
+
+```
+1、后台安全加固 — 完善登录与敏感操作保护，降低后台暴露在公网时的风险；具体改动不在发布说明
+   中展开，建议所有用户升级
+2、后台凭据初始化 — 访问路径 / 用户名 / 口令若仍为示例值，首次启动会替换为随机值，新值输出
+   到启动日志与配置目录 web-initial-password.txt（0600）；改密需输入当前密码，也可用
+   TVGATE_ADMIN_PASSWORD 指定初始口令
+3、PHP 模块 — docroot 增加业务目录校验；新增 php.allowed_roots 多目录支持（代码管理器可直接
+   浏览，docroot 内软链接指向这些目录时也可服务）；/php/ 不再返回 *.bak.* 备份文件与隐藏文件
+   （.git / .env / .htaccess 等），.well-known 保留
+4、phpgo（内嵌 PHP runtime） — curl 补齐 CURLINFO_HEADER_SIZE / CURLINFO_SIZE_DOWNLOAD /
+   CURLINFO_TOTAL_TIME 等常量与实现，CURLOPT_HEADER 下按 header_size 拆包再 json_decode 的
+   脚本可正常运行；curl_getinfo 支持整数与名称两种常量传参
+5、代码文件管理器 — 支持多根目录切换；新建文件后自动打开并聚焦；同名文件先确认再覆盖，
+   覆盖 / 上传 / 解压前自动备份为 .bak.<时间戳>
+6、定时任务 — 「立即执行」仅允许执行已保存任务；保存与启动前增加一致性校验，未通过的任务
+   不进入调度
+7、文档 — doc/WEB.md、doc/PHP.md、doc/TASKS.md、doc/MERLIN.md 同步更新
+```
+
+### v3.4.3
 ### v3.4.3
 
 ```

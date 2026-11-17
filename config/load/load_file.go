@@ -68,6 +68,10 @@ func LoadConfig(configPath string) error {
 	// 而 web 各保存路径（saveAndResponse）之后并**不会**再调 SetDefaults，nil 会一直留着，
 	// 后续任何一次 HTTP client 创建 / DNS 解析都会再崩一次。SetDefaults 幂等，这里提前调用安全。
 	newCfg.SetDefaults()
+	// 后台口令引导：不存在公开默认口令。若配置里仍是 admin（或为空），
+	// 这里生成随机口令并写回配置文件 —— 否则任何能访问面板的人都能用公开默认口令
+	// 先登录、再改密码把后台接管。必须在发布前完成，避免发布瞬间读到旧口令。
+	bootstrapPwd := config.EnsureWebPasswordBootstrap(&newCfg)
 	// 发布全局配置必须持写锁：读方（player.interval、stream、web 等多处）
 	// 均以 CfgMu.RLock 读取 config.Cfg，发布是无锁写会与它们竞争（-race 实证）。
 	config.CfgMu.Lock()
@@ -91,6 +95,15 @@ func LoadConfig(configPath string) error {
 		MaxAgeDays: config.Cfg.Log.MaxAgeDays,
 		Compress:   config.Cfg.Log.Compress,
 	})
+
+	// 口令引导结果放在 logger 初始化之后打印：既进日志文件，也出现在控制台。
+	// 控制台用 fmt 直接输出，保证「日志文件功能关闭」时（如精简部署）也能在
+	// docker logs / systemd journal 里看到初始口令。
+	if bootstrapPwd != nil {
+		banner := bootstrapPwd.Banner()
+		fmt.Println(banner)
+		logger.LogPrintf("%s", banner)
+	}
 
 	// 配置加载的**统一出口**通知播放器：player 段真的变了就立即重载订阅（台标/EPG/订阅源
 	// 等改动即时生效）。放在这里而不是各个保存/监听调用点，是因为加载路径有十几处

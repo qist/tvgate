@@ -226,3 +226,29 @@ func writeCookieJar(path string, headers []string) {
 	}
 	_ = os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }
+
+// curlInfoKey 把 CURLINFO_* 常量（整数常量值或常量名）映射为 curl_getinfo 返回数组的键。
+// 常量可能以整数（CURLINFO_HEADER_SIZE 等已定义）或字符串名传入，两种都要兼容。
+func curlInfoKey(opt string) string {
+	switch opt {
+	case "2097154", "2097153", "CURLINFO_HTTP_CODE", "CURLINFO_RESPONSE_CODE":
+		return "http_code"
+	case "1048577", "CURLINFO_EFFECTIVE_URL", "CURLINFO_URL":
+		return "effective_url"
+	case "1048593", "CURLINFO_CONTENT_TYPE":
+		return "content_type"
+	case "3145744", "CURLINFO_REDIRECT_URL":
+		return "redirect_url"
+	case "1769476", "CURLINFO_PRIMARY_IP":
+		return "primary_ip"
+	case "2097163", "CURLINFO_HEADER_SIZE":
+		return "header_size"
+	case "3145736", "CURLINFO_SIZE_DOWNLOAD":
+		return "size_download"
+	case "3145731", "CURLINFO_TOTAL_TIME":
+		return "total_time"
+	case "3145740", "CURLINFO_CONTENT_LENGTH_DOWNLOAD":
+		return "size_download"
+	}
+	return ""
+}

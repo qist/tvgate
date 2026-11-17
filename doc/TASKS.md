@@ -75,8 +75,28 @@ tasks:
 ### Web 后台操作
 
 - 「配置 → 定时任务」页可视化增删改任务（名称 / 分组 / cron / 命令 / 超时 / 备注）
-- 支持**立即执行**：手动触发一次，无需等待 cron 到点
+- 支持**立即执行**：手动触发一次，无需等待 cron 到点。为防止该接口被当作任意命令执行入口，`POST /api/tasks/run` 只接受后台会话，且命令一律取自**已保存的任务配置**（按任务名 key 查找），请求体里自带的 `command` 不会被执行；未保存的新任务需先保存再执行
 - 状态查看：上次执行结果 / 耗时 / 输出摘要 / 下次执行时间
+
+### 安全说明
+
+定时任务的 `command` 等价于 crontab 条目，可执行系统 shell 命令，具备面板运行用户的权限。请确保 Web 后台（`web.path`）仅对可信网络开放，并设置强密码；如只需运行 docroot 下的脚本，建议统一使用 `php://` 形式，避免在任务里写系统命令。
+
+### 危险命令拦截
+
+保存任务与运行任务时会校验 `command`，命中明显的系统级破坏操作会被拒绝（保存返回 400，运行期直接失败并记录日志）：
+
+- 磁盘/分区操作：`mkfs*`、`mke2fs`、`mkdosfs`、`mkswap`、`wipefs`、`fdisk`、`sfdisk`、`parted`、`sgdisk`、`gdisk`、`cfdisk`
+- 关机重启：`shutdown`、`reboot`、`halt`、`poweroff`、`kexec`
+- 递归删除/改权限根目录或系统目录：`rm -rf /`、`rm -rf /etc`、`chmod -R 777 /`、`chown -R ... /`
+- 覆写块设备：`dd of=/dev/sdX`、`cp /dev/zero /dev/sda`、`> /dev/sdX`
+- 删除根目录文件：`find / -delete`、`find / -exec rm`
+- 从网络下载后直接执行：`curl ... | sh`、`wget ... | bash`
+- fork 炸弹、`kill 1`/`killall5`、移动/覆盖系统目录
+- 通过 `sh -c`/`bash -c`/`cmd /c`/`eval` 嵌套执行的命令会被递归检查；`-EncodedCommand` 等无法审计的编码载荷直接拒绝
+- 任务不允许删除整个 PHP docroot（子目录清理仍允许，如 `rm -rf <docroot>/cache`）
+
+`php://` 命令走内嵌 phpgo、不经过系统 shell，不受上述黑名单限制。黑名单只是兜底，不是沙箱：无法覆盖混淆/编译脚本等所有绕过方式，彻底隔离请使用容器或低权限用户运行。
 
 ### 超时说明
 

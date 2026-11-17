@@ -70,15 +70,12 @@ func resolveScriptPath(rel string) string {
 		if err != nil || fi.IsDir() {
 			continue
 		}
-		// 防符号链接逃逸：真实路径必须仍落在 docRoot 内
+		// 防符号链接逃逸：真实路径必须落在 docroot 或 allowed_roots 内
 		real, err := filepath.EvalSymlinks(p)
 		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
 			continue
 		}
-		if real != resolvedDocRoot && !strings.HasPrefix(real, resolvedDocRoot+string(filepath.Separator)) {
+		if !withinServedRoot(real) {
 			continue
 		}
 		return p
@@ -92,6 +89,9 @@ func resolveScriptPath(rel string) string {
 func Capture(rel string, query url.Values) (int, http.Header, []byte, error) {
 	if cfg == nil || docRoot == "" {
 		return 0, nil, nil, errors.New("php 模块未初始化")
+	}
+	if docRootErr != nil {
+		return 0, nil, nil, fmt.Errorf("php docroot 不安全，已禁用内部执行: %w", docRootErr)
 	}
 	scriptPath := resolveScriptPath(rel)
 	if scriptPath == "" {

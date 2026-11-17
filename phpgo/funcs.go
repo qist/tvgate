@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // BuiltinFunc 内置函数签名
@@ -272,20 +273,14 @@ func init() {
 		info.ArraySet(NewString("content_type"), h.ArrayGet(NewString("__content_type")))
 		info.ArraySet(NewString("redirect_url"), h.ArrayGet(NewString("__redirect_url")))
 		info.ArraySet(NewString("primary_ip"), h.ArrayGet(NewString("__primary_ip")))
+		info.ArraySet(NewString("header_size"), h.ArrayGet(NewString("__header_size")))
+		info.ArraySet(NewString("size_download"), h.ArrayGet(NewString("__size_download")))
+		info.ArraySet(NewString("total_time"), h.ArrayGet(NewString("__total_time")))
 		// 单一选项模式: curl_getinfo($ch, CURLINFO_HTTP_CODE)
 		if len(a) >= 2 {
 			opt := a[1].ToString()
-			switch opt {
-			case "2097154": // CURLINFO_HTTP_CODE / CURLINFO_RESPONSE_CODE
-				return info.ArrayGet(NewString("http_code")), nil
-			case "1048577": // CURLINFO_EFFECTIVE_URL
-				return info.ArrayGet(NewString("effective_url")), nil
-			case "1048593": // CURLINFO_CONTENT_TYPE
-				return info.ArrayGet(NewString("content_type")), nil
-			case "3145744": // CURLINFO_REDIRECT_URL
-				return info.ArrayGet(NewString("redirect_url")), nil
-			case "1769476": // CURLINFO_PRIMARY_IP
-				return info.ArrayGet(NewString("primary_ip")), nil
+			if key := curlInfoKey(opt); key != "" {
+				return info.ArrayGet(NewString(key)), nil
 			}
 			return info.ArrayGet(a[1]), nil
 		}
@@ -628,6 +623,7 @@ func (e *Env) execCurlHandle(h Value) (string, error) {
 	if h.Kind != KindArray {
 		return "", nil
 	}
+	execStart := time.Now()
 	opts := &CurlOptions{Timeout: 30}
 	// 取出 URL
 	urlVal := h.Arr["url"]
@@ -823,9 +819,15 @@ func (e *Env) execCurlHandle(h Value) (string, error) {
 	h.ArraySet(NewString("__content_type"), NewString(result.ContentType))
 	h.ArraySet(NewString("__redirect_url"), NewString(result.Location))
 	// __headers 含状态行（对齐 PHP curl CURLOPT_HEADER 输出）
-	h.ArraySet(NewString("__headers"), NewString(fmt.Sprintf("HTTP/1.1 %d %s", httpCode, http.StatusText(httpCode))+"\n"+strings.Join(result.Headers, "\n")))
+	headerBlock := fmt.Sprintf("HTTP/1.1 %d %s", httpCode, http.StatusText(httpCode)) + "\n" + strings.Join(result.Headers, "\n")
+	h.ArraySet(NewString("__headers"), NewString(headerBlock))
 	h.ArraySet(NewString("__response"), NewString(result.Body))
 	h.ArraySet(NewString("__primary_ip"), NewString(result.PrimaryIP))
+	// CURLINFO_HEADER_SIZE：curl_exec 在 CURLOPT_HEADER 下返回 "headers + \n\n + body"，
+	// 这里记录头块 + 空行的字节数，脚本 substr($resp, HEADER_SIZE) 才能正确剥离响应头。
+	h.ArraySet(NewString("__header_size"), NewInt(int64(len(headerBlock)+2)))
+	h.ArraySet(NewString("__size_download"), NewInt(int64(len(result.Body))))
+	h.ArraySet(NewString("__total_time"), NewFloat(time.Since(execStart).Seconds()))
 	// CURLOPT_COOKIEJAR：把响应 Set-Cookie 写入文件
 	if opts.CookieJar != "" {
 		writeCookieJar(opts.CookieJar, result.Headers)

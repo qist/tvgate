@@ -64,6 +64,31 @@ func (h *ConfigHandler) handleTasksConfigSave(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// 安全策略：危险命令不允许保存（删根/格式化磁盘/关机/下载即执行等）。
+	// 运行期 tasks.runCommand 还会再校验一次，防止手工改配置文件绕过。
+	for _, e := range entries {
+		cmd := strings.TrimSpace(fmt.Sprintf("%v", e["command"]))
+		if cmd == "" || cmd == "<nil>" {
+			continue
+		}
+		if err := tasks.ValidateCommand(cmd); err != nil {
+			label := strings.TrimSpace(fmt.Sprintf("%v", e["name"]))
+			if label == "" || label == "<nil>" {
+				label = cmd
+			}
+			if len(label) > 40 {
+				label = label[:40] + "..."
+			}
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"code": 400,
+				"msg":  fmt.Sprintf("任务「%s」保存被拒绝：%v", label, err),
+			})
+			return
+		}
+	}
+
 	// 读取配置文件（yaml.Node 保留注释与格式）
 	configPath := *config.ConfigFilePath
 	data, err := os.ReadFile(configPath)
@@ -189,19 +214,21 @@ func (h *ConfigHandler) handleTasksRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Command = strings.TrimSpace(req.Command)
-	if req.Command == "" {
-		http.Error(w, "执行命令不能为空", http.StatusBadRequest)
+	req.Key = strings.TrimSpace(req.Key)
+	if req.Key == "" {
+		http.Error(w, "缺少任务标识（key）", http.StatusBadRequest)
 		return
 	}
 
-	var timeout time.Duration
-	if req.Timeout != "" {
-		if d, err := time.ParseDuration(req.Timeout); err == nil {
-			timeout = d
-		}
+	// 只允许执行配置中已保存的任务命令，防止「立即执行」接口变成任意命令执行入口：
+	// 否则拿到后台会话后可直接 POST 任意 command，绕过任务配置直接执行 shell。
+	savedCmd, savedTimeout, ok := lookupSavedTask(req.Key, req.Command)
+	if !ok {
+		http.Error(w, "只能执行已保存的定时任务命令，请先保存任务配置", http.StatusForbidden)
+		return
 	}
 
-	output, dur, err := tasks.ExecuteOnce(req.Command, timeout)
+	output, dur, err := tasks.ExecuteOnce(savedCmd, savedTimeout)
 	// 联动登记到该任务卡片的状态（握手时用 key 关联）
 	tasks.RecordRun(strings.TrimSpace(req.Key), err == nil, dur, summarizeOutput(output, err))
 	success := err == nil
@@ -212,6 +239,28 @@ func (h *ConfigHandler) handleTasksRun(w http.ResponseWriter, r *http.Request) {
 		"output":   output,
 		"error":    errString(err),
 	})
+}
+
+// lookupSavedTask 在已保存的任务配置中按 key 查找任务命令与超时。
+// key 约定为任务名；任务名为空时用命令本身（与前端 keyOf 保持一致）。
+// 用于「立即执行」：命令一律取自配置，不接受请求体里自带的任意命令。
+func lookupSavedTask(key, command string) (string, time.Duration, bool) {
+	config.CfgMu.RLock()
+	defer config.CfgMu.RUnlock()
+	for _, t := range config.Cfg.Tasks {
+		k := t.Name
+		if k == "" {
+			k = t.Command
+		}
+		if k != key {
+			continue
+		}
+		if strings.TrimSpace(t.Command) == "" {
+			return "", 0, false
+		}
+		return t.Command, t.Timeout, true
+	}
+	return "", 0, false
 }
 
 // errString 返回错误信息，无错误时为空字符串

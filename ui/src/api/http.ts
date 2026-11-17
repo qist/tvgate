@@ -19,7 +19,9 @@ export class ApiError extends Error {
     if (res.headers.get("content-type")?.includes("application/json")) {
       try {
         const j = JSON.parse(text);
+        // 后端错误体有两种约定：{code,msg} 与 {status,message}
         if (j?.msg) msg = j.msg;
+        else if (j?.message) msg = j.message;
       } catch {
         /* 非 JSON，按原文 */
       }

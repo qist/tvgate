@@ -5,6 +5,10 @@ server:
 # 配置文件编辑接口
 web:
   enabled: true
+  # 仅当口令仍是 admin/空时，启动才会初始化：口令换随机值，
+  # 用户名/路径也只在本身是默认值时才随机化；口令已自定义则完全不动。
+  # 新凭据输出到日志与 <配置目录>/web-initial-password.txt（0600）。
+  # 也可用环境变量 TVGATE_ADMIN_PASSWORD 指定初始口令。
   username: admin
   password: admin
   path: /web/ # 自定义路径

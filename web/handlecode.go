@@ -29,6 +29,26 @@ func (h *ConfigHandler) codeRoot() string {
 	return root
 }
 
+// requireSafeDocRoot 包装代码/备份管理接口：docroot 未通过安全校验
+// （例如被手工改成 / 或系统目录）时直接拒绝，避免后台退化为任意文件读写删除入口。
+func (h *ConfigHandler) requireSafeDocRoot(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		config.CfgMu.RLock()
+		root := config.Cfg.PHP.DocRoot
+		config.CfgMu.RUnlock()
+		if err := config.ValidateDocRoot(root); err != nil {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"code": 403,
+				"msg":  "PHP docroot 不安全，已拒绝操作：" + err.Error(),
+			})
+			return
+		}
+		handler(w, r)
+	}
+}
+
 // assertInside 对路径做完整符号链接解析，确保真实文件仍落在 root 内
 // （防止 docroot 内某层 symlink 指向外部目录而越权读写内容）
 func (h *ConfigHandler) assertInside(root, abs string) error {
@@ -60,7 +80,11 @@ func (h *ConfigHandler) handleCodeList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	subDir := r.URL.Query().Get("dir")
 	targetDir := root
 	if subDir != "" {
@@ -120,7 +144,11 @@ func (h *ConfigHandler) handleCodeRead(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	abs, err := h.resolvePath(root, r.URL.Query().Get("path"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -148,7 +176,11 @@ func (h *ConfigHandler) handleCodeSave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	rel := r.URL.Query().Get("path")
 	if rel == "" {
 		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
@@ -184,15 +216,22 @@ func (h *ConfigHandler) handleCodeSave(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"success","message":"已保存"}`))
 }
 
-// handleCodeNew 新建文件或目录（?path= & ?type=file|dir）
+// handleCodeNew 新建文件或目录（?path= & ?type=file|dir & ?overwrite=true）
+// 目标已存在时默认返回 409（前端弹窗确认后带 overwrite=true 重试）；
+// 确认覆盖时先把旧文件备份为 .bak.<时间戳> 再写入，避免误操作丢文件。
 func (h *ConfigHandler) handleCodeNew(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	rel := r.URL.Query().Get("path")
 	typ := r.URL.Query().Get("type")
+	overwrite := r.URL.Query().Get("overwrite") == "true"
 	if rel == "" {
 		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
 		return
@@ -202,21 +241,80 @@ func (h *ConfigHandler) handleCodeNew(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	exists := false
+	if _, statErr := os.Stat(abs); statErr == nil {
+		exists = true
+	}
+
 	if typ == "dir" {
+		if exists {
+			// 目录已存在：确认覆盖也只是保持不变（MkdirAll 幂等），明确告知避免误解
+			if !overwrite {
+				http.Error(w, "同目录已存在（确认后将保持不变）", http.StatusConflict)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Write([]byte(`{"status":"success","message":"目录已存在，未做修改"}`))
+			return
+		}
 		if err := os.MkdirAll(abs, 0755); err != nil {
 			http.Error(w, "创建目录失败: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-	} else {
-		if dir := filepath.Dir(abs); dir != root {
-			_ = os.MkdirAll(dir, 0755)
-		}
-		f, err := os.OpenFile(abs, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-		if err != nil {
-			http.Error(w, "创建文件失败: "+err.Error(), http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Write([]byte(`{"status":"success","message":"已创建"}`))
+		return
+	}
+
+	// 文件：请求体即初始内容（为空则创建空文件）
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+	if dir := filepath.Dir(abs); dir != root {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			http.Error(w, "创建父目录失败: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		f.Close()
+	}
+
+	if exists {
+		if !overwrite {
+			http.Error(w, "已存在同名文件（确认覆盖时会先自动备份）", http.StatusConflict)
+			return
+		}
+		if err := h.assertInside(root, abs); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		if err := copyFile(abs, abs+".bak."+timestamp()); err != nil {
+			http.Error(w, "备份旧文件失败，已取消覆盖: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := os.WriteFile(abs, body, 0644); err != nil {
+			http.Error(w, "覆盖写入失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Write([]byte(`{"status":"success","message":"已覆盖（旧文件已备份）","backed_up":true}`))
+		return
+	}
+
+	// O_EXCL：并发/竞态下也不会覆盖刚出现的同名文件
+	f, err := os.OpenFile(abs, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		if os.IsExist(err) {
+			http.Error(w, "已存在同名文件（确认覆盖时会先自动备份）", http.StatusConflict)
+			return
+		}
+		http.Error(w, "创建文件失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(body) > 0 {
+		_, err = f.Write(body)
+	}
+	f.Close()
+	if err != nil {
+		http.Error(w, "写入失败: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Write([]byte(`{"status":"success","message":"已创建"}`))
@@ -229,7 +327,11 @@ func (h *ConfigHandler) handleCodeRename(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	rel := r.URL.Query().Get("path")
 	newname := strings.TrimSpace(r.URL.Query().Get("newname"))
 	if rel == "" || newname == "" {
@@ -274,7 +376,11 @@ func (h *ConfigHandler) handleCodeDelete(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	rel := r.URL.Query().Get("path")
 	if rel == "" {
 		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
@@ -288,6 +394,11 @@ func (h *ConfigHandler) handleCodeDelete(w http.ResponseWriter, r *http.Request)
 	// 禁止删除 docroot 根目录本身
 	if abs == root {
 		http.Error(w, "禁止删除 docroot 根目录", http.StatusForbidden)
+		return
+	}
+	// 防符号链接逃逸：目标真实路径必须仍在 docroot 内（否则可通过软链接删除外部文件）
+	if err := h.assertInside(root, abs); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	if err := os.RemoveAll(abs); err != nil {
@@ -307,7 +418,11 @@ func (h *ConfigHandler) handleCodeUpload(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := r.ParseMultipartForm(64 << 20); err != nil {
 		http.Error(w, "解析上传失败: "+err.Error(), http.StatusBadRequest)
 		return
@@ -321,6 +436,7 @@ func (h *ConfigHandler) handleCodeUpload(w http.ResponseWriter, r *http.Request)
 	_ = os.MkdirAll(absDir, 0755)
 	var uploaded []string
 	var failed []string
+	var backedUp []string
 	files := r.MultipartForm.File["file"]
 	for _, fh := range files {
 		// 上传文件名统一转为 UTF-8 落盘（本地上传/远程工具可能带 GBK 编码名），
@@ -331,6 +447,14 @@ func (h *ConfigHandler) handleCodeUpload(w http.ResponseWriter, r *http.Request)
 		if e != nil {
 			failed = append(failed, name+": "+e.Error())
 			continue
+		}
+		// 覆盖已有文件前先备份（与在线保存一致），避免上传同名文件直接冲掉旧内容
+		if _, statErr := os.Stat(dst); statErr == nil {
+			if err := h.assertInside(root, dst); err == nil {
+				if err := copyFile(dst, dst+".bak."+timestamp()); err == nil {
+					backedUp = append(backedUp, name)
+				}
+			}
 		}
 		dstFile, e := os.Create(dst)
 		if e != nil {
@@ -396,10 +520,11 @@ func (h *ConfigHandler) handleCodeUpload(w http.ResponseWriter, r *http.Request)
 	}
 
 	resp := map[string]interface{}{
-		"status":   "success",
-		"message":  "上传完成",
-		"uploaded": uploaded,
-		"failed":   failed,
+		"status":    "success",
+		"message":   "上传完成",
+		"uploaded":  uploaded,
+		"failed":    failed,
+		"backed_up": backedUp,
 	}
 	if len(autoResults) > 0 {
 		resp["unzip"] = autoResults
@@ -414,7 +539,11 @@ func (h *ConfigHandler) handleCodeDownload(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	abs, err := h.resolvePath(root, r.URL.Query().Get("path"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -448,7 +577,11 @@ func (h *ConfigHandler) handleCodeUnzip(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// 模式1：通过 path 参数指定磁盘上已有的 zip 文件
 	zipParam := r.URL.Query().Get("path")
@@ -580,6 +713,10 @@ func (h *ConfigHandler) handleCodeUnzip(w http.ResponseWriter, r *http.Request) 
 			if parent := filepath.Dir(dstPath); parent != absDir {
 				_ = os.MkdirAll(parent, 0755)
 			}
+			// 覆盖已有文件前先备份，避免解压直接冲掉旧内容
+			if _, statErr := os.Stat(dstPath); statErr == nil {
+				_ = copyFile(dstPath, dstPath+".bak."+timestamp())
+			}
 			out, e := os.Create(dstPath)
 			if e != nil {
 				results = append(results, result{Name: name, Path: fname, Error: "创建文件失败: " + e.Error()})
@@ -622,7 +759,11 @@ func (h *ConfigHandler) handleCodeCheck(w http.ResponseWriter, r *http.Request) 
 	}
 	var src string
 	if r.URL.Query().Get("path") != "" {
-		root := h.codeRoot()
+		root, rootErr := h.codeRootForRequest(r)
+		if rootErr != nil {
+			http.Error(w, rootErr.Error(), http.StatusBadRequest)
+			return
+		}
 		abs, err := h.resolvePath(root, r.URL.Query().Get("path"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -968,6 +1109,10 @@ func extractZip(zipPath, destDir, root string, h *ConfigHandler) (int, error) {
 		// 确保父目录存在
 		if parent := filepath.Dir(dstPath); parent != destDir {
 			_ = os.MkdirAll(parent, 0755)
+		}
+		// 覆盖已有文件前先备份，避免解压直接冲掉旧内容
+		if _, statErr := os.Stat(dstPath); statErr == nil {
+			_ = copyFile(dstPath, dstPath+".bak."+timestamp())
 		}
 		out, e := os.Create(dstPath)
 		if e != nil {

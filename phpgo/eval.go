@@ -205,6 +205,13 @@ func defaultPHPConsts() map[string]Value {
 	c["CURLINFO_URL"] = NewInt(1048577)
 	c["CURLINFO_REDIRECT_URL"] = NewInt(3145744)
 	c["CURLINFO_PRIMARY_IP"] = NewInt(1769476)
+	// 配合 CURLOPT_HEADER 使用：脚本常用
+	// $hs = curl_getinfo($ch, CURLINFO_HEADER_SIZE); $body = substr($resp, $hs);
+	// 缺这个常量时 $hs 为 null，substr 不会剥离响应头，json_decode 必然失败。
+	c["CURLINFO_HEADER_SIZE"] = NewInt(2097163)
+	c["CURLINFO_SIZE_DOWNLOAD"] = NewInt(3145736)
+	c["CURLINFO_CONTENT_LENGTH_DOWNLOAD"] = NewInt(3145740)
+	c["CURLINFO_REQUEST_SIZE"] = NewInt(2097164)
 	// DNS（dns_get_record 类型常量，PHP 语义）
 	c["DNS_A"] = NewInt(1)
 	c["DNS_NS"] = NewInt(2)

@@ -152,7 +152,7 @@
 nohup /usr/local/TVGate/TVGate-linux-amd64 -config=/usr/local/TVGate/config.yaml > /var/log/tvgate.log 2>&1 &
 ```
 
-4. 浏览器打开 `http://<IP>:8888/web/` 进入管理后台（默认账号密码见配置 `web` 段），可视化配置所有模块。
+4. 打开管理后台：`web.password` 仍是默认 `admin`（或为空）时，启动会自动换成 16 位随机口令，并把仍是默认值的用户名/访问路径一起随机化；新凭据打印在启动日志里，也记录在配置目录下的 `web-initial-password.txt`（0600，含访问路径 / 用户名 / 口令）。**已经改过口令的部署不会被改动**。也可用环境变量 `TVGATE_ADMIN_PASSWORD` 指定口令。之后可视化配置所有模块。
 
 ---
 

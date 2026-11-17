@@ -31,7 +31,11 @@ export function PHPPage() {
 
   const save = async () => {
     try {
-      await savePHP({ ...cfg, index: cfg.index.filter((x) => x.trim() !== "") });
+      await savePHP({
+        ...cfg,
+        index: cfg.index.filter((x) => x.trim() !== ""),
+        allowed_roots: cfg.allowed_roots.map((x) => x.trim()).filter((x) => x !== ""),
+      });
       setNotice({ type: "ok", msg: "配置保存成功，热重载生效中" });
       setTimeout(refresh, 6500);
     } catch (e) {
@@ -45,6 +49,11 @@ export function PHPPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">PHP 模块</h1>
       </div>
+      {cfg.docroot_error && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          docroot 不安全，PHP 模块与代码管理已停用：{cfg.docroot_error}
+        </div>
+      )}
       {notice && (
         <div className={`rounded-lg border px-3 py-2 text-sm ${notice.type === "ok" ? "border-primary/30 bg-primary/10 text-primary" : "border-destructive/30 bg-destructive/10 text-destructive"}`}>
           {notice.msg}
@@ -75,6 +84,34 @@ export function PHPPage() {
               <div key={i} className="flex items-center gap-2">
                 <Input className="flex-1 font-mono" value={idx} onChange={(e) => patch({ index: cfg.index.map((x, xi) => (xi === i ? e.target.value : x)) })} placeholder="index.php" />
                 <Button size="icon" variant="ghost" onClick={() => patch({ index: cfg.index.filter((_, xi) => xi !== i) })}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>额外目录（多目录）</Label>
+                <p className="text-xs text-muted-foreground">
+                  代码文件管理器可直接浏览；docroot 内指向这些目录的软链接也可被 PHP 服务。禁止填根目录/系统敏感目录。
+                </p>
+              </div>
+              <Button size="sm" variant="secondary" onClick={() => patch({ allowed_roots: [...cfg.allowed_roots, ""] })}>
+                <Plus className="h-4 w-4" /> 添加
+              </Button>
+            </div>
+            {cfg.allowed_roots.length === 0 && <p className="text-xs text-muted-foreground">未配置，仅使用 docroot。</p>}
+            {cfg.allowed_roots.map((p, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <Input
+                  className="flex-1 font-mono"
+                  value={p}
+                  onChange={(e) => patch({ allowed_roots: cfg.allowed_roots.map((x, xi) => (xi === i ? e.target.value : x)) })}
+                  placeholder="/data/tvbox 或 tvbox（相对配置文件目录）"
+                />
+                <Button size="icon" variant="ghost" onClick={() => patch({ allowed_roots: cfg.allowed_roots.filter((_, xi) => xi !== i) })}>
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>

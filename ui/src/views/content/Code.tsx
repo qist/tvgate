@@ -119,6 +119,9 @@ const BIG_FILE_THRESHOLD = 1024 * 1024;
 export function CodePage() {
   const navigate = useNavigate();
   const [dir, setDir] = useState("");
+  /** 可浏览的根目录：0 = PHP docroot，其后为 php.allowed_roots */
+  const [roots, setRoots] = useState<code.CodeRoot[]>([]);
+  const [rootIdx, setRootIdx] = useState(0);
   const [items, setItems] = useState<CodeItem[]>([]);
   const [search, setSearch] = useState("");
   const [current, setCurrent] = useState<string | null>(null); // 当前打开文件相对路径
@@ -168,6 +171,33 @@ export function CodePage() {
     refresh();
   }, [refresh]);
 
+  // 加载可浏览根目录（docroot + 额外目录），默认选第一个
+  useEffect(() => {
+    let cancelled = false;
+    code.roots().then((rs) => {
+      if (cancelled || rs.length === 0) return;
+      setRoots(rs);
+      code.setRootIndex(rs[0].index);
+      setRootIdx(rs[0].index);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** 切换根目录：重置路径/编辑器并重新列目录 */
+  const switchRoot = (i: number) => {
+    code.setRootIndex(i);
+    setRootIdx(i);
+    setDir("");
+    setSearch("");
+    setCurrent(null);
+    setContent("");
+    setDirty(false);
+    // dir 可能本来就是空串，refresh 的 effect 不会重跑，这里显式刷新
+    setTimeout(refresh, 0);
+  };
+
   const filtered = useMemo(() => {
     const kw = search.toLowerCase().trim();
     const list = kw ? items.filter((it) => it.name.toLowerCase().includes(kw)) : items;
@@ -182,11 +212,24 @@ export function CodePage() {
       setContent(c);
       setDirty(false);
       setNotice(null);
+      // 打开后聚焦编辑器：新建文件后可以直接开始输入
+      requestAnimationFrame(() => taRef.current?.focus());
     } catch (e) {
       notify("err", "打开失败: " + (e as Error).message);
     } finally {
       setBusy("");
     }
+  };
+
+  /** 新建/覆盖成功后直接打开：左侧切到文件所在目录，并在编辑器里打开它 */
+  const openCreated = (relPath: string) => {
+    const i = relPath.lastIndexOf("/");
+    const parent = i < 0 ? "" : relPath.slice(0, i);
+    setDir(parent);
+    setSearch("");
+    // 目录没变时 refresh 的 effect 不会重跑，需要显式刷新列表
+    if (parent === dir) refresh();
+    openFile(relPath);
   };
 
   const openItem = (it: CodeItem) => {
@@ -242,13 +285,34 @@ export function CodePage() {
   const create = async (type: "file" | "dir") => {
     const name = window.prompt(type === "file" ? "新文件相对路径（可用斜杠建子目录）:" : "新目录相对路径:", `${dir ? dir + "/" : ""}new${type === "file" ? ".php" : ""}`);
     if (!name) return;
+    const rel = name.replace(/^\//, "");
+    const doCreate = (overwrite: boolean) =>
+      type === "file" ? code.createFile(rel, "", overwrite) : code.createDir(rel, overwrite);
     try {
-      if (type === "file") await code.createFile(name.replace(/^\//, ""));
-      else await code.createDir(name.replace(/^\//, ""));
+      try {
+        await doCreate(false);
+      } catch (e) {
+        const msg = (e as Error).message || "";
+        // 同名已存在：目录确认后保持不变；文件确认后先备份再以空文件覆盖
+        if (!msg.includes("已存在")) throw e;
+        if (type === "dir") {
+          notify("warn", `「${name}」已存在，未做修改`);
+          return;
+        }
+        if (!window.confirm(`「${name}」已存在。\n继续会用空文件覆盖它，旧内容先备份为 .bak.<时间戳>（可在备份中心恢复）。\n\n确定覆盖？`)) {
+          notify("warn", `已取消，未覆盖「${name}」`);
+          return;
+        }
+        await doCreate(true);
+        notify("ok", `已覆盖 ${name}（旧文件已备份为 .bak.<时间戳>，可在备份中心恢复）`);
+        openCreated(rel);
+        return;
+      }
       notify("ok", `已创建 ${name}`);
-      refresh();
+      if (type === "file") openCreated(rel);
+      else refresh();
     } catch (e) {
-      notify("err", (e as Error).message);
+      notify("err", (e as Error).message || "创建失败");
     }
   };
 
@@ -310,10 +374,11 @@ export function CodePage() {
     setBusy("上传中…");
     try {
       const r = await code.uploadFiles(dir, list);
+      const backupNote = r.backedUp.length > 0 ? `；已自动备份 ${r.backedUp.length} 个同名旧文件（.bak.<时间戳>）` : "";
       if (r.failed.length > 0) {
-        notify("err", `上传完成：成功 ${r.uploaded.length} 个，失败 ${r.failed.length} 个：${r.failed.join("、")}`);
+        notify("err", `上传完成：成功 ${r.uploaded.length} 个，失败 ${r.failed.length} 个：${r.failed.join("、")}${backupNote}`);
       } else {
-        notify("ok", `已上传 ${r.uploaded.length} 个文件`);
+        notify("ok", `已上传 ${r.uploaded.length} 个文件${backupNote}`);
       }
       refresh();
     } catch (e) {
@@ -454,13 +519,31 @@ export function CodePage() {
   // 面包屑
   const crumbs = useMemo(() => {
     const parts = dir ? dir.split("/") : [];
-    return [{ name: "", label: "docroot" }, ...parts.map((p, i) => ({ name: parts.slice(0, i + 1).join("/"), label: p }))];
-  }, [dir]);
+    const rootLabel = roots[rootIdx]?.label || "docroot";
+    return [{ name: "", label: rootLabel }, ...parts.map((p, i) => ({ name: parts.slice(0, i + 1).join("/"), label: p }))];
+  }, [dir, roots, rootIdx]);
 
   return (
     <div className="flex flex-col gap-3 lg:h-[calc(100vh-7.5rem)] lg:flex-row">
       {/* 左栏：文件树 */}
       <Card className="flex max-h-[42vh] w-full shrink-0 flex-col p-0 lg:max-h-none lg:w-72">
+        {roots.length > 0 && (
+          <div className="flex items-center gap-1 border-b px-2 py-1.5">
+            <span className="shrink-0 text-xs text-muted-foreground">根目录</span>
+            <select
+              className="h-7 min-w-0 flex-1 rounded border bg-background px-1 text-xs"
+              value={rootIdx}
+              onChange={(e) => switchRoot(Number(e.target.value))}
+              title={roots[rootIdx]?.path}
+            >
+              {roots.map((rt) => (
+                <option key={rt.index} value={rt.index}>
+                  {rt.label} · {rt.path}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="flex items-center gap-1 border-b px-2 py-1.5">
           <Button size="icon" variant="ghost" className="h-7 w-7" disabled={!dir} onClick={goUp} title="返回上级">
             <ArrowUp className="h-4 w-4" />

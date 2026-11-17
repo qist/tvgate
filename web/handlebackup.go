@@ -25,7 +25,11 @@ func (h *ConfigHandler) handleBackupList(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	dir := r.URL.Query().Get("dir")
 	targetDir := root
 	if dir != "" {
@@ -91,7 +95,11 @@ func (h *ConfigHandler) handleBackupRestore(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	bakPath := r.URL.Query().Get("path")
 	if bakPath == "" {
 		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
@@ -141,7 +149,11 @@ func (h *ConfigHandler) handleBackupDelete(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	bakPath := r.URL.Query().Get("path")
 	if bakPath == "" {
 		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
@@ -177,7 +189,11 @@ func (h *ConfigHandler) handleBackupBatchDelete(w http.ResponseWriter, r *http.R
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	var req struct {
 		Paths []string `json:"paths"`
 	}
@@ -222,7 +238,11 @@ func (h *ConfigHandler) handleBackupDownload(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	bakPath := r.URL.Query().Get("path")
 	if bakPath == "" {
 		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
@@ -254,7 +274,11 @@ func (h *ConfigHandler) handleBackupCleanup(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root := h.codeRoot()
+	root, rootErr := h.codeRootForRequest(r)
+	if rootErr != nil {
+		http.Error(w, rootErr.Error(), http.StatusBadRequest)
+		return
+	}
 	var req struct {
 		Path string `json:"path"` // 原始文件相对路径（空=全部）
 		Keep int    `json:"keep"` // 每个文件保留几个备份（0=全删）

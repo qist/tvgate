@@ -25,6 +25,7 @@ import {
   Tv,
   Search,
   Server,
+  ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
   Sun,
@@ -102,6 +103,11 @@ export function AppShell() {
   // 认证状态请求卡住/失败时的显式提示：不能一直停在"加载中…"（视觉上等同白屏）
   const [authError, setAuthError] = useState("");
   const [authAttempt, setAuthAttempt] = useState(0);
+  // 弱口令提示：默认/弱密码时后台会锁定高危操作，顶部常驻提醒引导改密
+  const [weakPw, setWeakPw] = useState(false);
+  const [weakHint, setWeakHint] = useState("");
+  // 初始自动生成口令：提醒尽快改成自己的密码
+  const [initialPw, setInitialPw] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,10 +122,13 @@ export function AppShell() {
     }, 12000);
     fetch(url, { credentials: "same-origin", cache: "no-store" })
       .then((r) => r.json())
-      .then((j: { authenticated?: boolean }) => {
+      .then((j: { authenticated?: boolean; weak_password?: boolean; weak_password_hint?: string; initial_password?: boolean }) => {
         if (cancelled || timedOut) return;
         if (j && j.authenticated === true) {
           setAuthed(true);
+          setWeakPw(j.weak_password === true);
+          setWeakHint(j.weak_password_hint || "");
+          setInitialPw(j.initial_password === true);
         } else {
           // 未认证：进公开登录页（白名单），不渲染任何授权页面
           navigate("/login", { replace: true });
@@ -136,6 +145,32 @@ export function AppShell() {
       window.clearTimeout(timer);
     };
   }, [navigate, authAttempt]);
+
+  // 弱口令/初始口令状态下每 30s 复查：改完密码后自动撤掉顶部提示
+  useEffect(() => {
+    if (!weakPw && !initialPw) return;
+    let cancelled = false;
+    const id = window.setInterval(() => {
+      const url = new URL("auth-status", window.location.href.split("#")[0]).toString();
+      fetch(url, { credentials: "same-origin", cache: "no-store" })
+        .then((r) => r.json())
+        .then((j: { weak_password?: boolean; weak_password_hint?: string; initial_password?: boolean }) => {
+          if (cancelled) return;
+          if (j?.weak_password !== true) {
+            setWeakPw(false);
+            setWeakHint("");
+          } else {
+            setWeakHint(j.weak_password_hint || "");
+          }
+          if (j?.initial_password !== true) setInitialPw(false);
+        })
+        .catch(() => {});
+    }, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [weakPw, initialPw]);
 
   if (authError) {
     return (
@@ -270,6 +305,19 @@ export function AppShell() {
               <LogOut className="h-4 w-4" />
             </Button>
           </header>
+        {(weakPw || initialPw) && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
+            <ShieldAlert className="h-4 w-4 shrink-0" />
+            <span className="flex-1">
+              {weakPw
+                ? `${weakHint || "当前使用默认/弱密码"}：修改 PHP 目录、定时任务、配置文件、代码文件等高危操作已锁定。`
+                : "当前使用首次启动自动生成的初始凭据（访问路径、用户名、口令），请尽快在「Web 设置」改成自己的密码（修改时需输入当前口令确认）。"}
+            </span>
+            <Button size="sm" variant="secondary" onClick={() => navigate("/web")}>
+              去修改密码
+            </Button>
+          </div>
+        )}
           <main className="flex-1 p-4 md:p-6">
             <ErrorBoundary>
               <Outlet />

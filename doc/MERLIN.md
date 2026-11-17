@@ -106,8 +106,9 @@ cd /opt/TVGate && ./tvgate -config /opt/TVGate/config.yaml   # Ctrl+C 退出
 /opt/etc/init.d/S99tvgate status      # 应显示 运行中 (PID xxx)
 ```
 
-1. 浏览器打开 `http://<路由器IP>:8888/web/` 进入管理后台
-   （默认账号密码见自动生成配置的 `web` 段，**登录后立即修改**）。
+1. 打开启动日志里的后台地址进入管理后台（**没有公开默认地址/账号/口令**：
+   首次启动若 `web.password` 仍是 `admin`，会把口令、用户名、访问路径一起随机化，
+   新值打印在日志并记录到配置目录的 `web-initial-password.txt`，**登录后立即改成自己的密码**）。
 2. 各模块（播放器 / 代理组 / 推流发布 / 定时任务等）都在后台可视化配置，
    详见 [README 文档索引](../README.md#-详细文档)。
 3. **外网访问需放行端口**：梅林后台「WAN → 虚拟服务器 / 端口转发」把 8888

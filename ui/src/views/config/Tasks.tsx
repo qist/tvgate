@@ -433,7 +433,7 @@ function EditCard({
           </Field>
         </div>
 
-        <Field label="执行命令（Shell 命令，或 php:// 内部执行 PHP 脚本）">
+        <Field label="执行命令（Shell 命令，或 php:// 内部执行 PHP 脚本；危险命令会被拒绝保存）">
           <textarea
             className="min-h-[80px] w-full rounded-[var(--radius)] border bg-background p-2 font-mono text-sm"
             value={task.command}
