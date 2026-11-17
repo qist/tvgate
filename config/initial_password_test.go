@@ -230,6 +230,113 @@ func TestEnsureWebPasswordBootstrapReusesStored(t *testing.T) {
 	}
 }
 
+// withAndroidRuntime 在测试期间模拟 Android 运行环境。
+func withAndroidRuntime(t *testing.T) {
+	t.Helper()
+	old := isAndroidRuntime
+	isAndroidRuntime = true
+	t.Cleanup(func() { isAndroidRuntime = old })
+}
+
+// Android 全新安装：不做随机化，保持公开默认值（三方 APK 无凭据展示界面也能登录）。
+func TestEnsureWebPasswordBootstrapAndroidKeepsDefaults(t *testing.T) {
+	withAndroidRuntime(t)
+	setupBootstrapConfig(t, "web:\n    enabled: true\n    username: admin\n    password: admin\n    path: /web/\n")
+
+	c := newDefaultWebConfig()
+	if res := EnsureWebPasswordBootstrap(c); res != nil {
+		t.Fatalf("Android 上不应随机化，实际 %+v", res)
+	}
+	if c.Web.Username != "admin" || c.Web.Password != "admin" || c.Web.Path != "/web/" {
+		t.Fatalf("配置不应被修改: %+v", c.Web)
+	}
+	if InitialPasswordFileExists() {
+		t.Fatal("Android 上不应生成凭据文件")
+	}
+}
+
+// Android 旧安装（已随机化且用户从未登录）：回退默认值并写回配置、删除凭据文件。
+func TestEnsureWebPasswordBootstrapAndroidRestoresRandomized(t *testing.T) {
+	withAndroidRuntime(t)
+	path := setupBootstrapConfig(t, "web:\n    enabled: true\n    username: admabc123456\n    password: \"R4nd0m-Pass-2026\"\n    path: /p8k2m4x9qz7c/\n")
+	_ = os.WriteFile(InitialPasswordFile(), []byte("username: admabc123456\npassword: R4nd0m-Pass-2026\npath: /p8k2m4x9qz7c/\n"), 0o600)
+
+	c := &Config{}
+	c.Web.Enabled = true
+	c.Web.Username = "admabc123456"
+	c.Web.Password = "R4nd0m-Pass-2026"
+	c.Web.Path = "/p8k2m4x9qz7c/"
+
+	res := EnsureWebPasswordBootstrap(c)
+	if res == nil || !res.AndroidDefault {
+		t.Fatalf("应回退为 Android 默认凭据，实际 %+v", res)
+	}
+	if c.Web.Username != "admin" || c.Web.Password != "admin" || c.Web.Path != "/web/" {
+		t.Fatalf("应回退默认值: %+v", c.Web)
+	}
+	doc := readPersistedWeb(t, path)
+	if doc.Username != "admin" || doc.Password != "admin" || doc.Path != "/web/" {
+		t.Fatalf("配置未正确写回: %+v", doc)
+	}
+	if InitialPasswordFileExists() {
+		t.Fatal("回退成功后应删除凭据文件")
+	}
+	if !strings.Contains(res.Banner(), "Android") {
+		t.Errorf("Banner 应说明 Android 默认凭据: %s", res.Banner())
+	}
+}
+
+// Android 用户已改密（配置口令与凭据文件不一致）：完全不动，只清理残留文件。
+func TestEnsureWebPasswordBootstrapAndroidKeepsCustomPassword(t *testing.T) {
+	withAndroidRuntime(t)
+	path := setupBootstrapConfig(t, "web:\n    enabled: true\n    username: admin\n    password: \"My-Str0ng-Pass\"\n    path: /web/\n")
+	_ = os.WriteFile(InitialPasswordFile(), []byte("username: admabc123456\npassword: R4nd0m-Pass-2026\npath: /p8k2m4x9qz7c/\n"), 0o600)
+
+	c := &Config{}
+	c.Web.Enabled = true
+	c.Web.Username = "admin"
+	c.Web.Password = "My-Str0ng-Pass"
+	c.Web.Path = "/web/"
+
+	if res := EnsureWebPasswordBootstrap(c); res != nil {
+		t.Fatalf("已改密不应改动，实际 %+v", res)
+	}
+	if c.Web.Password != "My-Str0ng-Pass" {
+		t.Fatalf("口令被意外修改: %q", c.Web.Password)
+	}
+	doc := readPersistedWeb(t, path)
+	if doc.Password != "My-Str0ng-Pass" {
+		t.Fatalf("配置文件被意外修改: %+v", doc)
+	}
+	if InitialPasswordFileExists() {
+		t.Fatal("已改密时残留凭据文件应被清理")
+	}
+}
+
+// Android 改过用户名/路径（说明用户能登进后台）：即使口令还是初始随机值也不回退。
+func TestEnsureWebPasswordBootstrapAndroidKeepsTouchedIdentity(t *testing.T) {
+	withAndroidRuntime(t)
+	path := setupBootstrapConfig(t, "web:\n    enabled: true\n    username: my-admin\n    password: \"R4nd0m-Pass-2026\"\n    path: /p8k2m4x9qz7c/\n")
+	_ = os.WriteFile(InitialPasswordFile(), []byte("username: admabc123456\npassword: R4nd0m-Pass-2026\npath: /p8k2m4x9qz7c/\n"), 0o600)
+
+	c := &Config{}
+	c.Web.Enabled = true
+	c.Web.Username = "my-admin"
+	c.Web.Password = "R4nd0m-Pass-2026"
+	c.Web.Path = "/p8k2m4x9qz7c/"
+
+	if res := EnsureWebPasswordBootstrap(c); res != nil {
+		t.Fatalf("身份被改过时不应回退，实际 %+v", res)
+	}
+	if c.Web.Username != "my-admin" || c.Web.Password != "R4nd0m-Pass-2026" {
+		t.Fatalf("配置被意外修改: %+v", c.Web)
+	}
+	doc := readPersistedWeb(t, path)
+	if doc.Username != "my-admin" || doc.Password != "R4nd0m-Pass-2026" {
+		t.Fatalf("配置文件被意外修改: %+v", doc)
+	}
+}
+
 func TestNeedsSecurityBootstrap(t *testing.T) {
 	cases := []struct {
 		p    string

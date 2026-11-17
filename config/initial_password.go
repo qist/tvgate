@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -23,6 +24,11 @@ import (
 //     同时打印到控制台与日志，便于取用；
 //   - 三项都不会再次触发（口令已是随机强口令），热重载不会反复变化；
 //   - 用户改密成功后，口令文件自动删除。
+//
+// Android 例外：TVGate 常以 .so 形式内嵌在三方 APK 中，宿主 App 未必有展示
+// web-initial-password.txt 的界面，随机化会让用户永远登不进后台；因此
+// GOOS=android（APK 内嵌或独立二进制）不做随机化，保持公开默认值，由「弱口令
+// 锁写」兜底（不改密则写配置/代码/任务等高风险操作一律被拒绝）。
 //
 // 也支持用环境变量 TVGATE_ADMIN_PASSWORD 指定口令（不再随机）。
 const (
@@ -52,13 +58,18 @@ const initialPasswordCharset = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ
 // 用户名 / 路径只用小写字母与数字，便于输入、且不会撞到 URL 特殊字符
 const initialTokenCharset = "abcdefghijkmnpqrstuvwxyz23456789"
 
+// isAndroidRuntime 标识当前进程是否运行在 Android（APK 内嵌 .so 或独立二进制）。
+// 声明为变量便于单元测试在非 Android 环境下覆盖。
+var isAndroidRuntime = runtime.GOOS == "android"
+
 // InitialPasswordResult 描述本次启动对后台凭据的处理结果（nil 表示无需处理）。
 type InitialPasswordResult struct {
-	Username string // 后台用户名
-	Password string // 后台口令
-	Path     string // 后台访问路径
-	File     string // 凭据文件路径（可能为空）
-	Source   string // 来源说明（环境变量 / 自动生成 / 复用）
+	Username       string // 后台用户名
+	Password       string // 后台口令
+	Path           string // 后台访问路径
+	File           string // 凭据文件路径（可能为空）
+	Source         string // 来源说明（环境变量 / 自动生成 / 复用）
+	AndroidDefault bool   // Android 回退到公开默认值（便于内嵌 APK 登录）
 }
 
 // InitialPasswordFile 返回初始凭据文件路径（未指定配置文件时返回空串）。
@@ -199,6 +210,11 @@ func EnsureWebPasswordBootstrap(c *Config) *InitialPasswordResult {
 		return nil
 	}
 
+	// Android：不做随机化（三方 APK 无法向用户展示随机凭据），保持公开默认值。
+	if isAndroidRuntime {
+		return ensureAndroidDefaultCredentials(c)
+	}
+
 	if !needsSecurityBootstrap(c.Web.Password) {
 		// 口令已经是自定义值：什么都不动（用户名 admin、路径 /web/ 也保持原样），
 		// 只清理过期的初始凭据文件。
@@ -275,6 +291,56 @@ func EnsureWebPasswordBootstrap(c *Config) *InitialPasswordResult {
 	return res
 }
 
+// ensureAndroidDefaultCredentials 处理 Android 运行时的后台凭据。
+//
+// Android 上 TVGate 通常以 .so 形式内嵌在三方 APK 中，宿主 App 未必有展示
+// web-initial-password.txt 的界面；一旦随机化，用户既不知道用户名也拿不到口令，
+// 后台等于永久锁死。因此 Android 不做随机化，保持公开默认值（admin / admin /
+// /web/），由「弱口令锁写」兜底：不修改密码时，写配置、代码管理、任务、升级、
+// 备份等高风险操作全部被拒绝。
+//
+// 兼容已经被随机化的旧安装：若凭据文件仍在、且配置里用户名/口令/路径都仍是文件
+// 记录的那份（说明用户从未登进过后台，否则至少改过密码或身份），则整体回退到默认
+// 值并删除凭据文件；只要有一项被改过，就说明用户拿得到当前凭据，完全不动。
+func ensureAndroidDefaultCredentials(c *Config) *InitialPasswordResult {
+	stored := readInitialPasswordFile()
+	if stored.Password == "" {
+		// 全新安装（默认值本就保留）或用户已改密：保持配置原样。
+		return nil
+	}
+	if strings.TrimSpace(c.Web.Password) != stored.Password {
+		// 口令已被用户改过，凭据文件只是残留。
+		ClearInitialPasswordFile()
+		return nil
+	}
+	if stored.Username != "" && strings.TrimSpace(c.Web.Username) != stored.Username {
+		// 用户名被改过：用户能登进后台，保留其配置。
+		return nil
+	}
+	if stored.Path != "" && normalizedWebPath(c.Web.Path) != normalizedWebPath(stored.Path) {
+		return nil
+	}
+
+	c.Web.Username = defaultWebUsername
+	c.Web.Path = defaultWebPath
+	c.Web.Password = defaultWebPassword
+
+	res := &InitialPasswordResult{
+		Username:       strings.TrimSpace(c.Web.Username),
+		Password:       strings.TrimSpace(c.Web.Password),
+		Path:           normalizedWebPath(c.Web.Path),
+		File:           InitialPasswordFile(),
+		Source:         "Android：保持公开默认凭据",
+		AndroidDefault: true,
+	}
+	// 只有写回成功才删除凭据文件，否则下次启动仍能据此再次回退。
+	if persistWebBootstrap(res.Username, res.Password, res.Path) {
+		ClearInitialPasswordFile()
+		res.File = ""
+	}
+	return res
+}
+
 // normalizedWebPath 与 web 模块的 getWebPath 保持一致：前后都带 /。
 func normalizedWebPath(p string) string {
 	p = strings.TrimSpace(p)
@@ -294,6 +360,17 @@ func normalizedWebPath(p string) string {
 func (r *InitialPasswordResult) Banner() string {
 	if r == nil {
 		return ""
+	}
+	if r.AndroidDefault {
+		return fmt.Sprintf(`\n========================================================
+🔐 后台凭据（Android）：%s
+   访问路径: %s
+   用户名:   %s
+   口令:     %s
+   默认口令下写配置/代码/任务等高风险操作会被锁定
+   首次登录后请立即在「服务 → Web 设置」修改密码
+========================================================`,
+			r.Source, r.Path, r.Username, r.Password)
 	}
 	var fileLine string
 	if r.File != "" {
@@ -331,25 +408,26 @@ path: %s
 
 // persistWebBootstrap 把随机化的用户名/口令/路径写回配置文件
 // （只替换 web 段里的对应节点，保留其余内容与注释）。
-func persistWebBootstrap(username, password, path string) {
+// 返回是否成功写回：Android 回退默认值后要据此决定能否删除凭据文件。
+func persistWebBootstrap(username, password, path string) bool {
 	if ConfigFilePath == nil || *ConfigFilePath == "" {
-		return
+		return false
 	}
 	file := *ConfigFilePath
 	data, err := os.ReadFile(file)
 	if err != nil {
-		return
+		return false
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return
+		return false
 	}
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		return
+		return false
 	}
 	root := doc.Content[0]
 	if root.Kind != yaml.MappingNode {
-		return
+		return false
 	}
 
 	setScalar := func(webNode *yaml.Node, key, val string) {
@@ -372,14 +450,19 @@ func persistWebBootstrap(username, password, path string) {
 		}
 		webNode := root.Content[i+1]
 		if webNode.Kind != yaml.MappingNode {
-			return
+			return false
 		}
 		setScalar(webNode, "username", username)
 		setScalar(webNode, "password", password)
 		setScalar(webNode, "path", path)
-		if out, err := yaml.Marshal(&doc); err == nil {
-			_ = os.WriteFile(file, out, 0o600)
+		out, err := yaml.Marshal(&doc)
+		if err != nil {
+			return false
 		}
-		return
+		if err := os.WriteFile(file, out, 0o600); err != nil {
+			return false
+		}
+		return true
 	}
+	return false
 }
