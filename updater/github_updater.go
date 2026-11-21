@@ -245,6 +245,29 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 		return lastErr
 	}
 
+	// 下载内容先在临时目录校验，确认是官方发布的升级包再备份/解压。
+	// DNS 劫持、加速镜像返回错误页都会在这里被拦下，不会破坏当前版本。
+	newapp := fmt.Sprintf("TVGate-%s-%s", arch.PackageOS, arch.PackageArch)
+	SetStatus("verifying", "校验升级包完整性")
+	if err := verifyUpdatePackage(tmpFile, filepath.Base(newapp)); err != nil {
+		_ = os.Remove(tmpFile)
+		SetStatus("error", err.Error())
+		return err
+	}
+	if ok, err := verifyReleaseDigest(cfg, version, zipFileName, tmpFile); err != nil {
+		_ = os.Remove(tmpFile)
+		SetStatus("error", err.Error())
+		return err
+	} else if !ok {
+		// 老版本/镜像可能没有 .dgst：结构与程序校验已通过，记录后继续。
+		SetStatus("verifying", "未获取到发布页校验文件，已跳过 SHA-256 校验")
+	}
+	if err := verifyReleaseSignature(cfg, version, zipFileName, tmpFile); err != nil {
+		_ = os.Remove(tmpFile)
+		SetStatus("error", err.Error())
+		return err
+	}
+
 	SetStatus("backing_up", "备份当前程序")
 	execPath, _ := os.Executable()
 	backupPath := execPath + ".bak"
@@ -257,9 +280,10 @@ func UpdateFromGithub(cfg config.GithubConfig, version string) error {
 	_ = os.MkdirAll(tmpDestDir, 0755)
 
 	if err := unzip(tmpFile, tmpDestDir); err != nil {
+		_ = os.Remove(tmpFile)
+		SetStatus("error", fmt.Sprintf("解压升级包失败: %v", err))
 		return err
 	}
-	newapp := fmt.Sprintf("TVGate-%s-%s", arch.PackageOS, arch.PackageArch)
 	newExecPath := filepath.Join(tmpDestDir, filepath.Base(newapp))
 	if runtime.GOOS != "windows" {
 		_ = os.Chmod(newExecPath, 0755)
@@ -289,14 +313,46 @@ func downloadFile(url, dst string) error {
 	}
 	defer resp.Body.Close()
 
-	out, err := os.Create(dst)
+	// 错误页/限流页通常也是 200，这里至少拦住明确的失败状态与超大响应；
+	// 内容本身由 verifyUpdatePackage 校验（文件头、zip 结构、包内程序）。
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("下载返回状态码 %d", resp.StatusCode)
+	}
+	if resp.ContentLength > maxUpdatePackageSize {
+		return fmt.Errorf("文件过大（%d 字节），拒绝下载", resp.ContentLength)
+	}
+
+	// 先写 .part，校验前不覆盖旧文件；失败时删除，避免下次误用半截文件。
+	tmp := dst + ".part"
+	_ = os.Remove(tmp)
+	out, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	return err
+	n, copyErr := io.Copy(out, io.LimitReader(resp.Body, maxUpdatePackageSize+1))
+	syncErr := out.Sync()
+	closeErr := out.Close()
+	if copyErr != nil {
+		_ = os.Remove(tmp)
+		return copyErr
+	}
+	if syncErr != nil {
+		_ = os.Remove(tmp)
+		return syncErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmp)
+		return closeErr
+	}
+	if n > maxUpdatePackageSize {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("文件超过 %d 字节上限", maxUpdatePackageSize)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func copyFile(src, dst string) error {

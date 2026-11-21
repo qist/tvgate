@@ -16,7 +16,10 @@ OUT_DIR := build
 # 如果没有指定 VERSION，就从 config/version 文件读取
 VERSION ?= $(shell cat config/version 2>/dev/null || echo latest)
 
-LDFLAGS := -s -w -extldflags '-static' -X '$(MODULE)/config.Version=$(VERSION)'
+# 可选：内置升级包签名公钥（hex）。设置后 updater 会强制校验 Release 的 .sig。
+# 例：make linux-64 UPDATE_PUBKEY=<ed25519 公钥 hex>
+LDFLAGS := -s -w -extldflags '-static' -X '$(MODULE)/config.Version=$(VERSION)' \
+	$(if $(UPDATE_PUBKEY),-X '$(MODULE)/updater.updatePublicKeyHex=$(UPDATE_PUBKEY)',)
 GCFLAGS := -trimpath
 ASMFLAGS := -trimpath
 BUILD    = CGO_ENABLED=0 GOOS=$(1) GOARCH=$(2) $(if $(3),GOARM=$(3) )go build -ldflags "$(LDFLAGS)" -gcflags="$(GCFLAGS)" -asmflags="$(ASMFLAGS)" -o $@ .

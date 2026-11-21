@@ -134,6 +134,9 @@ jobs:
           [ "$GOOS" != "android" ] && echo "CGO_ENABLED=0" >> $GITHUB_ENV || true
 
       - name: Build TVGate
+        env:
+          # 公开的 Ed25519 公钥（hex）。未配置时构建里为空，升级只校验结构 + SHA-256。
+          UPDATE_PUBKEY: ${{ vars.TVGATE_UPDATE_PUBKEY }}
         run: |
           mkdir -p build
           OUTPUT="build/TVGate-${PACKAGE_OS}-${PACKAGE_ARCH}"
@@ -150,7 +153,7 @@ jobs:
               cp "build/TVGate-android-${ABI}" "$OUTPUT"
             fi
           else
-            go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION'" -o $OUTPUT .
+            go build -ldflags="-s -w -X 'github.com/qist/tvgate/config.Version=$VERSION' -X 'github.com/qist/tvgate/updater.updatePublicKeyHex=$UPDATE_PUBKEY'" -o $OUTPUT .
           fi
           echo "OUTPUT=$OUTPUT" >> $GITHUB_ENV
 
@@ -186,6 +189,19 @@ jobs:
           echo "SHA2-512= $(sha512sum $FILE | awk '{print $1}')" >> "$DGST"
           echo "CHECKSUM=$DGST" >> $GITHUB_ENV
 
+      # 可选：用 Ed25519 私钥（Secret）给升级包签名。客户端内置公钥后会强制校验，
+      # 可防止加速镜像/GitHub 账号被攻破时下发被替换的升级包。
+      - name: Sign release package (optional)
+        env:
+          TVGATE_SIGNING_KEY: ${{ secrets.TVGATE_SIGNING_KEY }}
+        run: |
+          if [ -z "$TVGATE_SIGNING_KEY" ]; then
+            echo "未配置 TVGATE_SIGNING_KEY，跳过升级包签名（升级仍校验结构与 SHA-256）"
+            exit 0
+          fi
+          go run ./scripts/sign-release "$FILE" "$FILE.sig"
+          echo "SIGNED=1" >> $GITHUB_ENV
+
       - name: Set asset names
         run: |
           FILE_NAME=$(basename "$FILE")
@@ -211,5 +227,16 @@ jobs:
           tag: ${{ github.ref_name }}
           file: ${{ env.CHECKSUM }}
           asset_name: ${{ env.CHECKSUM_NAME }}
+          prerelease: false
+          overwrite: true
+
+      - name: Upload Release Asset (signature)
+        if: env.SIGNED == '1'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+          file: ${{ env.FILE }}.sig
+          asset_name: ${{ env.FILE_NAME }}.sig
           prerelease: false
           overwrite: true
