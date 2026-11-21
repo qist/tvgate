@@ -40,7 +40,8 @@ v3.4.6 — 代理组支持动态端口池与探测 UA，修复 H5 解析入口�
 5. DNS — 代理组 resolve 支持 remote（默认）/ local，文档见 doc/PROXYGROUPS.md
 
 升级：下载对应平台压缩包解压覆盖后重启；Docker 用户重新拉取镜像；旧配置文件可直接使用。
-Android 用户重新下载对应二进制包即可，配置格式无变化。
+Android 用户：App（APK）由独立仓库 qist/tvgate-android 按同一版本号发布（内嵌本版本服务端），
+覆盖安装即可；直接用二进制则在 Releases 页下载 TVGate-android-*.zip。
 ```
 
 ## 三、完整版（用于发布公告 / 论坛 / 通知，用户可读）
@@ -91,7 +92,9 @@ Android 用户重新下载对应二进制包即可，配置格式无变化。
 - 配置文件向后兼容：旧 config.yaml 可直接使用，不配置 pool / probe_ua 时行为与之前一致
 - 二进制：下载对应平台压缩包，解压覆盖后重启服务（systemd：systemctl restart tvgate）
 - Docker：docker pull juestnow/tvgate:v3.4.6（或 ghcr.io/qist/tvgate:v3.4.6），重建容器
-- Android：重新获取对应二进制包即可，配置格式无变化
+- Android App（APK）：独立仓库 qist/tvgate-android 发布，版本号与服务端对齐，内嵌同版本服务端，
+  覆盖安装即可升级
+- Android 二进制：Releases 页 TVGate-android-arm64-v8a.zip / TVGate-android-arm32-v7a.zip
 
 ### 发布校验
 
@@ -108,7 +111,8 @@ Android 用户重新下载对应二进制包即可，配置格式无变化。
 |---|---|---|
 | 裸机二进制 | Releases 页 `TVGate-<平台>-<架构>.zip` | 解压覆盖 → 重启服务（`systemctl restart tvgate`） |
 | Docker | `juestnow/tvgate:v3.4.6` / `ghcr.io/qist/tvgate:v3.4.6` | 拉取新镜像 → 重建容器（config 挂载不变） |
-| Android | Releases 页 `TVGate-android-{arm64-v8a,arm32-v7a}.zip` | 解压覆盖二进制后重启 |
+| Android 二进制 | Releases 页 `TVGate-android-{arm64-v8a,arm32-v7a}.zip` | 解压覆盖二进制后重启 |
+| Android App | 独立仓库 `qist/tvgate-android` 的 `TVGate-v3.4.6-{arm64,arm,x86_64}.apk` | 覆盖安装，或 App 内在线更新 |
 | 源码 | tag `v3.4.6` | `make linux-64`（自动构建 Web UI） |
 
 ## 五、发布核对清单
@@ -116,5 +120,6 @@ Android 用户重新下载对应二进制包即可，配置格式无变化。
 - [ ] 服务端 Release：tag `v3.4.6` 已推送，66 个资产（33 平台包 + 33 `.dgst`）上传完成
 - [ ] Docker 镜像：`juestnow/tvgate:v3.4.6` 已推送，`latest` 随 tag 更新
 - [ ] Android 二进制：`android-arm64-v8a` / `android-arm32-v7a` 构建成功并上传
+- [ ] Android APK：`tvgate-android` 仓库 v3.4.6 已发布（arm64 / arm / x86_64，内嵌同版本服务端）
 - [ ] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.6
 - [ ] GitHub Release 标题与正文已填写（取自「一」「二」精简版）
