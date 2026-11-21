@@ -173,10 +173,11 @@ func (g *ProxyGroupConfig) PoolKey() string {
 	p := *g.Pool
 	p.SetDefaults()
 	enabled := p.ProbeEnabled == nil || *p.ProbeEnabled
-	return strings.Join(p.Servers, ",") + fmt.Sprintf("|%s|%t|%s|%s|%s|%d|%d|%d|%s|%d",
+	return strings.Join(p.Servers, ",") + fmt.Sprintf("|%s|%t|%s|%s|%s|%s|%d|%d|%d|%s|%d",
 		normalizePoolProtocol(p.Protocol),
 		enabled,
 		p.ProbeInterval,
+		p.ProbeFullInterval,
 		p.ProbeURL,
 		p.ProbeTimeout,
 		p.ProbeRetries,
@@ -396,8 +397,16 @@ func (p *ProxyPoolConfig) SetDefaults() {
 	if p.ProbeInterval < 10*time.Second {
 		p.ProbeInterval = 10 * time.Second
 	}
+	if p.ProbeFullInterval <= 0 {
+		// 全端口扫描会重新确认整个端口段，默认 1 小时一次。
+		p.ProbeFullInterval = time.Hour
+	}
+	if p.ProbeFullInterval < time.Minute {
+		p.ProbeFullInterval = time.Minute
+	}
 	if p.ProbeTimeout <= 0 {
-		p.ProbeTimeout = 2 * time.Second
+		// 10s 才能覆盖 HTTP 分片的「突发段 + 后段观察窗」，以及 RTSP 握手 + 2s 采样。
+		p.ProbeTimeout = 10 * time.Second
 	}
 	if p.ProbeRetries < 0 {
 		p.ProbeRetries = 0

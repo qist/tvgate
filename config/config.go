@@ -425,24 +425,26 @@ type ProxyConfig struct {
 
 // ProxyPoolConfig 动态代理池配置
 type ProxyPoolConfig struct {
-	Servers          []string      `yaml:"servers"`           // 网关列表: host:start-end / host:port / scheme://[user:pass@]host:start-end
-	Protocol         string        `yaml:"protocol"`          // socks5 | http | https | socks4a | auto
-	ProbeEnabled     *bool         `yaml:"probe_enabled"`     // 定时探测开关，默认 true
-	ProbeInterval    time.Duration `yaml:"probe_interval"`    // 定时探测间隔
-	ProbeURL         string        `yaml:"probe_url"`         // 探测地址；为空则不做定时探测
-	ProbeTimeout     time.Duration `yaml:"probe_timeout"`     // 单次探测超时
-	ProbeRetries     int           `yaml:"probe_retries"`     // 单轮失败后的立即重试次数（0=不重试）
-	ProbeConcurrency int           `yaml:"probe_concurrency"` // 并发探测数
-	TopN             int           `yaml:"top_n"`             // 可用节点保留数量
-	FailCooldown     time.Duration `yaml:"fail_cooldown"`     // 失败冷却时间
-	MaxPorts         int           `yaml:"max_ports"`         // 端口段总端口上限
+	Servers           []string      `yaml:"servers"`             // 网关列表: host:start-end / host:port / scheme://[user:pass@]host:start-end
+	Protocol          string        `yaml:"protocol"`            // socks5 | http | https | socks4a | auto
+	ProbeEnabled      *bool         `yaml:"probe_enabled"`       // 定时探测开关，默认 true
+	ProbeInterval     time.Duration `yaml:"probe_interval"`      // 深度探测间隔（完整分片后段采样）
+	ProbeFullInterval time.Duration `yaml:"probe_full_interval"` // 全端口扫描间隔（发现新端口）
+	ProbeURL          string        `yaml:"probe_url"`           // 探测地址；为空则不做定时探测
+	ProbeTimeout      time.Duration `yaml:"probe_timeout"`       // 单次探测超时
+	ProbeRetries      int           `yaml:"probe_retries"`       // 单轮失败后的立即重试次数（0=不重试）
+	ProbeConcurrency  int           `yaml:"probe_concurrency"`   // 并发探测数
+	TopN              int           `yaml:"top_n"`               // 可用节点保留数量
+	FailCooldown      time.Duration `yaml:"fail_cooldown"`       // 失败冷却时间
+	MaxPorts          int           `yaml:"max_ports"`           // 端口段总端口上限
 }
 
 // ProxyStats 代理统计信息
 type ProxyStats struct {
 	LastCheck     time.Time     // 仅测速时更新
-	LastUsed      time.Time     // 代理被用时更新
-	ResponseTime  time.Duration // 响应时间
+	LastUsed      time.Time     // 代理被用时更新；池探测据此跳过播放中的节点
+	ResponseTime  time.Duration // 响应时间（首包/TTFB）
+	Throughput    int64         // 探测采样吞吐（字节/秒）：播放中的节点为「可用 + 在用」估算
 	Alive         bool          // 代理是否可用
 	FailCount     int           // 测速失败次数
 	CooldownUntil time.Time     // 冷却时间，防止频繁重试
@@ -453,6 +455,7 @@ type ProxyStats struct {
 type TestResult struct {
 	Proxy        ProxyConfig
 	ResponseTime time.Duration
+	Throughput   int64
 	Err          error
 	StatusCode   int
 }

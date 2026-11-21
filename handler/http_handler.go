@@ -510,6 +510,9 @@ func markProxyResult(group *config.ProxyGroupConfig, proxy *config.ProxyConfig, 
 	}
 
 	stats.Alive = alive
+	// 真实请求（含播放分片）也算一次使用：池探测据此跳过正在承载播放的节点，
+	// 不再做 2MB/RTP 采样。
+	stats.LastUsed = time.Now()
 	// stats.LastCheck = time.Now()
 	// 不一定每次都更新 TestURL 和 ResponseTime，可视需要添加
 }

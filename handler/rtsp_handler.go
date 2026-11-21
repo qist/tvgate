@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -108,9 +109,9 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 			t := gortsplib.ProtocolTCP
 			return &t
 		}(),
-		DisableRTCPSenderReports:   true,
-		ReadTimeout:                10 * time.Second,
-		WriteTimeout:               10 * time.Second,
+		DisableRTCPSenderReports: true,
+		ReadTimeout:              10 * time.Second,
+		WriteTimeout:             10 * time.Second,
 	}
 
 	// 代理组选择
@@ -281,15 +282,18 @@ func RtspToHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if mpegtsFormat != nil && videoMedia != nil {
-		if err := stream.HandleMpegtsStream(ctx, w, client, videoMedia, mpegtsFormat, r, rtspURL, hub, updateActive); err != nil {
-			http.Error(w, "Stream error: "+err.Error(), 500)
+		// 进入这里时响应头已经发出，再调 http.Error 只会触发
+		// "superfluous response.WriteHeader"；客户端断开属正常结束，不打日志。
+		if err := stream.HandleMpegtsStream(ctx, w, client, videoMedia, mpegtsFormat, r, rtspURL, hub, updateActive); err != nil && !errors.Is(err, context.Canceled) {
+			logger.LogPrintf("RTSP→HTTP(mpegts) 流结束: %v, URL: %s", err, rtspURL)
 		}
 		return
 	}
 
 	if videoFormat != nil && videoMedia != nil {
-		if err := stream.HandleH264AacStream(ctx, w, client, videoMedia, videoFormat, audioMedia, audioFormat, r, rtspURL, hub, updateActive); err != nil {
-			http.Error(w, "Stream error: "+err.Error(), 500)
+		// 同上：H264/AAC 分支也已经进入流式输出，不能再写 500。
+		if err := stream.HandleH264AacStream(ctx, w, client, videoMedia, videoFormat, audioMedia, audioFormat, r, rtspURL, hub, updateActive); err != nil && !errors.Is(err, context.Canceled) {
+			logger.LogPrintf("RTSP→HTTP(h264/aac) 流结束: %v, URL: %s", err, rtspURL)
 		}
 		return
 	}

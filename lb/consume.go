@@ -35,6 +35,9 @@ func ConsumeRemainingResults(ch chan config.TestResult, count int, group *config
 		if res.Err == nil && res.StatusCode < 500 {
 			stats.Alive = true
 			stats.ResponseTime = res.ResponseTime
+			if res.Throughput >= 0 {
+				stats.Throughput = res.Throughput
+			}
 			stats.StatusCode = res.StatusCode
 			stats.FailCount = 0
 			stats.CooldownUntil = time.Time{}
@@ -43,6 +46,7 @@ func ConsumeRemainingResults(ch chan config.TestResult, count int, group *config
 			stats.Alive = false
 			// 失败时清掉上一次的状态码/延迟，避免日志显示“206 + 失败次数 N”这种误导组合。
 			stats.ResponseTime = 0
+			stats.Throughput = 0
 			stats.StatusCode = 0
 			stats.FailCount++
 			var cooldown time.Duration

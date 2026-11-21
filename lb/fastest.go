@@ -3,7 +3,6 @@ package lb
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/qist/tvgate/config"
@@ -71,40 +70,16 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 
 	// ===== 缓存优先使用（非强制测速时）=====
 	ignoreCooldown := false
+	// 只在即将测速时打印缓存状态；缓存命中是高频路径（HLS 每个分片都选路），
+	// 逐请求打印会把日志刷满。
+	if needCheck {
+		logProxyGroupStatus(group, proxies, now, interval)
+	}
 	if !needCheck {
-		logger.LogPrintf("🌀 当前代理组缓存状态：")
 		group.Stats.RLock()
-		for _, proxy := range proxies {
-			stats := group.Stats.ProxyStats[proxy.Name]
-			if stats == nil {
-				continue
-			}
-
-			status := "❌失"
-			if stats.Alive && now.After(stats.CooldownUntil) && stats.ResponseTime > 0 {
-				status = "✅活"
-			} else if stats.Alive && now.Before(stats.CooldownUntil) {
-				status = "🚫冷"
-			}
-
-			cooldown := "无"
-			if stats.CooldownUntil.After(now) {
-				cooldown = fmt.Sprintf("冷却中(至 %s)", stats.CooldownUntil.Format("15:04:05"))
-			}
-
-			logger.LogPrintf(" - %-16s [%-3s] RT: %-10v 上次测速已过: %-6v 最小测速间隔: %-6v HTTP状态: [%-3d] 失败次数: %-2d %s",
-				proxy.Name,
-				status,
-				stats.ResponseTime.Truncate(time.Microsecond),
-				now.Sub(stats.LastCheck).Truncate(time.Second),
-				interval,
-				stats.StatusCode,
-				stats.FailCount,
-				cooldown,
-			)
-		}
 
 		var fastest *config.ProxyConfig
+		var bestThroughput int64
 		minTime := time.Hour
 		for _, proxy := range proxies {
 			stats, ok := group.Stats.ProxyStats[proxy.Name]
@@ -117,6 +92,17 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 			if stats.LastCheck.IsZero() || now.Sub(stats.LastCheck) > interval {
 				continue
 			}
+			// 有吞吐样本时优先选带宽最大的；没有样本再退回延迟。
+			if stats.Throughput > 0 {
+				if stats.Throughput > bestThroughput {
+					bestThroughput = stats.Throughput
+					fastest = proxy
+				}
+				continue
+			}
+			if bestThroughput > 0 {
+				continue
+			}
 			if stats.ResponseTime < minTime && stats.ResponseTime > 0 {
 				minTime = stats.ResponseTime
 				fastest = proxy
@@ -125,8 +111,14 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 
 		if fastest != nil {
 			stats := group.Stats.ProxyStats[fastest.Name]
-			logger.LogPrintf("⚡ 使用缓存数据选择最快代理: %s，响应时间: %v，上次测速已过: %v, 最小测速间隔: %v", fastest.Name, minTime,
-				now.Sub(stats.LastCheck).Truncate(time.Second), interval)
+			if stats.Throughput > 0 {
+				logger.LogPrintf("⚡ 使用缓存数据选择最快代理: %s，吞吐: %.1f Mbps，响应时间: %v，上次测速已过: %v",
+					fastest.Name, float64(stats.Throughput)*8/1e6, stats.ResponseTime,
+					now.Sub(stats.LastCheck).Truncate(time.Second))
+			} else {
+				logger.LogPrintf("⚡ 使用缓存数据选择最快代理: %s，响应时间: %v，上次测速已过: %v, 最小测速间隔: %v", fastest.Name, minTime,
+					now.Sub(stats.LastCheck).Truncate(time.Second), interval)
+			}
 			group.Stats.RUnlock()
 			return fastest
 		}
@@ -175,6 +167,7 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 			resultChan <- config.TestResult{
 				Proxy:        pCopy,
 				ResponseTime: out.ResponseTime,
+				Throughput:   out.Throughput,
 				Err:          out.Err,
 				StatusCode:   out.StatusCode,
 			}
@@ -203,6 +196,9 @@ loop:
 			if res.Err == nil && res.ResponseTime >= 0 && res.StatusCode < 500 {
 				stats.Alive = true
 				stats.ResponseTime = res.ResponseTime
+				if res.Throughput >= 0 {
+					stats.Throughput = res.Throughput
+				}
 				stats.StatusCode = res.StatusCode
 				stats.FailCount = 0
 				stats.CooldownUntil = time.Time{}
@@ -235,6 +231,7 @@ loop:
 
 				stats.Alive = false
 				stats.ResponseTime = 0
+				stats.Throughput = 0
 				stats.StatusCode = 0
 				stats.FailCount++
 				if stats.FailCount >= 3 {

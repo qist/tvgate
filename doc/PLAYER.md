@@ -69,7 +69,7 @@ http://source.example.com/cctv1.m3u8
 | EXTINF | `tvg-logo="..."` | 台标地址 |
 | EXTINF | `group-title="..."` | 分组名 |
 | EXTINF | `ua="..."` | 该频道抓流 UA |
-| EXTINF | `proxy="..."` | 该频道内联上游代理（逗号分隔多个，按 fastest 选最快，如 `proxy="socks5://127.0.0.1:7890,http://127.0.0.1:8080"`） |
+| EXTINF | `proxy="..."` | 该频道内联上游代理（逗号分隔多个，按 fastest 的吞吐优先策略选最优，如 `proxy="socks5://127.0.0.1:7890,http://127.0.0.1:8080"`） |
 | EXTINF | `referer="..."` / `origin="..."` | 该频道上游 Referer / Origin 请求头（按原样透传，未配置忽略） |
 | EXTINF | 最后一个逗号后 | 频道显示名 |
 
@@ -90,7 +90,7 @@ epg=https://epg.example.com/?ch={name}&date={date}
 logo=https://logo.example.com/{name}.png
 ```
 
-**内联代理（`proxy=`）**：为订阅内频道直接指定上游代理，无需先建 `proxygroups` 规则；多个代理用逗号/分号分隔，服务端按 **fastest 选最快**（与 `proxygroups` 的 `loadbalance: fastest` 同一套测速/选取逻辑，同一代理列表跨请求复用测速统计）。未配置即忽略，回落域名规则代理组/直连。直播、回看（`playseek`）与点播分片走同一拉流链路，代理与 `referer=`/`origin=` 均生效。
+**内联代理（`proxy=`）**：为订阅内频道直接指定上游代理，无需先建 `proxygroups` 规则；多个代理用逗号/分号分隔，服务端按 **fastest 的吞吐优先策略**（与 `proxygroups` 的 `loadbalance: fastest` 同一套测速/选取逻辑：优先选探测吞吐最大的节点，无样本时退回响应时间，同一代理列表跨请求复用测速统计）。未配置即忽略，回落域名规则代理组/直连。直播、回看（`playseek`）与点播分片走同一拉流链路，代理与 `referer=`/`origin=` 均生效。
 
 **302 解析型源**：重定向由服务端经同一代理跟随（最多 10 跳），解析出的最终地址、子清单（master m3u8）与 TS/分片请求继续走同一代理出口，`referer=`/`origin=` 也随重定向保留；源站真实地址不回流到浏览器。
 
@@ -98,7 +98,7 @@ logo=https://logo.example.com/{name}.png
 |---|---|
 | `分类,#genre#` | 声明分组，作用于后续频道（行首 `#` 可省略） |
 | `ua=xxx` | 组/文件级默认 UA，作用于后续所有频道；`ua=`（空值）恢复 `player.ua` 默认；再次出现覆盖 |
-| `proxy=a,b` | 组/文件级内联上游代理，逗号/分号分隔多个；覆盖后按 **fastest 选最快**（与 `proxygroups` 的 `loadbalance: fastest` 同一套逻辑）。作用于后续频道，`proxy=`（空值）清空；支持 `socks5://`、`socks4://`、`http://`、`https://`（可带 `user:pass@`，省略 scheme 默认 `http://`） |
+| `proxy=a,b` | 组/文件级内联上游代理，逗号/分号分隔多个；覆盖后按 **fastest 的吞吐优先策略**选最优（与 `proxygroups` 的 `loadbalance: fastest` 同一套逻辑）。作用于后续频道，`proxy=`（空值）清空；支持 `socks5://`、`socks4://`、`http://`、`https://`（可带 `user:pass@`，省略 scheme 默认 `http://`） |
 | `referer=xxx` | 组/文件级上游 Referer 请求头，作用于后续频道；`referer=`（空值）清空，未配置忽略 |
 | `origin=xxx` | 组/文件级上游 Origin 请求头，作用于后续频道；`origin=`（空值）清空，未配置忽略 |
 | `名称,URL` | 频道行（URL 取最后一个逗号之后，名称可含逗号） |

@@ -45,6 +45,7 @@ func ResetProxyGroupStats(group *config.ProxyGroupConfig) {
 	for _, stats := range group.Stats.ProxyStats {
 		stats.LastCheck = time.Time{}
 		stats.ResponseTime = 0
+		stats.Throughput = 0
 		stats.Alive = false
 		stats.FailCount = 0
 		stats.StatusCode = 0

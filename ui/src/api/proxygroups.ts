@@ -18,6 +18,8 @@ export interface ProxyStats {
   LastCheck?: string | null;
   LastUsed?: string | null;
   ResponseTime?: number;
+  /** 探测采样吞吐，单位：字节/秒；0/缺省表示没有有效样本 */
+  Throughput?: number;
   Alive?: boolean;
   FailCount?: number;
   CooldownUntil?: string | null;
@@ -29,7 +31,10 @@ export interface ProxyPool {
   servers: string[];
   protocol?: string;
   probe_enabled?: boolean;
+  /** 深度探测间隔（完整分片后段采样），默认 60s */
   probe_interval?: string;
+  /** 全端口扫描间隔（重新发现端口段内的可用节点），默认 1h */
+  probe_full_interval?: string;
   probe_url?: string;
   probe_timeout?: string;
   /** 单轮失败后的立即重试次数（0=不重试，上限 5） */

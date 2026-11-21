@@ -39,7 +39,7 @@ proxygroups:                 # map 形式：组名 → 组配置，组名自定�
       probe_enabled: true
       probe_interval: 60s
       probe_url: "http://example.com/main.m3u8"
-      probe_timeout: 2s
+      probe_timeout: 10s
       probe_retries: 1
       probe_concurrency: 16
       top_n: 30
@@ -58,7 +58,7 @@ proxygroups:                 # map 形式：组名 → 组配置，组名自定�
 | `domains` | 列表 | 必填 | 命中即走本组的规则列表，支持域名 / IP / CIDR / IPv6 |
 | `interval` | duration | — | 组内节点测速间隔，如 `180s`、`3m`；同时是测速结果缓存有效期 |
 | `ipv6` | bool | `false` | 是否启用 IPv6 目标支持 |
-| `loadbalance` | string | `round-robin` | `round-robin` 轮询均摊；`fastest` 每次选响应最快的节点 |
+| `loadbalance` | string | `round-robin` | `round-robin` 轮询均摊（有吞吐样本时优先选带宽最大的）；`fastest` 优先选**探测吞吐最大**的节点，没有吞吐样本（如 RTSP 采样不足、m3u8 过小）时退回响应时间最小 |
 | `max_retries` | int | — | 请求失败后的最大重试次数 |
 | `retry_delay` | duration | — | 两次重试之间的等待时间 |
 | `max_rt` | duration | — | 最大响应时间阈值，测速/选用时高于该值的节点视为不可用 |
@@ -87,9 +87,10 @@ proxygroups:                 # map 形式：组名 → 组配置，组名自定�
 | `servers` | []string | 必填 | 网关列表，支持 `host:start-end`、`host:port`、`scheme://[user:pass@]host:start-end` |
 | `protocol` | string | `auto` | `socks5` / `http` / `https` / `socks4a` / `auto`；`auto` 对每个端口同时探测 socks5 与 http |
 | `probe_enabled` | bool | `true` | 是否启用池主动探测；`false` 时只把前 `top_n` 个候选交给 `lb`，由请求时按需测速 |
-| `probe_interval` | duration | `60s` | 定时探测间隔，最小 10s |
+| `probe_interval` | duration | `60s` | 深度探测间隔（完整分片、后段速率），最小 10s；仅在组内有播放时运行 |
+| `probe_full_interval` | duration | `1h` | 全端口扫描间隔，最小 1m；重新扫描整个端口段发现新节点；全部节点不可用时也会触发，但受该间隔限流 |
 | `probe_url` | string | 空 | 探测目标，支持 `http` / `https` / `rtsp`；为空时不启动定时探测 |
-| `probe_timeout` | duration | `2s` | 单次探测超时 |
+| `probe_timeout` | duration | `10s` | 单次探测超时；HTTP 实际下限 8s（需覆盖分片「突发段 + 后段观察窗」），RTSP 需覆盖握手 + 2s RTP 采样 |
 | `probe_retries` | int | `0` | 单轮内失败后的立即重试次数，最大 5；每次重试同样受 `probe_timeout` 限制，全部失败才标记失败并进入冷却 |
 | `probe_concurrency` | int | `16` | 并发探测数，最大 64 |
 | `top_n` | int | `30` | 进入可用列表的最大节点数，最大 200 |
@@ -122,14 +123,19 @@ proxygroups:                 # map 形式：组名 → 组配置，组名自定�
 ### 探测与选路
 
 1. **加载/热重载**：展开 `servers` 为候选节点，先把前 `top_n` 个候选放入可用列表（此时为「未测」），保证首个请求就有节点可选；同时后台立即开始探测。
-2. **定时探测**：`probe_enabled: true` 且 `probe_url` 非空时，每 `probe_interval` 巡检一轮。
-3. **探测判定**：复用 `lb` 的直播检测——HTTP 发 `Range` 请求，RTSP 走 OPTIONS/DESCRIBE/SETUP/PLAY；HTTP 状态码 `< 400` 视为成功，记录响应时间。`probe_retries` 用于单轮内的立即重试。
-4. **排序**：成功节点按响应时间升序，保留前 `top_n` 个。
-5. **冷却**：失败节点进入 `fail_cooldown`；下一轮探测仍会重测，成功后自动恢复。
-6. **选路**：继续使用现有 `lb` 逻辑，`fastest` 从可用列表里选响应时间最小的节点。
-7. **故障切换**：请求失败由 `lb` 标记并按 `max_retries` / `retry_delay` 重试，池管理器下一轮探测补充节点。
+2. **两档节奏**（`probe_enabled: true` 且 `probe_url` 非空时）：
+   - **深度探测**：每 `probe_interval`（默认 60s，仅组内有播放时运行）读取完整分片、按后段速率算吞吐并重排，对吞吐前 2 名再做一次采样取较小值；
+   - **全端口扫描**：每 `probe_full_interval`（默认 1h）重新扫描 `servers` 展开后的全部候选，发现新端口；所有节点都不可用时也会触发，但同样受该间隔限流，避免频繁扫端口段。
+3. **探测判定**：复用 `lb` 的直播检测——HTTP 发 `Range` 请求并读取分片正文（最多 8MB，m3u8 会继续取首个 variant / 最新分片），RTSP 走 OPTIONS/DESCRIBE/SETUP/PLAY 后继续接收 2s RTP 统计码率；HTTP 状态码 `< 400` 视为成功，同时记录响应时间与吞吐。`probe_retries` 用于单轮内的立即重试。
+4. **吞吐只看「后段」**：HTTP 吞吐按最后 3 秒的读取速率计算，而不是全程平均。出口常见「前 3 秒跑满 6~7Mbps、随后限速到 2Mbps 甚至直接停住不再传数据」，全程平均会被突发段抬高；后段速率能立刻掉下来，后段完全没有数据时吞吐记 0。读取在 `probe_timeout`（HTTP 下限 8s）到点后结束，用已读数据计算，节点仍算可用但排名靠后。
+5. **排序**：成功节点按后段吞吐降序，吞吐相同（或都没有样本）时按响应时间升序，保留前 `top_n` 个。每轮还会对吞吐前 2 名再采样一次并取两次较小值，进一步压低抖动。
+6. **冷却与重试**：失败节点进入 `fail_cooldown`，并被移出可用列表。深度探测会继续重测「连续失败少于 3 次」的候选，成功即恢复；连续失败达到 3 次后停止重试，等下一次全端口扫描重新确认，避免一次源站抖动就让节点消失一小时。
+7. **选路**：`fastest` 从可用列表里选吞吐最大的节点；没有吞吐样本时退回响应时间最小。`round-robin` 轮询时也优先跳过没有吞吐样本的节点。
+8. **故障切换**：请求失败由 `lb` 标记并按 `max_retries` / `retry_delay` 重试，池管理器下一轮探测补充节点。
 
 `pool.probe_interval` 是后台巡检，代理组的 `interval` 是请求时的测速缓存有效期，两者不是同一个东西。建议 `interval >= probe_interval`，避免 `lb` 在两次池探测之间又对整组节点做一次全量测速。
+
+**播放中的节点只验连通、不更新吞吐**：`lb.SelectProxy` 每次选路都会刷新节点的 `LastUsed`，HLS 每个分片都会重新选路。池探测发现节点在一个 `interval` 内被使用过时，只读 1 字节确认存活，吞吐沿用上一次空闲时的完整采样结果。原因：完整采样会和播放抢带宽；短采样落在突发段会高估、落在限速段又会低估，两种都会误导选路。播放中节点变慢/断流由真实请求失败触发 `lb` 标记和重试切换来兜底。长连接（FLV/TS 直链）只在建连时选路一次，超过 `interval` 后可能被当作空闲，属于当前统计粒度的已知边界。
 
 ### 启动时序与首次探测
 
@@ -138,8 +144,8 @@ proxygroups:                 # map 形式：组名 → 组配置，组名自定�
 | 阶段 | 行为 |
 |---|---|
 | 配置加载 / 热重载 | 展开 `servers`，把前 `top_n` 个候选写入可用列表（未测状态），首个请求即可选到节点 |
-| 冷启动首轮 | **立即执行一次**，只测前 `probe_concurrency` 个候选（默认 16），先尽快拿到可用节点 |
-| 后续轮次 | 每 `probe_interval` 执行一次**全量**探测（全部候选），不受首轮范围限制 |
+| 冷启动首轮 | **立即执行一次**，先测前 `probe_concurrency` 个候选（默认 16）拿到可用节点；随后再跑一次全端口扫描 |
+| 后续轮次 | 全端口扫描始终按 `probe_full_interval` 进行；深度探测（`probe_interval`）仅在组内有播放时运行 |
 | 等待结果期间 | 节点显示「未测」；`lb` 若在这一窗口内收到播放请求，会按原有逻辑做一次请求时测速兜底 |
 
 由此可以推出：
@@ -233,7 +239,7 @@ proxygroups:
       - 198.51.100.0/24                 # 源站 IP 段
     interval: 180s
     ipv6: false
-    loadbalance: fastest                # 自动选响应最快的联通节点
+    loadbalance: fastest                # 自动选探测吞吐最大的联通节点
     max_retries: 3
     retry_delay: 1s
     max_rt: 200ms
@@ -280,7 +286,7 @@ proxygroups:
       probe_enabled: true
       probe_interval: 60s
       probe_url: "http://tvgslb.hn.chinamobile.com:8089/1800000001001/000000010000000000007000000001243/main.m3u8"
-      probe_timeout: 2s
+      probe_timeout: 10s
       probe_retries: 1
       probe_concurrency: 16
       top_n: 30
@@ -311,7 +317,7 @@ proxygroups:
 
 ## 注意事项
 
-- **按组独立测速与故障切换**：每组按 `interval` 独立测速并维护节点存活/响应时间统计；`fastest` 依据测速结果选最快节点，当前节点请求失败时按 `max_retries` / `retry_delay` 重试并在组内切换，单节点故障不影响其他组。
+- **按组独立测速与故障切换**：每组按 `interval` 独立测速并维护节点存活/响应时间/吞吐统计；`fastest` 优先依据吞吐选最大带宽的节点（无样本时退回响应时间），当前节点请求失败时按 `max_retries` / `retry_delay` 重试并在组内切换，单节点故障不影响其他组。
 - **规则宁多勿少**：需要代理的 IP、域名尽量都添加。若日志出现 `dial tcp x.x.x.x:80: i/o timeout`，说明该地址直连不通，把对应 `x.x.x.x/24` 加入所属组的 `domains` 即可。
 - **域名与 IP 都要覆盖**：部分源先请求调度域名再跳转源站 IP，调度域名与源站 IP 段都要加入 `domains`，否则跳转后的请求会直连失败。
 - **UA 白名单源站**：探测与播放是两套 UA。源站校验 UA 时，除频道订阅里的 `ua=` 外，组级 `probe_ua` 也要配对，否则后台会一直显示 403 并可能把节点打进冷却。

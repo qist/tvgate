@@ -62,8 +62,11 @@ func TestPoolDefaults(t *testing.T) {
 	if p.ProbeEnabled == nil || !*p.ProbeEnabled {
 		t.Fatal("probe_enabled 默认应为 true")
 	}
-	if p.ProbeInterval != 60*time.Second || p.ProbeTimeout != 2*time.Second {
+	if p.ProbeInterval != 60*time.Second || p.ProbeTimeout != 10*time.Second {
 		t.Fatalf("探测默认值异常: %+v", p)
+	}
+	if p.ProbeFullInterval != time.Hour {
+		t.Fatalf("全量扫描默认值异常: %+v", p)
 	}
 	if p.ProbeConcurrency != 16 || p.TopN != 30 || p.MaxPorts != 2048 {
 		t.Fatalf("数量默认值异常: %+v", p)

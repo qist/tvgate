@@ -7,7 +7,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -280,4 +282,313 @@ func handleConnect(client net.Conn) {
 	_, _ = fmt.Fprint(client, "HTTP/1.1 200 Connection Established\r\n\r\n")
 	go func() { _, _ = io.Copy(upstream, br) }()
 	_, _ = io.Copy(client, upstream)
+}
+
+// TestSyncImmediatelyReprobesOnProbeConfigChange 验证池结构不变、仅探测参数
+// （如 probe_ua）变化时，也要立即测一轮，而不是等 probe_interval 到点。
+func TestSyncImmediatelyReprobesOnProbeConfigChange(t *testing.T) {
+	restore := prepareTestConfig(t)
+	defer restore()
+
+	target, closeTarget := startProbeTarget(t)
+	defer closeTarget()
+	proxyAddr, closeProxy := startConnectProxy(t)
+	defer closeProxy()
+
+	StopAll()
+	defer StopAll()
+
+	stats := &config.GroupStats{ProxyStats: make(map[string]*config.ProxyStats)}
+	newGroup := func(ua string) *config.ProxyGroupConfig {
+		g := &config.ProxyGroupConfig{
+			Resolve: "local",
+			ProbeUA: ua,
+			Stats:   stats,
+			Pool: &config.ProxyPoolConfig{
+				Servers:       []string{proxyAddr},
+				Protocol:      "http",
+				ProbeURL:      target.url,
+				ProbeInterval: time.Hour,
+				TopN:          5,
+			},
+		}
+		g.Pool.SetDefaults()
+		return g
+	}
+
+	g1 := newGroup("ua-a")
+	cfg := &config.Config{ProxyGroups: map[string]*config.ProxyGroupConfig{"g": g1}}
+	Sync(cfg)
+
+	nodes := g1.PoolNodes()
+	if len(nodes) == 0 {
+		t.Fatal("Sync 后没有初始节点")
+	}
+	nodeName := nodes[0].Name
+
+	waitProbe := func(after time.Time) time.Time {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			stats.RLock()
+			st := stats.ProxyStats[nodeName]
+			var last time.Time
+			if st != nil {
+				last = st.LastCheck
+			}
+			stats.RUnlock()
+			if last.After(after) {
+				return last
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("等待立即测速超时（after=%v）", after)
+		return time.Time{}
+	}
+
+	first := waitProbe(time.Time{})
+
+	// PoolKey 不变（servers/probe_url/probe_interval 均相同），只有 probe_ua 变化。
+	g2 := newGroup("ua-b")
+	cfg.ProxyGroups["g"] = g2
+	Sync(cfg)
+
+	if got := waitProbe(first); !got.After(first) {
+		t.Fatalf("配置变更后未立即重新测速: first=%v got=%v", first, got)
+	}
+}
+
+// TestProbeSampleReadsHLSThroughput 验证探测不再只读 2KB：m3u8 会继续取首个
+// 分片并读最多 2MB，写入 Throughput；这是避免「延迟低但带宽不够」节点被选中的关键。
+func TestProbeSampleReadsHLSThroughput(t *testing.T) {
+	restore := prepareTestConfig(t)
+	defer restore()
+
+	var segmentHits atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/main.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = io.WriteString(w, "#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:10,\nseg.ts\n")
+		case "/seg.ts":
+			segmentHits.Add(1)
+			w.Header().Set("Content-Type", "video/mp2t")
+			w.Header().Set("Content-Length", "307200")
+			_, _ = w.Write(make([]byte, 300<<10))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer target.Close()
+
+	proxyAddr, closeProxy := startConnectProxy(t)
+	defer closeProxy()
+
+	g := &config.ProxyGroupConfig{
+		Resolve: "local",
+		Stats:   &config.GroupStats{ProxyStats: make(map[string]*config.ProxyStats)},
+		Pool: &config.ProxyPoolConfig{
+			Servers:      []string{proxyAddr},
+			Protocol:     "http",
+			ProbeURL:     target.URL + "/main.m3u8",
+			ProbeTimeout: 5 * time.Second,
+			TopN:         5,
+		},
+	}
+	g.Pool.SetDefaults()
+	nodes, err := g.BuildPoolNodes()
+	if err != nil {
+		t.Fatalf("BuildPoolNodes: %v", err)
+	}
+
+	probeAndApply(context.Background(), "throughput", g, nodes)
+
+	g.Stats.RLock()
+	st := g.Stats.ProxyStats[nodes[0].Name]
+	g.Stats.RUnlock()
+	if st == nil || !st.Alive {
+		t.Fatalf("探测未成功: %+v", st)
+	}
+	if st.Throughput <= 0 {
+		t.Fatalf("未记录吞吐样本: %+v", st)
+	}
+	if segmentHits.Load() == 0 {
+		t.Fatal("探测没有继续请求 m3u8 里的分片")
+	}
+}
+
+// TestProbeInUseNodeNeverUpgradesThroughput 验证播放中的节点只允许下调吞吐：
+// 空闲时完整采样（8MB/后段速率）已经把「前段突发、随后停住」的出口判低，
+// 播放中的 1MB 短采样落在突发段里测出高值，也不能把它重新抬上去，
+// 否则又会选中这种跑一会儿就卡的节点。
+func TestProbeInUseNodeNeverUpgradesThroughput(t *testing.T) {
+	restore := prepareTestConfig(t)
+	defer restore()
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/mp2t")
+		_, _ = w.Write(make([]byte, 1<<20))
+	}))
+	defer target.Close()
+	proxyAddr, closeProxy := startConnectProxy(t)
+	defer closeProxy()
+
+	g := &config.ProxyGroupConfig{
+		Resolve: "local",
+		Stats:   &config.GroupStats{ProxyStats: make(map[string]*config.ProxyStats)},
+		Pool: &config.ProxyPoolConfig{
+			Servers:      []string{proxyAddr},
+			Protocol:     "http",
+			ProbeURL:     target.URL,
+			ProbeTimeout: 5 * time.Second,
+			TopN:         5,
+		},
+	}
+	g.Pool.SetDefaults()
+	nodes, err := g.BuildPoolNodes()
+	if err != nil || len(nodes) == 0 {
+		t.Fatalf("BuildPoolNodes: %v", err)
+	}
+	name := nodes[0].Name
+	// 完整采样已经判定只有 1KB/s（突发后停住），播放中的短采样必须不能抬高它。
+	const verified = int64(1 << 10)
+	g.Stats.ProxyStats[name] = &config.ProxyStats{
+		LastUsed:   time.Now(),
+		LastCheck:  time.Now(),
+		Throughput: verified,
+	}
+
+	res := probeOne(context.Background(), g, nodes[0])
+	if !res.inUse {
+		t.Fatal("最近被选路使用的节点应标记为播放中")
+	}
+	if res.err != nil {
+		t.Fatalf("探测失败: %v", res.err)
+	}
+	if res.throughput != -1 {
+		t.Fatalf("播放中只验连通，应返回无样本 -1，实际 %d", res.throughput)
+	}
+
+	probeAndApply(context.Background(), "inuse", g, nodes)
+
+	g.Stats.RLock()
+	st := g.Stats.ProxyStats[name]
+	g.Stats.RUnlock()
+	if st == nil || !st.Alive {
+		t.Fatalf("探测后节点应可用: %+v", st)
+	}
+	if st.Throughput != verified {
+		t.Fatalf("播放中的短采样不得抬高已验证吞吐 %d，实际 %d", verified, st.Throughput)
+	}
+}
+
+// TestProbeUpdatesThroughput 验证深度探测会真正采样吞吐并覆盖旧分：
+// 节点变快/变慢都必须以本轮实测为准，不能一直沿用历史值。
+func TestProbeUpdatesThroughput(t *testing.T) {
+	restore := prepareTestConfig(t)
+	defer restore()
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/mp2t")
+		_, _ = w.Write(make([]byte, 1<<20))
+	}))
+	defer target.Close()
+	proxyAddr, closeProxy := startConnectProxy(t)
+	defer closeProxy()
+
+	g := &config.ProxyGroupConfig{
+		Resolve: "local",
+		Stats:   &config.GroupStats{ProxyStats: make(map[string]*config.ProxyStats)},
+		Pool: &config.ProxyPoolConfig{
+			Servers:      []string{proxyAddr},
+			Protocol:     "http",
+			ProbeURL:     target.URL,
+			ProbeTimeout: 5 * time.Second,
+			TopN:         5,
+		},
+	}
+	g.Pool.SetDefaults()
+	nodes, err := g.BuildPoolNodes()
+	if err != nil || len(nodes) == 0 {
+		t.Fatalf("BuildPoolNodes: %v", err)
+	}
+	// 旧的高分（模拟节点此前很快），深度探测必须用本轮实测覆盖它。
+	const oldThroughput = int64(8 << 20)
+	g.Stats.ProxyStats[nodes[0].Name] = &config.ProxyStats{
+		Alive:      true,
+		Throughput: oldThroughput,
+	}
+
+	if alive := probeAndApply(context.Background(), "deep", g, nodes); alive != len(nodes) {
+		t.Fatalf("深度探测应保留可用节点，got %d", alive)
+	}
+
+	g.Stats.RLock()
+	st := g.Stats.ProxyStats[nodes[0].Name]
+	g.Stats.RUnlock()
+	if st == nil || !st.Alive {
+		t.Fatalf("深度探测后节点应可用: %+v", st)
+	}
+	if st.Throughput <= 0 {
+		t.Fatal("深度探测应采样吞吐")
+	}
+	if st.Throughput == oldThroughput {
+		t.Fatalf("深度探测应覆盖旧吞吐，实际仍为 %d", st.Throughput)
+	}
+}
+
+// TestGroupInPlayback 验证没有播放时深度探测会被跳过：
+// 判定只看节点的 LastUsed 是否落在组的 interval 窗口内。
+func TestGroupInPlayback(t *testing.T) {
+	g := &config.ProxyGroupConfig{
+		Interval: time.Minute,
+		Stats:    &config.GroupStats{ProxyStats: make(map[string]*config.ProxyStats)},
+		Proxies: []*config.ProxyConfig{
+			{Name: "p1", Type: "http", Server: "127.0.0.1", Port: 1},
+		},
+	}
+	now := time.Now()
+
+	if groupInPlayback(g, now) {
+		t.Fatal("从未使用的组应判定为空闲")
+	}
+
+	g.Stats.ProxyStats["p1"] = &config.ProxyStats{LastUsed: now.Add(-30 * time.Second)}
+	if !groupInPlayback(g, now) {
+		t.Fatal("LastUsed 在 interval 窗口内应判定为播放中")
+	}
+
+	g.Stats.ProxyStats["p1"].LastUsed = now.Add(-2 * time.Minute)
+	if groupInPlayback(g, now) {
+		t.Fatal("LastUsed 超出 interval 窗口应判定为空闲")
+	}
+
+	if groupInPlayback(&config.ProxyGroupConfig{}, now) {
+		t.Fatal("没有 Stats 的组应判定为空闲")
+	}
+}
+
+// TestProbeTargetsRetriesFailedNodes 验证一次失败不会让节点消失到下次全量扫描：
+// 深度探测会继续重测近期失败、次数未达上限的候选。
+func TestProbeTargetsRetriesFailedNodes(t *testing.T) {
+	n1 := &config.ProxyConfig{Name: "good", Type: "http", Server: "127.0.0.1", Port: 1}
+	n2 := &config.ProxyConfig{Name: "flaky", Type: "http", Server: "127.0.0.1", Port: 2}
+	g := &config.ProxyGroupConfig{
+		Stats: &config.GroupStats{ProxyStats: map[string]*config.ProxyStats{
+			"good":  {Alive: true, LastCheck: time.Now()},
+			"flaky": {Alive: false, LastCheck: time.Now(), FailCount: 1},
+		}},
+	}
+	g.SetPoolNodes([]*config.ProxyConfig{n1})
+	all := []*config.ProxyConfig{n1, n2}
+
+	got := probeTargets(g, all, 10)
+	if len(got) != 2 {
+		t.Fatalf("失败 1 次的节点应继续重试，got %d", len(got))
+	}
+
+	g.Stats.ProxyStats["flaky"].FailCount = probeRetryLimit
+	if got := probeTargets(g, all, 10); len(got) != 1 {
+		t.Fatalf("连续失败达上限后应停止重试，got %d", len(got))
+	}
 }

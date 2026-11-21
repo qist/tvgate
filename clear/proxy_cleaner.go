@@ -38,6 +38,7 @@ func cleanupProxyStats(group *config.ProxyGroupConfig, maxIdle time.Duration) {
 		// 如果上次测速时间超过 maxIdle
 		if !stats.LastCheck.IsZero() && now.Sub(stats.LastCheck) > maxIdle {
 			stats.ResponseTime = 0
+			stats.Throughput = 0
 			stats.Alive = false
 			stats.FailCount = 0
 			stats.StatusCode = 0 // 状态码重置

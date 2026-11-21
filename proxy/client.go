@@ -81,6 +81,7 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 	if cached, ok := transportCache.Load(cacheKey); ok {
 		transport := cached.(*http.Transport)
 		client := httpclient.NewHTTPClient(cfg, transport)
+		client.Transport = &usageTransport{base: transport, meter: meterFor(proxyConfig)}
 		return client, nil
 	}
 
@@ -186,7 +187,17 @@ func CreateUniqueProxyClient(ctx context.Context, cfg *config.Config, proxyConfi
 	}
 
 	// 创建一个新的transport实例，以确保连接隔离
-	transport := baseClient.Transport.(*http.Transport).Clone()
+	var baseTransport *http.Transport
+	switch tr := baseClient.Transport.(type) {
+	case *http.Transport:
+		baseTransport = tr
+	case *usageTransport:
+		baseTransport, _ = tr.base.(*http.Transport)
+	}
+	if baseTransport == nil {
+		return nil, fmt.Errorf("代理 transport 类型异常")
+	}
+	transport := baseTransport.Clone()
 
 	// 设置更严格的连接管理参数，减少连接复用的可能性
 	transport.MaxIdleConns = 1                   // 减少空闲连接数量

@@ -68,6 +68,7 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 					"LastCheck":     proxyStats.LastCheck,
 					"LastUsed":      proxyStats.LastUsed,
 					"ResponseTime":  proxyStats.ResponseTime,
+					"Throughput":    proxyStats.Throughput,
 					"Alive":         proxyStats.Alive,
 					"FailCount":     proxyStats.FailCount,
 					"CooldownUntil": proxyStats.CooldownUntil,
@@ -130,17 +131,18 @@ func proxyPoolToMap(p *config.ProxyPoolConfig) interface{} {
 	}
 	enabled := p.ProbeEnabled == nil || *p.ProbeEnabled
 	return map[string]interface{}{
-		"servers":           p.Servers,
-		"protocol":          p.Protocol,
-		"probe_enabled":     enabled,
-		"probe_interval":    formatDuration(p.ProbeInterval),
-		"probe_url":         p.ProbeURL,
-		"probe_timeout":     formatDuration(p.ProbeTimeout),
-		"probe_retries":     p.ProbeRetries,
-		"probe_concurrency": p.ProbeConcurrency,
-		"top_n":             p.TopN,
-		"fail_cooldown":     formatDuration(p.FailCooldown),
-		"max_ports":         p.MaxPorts,
+		"servers":             p.Servers,
+		"protocol":            p.Protocol,
+		"probe_enabled":       enabled,
+		"probe_interval":      formatDuration(p.ProbeInterval),
+		"probe_full_interval": formatDuration(p.ProbeFullInterval),
+		"probe_url":           p.ProbeURL,
+		"probe_timeout":       formatDuration(p.ProbeTimeout),
+		"probe_retries":       p.ProbeRetries,
+		"probe_concurrency":   p.ProbeConcurrency,
+		"top_n":               p.TopN,
+		"fail_cooldown":       formatDuration(p.FailCooldown),
+		"max_ports":           p.MaxPorts,
 	}
 }
 
@@ -786,6 +788,7 @@ func buildProxyPoolNode(poolMap map[string]interface{}) *yaml.Node {
 		}
 	}
 	appendDuration("probe_interval", poolMap["probe_interval"])
+	appendDuration("probe_full_interval", poolMap["probe_full_interval"])
 	if v, ok := poolMap["probe_url"]; ok {
 		appendScalar("probe_url", fmt.Sprintf("%v", v))
 	}

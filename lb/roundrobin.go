@@ -3,7 +3,6 @@ package lb
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/qist/tvgate/config"
@@ -78,39 +77,50 @@ func SelectRoundRobinProxy(ctx context.Context, group *config.ProxyGroupConfig, 
 
 	// ===== 缓存优先使用（非强制测速时）=====
 	ignoreCooldown := false
+	// 只在即将测速时打印缓存状态；缓存命中是高频路径（HLS 每个分片都选路），
+	// 逐请求打印会把日志刷满。
+	if needCheck {
+		logProxyGroupStatus(group, proxies, now, interval)
+	}
 	if !forceTest || !needCheck {
-		logger.LogPrintf("🌀 当前代理组缓存状态：")
 		group.Stats.RLock()
 		start := group.Stats.RoundRobinIndex
 
-		for _, proxy := range proxies {
-			stats := group.Stats.ProxyStats[proxy.Name]
-			if stats == nil {
+		// 有吞吐样本时优先选带宽最大的节点。max_rt 是延迟阈值，不能用来
+		// 否决「首包稍慢但带宽足够」的节点；也不能按轮询顺序随便挑一个
+		// 低带宽节点，否则播放仍然会卡。
+		var best *config.ProxyConfig
+		var bestThroughput int64
+		var bestIdx int
+		var bestRT time.Duration
+		for i := 0; i < n; i++ {
+			idx := (start + i) % n
+			proxy := proxies[idx]
+			stats, ok := group.Stats.ProxyStats[proxy.Name]
+			if !ok || !stats.Alive || now.Before(stats.CooldownUntil) {
 				continue
 			}
-
-			status := "❌失"
-			if stats.Alive && now.After(stats.CooldownUntil) && stats.ResponseTime > 0 {
-				status = "✅活"
-			} else if stats.Alive && now.Before(stats.CooldownUntil) {
-				status = "🚫冷"
+			if stats.LastCheck.IsZero() || now.Sub(stats.LastCheck) > interval {
+				continue
 			}
-
-			cooldown := "无"
-			if stats.CooldownUntil.After(now) {
-				cooldown = fmt.Sprintf("冷却中(至 %s)", stats.CooldownUntil.Format("15:04:05"))
+			if stats.Throughput <= 0 {
+				continue
 			}
-
-			logger.LogPrintf(" - %-16s [%-3s] RT: %-10v 上次测速已过: %-6v 最小测速间隔: %-6v HTTP状态: [%-3d] 失败次数: %-2d %s",
-				proxy.Name,
-				status,
-				stats.ResponseTime.Truncate(time.Microsecond),
-				now.Sub(stats.LastCheck).Truncate(time.Second),
-				interval,
-				stats.StatusCode,
-				stats.FailCount,
-				cooldown,
-			)
+			if best == nil || stats.Throughput > bestThroughput {
+				best = proxy
+				bestThroughput = stats.Throughput
+				bestIdx = idx
+				bestRT = stats.ResponseTime
+			}
+		}
+		if best != nil {
+			group.Stats.RUnlock()
+			group.Stats.Lock()
+			group.Stats.RoundRobinIndex = (bestIdx + 1) % n
+			group.Stats.Unlock()
+			logger.LogPrintf("🌀 使用缓存代理(吞吐): %s 响应: %v 吞吐: %.1f Mbps",
+				best.Name, bestRT, float64(bestThroughput)*8/1e6)
+			return best
 		}
 
 		var fallback *config.ProxyConfig
@@ -198,6 +208,7 @@ func SelectRoundRobinProxy(ctx context.Context, group *config.ProxyGroupConfig, 
 			resultChan <- config.TestResult{
 				Proxy:        pCopy,
 				ResponseTime: out.ResponseTime,
+				Throughput:   out.Throughput,
 				Err:          out.Err,
 				StatusCode:   out.StatusCode,
 			}
@@ -226,6 +237,9 @@ LOOP:
 			if res.Err == nil && res.ResponseTime >= minAcceptableRT && res.StatusCode < 500 {
 				stats.Alive = true
 				stats.ResponseTime = res.ResponseTime
+				if res.Throughput >= 0 {
+					stats.Throughput = res.Throughput
+				}
 				stats.StatusCode = res.StatusCode
 				stats.FailCount = 0
 				stats.CooldownUntil = time.Time{}
@@ -263,6 +277,7 @@ LOOP:
 
 				stats.Alive = false
 				stats.ResponseTime = 0
+				stats.Throughput = 0
 				stats.StatusCode = 0
 				stats.FailCount++
 				if stats.FailCount >= 3 {
