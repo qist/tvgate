@@ -64,6 +64,10 @@ func MergeProxyStats(oldGroups, newGroups map[string]*config.ProxyGroupConfig) {
 			}
 		}
 
+		// 池配置未变化时，保留旧组的可用节点和池节点测速状态，
+		// 避免每次后台保存/热重载都把池清空重测。
+		newGroup.InheritPoolRuntime(oldGroup)
+
 		// 移除被删除的旧代理状态（仅日志提示，不复制）
 		for oldName := range oldGroup.Stats.ProxyStats {
 			if !newProxySet[oldName] {
@@ -100,6 +104,7 @@ func isGroupConfigChanged(oldGroup, newGroup *config.ProxyGroupConfig) bool {
 		oldGroup.RetryDelay != newGroup.RetryDelay ||
 		oldGroup.MaxRT != newGroup.MaxRT ||
 		oldGroup.IPv6 != newGroup.IPv6 ||
+		oldGroup.PoolKey() != newGroup.PoolKey() ||
 		!proxyListEqual(oldGroup.Proxies, newGroup.Proxies)
 }
 
@@ -110,9 +115,15 @@ func normalizeGroup(g *config.ProxyGroupConfig) {
 	if g.Proxies == nil {
 		g.Proxies = []*config.ProxyConfig{}
 	}
+	if g.Resolve == "" {
+		g.Resolve = "remote"
+	}
 	for _, p := range g.Proxies {
 		if p.Headers == nil {
 			p.Headers = map[string]string{}
+		}
+		if p.Resolve == "" {
+			p.Resolve = g.Resolve
 		}
 	}
 }
@@ -140,6 +151,7 @@ func proxyEqual(a, b *config.ProxyConfig) bool {
 		a.Username == b.Username &&
 		a.Password == b.Password &&
 		a.Name == b.Name &&
+		a.Resolve == b.Resolve &&
 		reflect.DeepEqual(a.Headers, b.Headers)
 }
 

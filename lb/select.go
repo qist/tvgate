@@ -14,8 +14,8 @@ func SelectProxy(ctx context.Context, group *config.ProxyGroupConfig, targetURL 
 		return nil
 	}
 
-	if len(group.Proxies) == 0 {
-		logger.LogPrintf("代理组中没有代理")
+	if len(group.ActiveProxies()) == 0 {
+		logger.LogPrintf("代理组中没有可用代理")
 		return nil
 	}
 	// logger.LogPrintf("代理组中有 %d 个代理", len(group.Proxies))

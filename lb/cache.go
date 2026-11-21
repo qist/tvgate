@@ -10,11 +10,12 @@ func SelectProxyFromCache(group *config.ProxyGroupConfig, now time.Time) *config
 	group.Stats.Lock()
 	defer group.Stats.Unlock()
 
-	n := len(group.Proxies)
+	proxies := group.ActiveProxies()
+	n := len(proxies)
 	start := group.Stats.RoundRobinIndex
 	for i := 0; i < n; i++ {
 		idx := (start + i) % n
-		proxy := group.Proxies[idx]
+		proxy := proxies[idx]
 		stats, ok := group.Stats.ProxyStats[proxy.Name]
 		if ok && stats.Alive &&
 			now.After(stats.CooldownUntil) &&

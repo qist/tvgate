@@ -4,13 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/logger"
-	p "github.com/qist/tvgate/proxy"
 	tsync "github.com/qist/tvgate/utils/sync"
 )
 
@@ -18,6 +15,7 @@ var lbWg tsync.WaitGroup
 
 // SelectFastestProxy 使用最快的代理
 func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, targetURL string, forceTest bool) *config.ProxyConfig {
+	proxies := group.ActiveProxies()
 	waitCtx, waitCancel := context.WithTimeout(ctx, config.DefaultDialTimeout)
 	defer waitCancel()
 	now := time.Now()
@@ -27,7 +25,7 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 	}
 
 	group.Stats.RLock()
-	n := len(group.Proxies)
+	n := len(proxies)
 	group.Stats.RUnlock()
 	if n == 0 {
 		return nil
@@ -39,7 +37,7 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 		// 防止外部重试逻辑导致的瞬时死循环测速
 		justChecked := true
 		group.Stats.RLock()
-		for _, proxy := range group.Proxies {
+		for _, proxy := range proxies {
 			stats, ok := group.Stats.ProxyStats[proxy.Name]
 			if !ok || now.Sub(stats.LastCheck) > 1*time.Second {
 				justChecked = false
@@ -56,7 +54,7 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 	if !needCheck {
 		allNoRT := true
 		group.Stats.RLock()
-		for _, proxy := range group.Proxies {
+		for _, proxy := range proxies {
 			stats, ok := group.Stats.ProxyStats[proxy.Name]
 			if ok && now.Sub(stats.LastCheck) <= interval {
 				// 只要有代理在最近测速过（无论成功失败），就不强制触发全局测速
@@ -76,7 +74,7 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 	if !needCheck {
 		logger.LogPrintf("🌀 当前代理组缓存状态：")
 		group.Stats.RLock()
-		for _, proxy := range group.Proxies {
+		for _, proxy := range proxies {
 			stats := group.Stats.ProxyStats[proxy.Name]
 			if stats == nil {
 				continue
@@ -108,7 +106,7 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 
 		var fastest *config.ProxyConfig
 		minTime := time.Hour
-		for _, proxy := range group.Proxies {
+		for _, proxy := range proxies {
 			stats, ok := group.Stats.ProxyStats[proxy.Name]
 			if !ok {
 				continue
@@ -143,7 +141,7 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 
 	// 更新 LastCheck 避免并发触发
 	group.Stats.Lock()
-	for _, proxy := range group.Proxies {
+	for _, proxy := range proxies {
 		stats, ok := group.Stats.ProxyStats[proxy.Name]
 		if !ok {
 			stats = &config.ProxyStats{}
@@ -157,8 +155,8 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 	var wg tsync.WaitGroup
 
 	tested := 0
-	for i := range group.Proxies {
-		proxy := group.Proxies[i]
+	for i := range proxies {
+		proxy := proxies[i]
 
 		group.Stats.RLock()
 		stats := group.Stats.ProxyStats[proxy.Name]
@@ -171,47 +169,14 @@ func SelectFastestProxy(ctx context.Context, group *config.ProxyGroupConfig, tar
 		tested++
 		wg.Go(func() {
 			pCopy := *proxy
-			if strings.HasPrefix(targetURL, "rtsp://") {
-				proxyCtx, proxyCancel := context.WithTimeout(context.Background(), config.DefaultDialTimeout)
-				defer proxyCancel()
-				rt, err := TestRTSPProxy(proxyCtx, pCopy, targetURL)
-				resultChan <- config.TestResult{
-					Proxy:        pCopy,
-					ResponseTime: rt,
-					Err:          err,
-					StatusCode:   200,
-				}
-			} else {
-				proxyCtx, proxyCancel := context.WithTimeout(context.Background(), config.DefaultDialTimeout)
-				defer proxyCancel()
-
-				client, err := p.CreateProxyClient(proxyCtx, &config.Cfg, pCopy, group.IPv6)
-				if err != nil {
-					resultChan <- config.TestResult{Proxy: pCopy, Err: err}
-					return
-				}
-
-				req, _ := http.NewRequestWithContext(proxyCtx, "GET", targetURL, nil)
-				req.Header.Set("Range", "bytes=0-2047")
-
-				start := time.Now()
-				resp, err := client.Do(req)
-				duration := time.Since(start)
-				if err == nil && resp != nil {
-					resp.Body.Close()
-				}
-
-				statusCode := 0
-				if resp != nil {
-					statusCode = resp.StatusCode
-				}
-
-				resultChan <- config.TestResult{
-					Proxy:        pCopy,
-					ResponseTime: duration,
-					Err:          err,
-					StatusCode:   statusCode,
-				}
+			proxyCtx, proxyCancel := context.WithTimeout(context.Background(), config.DefaultDialTimeout)
+			defer proxyCancel()
+			out := CheckTarget(proxyCtx, pCopy, targetURL, group.IPv6, GroupProbeUA(group))
+			resultChan <- config.TestResult{
+				Proxy:        pCopy,
+				ResponseTime: out.ResponseTime,
+				Err:          out.Err,
+				StatusCode:   out.StatusCode,
 			}
 		})
 	}
@@ -254,7 +219,7 @@ loop:
 						})
 					}
 
-					for _, pxy := range group.Proxies {
+					for _, pxy := range proxies {
 						if pxy.Name == res.Proxy.Name {
 							return pxy
 						}
@@ -270,6 +235,7 @@ loop:
 
 				stats.Alive = false
 				stats.ResponseTime = 0
+				stats.StatusCode = 0
 				stats.FailCount++
 				if stats.FailCount >= 3 {
 					stats.CooldownUntil = now.Add(interval)

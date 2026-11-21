@@ -10,6 +10,7 @@ import (
 	"github.com/qist/tvgate/groupstats"
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/player"
+	"github.com/qist/tvgate/pool"
 	"gopkg.in/yaml.v3"
 )
 
@@ -80,6 +81,9 @@ func LoadConfig(configPath string) error {
 
 	// 初始化统计结构
 	groupstats.InitProxyGroups()
+
+	// 同步动态代理池：池配置变化时重建探测任务，未变化时保留已有节点和状态。
+	pool.Sync(&config.Cfg)
 
 	// 打印基本加载信息
 	logger.LogPrintf("✅ 配置文件已加载，代理组数量: %d", len(config.Cfg.ProxyGroups))

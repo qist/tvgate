@@ -7,11 +7,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/dns"
 	"github.com/qist/tvgate/logger"
 	conf "github.com/qist/tvgate/proxy/config"
 	httpclient "github.com/qist/tvgate/utils/http"
@@ -26,6 +28,29 @@ type transportCacheKey struct {
 	proxyAddr   string
 	enableIPv6  bool
 	insecureTLS bool
+	resolve     string
+	username    string
+	password    string
+	headers     string
+}
+
+func proxyHeadersKey(h map[string]string) string {
+	if len(h) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(h))
+	for k := range h {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(h[k])
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // createProxyClient 根据代理配置和 IPv6 开关创建 http.Client
@@ -35,12 +60,22 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 	proxyType := strings.ToLower(proxyConfig.Type)
 	proxyAddr := fmt.Sprintf("%s:%d", proxyConfig.Server, proxyConfig.Port)
 
+	resolve := strings.ToLower(strings.TrimSpace(proxyConfig.Resolve))
+	localResolve := resolve == "local"
+	insecureSkipVerify := false
+	if cfg != nil && cfg.HTTP.InsecureSkipVerify != nil {
+		insecureSkipVerify = *cfg.HTTP.InsecureSkipVerify
+	}
 	// 检查缓存中是否有可用的 transport
 	cacheKey := transportCacheKey{
 		proxyType:   proxyType,
 		proxyAddr:   proxyAddr,
 		enableIPv6:  enableIPv6,
-		insecureTLS: *cfg.HTTP.InsecureSkipVerify,
+		insecureTLS: insecureSkipVerify,
+		resolve:     resolve,
+		username:    proxyConfig.Username,
+		password:    proxyConfig.Password,
+		headers:     proxyHeadersKey(proxyConfig.Headers),
 	}
 
 	if cached, ok := transportCache.Load(cacheKey); ok {
@@ -51,7 +86,7 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: *cfg.HTTP.InsecureSkipVerify,
+			InsecureSkipVerify: insecureSkipVerify,
 			CipherSuites:       tlsutil.CipherSuitesWithRSAKex(),
 		},
 		ResponseHeaderTimeout: 10 * time.Second,
@@ -69,19 +104,23 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 	useStdProxyDialer := false
 
 	if (proxyType == "http" || proxyType == "https") && proxyConfig.Username == "" && len(proxyConfig.Headers) == 0 {
-		var proxyURL *url.URL
-		var err error
-		if proxyType == "https" {
-			proxyURL, err = url.Parse("https://" + proxyAddr)
-		} else {
-			proxyURL, err = url.Parse("http://" + proxyAddr)
+		// local 模式需要自定义 CONNECT 才能改写目标地址；remote 模式继续用标准
+		// transport.Proxy（https 代理由 Go 自己完成 TLS-to-proxy）。
+		if !localResolve {
+			var proxyURL *url.URL
+			var err error
+			if proxyType == "https" {
+				proxyURL, err = url.Parse("https://" + proxyAddr)
+			} else {
+				proxyURL, err = url.Parse("http://" + proxyAddr)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("解析代理地址失败: %v", err)
+			}
+			transport.Proxy = http.ProxyURL(proxyURL)
+			logger.LogPrintf("使用标准 %s 代理方式: %s", proxyType, proxyURL.String())
+			useStdProxyDialer = true
 		}
-		if err != nil {
-			return nil, fmt.Errorf("解析代理地址失败: %v", err)
-		}
-		transport.Proxy = http.ProxyURL(proxyURL)
-		logger.LogPrintf("使用标准 %s 代理方式: %s", proxyType, proxyURL.String())
-		useStdProxyDialer = true
 	}
 
 	if !useStdProxyDialer {
@@ -90,7 +129,7 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 			return nil, fmt.Errorf("创建代理拨号器失败: %v", err)
 		}
 
-		dialer := &conf.DialContextWrapper{Base: baseDialer, EnableIPv6: enableIPv6}
+		dialer := &conf.DialContextWrapper{Base: baseDialer, EnableIPv6: enableIPv6, Resolve: resolve}
 
 		transport.DialContext = func(dialCtx context.Context, network, addr string) (net.Conn, error) {
 			if !enableIPv6 && (network == "tcp6" || network == "tcp") {
@@ -104,7 +143,10 @@ func CreateProxyClient(ctx context.Context, cfg *config.Config, proxyConfig conf
 			return conn, nil
 		}
 	} else {
-		baseDialer := &net.Dialer{Timeout: 10 * time.Second}
+		baseDialer := &net.Dialer{
+			Timeout:  10 * time.Second,
+			Resolver: dns.GetInstance().GetNetResolver(),
+		}
 		safeDial := conf.SafeDialContext(baseDialer, enableIPv6)
 
 		transport.DialContext = func(dialCtx context.Context, network, addr string) (net.Conn, error) {

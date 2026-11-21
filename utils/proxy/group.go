@@ -5,6 +5,12 @@ import (
 )
 
 func GetGroupName(group *config.ProxyGroupConfig) string {
+	if group == nil {
+		return ""
+	}
+	if group.GroupName != "" {
+		return group.GroupName
+	}
 	if len(group.Proxies) > 0 {
 		return group.Proxies[0].Name
 	}

@@ -30,6 +30,9 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 
 	for name, pg := range proxyGroups {
 		proxies := make([]map[string]interface{}, len(pg.Proxies))
+		if pg.Proxies == nil {
+			proxies = []map[string]interface{}{}
+		}
 		for i, proxy := range pg.Proxies {
 			// 打印单个代理日志
 			// logger.LogPrintf("代理组 [%s] - 代理 #%d: %+v (类型: %T)", name, i, proxy, proxy)
@@ -42,6 +45,7 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 				"udp":      proxy.UDP,
 				"username": proxy.Username,
 				"password": proxy.Password,
+				"resolve":  proxy.Resolve,
 			}
 
 			// 添加 headers 配置（如果存在）
@@ -84,6 +88,10 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 			"max_retries": pg.MaxRetries,
 			"retry_delay": formatDuration(pg.RetryDelay),
 			"max_rt":      formatDuration(pg.MaxRT),
+			"resolve":     pg.Resolve,
+			"probe_ua":    pg.ProbeUA,
+			"pool":        proxyPoolToMap(pg.Pool),
+			"pool_nodes":  proxyPoolNodes(pg),
 			"stats":       statsMap,
 		}
 
@@ -102,6 +110,49 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+func proxyPoolToMap(p *config.ProxyPoolConfig) interface{} {
+	if p == nil {
+		return nil
+	}
+	enabled := p.ProbeEnabled == nil || *p.ProbeEnabled
+	return map[string]interface{}{
+		"servers":           p.Servers,
+		"protocol":          p.Protocol,
+		"probe_enabled":     enabled,
+		"probe_interval":    formatDuration(p.ProbeInterval),
+		"probe_url":         p.ProbeURL,
+		"probe_timeout":     formatDuration(p.ProbeTimeout),
+		"probe_retries":     p.ProbeRetries,
+		"probe_concurrency": p.ProbeConcurrency,
+		"top_n":             p.TopN,
+		"fail_cooldown":     formatDuration(p.FailCooldown),
+		"max_ports":         p.MaxPorts,
+	}
+}
+
+// proxyPoolNodes 返回池探测后的运行时节点（成功端口），供后台展示。
+// 这些节点只存在于内存，后台保存时会作为只读字段忽略。
+func proxyPoolNodes(g *config.ProxyGroupConfig) []map[string]interface{} {
+	nodes := g.PoolNodes()
+	if len(nodes) == 0 {
+		return []map[string]interface{}{}
+	}
+	out := make([]map[string]interface{}, 0, len(nodes))
+	for _, p := range nodes {
+		if p == nil {
+			continue
+		}
+		out = append(out, map[string]interface{}{
+			"name":    p.Name,
+			"type":    p.Type,
+			"server":  p.Server,
+			"port":    p.Port,
+			"resolve": p.Resolve,
+		})
+	}
+	return out
 }
 
 // handleProxyGroupsConfigSave 处理代理组配置保存请求
@@ -214,6 +265,24 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 
 	// logger.LogPrintf("成功解析YAML配置")
 
+	// 记录现有代理组节点，保存时用于保留未识别字段（例如后续新增的 pool 扩展字段）。
+	existingGroupNodes := map[string]*yaml.Node{}
+	if fullNode.Kind == yaml.DocumentNode && len(fullNode.Content) > 0 {
+		doc := fullNode.Content[0]
+		if doc.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(doc.Content); i += 2 {
+				if doc.Content[i].Kind == yaml.ScalarNode && doc.Content[i].Value == "proxygroups" && doc.Content[i+1].Kind == yaml.MappingNode {
+					pgNode := doc.Content[i+1]
+					for j := 0; j+1 < len(pgNode.Content); j += 2 {
+						if pgNode.Content[j].Kind == yaml.ScalarNode {
+							existingGroupNodes[pgNode.Content[j].Value] = pgNode.Content[j+1]
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// 转换代理组数据
 	yamlProxyGroups := make(map[string]*yaml.Node)
 
@@ -306,6 +375,14 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 							// logger.LogPrintf("添加密码: [HIDDEN]")
 						}
 
+						// 节点级 DNS 模式（可选，默认继承组）
+						if resolve, ok := proxyMap["resolve"]; ok && resolve != "" {
+							proxyNode.Content = append(proxyNode.Content,
+								&yaml.Node{Kind: yaml.ScalarNode, Value: "resolve"},
+								&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", resolve)},
+							)
+						}
+
 						// 添加headers字段（如果存在）
 						if headers, ok := proxyMap["headers"]; ok {
 							// logger.LogPrintf("处理Headers: %v (类型: %T)", headers, headers)
@@ -332,10 +409,12 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 
 				// logger.LogPrintf("完成所有代理处理，代理数量: %d", len(yamlProxies))
 				proxiesNode.Content = yamlProxies
-				proxyGroupNode.Content = append(proxyGroupNode.Content,
-					&yaml.Node{Kind: yaml.ScalarNode, Value: "proxies"},
-					proxiesNode,
-				)
+				if len(yamlProxies) > 0 || !proxyGroupHasPool(pg) {
+					proxyGroupNode.Content = append(proxyGroupNode.Content,
+						&yaml.Node{Kind: yaml.ScalarNode, Value: "proxies"},
+						proxiesNode,
+					)
+				}
 				// logger.LogPrintf("已添加proxies字段到代理组 %s，当前节点内容数量: %d", name, len(proxyGroupNode.Content))
 			} else {
 				// logger.LogPrintf("代理组 %s 的proxies字段不是数组类型", name)
@@ -346,9 +425,9 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 				)
 				// logger.LogPrintf("代理组 %s proxies字段类型错误，添加空的proxies字段", name)
 			}
-		} else {
+		} else if !proxyGroupHasPool(pg) {
 			// logger.LogPrintf("代理组 %s 没有proxies字段", name)
-			// 添加空的proxies字段
+			// 没有 pool 时补空 proxies，保持旧配置结构
 			proxyGroupNode.Content = append(proxyGroupNode.Content,
 				&yaml.Node{Kind: yaml.ScalarNode, Value: "proxies"},
 				&yaml.Node{Kind: yaml.SequenceNode},
@@ -452,6 +531,56 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 			&yaml.Node{Kind: yaml.ScalarNode, Value: maxRT},
 		)
 		// logger.LogPrintf("添加最大响应时间: %s", maxRT)
+
+		// DNS 模式：remote(默认) / local
+		if resolve, ok := pg["resolve"]; ok && resolve != "" {
+			proxyGroupNode.Content = append(proxyGroupNode.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "resolve"},
+				&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", resolve)},
+			)
+		}
+
+		// 探测/测速用 User-Agent（仅探测生效，播放不受影响）
+		if probeUA, ok := pg["probe_ua"]; ok && probeUA != "" {
+			proxyGroupNode.Content = append(proxyGroupNode.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "probe_ua"},
+				&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", probeUA)},
+			)
+		}
+
+		// 动态代理池：字段存在时写入；显式传 null 表示删除 pool
+		if rawPool, ok := pg["pool"]; ok {
+			if poolMap, ok := rawPool.(map[string]interface{}); ok && len(poolMap) > 0 {
+				if poolNode := buildProxyPoolNode(poolMap); poolNode != nil {
+					if oldPool := mappingValue(existingGroupNodes[name], "pool"); oldPool != nil {
+						mergeUnknownGroupFields(oldPool, poolNode, nil)
+					}
+					proxyGroupNode.Content = append(proxyGroupNode.Content,
+						&yaml.Node{Kind: yaml.ScalarNode, Value: "pool"},
+						poolNode,
+					)
+				}
+			}
+		}
+
+		// 保留 YAML 中本版本不认识的组级字段（例如后续前端新增字段）
+		skipKnown := map[string]bool{
+			"proxies": true, // proxies 无论写不写都由本次提交决定
+			"ipv6":    true, // false 时不写字段，但不能保留旧的 true
+		}
+		if _, ok := pg["probe_ua"]; ok {
+			skipKnown["probe_ua"] = true // 显式传空表示删除旧值
+		}
+		if _, ok := pg["domains"]; ok {
+			skipKnown["domains"] = true
+		}
+		if _, ok := pg["pool"]; ok {
+			skipKnown["pool"] = true
+		}
+		if _, ok := pg["resolve"]; ok {
+			skipKnown["resolve"] = true
+		}
+		mergeUnknownGroupFields(existingGroupNodes[name], proxyGroupNode, skipKnown)
 
 		yamlProxyGroups[name] = proxyGroupNode
 	}
@@ -566,6 +695,133 @@ func (h *ConfigHandler) handleProxyGroupsConfigSave(w http.ResponseWriter, r *ht
 	w.Write([]byte("配置保存成功"))
 
 	// logger.LogPrintf("代理组配置保存完成")
+}
+
+func proxyGroupHasPool(pg map[string]interface{}) bool {
+	v, ok := pg["pool"]
+	if !ok || v == nil {
+		return false
+	}
+	m, ok := v.(map[string]interface{})
+	return ok && len(m) > 0
+}
+
+func buildProxyPoolNode(poolMap map[string]interface{}) *yaml.Node {
+	servers, ok := poolMap["servers"].([]interface{})
+	if !ok || len(servers) == 0 {
+		return nil
+	}
+	node := &yaml.Node{Kind: yaml.MappingNode}
+
+	serversNode := &yaml.Node{Kind: yaml.SequenceNode}
+	for _, v := range servers {
+		s := fmt.Sprintf("%v", v)
+		if s == "" {
+			continue
+		}
+		serversNode.Content = append(serversNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: s})
+	}
+	if len(serversNode.Content) == 0 {
+		return nil
+	}
+	node.Content = append(node.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: "servers"},
+		serversNode,
+	)
+
+	appendScalar := func(key, value string) {
+		if value != "" {
+			node.Content = append(node.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: key},
+				&yaml.Node{Kind: yaml.ScalarNode, Value: value},
+			)
+		}
+	}
+	appendDuration := func(key string, value interface{}) {
+		if value == nil || value == "" {
+			return
+		}
+		if formatted, err := formatDurationValue(value); err == nil && formatted != "" {
+			appendScalar(key, formatted)
+		}
+	}
+	appendInt := func(key string, value interface{}) {
+		if value == nil {
+			return
+		}
+		var n int
+		switch v := value.(type) {
+		case float64:
+			n = int(v)
+		case int:
+			n = v
+		case string:
+			fmt.Sscanf(v, "%d", &n)
+		default:
+			return
+		}
+		if n != 0 {
+			appendScalar(key, fmt.Sprintf("%d", n))
+		}
+	}
+
+	if v, ok := poolMap["protocol"]; ok {
+		appendScalar("protocol", fmt.Sprintf("%v", v))
+	}
+	if v, ok := poolMap["probe_enabled"]; ok {
+		if b, ok := v.(bool); ok {
+			appendScalar("probe_enabled", fmt.Sprintf("%v", b))
+		}
+	}
+	appendDuration("probe_interval", poolMap["probe_interval"])
+	if v, ok := poolMap["probe_url"]; ok {
+		appendScalar("probe_url", fmt.Sprintf("%v", v))
+	}
+	appendDuration("probe_timeout", poolMap["probe_timeout"])
+	appendInt("probe_retries", poolMap["probe_retries"])
+	appendInt("probe_concurrency", poolMap["probe_concurrency"])
+	appendInt("top_n", poolMap["top_n"])
+	appendDuration("fail_cooldown", poolMap["fail_cooldown"])
+	appendInt("max_ports", poolMap["max_ports"])
+
+	return node
+}
+
+func mappingValue(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Kind == yaml.ScalarNode && node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// mergeUnknownGroupFields 把旧 YAML 节点里本版本不认识的字段补到新节点，
+// 避免后台保存时把新增配置（如 pool 扩展字段）丢掉。
+func mergeUnknownGroupFields(existing, generated *yaml.Node, skip map[string]bool) {
+	if existing == nil || existing.Kind != yaml.MappingNode || generated == nil || generated.Kind != yaml.MappingNode {
+		return
+	}
+	known := make(map[string]bool)
+	for i := 0; i+1 < len(generated.Content); i += 2 {
+		if generated.Content[i].Kind == yaml.ScalarNode {
+			known[generated.Content[i].Value] = true
+		}
+	}
+	for k := range skip {
+		known[k] = true
+	}
+	for i := 0; i+1 < len(existing.Content); i += 2 {
+		key := existing.Content[i]
+		if key.Kind != yaml.ScalarNode || known[key.Value] {
+			continue
+		}
+		generated.Content = append(generated.Content, key, existing.Content[i+1])
+		known[key.Value] = true
+	}
 }
 
 // handleProxyGroupsCacheClear 处理单个代理组的缓存清理请求（POST，JSON: {"group": "组名"}）：

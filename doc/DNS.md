@@ -74,6 +74,6 @@ dns:
 - **Android 兼容性**：解析器刻意未启用纯 Go 模式，系统解析走 netd / `getaddrinfo`；请勿假设 `/etc/resolv.conf` 一定存在，安卓设备建议显式配置 `servers`。
 - **`max_conns` 只对 DoH / DoH3 / DoQ 生效**：普通 UDP / TCP / DoT 客户端不使用连接池，配置该项不影响它们。
 - **DNSCrypt 服务器**需使用 `sdns://` 开头的 DNSCrypt stamp 格式，程序自动识别协议类型；普通 URL 形式按 scheme（`https://` / `h3://` / `tls://` / `quic://` / `tcp://` / `udp://`）识别，无法识别时按普通 UDP 处理。
-- **与代理模块的关系**：本段解析的是 TVGate 自身要访问的上游域名；上游走代理组时，代理服务器的域名解析同样使用本解析器。
+- **与代理模块的关系**：本段解析的是 TVGate 自身要访问的上游域名。代理组默认 `resolve: remote`，目标域名交给代理端解析；设为 `resolve: local` 时，目标域名使用本段的解析链。socks5/http 代理服务器自身的域名也使用本解析器（socks4/socks4a 由底层库解析）。详见 `doc/PROXYGROUPS.md`。
 - **示例中的 192.0.2.x 为 RFC 5737 文档专用 IP**，实际部署请替换为你的内网 DNS 或可信公共 DNS。
 - 修改本段后通过配置热重载生效，日志中可见解析器重建；若配置了非法服务器地址，加载时会打印 WARNING 并跳过该服务器。

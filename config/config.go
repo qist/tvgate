@@ -381,15 +381,24 @@ type VideoAPIGroupConfig struct {
 
 // ProxyGroupConfig 代理组配置
 type ProxyGroupConfig struct {
-	Proxies     []*ProxyConfig `yaml:"proxies"`     // 代理服务器列表
-	Domains     []string       `yaml:"domains"`     // 域名和IP规则列表(包含IPv4和IPv6)
-	IPv6        bool           `yaml:"ipv6"`        // IPv6 开关
-	Interval    time.Duration  `yaml:"interval"`    // 检查间隔时间(秒)
-	LoadBalance string         `yaml:"loadbalance"` // 负载均衡方式
-	MaxRetries  int            `yaml:"max_retries"` // 最大重试次数
-	RetryDelay  time.Duration  `yaml:"retry_delay"` // 重试延迟(秒)
-	MaxRT       time.Duration  `yaml:"max_rt"`      // 最大响应时间
-	Stats       *GroupStats    `yaml:"-"`           // 运行时统计信息
+	Proxies     []*ProxyConfig   `yaml:"proxies"`        // 代理服务器列表（pool 模式下可省略）
+	Domains     []string         `yaml:"domains"`        // 域名和IP规则列表(包含IPv4和IPv6)
+	IPv6        bool             `yaml:"ipv6"`           // IPv6 开关
+	Interval    time.Duration    `yaml:"interval"`       // 检查间隔时间(秒)
+	LoadBalance string           `yaml:"loadbalance"`    // 负载均衡方式
+	MaxRetries  int              `yaml:"max_retries"`    // 最大重试次数
+	RetryDelay  time.Duration    `yaml:"retry_delay"`    // 重试延迟(秒)
+	MaxRT       time.Duration    `yaml:"max_rt"`         // 最大响应时间
+	Resolve     string           `yaml:"resolve"`        // DNS 模式: remote(默认) / local
+	ProbeUA     string           `yaml:"probe_ua"`       // 探测/测速用 User-Agent；为空回退 player.ua，再为空则不发送
+	Pool        *ProxyPoolConfig `yaml:"pool,omitempty"` // 动态代理池（可选）
+	Stats       *GroupStats      `yaml:"-"`              // 运行时统计信息
+	GroupName   string           `yaml:"-"`              // 运行时组名（用于访问缓存按组清理）
+
+	// activeProxies / poolNodes 是 pool 探测后的运行时节点，不参与 YAML 序列化。
+	// 保护锁在 pool.go 中（包级），避免在可被复制的配置结构里直接放 mutex。
+	activeProxies []*ProxyConfig
+	poolNodes     []*ProxyConfig
 }
 
 // GroupStats 代理组运行时统计
@@ -411,6 +420,22 @@ type ProxyConfig struct {
 	Username string            `yaml:"username"` // 代理用户名 (可选)
 	Password string            `yaml:"password"` // 代理密码 (可选)
 	Headers  map[string]string `yaml:"headers"`  // 添加自定义headers支持
+	Resolve  string            `yaml:"resolve"`  // DNS 模式: remote(默认) / local
+}
+
+// ProxyPoolConfig 动态代理池配置
+type ProxyPoolConfig struct {
+	Servers          []string      `yaml:"servers"`           // 网关列表: host:start-end / host:port / scheme://[user:pass@]host:start-end
+	Protocol         string        `yaml:"protocol"`          // socks5 | http | https | socks4a | auto
+	ProbeEnabled     *bool         `yaml:"probe_enabled"`     // 定时探测开关，默认 true
+	ProbeInterval    time.Duration `yaml:"probe_interval"`    // 定时探测间隔
+	ProbeURL         string        `yaml:"probe_url"`         // 探测地址；为空则不做定时探测
+	ProbeTimeout     time.Duration `yaml:"probe_timeout"`     // 单次探测超时
+	ProbeRetries     int           `yaml:"probe_retries"`     // 单轮失败后的立即重试次数（0=不重试）
+	ProbeConcurrency int           `yaml:"probe_concurrency"` // 并发探测数
+	TopN             int           `yaml:"top_n"`             // 可用节点保留数量
+	FailCooldown     time.Duration `yaml:"fail_cooldown"`     // 失败冷却时间
+	MaxPorts         int           `yaml:"max_ports"`         // 端口段总端口上限
 }
 
 // ProxyStats 代理统计信息
@@ -563,6 +588,26 @@ func (c *Config) SetDefaults() {
 	}
 	if c.DNS.MaxConns == 0 {
 		c.DNS.MaxConns = 10
+	}
+
+	// 代理组 DNS / 代理池默认值
+	for _, g := range c.ProxyGroups {
+		if g == nil {
+			continue
+		}
+		g.Resolve = normalizeResolve(g.Resolve)
+		for _, p := range g.Proxies {
+			if p != nil {
+				if strings.TrimSpace(p.Resolve) == "" {
+					p.Resolve = g.Resolve
+				} else {
+					p.Resolve = normalizeResolve(p.Resolve)
+				}
+			}
+		}
+		if g.Pool != nil {
+			g.Pool.SetDefaults()
+		}
 	}
 
 	// GitHub 默认值

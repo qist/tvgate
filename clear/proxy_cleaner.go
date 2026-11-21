@@ -29,7 +29,7 @@ func StartGlobalProxyStatsCleaner(interval time.Duration, maxIdle time.Duration,
 // cleanupProxyStats 清理单个代理组超过 maxIdle 的 ProxyStats 数据
 func cleanupProxyStats(group *config.ProxyGroupConfig, maxIdle time.Duration) {
 	now := time.Now()
-	for _, proxy := range group.Proxies {
+	for _, proxy := range group.ActiveProxies() {
 		stats, ok := group.Stats.ProxyStats[proxy.Name]
 		if !ok {
 			continue

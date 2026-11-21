@@ -24,6 +24,7 @@ import (
 	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/monitor"
 	"github.com/qist/tvgate/php"
+	"github.com/qist/tvgate/pool"
 	"github.com/qist/tvgate/publisher"
 	"github.com/qist/tvgate/server"
 	"github.com/qist/tvgate/stream"
@@ -121,11 +122,8 @@ func main() {
 	// 初始化代理组统计
 	// -------------------------
 	groupstats.InitProxyGroups()
-	for _, group := range config.Cfg.ProxyGroups {
-		group.Stats = &config.GroupStats{
-			ProxyStats: make(map[string]*config.ProxyStats),
-		}
-	}
+	// DNS 初始化完成后再同步代理池，确保冷启动探测能走完整解析链。
+	pool.Sync(&config.Cfg)
 
 	// -------------------------
 	// 初始化 publisher 模块

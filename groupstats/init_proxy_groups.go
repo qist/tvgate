@@ -1,8 +1,8 @@
 package groupstats
 
 import (
-	"github.com/qist/tvgate/logger"
 	"github.com/qist/tvgate/config"
+	"github.com/qist/tvgate/logger"
 	"time"
 )
 
@@ -13,6 +13,7 @@ func InitProxyGroups() {
 			logger.LogPrintf("⚠️ 代理组 %s 为 nil，跳过初始化", groupName)
 			continue
 		}
+		group.GroupName = groupName
 		if group.Stats == nil {
 			group.Stats = &config.GroupStats{
 				ProxyStats: make(map[string]*config.ProxyStats),

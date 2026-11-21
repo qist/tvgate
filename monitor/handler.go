@@ -45,6 +45,7 @@ func prepareStatusData(r *http.Request) StatusData {
 			Proxies:     make([]*config.ProxyConfig, len(group.Proxies)),
 			Domains:     group.Domains,
 			LoadBalance: group.LoadBalance,
+			GroupName:   name,
 			Stats:       &config.GroupStats{ProxyStats: make(map[string]*config.ProxyStats)},
 		}
 		for i, p := range group.Proxies {

@@ -820,6 +820,12 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 		//   2) 否则按域名规则匹配代理组
 		// 都未命中或屡次选不到节点（返回 nil resp）→ 直连兜底（h.stream 服务端跟随重定向）。
 		preferred := h.getSegGroup(ch.Key)
+		// 频道原始入口（解析脚本 / 首个播放列表地址）不强制沿用分片出口：
+		// 入口常是内网/本机地址，经运营商代理反而不可达，还会把该组测速打成失败。
+		// 入口交给域名规则或直连；缓存后的解析结果与分片地址才沿用同一代理出口。
+		if u == ch.RawURL {
+			preferred = nil
+		}
 		inline := inlineProxyGroup(ch.Proxies)
 		if inline != nil {
 			preferred = inline
@@ -837,12 +843,51 @@ func (h *Handler) serveHTTP(w http.ResponseWriter, r *http.Request, ch *Channel,
 			h.storeSegGroup(ch.Key, usedPg)
 		}
 		if resp == nil {
+			// 入口未命中代理组（如内网/本机 php 解析脚本），先不跟随重定向：
+			// 解析脚本本身直连即可，但 302 指向的播放地址可能只允许运营商/属地 IP
+			// 访问（如小果 CDN），此时必须把跳转目标交给代理组重新拉取，否则直连
+			// 跟随会拿到 403。跳转目标无代理组时保持原有直连跟随行为。
+			noFollow := *h.stream
+			noFollow.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			}
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 			if err != nil {
 				return nil, err
 			}
 			req.Header = hdr.Clone()
-			return h.stream.Do(req)
+			resp, err := noFollow.Do(req)
+			if err != nil {
+				return nil, err
+			}
+			if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+				if loc := resp.Header.Get("Location"); loc != "" {
+					if base, perr := url.Parse(u); perr == nil {
+						if target, terr := base.Parse(loc); terr == nil {
+							io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+							resp.Body.Close()
+							targetURL := target.String()
+							pResp, usedPg, ferr := handler.FetchViaProxyGroup(ctx, targetURL, hdr, true, nil)
+							if ferr == nil && pResp != nil {
+								if usedPg != nil && inline == nil {
+									h.storeSegGroup(ch.Key, usedPg)
+								}
+								logger.LogPrintf("[player] 解析跳转改走代理 key=%s target=%s", ch.Key, target.Host)
+								return pResp, nil
+							}
+							// 跳转目标未命中代理组或代理失败 → 直连跟随跳转目标。
+							// 重新请求原始地址会二次执行解析脚本，这里直接请求已解析出的目标。
+							req2, err2 := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+							if err2 != nil {
+								return nil, err2
+							}
+							req2.Header = hdr.Clone()
+							return h.stream.Do(req2)
+						}
+					}
+				}
+			}
+			return resp, nil
 		}
 		return resp, nil
 	}

@@ -15,6 +15,12 @@ import (
 
 // TestRTSPProxy 测试代理访问 RTSP 流（OPTIONS + DESCRIBE + SETUP + PLAY）
 func TestRTSPProxy(ctx context.Context, proxy config.ProxyConfig, rtspURL string) (time.Duration, error) {
+	return TestRTSPProxyWithUA(ctx, proxy, rtspURL, "")
+}
+
+// TestRTSPProxyWithUA 与 TestRTSPProxy 相同，但可指定 User-Agent；
+// ua 为空时保持 gortsplib 默认值。
+func TestRTSPProxyWithUA(ctx context.Context, proxy config.ProxyConfig, rtspURL, ua string) (time.Duration, error) {
 	// fmt.Printf("DEBUG TestRTSPProxy: proxy=%s://%s:%d, rtspURL=%s\n", proxy.Type, proxy.Server, proxy.Port, rtspURL)
 
 	// 创建代理 Dialer
@@ -36,14 +42,23 @@ func TestRTSPProxy(ctx context.Context, proxy config.ProxyConfig, rtspURL string
 
 	// 创建 RTSP 客户端
 	protocol := gortsplib.ProtocolTCP
+	// 探测场景通常带更短的整体超时（pool.probe_timeout），读写超时跟随 ctx，
+	// 避免单个不可达节点把探测 goroutine 拖到默认的 15s。
+	ioTimeout := config.DefaultDialTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		if d := time.Until(deadline); d > 0 && d < ioTimeout {
+			ioTimeout = d
+		}
+	}
 	client := &gortsplib.Client{
-		Scheme:                     parsedURL.Scheme,
-		Host:                       parsedURL.Host,
-		Protocol:                   &protocol,
-		AnyPortEnable:              true,
-		DisableRTCPSenderReports:   true,
-		ReadTimeout:                config.DefaultDialTimeout,
-		WriteTimeout:               config.DefaultDialTimeout,
+		Scheme:                   parsedURL.Scheme,
+		Host:                     parsedURL.Host,
+		Protocol:                 &protocol,
+		AnyPortEnable:            true,
+		DisableRTCPSenderReports: true,
+		UserAgent:                ua,
+		ReadTimeout:              ioTimeout,
+		WriteTimeout:             ioTimeout,
 		DialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
 			// fmt.Printf("DEBUG DialContext: network=%s, addr=%s\n", network, addr)
 			// Ensure we respect the parent context if provided

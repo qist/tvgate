@@ -3,6 +3,7 @@ package config
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 
 	"net"
@@ -22,6 +23,8 @@ import (
 type DialContextWrapper struct {
 	Base       proxy.Dialer
 	EnableIPv6 bool
+	// Resolve: remote(默认) 域名原样交给代理；local 先用 TVGate 的 DNS 解析成 IP。
+	Resolve string
 }
 
 func (d *DialContextWrapper) Dial(network, addr string) (net.Conn, error) {
@@ -47,6 +50,75 @@ func (d *DialContextWrapper) DialContext(ctx context.Context, network, addr stri
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
+	// local: TVGate 先解析目标域名，再把 IP 交给代理。
+	// remote(默认): addr 原样交给代理，由代理端解析。
+	if strings.EqualFold(strings.TrimSpace(d.Resolve), "local") {
+		if host, port, err := net.SplitHostPort(addr); err == nil && net.ParseIP(host) == nil {
+			conn, err := d.dialWithLocalDNS(dialCtx, network, host, port)
+			if err != nil {
+				return nil, err
+			}
+			return conn, nil
+		}
+	}
+
+	return d.dialBase(dialCtx, network, addr)
+}
+
+// dialWithLocalDNS 使用 TVGate 的 dns 单例解析目标，并按 IPv4/IPv6 开关过滤后依次尝试。
+func (d *DialContextWrapper) dialWithLocalDNS(ctx context.Context, network, host, port string) (net.Conn, error) {
+	resolver := dns.GetInstance()
+	var (
+		ips []net.IPAddr
+		err error
+	)
+	if d.EnableIPv6 {
+		ips, err = resolver.LookupIPAddr(ctx, host)
+	} else {
+		ips, err = dns.LookupIPWithIPv6Disabled(ctx, host)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("本地 DNS 解析 %s 失败: %w", host, err)
+	}
+
+	resolvedNetwork := network
+	if !d.EnableIPv6 && (resolvedNetwork == "tcp6" || resolvedNetwork == "tcp") {
+		resolvedNetwork = "tcp4"
+	}
+
+	var lastErr error
+	tried := 0
+	for _, ip := range ips {
+		if ip.IP == nil {
+			continue
+		}
+		if resolvedNetwork == "tcp4" && ip.IP.To4() == nil {
+			continue
+		}
+		if resolvedNetwork == "tcp6" && ip.IP.To4() != nil {
+			continue
+		}
+		tried++
+		conn, err := d.dialBase(ctx, resolvedNetwork, net.JoinHostPort(ip.IP.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if lastErr == nil {
+		if tried == 0 {
+			return nil, fmt.Errorf("本地 DNS 解析 %s 没有匹配 %s 的地址", host, resolvedNetwork)
+		}
+		lastErr = fmt.Errorf("本地 DNS 解析 %s 没有可用地址", host)
+	}
+	return nil, lastErr
+}
+
+// dialBase 执行实际拨号，兼容实现了 proxy.ContextDialer 的上游 dialer。
+func (d *DialContextWrapper) dialBase(dialCtx context.Context, network, addr string) (net.Conn, error) {
 	// 优先使用 ContextDialer 接口，避免创建额外的 Goroutine
 	if cd, ok := d.Base.(proxy.ContextDialer); ok {
 		return cd.DialContext(dialCtx, network, addr)
@@ -89,11 +161,31 @@ func (d *DialContextWrapper) DialContext(ctx context.Context, network, addr stri
 type HttpProxyDialer struct {
 	ProxyAddr string
 	Headers   map[string]string
+	// Dialer 用于连接代理服务器；为空时退回 net.DialTimeout。
+	// 由 proxy.CreateProxyDialer 注入带 DNS 配置的 dialer。
+	Dialer *net.Dialer
+	// TLS 为 true 时表示代理本身是 https（先与代理建 TLS，再发 CONNECT）。
+	TLS                bool
+	InsecureSkipVerify bool
 }
 
 func (d *HttpProxyDialer) Dial(network, addr string) (net.Conn, error) {
+	dialer := d.Dialer
+	if dialer == nil {
+		dialer = &net.Dialer{Timeout: 10 * time.Second}
+	}
 	// 连接代理服务器
-	conn, err := net.DialTimeout("tcp", d.ProxyAddr, 10*time.Second)
+	var (
+		conn net.Conn
+		err  error
+	)
+	if d.TLS {
+		conn, err = tls.DialWithDialer(dialer, "tcp", d.ProxyAddr, &tls.Config{
+			InsecureSkipVerify: d.InsecureSkipVerify,
+		})
+	} else {
+		conn, err = dialer.Dial("tcp", d.ProxyAddr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("连接代理失败: %v", err)
 	}

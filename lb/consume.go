@@ -31,8 +31,8 @@ func ConsumeRemainingResults(ch chan config.TestResult, count int, group *config
 		}
 
 		stats.LastCheck = now
-		if res.Err == nil &&
-			res.ResponseTime > 0 {
+		// 与主循环判定保持一致：有响应且状态码 <500 即可连（206 分片响应同样算成功）。
+		if res.Err == nil && res.StatusCode < 500 {
 			stats.Alive = true
 			stats.ResponseTime = res.ResponseTime
 			stats.StatusCode = res.StatusCode
@@ -41,6 +41,9 @@ func ConsumeRemainingResults(ch chan config.TestResult, count int, group *config
 			logger.LogPrintf("✅ 异步：代理 %s 测速成功: %v（已写入缓存）", res.Proxy.Name, res.ResponseTime)
 		} else {
 			stats.Alive = false
+			// 失败时清掉上一次的状态码/延迟，避免日志显示“206 + 失败次数 N”这种误导组合。
+			stats.ResponseTime = 0
+			stats.StatusCode = 0
 			stats.FailCount++
 			var cooldown time.Duration
 			if stats.FailCount >= 15 {
