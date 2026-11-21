@@ -64,7 +64,7 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 
 			pg.Stats.RLock()
 			for proxyName, proxyStats := range pg.Stats.ProxyStats {
-				proxyStatsMap[proxyName] = map[string]interface{}{
+				item := map[string]interface{}{
 					"LastCheck":     proxyStats.LastCheck,
 					"LastUsed":      proxyStats.LastUsed,
 					"ResponseTime":  proxyStats.ResponseTime,
@@ -73,6 +73,18 @@ func (h *ConfigHandler) handleProxyGroupsConfig(w http.ResponseWriter, r *http.R
 					"CooldownUntil": proxyStats.CooldownUntil,
 					"StatusCode":    proxyStats.StatusCode,
 				}
+				// 零值时间会被序列化成 0001-01-01T00:00:00Z，前端会误判成「已测速」；
+				// 统一输出 null，表示从未测速 / 无冷却。
+				if proxyStats.LastCheck.IsZero() {
+					item["LastCheck"] = nil
+				}
+				if proxyStats.LastUsed.IsZero() {
+					item["LastUsed"] = nil
+				}
+				if proxyStats.CooldownUntil.IsZero() {
+					item["CooldownUntil"] = nil
+				}
+				proxyStatsMap[proxyName] = item
 			}
 			pg.Stats.RUnlock()
 

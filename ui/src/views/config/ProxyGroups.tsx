@@ -8,12 +8,21 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { clearProxyGroupCache, listProxyGroups, saveProxyGroups, type Proxy, type ProxyGroup, type ProxyPool } from "@/api/proxygroups";
+import { clearProxyGroupCache, listProxyGroups, saveProxyGroups, type Proxy, type ProxyGroup, type ProxyPool, type ProxyStats } from "@/api/proxygroups";
 
 interface Entry {
   name: string;
   g: ProxyGroup;
 }
+
+/**
+ * 是否已有测速结果。
+ * 只写 LastCheck 表示「测速进行中」或「请求成功标记」——延迟、状态码、失败次数全为 0 时
+ * 仍应显示未测，避免刚更新/刚重启时把没测过的节点显示成在线。
+ * 后端零值时间输出 null（或旧格式 0001-01-01），同样视为未测。
+ */
+const hasCheck = (st?: ProxyStats | null) =>
+  !!st && !!st.LastCheck && (!!st.ResponseTime || !!st.StatusCode || (st.FailCount ?? 0) > 0);
 
 const emptyProxy = (): Proxy => ({ name: "", type: "http", server: "", port: 8080, udp: false, username: "", password: "", headers: {} });
 
@@ -173,15 +182,15 @@ function GroupViewCard({ entry, onEdit, onDelete, onClearCache }: { entry: Entry
   const allNodes = [...g.proxies, ...poolNodes];
   const aliveCount = allNodes.filter((p) => {
     const st = proxyStats[p.name || p.server];
-    return st && st.LastCheck && st.Alive;
+    return hasCheck(st) && !!st.Alive;
   }).length;
   const unknownCount = allNodes.filter((p) => {
     const st = proxyStats[p.name || p.server];
-    return !st || !st.LastCheck;
+    return !hasCheck(st);
   }).length;
   const poolAlive = poolNodes.filter((p) => {
     const st = proxyStats[p.name];
-    return st && st.LastCheck && st.Alive;
+    return hasCheck(st) && !!st.Alive;
   }).length;
   return (
     <Card>
@@ -225,7 +234,7 @@ function GroupViewCard({ entry, onEdit, onDelete, onClearCache }: { entry: Entry
                 {g.proxies.map((p, pi) => {
                   const st = proxyStats[p.name || p.server];
                   // 从未测速（无 LastCheck）视为"未测"，不算离线
-                  const checked = !!st?.LastCheck;
+                  const checked = hasCheck(st);
                   const alive = st?.Alive;
                   return (
                     <tr key={pi} className="border-t border-border/60">
@@ -282,7 +291,7 @@ function GroupViewCard({ entry, onEdit, onDelete, onClearCache }: { entry: Entry
                   <tbody>
                     {poolNodes.map((p, pi) => {
                       const st = proxyStats[p.name];
-                      const checked = !!st?.LastCheck;
+                      const checked = hasCheck(st);
                       const alive = st?.Alive;
                       return (
                         <tr key={pi} className="border-t border-border/60">

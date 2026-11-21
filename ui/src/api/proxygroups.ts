@@ -14,12 +14,13 @@ export interface Proxy {
 }
 
 export interface ProxyStats {
-  LastCheck?: string;
-  LastUsed?: string;
+  /** 从未测速时后端返回 null（零值时间不再序列化成 0001-01-01） */
+  LastCheck?: string | null;
+  LastUsed?: string | null;
   ResponseTime?: number;
   Alive?: boolean;
   FailCount?: number;
-  CooldownUntil?: string;
+  CooldownUntil?: string | null;
   StatusCode?: number;
 }
 
