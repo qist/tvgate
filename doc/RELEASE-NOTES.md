@@ -122,10 +122,10 @@ TVGate-android-*.zip。
 
 ## 五、发布核对清单
 
-- [ ] 服务端 Release：tag `v3.4.9` 已推送，66 个资产（33 平台包 + 33 `.dgst`）上传完成
-- [ ] Docker 镜像：`juestnow/tvgate:v3.4.9` 已推送，`latest` 随 tag 更新
-- [ ] Android 二进制：`android-arm64-v8a` / `android-arm32-v7a` 构建成功并上传
-- [ ] Android APK：`tvgate-android` 仓库 v3.4.9 已发布（arm64 / arm / x86_64，内嵌同版本服务端，versionCode 17）
-- [ ] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.9
-- [ ] GitHub Release 标题与正文已填写（取自「一」「二」精简版）
-- [ ] 本地归档：`download/TVGate-3.4.9.7z`、`download/tvgate-android-3.4.9.zip`
+- [x] 服务端 Release：tag `v3.4.9` 已推送，66 个资产（33 平台包 + 33 `.dgst`）上传完成
+- [x] Docker 镜像：`juestnow/tvgate:v3.4.9` 已推送，`latest` 随 tag 更新
+- [x] Android 二进制：`android-arm64-v8a` / `android-arm32-v7a` 构建成功并上传
+- [x] Android APK：`tvgate-android` 仓库 v3.4.9 已发布（arm64 / arm / x86_64，内嵌同版本服务端，versionCode 17）
+- [x] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.9
+- [x] GitHub Release 标题与正文已填写（取自「一」「二」精简版）
+- [x] 本地归档：`download/TVGate-3.4.9.7z`、`download/tvgate-android-3.4.9.zip`
