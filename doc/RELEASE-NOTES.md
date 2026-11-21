@@ -129,4 +129,5 @@ TVGate-android-*.zip。
 - [x] Android 二进制：`android-arm64-v8a` / `android-arm32-v7a` 构建成功并上传
 - [x] Android APK：`tvgate-android` 仓库 v3.4.8 已发布（arm64 / arm / x86_64，内嵌同版本服务端，versionCode 16）
 - [x] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.8
-- [ ] GitHub Release 标题与正文已填写（取自「一」「二」精简版）
+- [x] GitHub Release 标题与正文已填写（取自「一」「二」精简版）
+- [x] 本地归档：`download/TVGate-3.4.8.7z`（22 平台二进制）、`download/tvgate-android-3.4.8.zip`（3 个 APK）
