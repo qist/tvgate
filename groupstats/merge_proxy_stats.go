@@ -11,18 +11,8 @@ import (
 func MergeProxyStats(oldGroups, newGroups map[string]*config.ProxyGroupConfig) {
 	for groupName, newGroup := range newGroups {
 		oldGroup, ok := oldGroups[groupName]
-		if !ok || oldGroup.Stats == nil {
+		if !ok {
 			continue
-		}
-
-		// 初始化新组运行状态
-		if newGroup.Stats == nil {
-			newGroup.Stats = &config.GroupStats{
-				LastCheck:       oldGroup.Stats.LastCheck,
-				RoundRobinIndex: oldGroup.Stats.RoundRobinIndex,
-				CurrentIndex:    oldGroup.Stats.CurrentIndex,
-				ProxyStats:      make(map[string]*config.ProxyStats),
-			}
 		}
 
 		// === 判断是否需要清理访问缓存 ===
@@ -55,25 +45,43 @@ func MergeProxyStats(oldGroups, newGroups map[string]*config.ProxyGroupConfig) {
 			shouldClearCache = true
 		}
 
-		// 同步旧的代理状态
-		for _, proxy := range newGroup.Proxies {
-			if oldStat, exists := oldGroup.Stats.ProxyStats[proxy.Name]; exists {
-				newGroup.Stats.ProxyStats[proxy.Name] = oldStat
-			} else {
-				newGroup.Stats.ProxyStats[proxy.Name] = &config.ProxyStats{}
+		if oldGroup.Stats != nil {
+			// 初始化新组运行状态
+			if newGroup.Stats == nil {
+				newGroup.Stats = &config.GroupStats{
+					LastCheck:       oldGroup.Stats.LastCheck,
+					RoundRobinIndex: oldGroup.Stats.RoundRobinIndex,
+					CurrentIndex:    oldGroup.Stats.CurrentIndex,
+					ProxyStats:      make(map[string]*config.ProxyStats),
+				}
 			}
-		}
 
-		// 池配置未变化时，保留旧组的可用节点和池节点测速状态，
-		// 避免每次后台保存/热重载都把池清空重测。
-		newGroup.InheritPoolRuntime(oldGroup)
+			// 同步旧的代理状态
+			for _, proxy := range newGroup.Proxies {
+				if oldStat, exists := oldGroup.Stats.ProxyStats[proxy.Name]; exists {
+					newGroup.Stats.ProxyStats[proxy.Name] = oldStat
+				} else {
+					newGroup.Stats.ProxyStats[proxy.Name] = &config.ProxyStats{}
+				}
+			}
 
-		// 移除被删除的旧代理状态（仅日志提示，不复制）
-		for oldName := range oldGroup.Stats.ProxyStats {
-			if !newProxySet[oldName] {
+			// 移除被删除的旧代理状态（仅日志提示，不复制）。
+			// 池节点的名字不在静态 proxies 里，但配置里仍然是有效候选，
+			// 不能当成「已删除」把测速历史丢掉。
+			oldPoolNames := poolCandidateNames(oldGroup)
+			newPoolNames := poolCandidateNames(newGroup)
+			for oldName := range oldGroup.Stats.ProxyStats {
+				if newProxySet[oldName] || oldPoolNames[oldName] || newPoolNames[oldName] {
+					continue
+				}
 				logger.LogPrintf("⚠️ 代理组 %s: 移除已删除代理 %s 的运行状态", groupName, oldName)
 			}
 		}
+
+		// 池配置未变化时，保留旧组的可用节点和整个端口段的测速状态，
+		// 避免每次后台保存/热重载都把池清空重测。
+		// 即使旧组 Stats 为空也要调用：池节点可能还挂在 running 的探测任务上。
+		newGroup.InheritPoolRuntime(oldGroup)
 
 		// 清理访问缓存（按组名全量清理：覆盖域名删除/挪组等所有变更场景）
 		if shouldClearCache {
@@ -90,6 +98,24 @@ func MergeProxyStats(oldGroups, newGroups map[string]*config.ProxyGroupConfig) {
 			clear.ClearAccessCacheByGroup(oldName)
 		}
 	}
+}
+
+// poolCandidateNames 返回池配置展开后的节点名集合（含本轮失败/未入选的端口）。
+func poolCandidateNames(g *config.ProxyGroupConfig) map[string]bool {
+	if g == nil || g.Pool == nil || len(g.Pool.Servers) == 0 {
+		return nil
+	}
+	nodes, err := g.BuildPoolNodes()
+	if err != nil || len(nodes) == 0 {
+		return nil
+	}
+	names := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		if n != nil {
+			names[n.Name] = true
+		}
+	}
+	return names
 }
 
 // isGroupConfigChanged 判断代理组配置是否有变化

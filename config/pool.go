@@ -314,6 +314,10 @@ func (g *ProxyGroupConfig) SetPoolNodes(nodes []*ProxyConfig) {
 
 // InheritPoolRuntime 把旧组的池节点和测速状态复制到新组。
 // 只在 PoolKey 完全一致时调用，避免配置变化后误用旧节点。
+//
+// 除了当前可用节点，整个端口段的测速历史也会保留：历史上失败/未入选的端口
+// 仍然带着延迟、吞吐、失败次数，后台保存配置或热重载后不会被重置成「未测」，
+// 也不会再出现「改一个组，其它组的池数据全没了」。
 func (g *ProxyGroupConfig) InheritPoolRuntime(old *ProxyGroupConfig) {
 	if g == nil || old == nil || g.PoolKey() == "" || g.PoolKey() != old.PoolKey() {
 		return
@@ -321,22 +325,32 @@ func (g *ProxyGroupConfig) InheritPoolRuntime(old *ProxyGroupConfig) {
 	activeProxyMu.RLock()
 	nodes := old.poolNodes
 	activeProxyMu.RUnlock()
-	if len(nodes) == 0 {
-		return
+
+	if len(nodes) > 0 {
+		g.SetPoolNodes(nodes)
 	}
-	g.SetPoolNodes(nodes)
 	if g.Stats == nil {
 		g.Stats = &GroupStats{ProxyStats: make(map[string]*ProxyStats)}
 	}
-	if old.Stats != nil {
-		old.Stats.RLock()
-		for _, n := range nodes {
-			if st, ok := old.Stats.ProxyStats[n.Name]; ok {
-				g.Stats.ProxyStats[n.Name] = st
-			}
-		}
-		old.Stats.RUnlock()
+	if old.Stats == nil {
+		return
 	}
+
+	// 以新配置展开的候选为准复制统计：旧配置里已经删除的端口不会被带过来。
+	candidates, err := g.BuildPoolNodes()
+	if err != nil || len(candidates) == 0 {
+		candidates = nodes
+	}
+	old.Stats.RLock()
+	for _, n := range candidates {
+		if n == nil {
+			continue
+		}
+		if st, ok := old.Stats.ProxyStats[n.Name]; ok {
+			g.Stats.ProxyStats[n.Name] = st
+		}
+	}
+	old.Stats.RUnlock()
 }
 
 // ActiveProxies 返回当前实际参与选路的节点（静态 + 池）。

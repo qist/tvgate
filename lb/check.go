@@ -64,6 +64,24 @@ func sampleSizeFor(ctx context.Context) int {
 	return probeSampleSize
 }
 
+// probeLightKey 表示本次探测只验连通性，不做吞吐采样。
+// 池的定时「全端口扫描」使用该模式：空闲期只确认端口是否真的可用，
+// 不再读取分片/接收 RTP 测速，避免没有播放时仍持续消耗带宽。
+type probeLightKey struct{}
+
+// WithProbeLight 让本次探测只做握手/首字节检查，不采样吞吐。
+func WithProbeLight(ctx context.Context, light bool) context.Context {
+	if !light {
+		return ctx
+	}
+	return context.WithValue(ctx, probeLightKey{}, true)
+}
+
+func probeIsLight(ctx context.Context) bool {
+	v, _ := ctx.Value(probeLightKey{}).(bool)
+	return v
+}
+
 // CheckTarget 复用 lb 选路自身的直播检测逻辑，供代理池探测与请求时测速共用：
 //   - rtsp://    → OPTIONS + DESCRIBE + SETUP + PLAY，PLAY 后采样 2s RTP 载荷；
 //   - http(s):// → 经代理发 Range 请求，读最多 2MB 正文采样吞吐；
@@ -73,6 +91,11 @@ func sampleSizeFor(ctx context.Context) int {
 // （lb 选路保持 <500 视为可连；池探测要求 <400，避免把错误页当可用节点）。
 func CheckTarget(ctx context.Context, proxyConfig config.ProxyConfig, targetURL string, ipv6 bool, ua string) CheckOutcome {
 	if strings.HasPrefix(strings.ToLower(targetURL), "rtsp://") {
+		if probeIsLight(ctx) {
+			// 只做到 PLAY 握手，不接收 2s RTP：端口可用即可，不测码率。
+			rt, _, err := testRTSP(ctx, proxyConfig, targetURL, ua, false)
+			return CheckOutcome{ResponseTime: rt, StatusCode: http.StatusOK, Throughput: -1, Err: err}
+		}
 		rt, throughput, err := TestRTSPProxyThroughput(ctx, proxyConfig, targetURL, ua)
 		return CheckOutcome{ResponseTime: rt, StatusCode: http.StatusOK, Throughput: throughput, Err: err}
 	}
@@ -98,6 +121,13 @@ func checkHTTPTarget(ctx context.Context, proxyConfig config.ProxyConfig, target
 	out := CheckOutcome{ResponseTime: time.Since(start), StatusCode: resp.StatusCode}
 	// 4xx/5xx 是错误页，不读取也不测吞吐；状态码由调用方判定。
 	if resp.StatusCode >= 400 {
+		return out
+	}
+
+	if probeIsLight(ctx) {
+		// 轻量扫描只读 1 字节确认数据通路，不解析播放列表也不测速。
+		_, _, _ = readProbeSample(resp.Body, 1)
+		out.Throughput = -1
 		return out
 	}
 

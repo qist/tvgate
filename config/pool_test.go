@@ -162,6 +162,50 @@ proxygroups:
 	}
 }
 
+// TestInheritPoolRuntimeKeepsAllPoolStats 验证热重载/后台保存时，
+// 未变化池的整个端口段测速状态都被保留（包括本轮失败、未入选的端口），
+// 而不是只保留当前可用节点。
+func TestInheritPoolRuntimeKeepsAllPoolStats(t *testing.T) {
+	newGroup := func() *ProxyGroupConfig {
+		g := &ProxyGroupConfig{
+			Proxies: []*ProxyConfig{{Name: "static"}},
+			Pool: &ProxyPoolConfig{
+				Servers:  []string{"192.0.2.1:100-102"},
+				Protocol: "http",
+			},
+		}
+		g.Pool.SetDefaults()
+		return g
+	}
+
+	old := newGroup()
+	nodes, err := old.BuildPoolNodes()
+	if err != nil || len(nodes) != 3 {
+		t.Fatalf("BuildPoolNodes: %v, len=%d", err, len(nodes))
+	}
+	old.SetPoolNodes(nodes[:2])
+	old.Stats = &GroupStats{ProxyStats: map[string]*ProxyStats{
+		nodes[0].Name: {Alive: true, Throughput: 1024, LastCheck: time.Now()},
+		nodes[1].Name: {Alive: true, ResponseTime: time.Second, LastCheck: time.Now()},
+		nodes[2].Name: {Alive: false, FailCount: 2, LastCheck: time.Now()},
+	}}
+
+	fresh := newGroup()
+	fresh.InheritPoolRuntime(old)
+
+	if got := len(fresh.PoolNodes()); got != 2 {
+		t.Fatalf("可用节点未继承: %d", got)
+	}
+	for _, n := range nodes {
+		if _, ok := fresh.Stats.ProxyStats[n.Name]; !ok {
+			t.Fatalf("端口 %s 的测速状态丢失", n.Name)
+		}
+	}
+	if st := fresh.Stats.ProxyStats[nodes[2].Name]; st.FailCount != 2 || st.Alive {
+		t.Fatalf("失败端口状态未保留: %+v", st)
+	}
+}
+
 func TestPoolKeyStableWithDefaults(t *testing.T) {
 	a := &ProxyGroupConfig{
 		Resolve: "remote",

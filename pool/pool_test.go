@@ -65,7 +65,7 @@ func TestProbeAndApplyHTTPProxy(t *testing.T) {
 				t.Fatalf("nodes = %d, want 1", len(nodes))
 			}
 
-			probeAndApply(context.Background(), "test", g, nodes)
+			probeAndApply(context.Background(), "test", g, nodes, false)
 			active := g.ActiveProxies()
 			if len(active) != 1 {
 				t.Fatalf("探测后可用节点 = %d, want 1", len(active))
@@ -125,7 +125,7 @@ func TestProbeRetriesWithinRound(t *testing.T) {
 				t.Fatalf("BuildPoolNodes: %v", err)
 			}
 
-			probeAndApply(context.Background(), "retry", g, nodes)
+			probeAndApply(context.Background(), "retry", g, nodes, false)
 
 			g.Stats.RLock()
 			st := g.Stats.ProxyStats[nodes[0].Name]
@@ -401,7 +401,7 @@ func TestProbeSampleReadsHLSThroughput(t *testing.T) {
 		t.Fatalf("BuildPoolNodes: %v", err)
 	}
 
-	probeAndApply(context.Background(), "throughput", g, nodes)
+	probeAndApply(context.Background(), "throughput", g, nodes, false)
 
 	g.Stats.RLock()
 	st := g.Stats.ProxyStats[nodes[0].Name]
@@ -458,7 +458,7 @@ func TestProbeInUseNodeNeverUpgradesThroughput(t *testing.T) {
 		Throughput: verified,
 	}
 
-	res := probeOne(context.Background(), g, nodes[0])
+	res := probeOne(context.Background(), g, nodes[0], false)
 	if !res.inUse {
 		t.Fatal("最近被选路使用的节点应标记为播放中")
 	}
@@ -469,7 +469,7 @@ func TestProbeInUseNodeNeverUpgradesThroughput(t *testing.T) {
 		t.Fatalf("播放中只验连通，应返回无样本 -1，实际 %d", res.throughput)
 	}
 
-	probeAndApply(context.Background(), "inuse", g, nodes)
+	probeAndApply(context.Background(), "inuse", g, nodes, false)
 
 	g.Stats.RLock()
 	st := g.Stats.ProxyStats[name]
@@ -519,7 +519,7 @@ func TestProbeUpdatesThroughput(t *testing.T) {
 		Throughput: oldThroughput,
 	}
 
-	if alive := probeAndApply(context.Background(), "deep", g, nodes); alive != len(nodes) {
+	if alive := probeAndApply(context.Background(), "deep", g, nodes, false); alive != len(nodes) {
 		t.Fatalf("深度探测应保留可用节点，got %d", alive)
 	}
 
@@ -589,6 +589,104 @@ func TestProbeTargetsRetriesFailedNodes(t *testing.T) {
 
 	g.Stats.ProxyStats["flaky"].FailCount = probeRetryLimit
 	if got := probeTargets(g, all, 10); len(got) != 1 {
-		t.Fatalf("连续失败达上限后应停止重试，got %d", len(got))
+		t.Fatalf("连续失败达上限后本应暂停重试，got %d", len(got))
+	}
+
+	// 超过退避间隔后仍要重新纳入重试：出口恢复后不能一直等到全端口扫描/重启。
+	g.Stats.ProxyStats["flaky"].LastCheck = time.Now().Add(-probeRetryBackoff - time.Second)
+	if got := probeTargets(g, all, 10); len(got) != 2 {
+		t.Fatalf("超过退避间隔后应重新重试，got %d", len(got))
+	}
+}
+
+// TestResetProbeFailures 验证全端口扫描前会清空失败计数与冷却，
+// 避免「测速失败的数据没重置」，端口恢复后仍被视为冷却/失败。
+func TestResetProbeFailures(t *testing.T) {
+	n1 := &config.ProxyConfig{Name: "p1", Type: "http", Server: "127.0.0.1", Port: 1}
+	g := &config.ProxyGroupConfig{
+		Stats: &config.GroupStats{ProxyStats: map[string]*config.ProxyStats{
+			"p1": {Alive: false, FailCount: 5, CooldownUntil: time.Now().Add(time.Hour), LastCheck: time.Now()},
+		}},
+	}
+	resetProbeFailures(g, []*config.ProxyConfig{n1})
+	st := g.Stats.ProxyStats["p1"]
+	if st.FailCount != 0 || !st.CooldownUntil.IsZero() {
+		t.Fatalf("失败状态未重置: %+v", st)
+	}
+}
+
+// TestLightProbeDoesNotSampleThroughput 验证空闲期全端口扫描只做连通性检查：
+// 不断言吞吐（沿用旧值），也不继续请求 m3u8 里的分片（没有测速流量）。
+func TestLightProbeDoesNotSampleThroughput(t *testing.T) {
+	restore := prepareTestConfig(t)
+	defer restore()
+
+	var segmentHits atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/main.m3u8":
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = io.WriteString(w, "#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:10,\nseg.ts\n")
+		default:
+			segmentHits.Add(1)
+			_, _ = w.Write(make([]byte, 300<<10))
+		}
+	}))
+	defer target.Close()
+
+	proxyAddr, closeProxy := startConnectProxy(t)
+	defer closeProxy()
+
+	g := &config.ProxyGroupConfig{
+		Resolve: "local",
+		Stats:   &config.GroupStats{ProxyStats: make(map[string]*config.ProxyStats)},
+		Pool: &config.ProxyPoolConfig{
+			Servers:  []string{proxyAddr},
+			Protocol: "http",
+			ProbeURL: target.URL + "/main.m3u8",
+		},
+	}
+	g.Pool.SetDefaults()
+	nodes, err := g.BuildPoolNodes()
+	if err != nil || len(nodes) == 0 {
+		t.Fatalf("BuildPoolNodes: %v", err)
+	}
+	const oldThroughput = int64(4 << 20)
+	g.Stats.ProxyStats[nodes[0].Name] = &config.ProxyStats{
+		Alive:      true,
+		Throughput: oldThroughput,
+		LastCheck:  time.Now(),
+	}
+
+	probeAndApply(context.Background(), "light", g, nodes, true)
+
+	st := g.Stats.ProxyStats[nodes[0].Name]
+	if !st.Alive {
+		t.Fatalf("轻量扫描应判定节点可用: %+v", st)
+	}
+	if st.Throughput != oldThroughput {
+		t.Fatalf("轻量扫描不应改写吞吐: got %d want %d", st.Throughput, oldThroughput)
+	}
+	if segmentHits.Load() != 0 {
+		t.Fatalf("轻量扫描不应继续请求分片（实际 %d 次）", segmentHits.Load())
+	}
+}
+
+// TestProxyInUseUsesShortWindow 验证「在用」判定跟随 45s 静默窗口，而不是组的
+// interval（可能是 3 分钟）：播放停止后该节点要尽快恢复完整采样，拿到吞吐样本。
+func TestProxyInUseUsesShortWindow(t *testing.T) {
+	g := &config.ProxyGroupConfig{
+		Interval: 3 * time.Minute,
+		Stats: &config.GroupStats{ProxyStats: map[string]*config.ProxyStats{
+			"p1": {LastUsed: time.Now().Add(-60 * time.Second)},
+		}},
+	}
+	if proxyInUse(g, "p1", time.Now()) {
+		t.Fatal("静默 60s 的节点不应再判定为播放中（interval=3m 不应延长窗口）")
+	}
+
+	g.Stats.ProxyStats["p1"].LastUsed = time.Now().Add(-10 * time.Second)
+	if !proxyInUse(g, "p1", time.Now()) {
+		t.Fatal("10s 前还在传输的节点应判定为播放中")
 	}
 }

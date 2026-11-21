@@ -15,6 +15,7 @@ import (
 	"github.com/qist/tvgate/config"
 	"github.com/qist/tvgate/lb"
 	"github.com/qist/tvgate/logger"
+	"github.com/qist/tvgate/proxy"
 )
 
 // minHTTPProbeTimeout 是 HTTP 探测的实际超时下限。
@@ -32,6 +33,22 @@ const minHTTPProbeTimeout = 8 * time.Second
 // 播放中节点的吞吐沿用空闲时完整采样的结果；变慢/断流由真实请求失败
 // （lb 标记 + 重试切换）兜底。
 const busyProbeSampleSize = 1
+
+// playbackIdleWindow 是判定「播放已结束」的静默窗口。
+// LastUsed 由每次选路/真实请求刷新，HLS 播放时每个分片都会刷新；
+// 静默超过该窗口即认为播放结束，立即暂停深度探测（不再测速）。
+// 长连接（FLV/TS 直链）只在建连时刷新一次，窗口过后不再探测 ——
+// 播放本身不受影响，只是不再抢占出口带宽。
+const playbackIdleWindow = 45 * time.Second
+
+// playbackWatchInterval 是播放状态的检查周期：播放结束后最迟约
+// playbackIdleWindow+该周期 就会停止深度探测，而不是等下一个 probe_interval。
+const playbackWatchInterval = 15 * time.Second
+
+// probeRetryBackoff 是连续失败节点在深度探测中的重试间隔下限。
+// 失败次数达到上限后不再每轮重测，但超过该间隔仍会尝试一次，
+// 避免出口恢复后要等到下一次全端口扫描（默认 1 小时）或重启进程。
+const probeRetryBackoff = 2 * time.Minute
 
 type probeResult struct {
 	node       *config.ProxyConfig
@@ -123,6 +140,11 @@ func Sync(cfg *config.Config) {
 			continue
 		}
 		if r.key == g.PoolKey() {
+			// 热重载会创建全新的组对象：合并逻辑没覆盖到（或旧组 Stats 为空）时，
+			// 从仍在运行的旧组继承池节点与测速状态，避免保存配置后池被清空重测。
+			if len(g.PoolNodes()) == 0 {
+				g.InheritPoolRuntime(r.currentGroup())
+			}
 			ensureInitialNodes(g)
 			if r.updateGroup(g) {
 				// probe_ua / ipv6 等探测参数变化：立即补一轮，测完重新按 interval 计时。
@@ -232,9 +254,10 @@ func run(ctx context.Context, name string, r *runner) {
 		return
 	}
 
-	// 冷启动先快速探测一小批，尽快给出可用节点。
+	// 冷启动先快速确认一小批候选的连通性，尽快给出可用节点；
+	// 只读 1 字节，不测速（没有播放时不做吞吐采样）。
 	quick := limitNodes(nodes, quickN)
-	probeAndApply(ctx, name, g, quick)
+	probeAndApply(ctx, name, g, quick, true)
 
 	// 两档节奏：
 	//   - 深度探测（probe_interval，默认 60s）：对当前可用节点读取完整分片、
@@ -242,15 +265,24 @@ func run(ctx context.Context, name string, r *runner) {
 	//   - 全端口扫描（probe_full_interval，默认 1 小时）：重新确认整个端口段。
 	//
 	// 深度探测只在「组内有播放」时运行：没有播放时持续采样既浪费流量，
-	// 也会白白占用出口带宽。空闲期只保留全端口扫描，播放开始时由 lb 的
-	// 请求时测速兜底，随后一个 probe_interval 内深度探测接管排名。
+	// 也会白白占用出口带宽。全端口扫描只做连通性检查（1 字节 / RTSP 握手），
+	// 不测速，空闲时不会产生测速流量。
 	lastFull := time.Now()
 	runFull := func(cur *config.ProxyGroupConfig, reason string) {
 		if cur == nil || cur.Pool == nil {
 			return
 		}
-		logger.LogPrintf("🔍 代理池 %s 全端口扫描（%s）", name, reason)
-		probeAndApply(ctx, name, cur, nodes)
+		cands := nodes
+		// 以当前配置重新展开端口段：避免运行中候选列表变化后仍用旧快照。
+		if built, err := cur.BuildPoolNodes(); err == nil && len(built) > 0 {
+			cands = built
+			nodes = built
+		}
+		// 每轮全端口扫描重置失败计数/冷却：出口恢复后应当被重新测速，
+		// 而不是等到进程重启或失败计数被别处清零。
+		resetProbeFailures(cur, cands)
+		logger.LogPrintf("🔍 代理池 %s 全端口扫描（%s，仅连通性）", name, reason)
+		probeAndApply(ctx, name, cur, cands, true)
 		lastFull = time.Now()
 	}
 
@@ -265,6 +297,10 @@ func run(ctx context.Context, name string, r *runner) {
 	defer deepTicker.Stop()
 	fullTicker := time.NewTicker(poolDuration(g.Pool.ProbeFullInterval, time.Hour, time.Minute))
 	defer fullTicker.Stop()
+	// 播放状态检查与深度探测解耦：probe_interval 可能是几分钟，
+	// 只靠深度探测周期判断会以为「播放已关闭却还在测速」。
+	watchTicker := time.NewTicker(playbackWatchInterval)
+	defer watchTicker.Stop()
 
 	// 节点全部不可用时兜底全量扫描；仍受 full_interval 限流，避免频繁扫端口段。
 	failover := func(cur *config.ProxyGroupConfig, alive int) {
@@ -281,14 +317,14 @@ func run(ctx context.Context, name string, r *runner) {
 	playing := false
 	// checkPlayback 判断组内是否正在播放；返回 false 时跳过深度探测。
 	// 判定依据是池节点的 LastUsed：lb 每次选路、真实请求都会刷新它，
-	// 播放停止后超过组的 interval 自动判定为空闲。
+	// 播放停止后静默超过 playbackIdleWindow 立即判定为空闲。
 	checkPlayback := func(cur *config.ProxyGroupConfig) bool {
 		nowPlaying := groupInPlayback(cur, time.Now())
 		switch {
 		case nowPlaying && !playing:
 			logger.LogPrintf("▶️ 代理池 %s 检测到播放，启用深度探测", name)
 		case !nowPlaying && playing:
-			logger.LogPrintf("💤 代理池 %s 当前无播放，暂停深度探测（仅保留全端口扫描）", name)
+			logger.LogPrintf("💤 代理池 %s 当前无播放，已停止深度探测（仅保留全端口扫描）", name)
 		}
 		playing = nowPlaying
 		return nowPlaying
@@ -298,6 +334,11 @@ func run(ctx context.Context, name string, r *runner) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-watchTicker.C:
+			// 只更新播放状态，不触发探测；深度探测仍在 deepTicker 上执行。
+			if cur := r.currentGroup(); cur != nil {
+				checkPlayback(cur)
+			}
 		case <-deepTicker.C:
 			cur := r.currentGroup()
 			if cur == nil || cur.Pool == nil {
@@ -306,7 +347,7 @@ func run(ctx context.Context, name string, r *runner) {
 			if !checkPlayback(cur) {
 				continue
 			}
-			good := probeAndApply(ctx, name, cur, activeNodes(cur))
+			good := probeAndApply(ctx, name, cur, activeNodes(cur), false)
 			failover(cur, good)
 		case <-fullTicker.C:
 			cur := r.currentGroup()
@@ -328,14 +369,15 @@ func run(ctx context.Context, name string, r *runner) {
 	}
 }
 
-// probeRetryLimit 是深度探测对「当前不可用」节点的最大重试轮数。
+// probeRetryLimit 是深度探测对「当前不可用」节点的快速重试轮数。
 // 源站抖动/瞬时超时导致一次失败时，节点不应消失到下一次全端口扫描
-// （默认 1 小时）；连续失败达到该次数才放弃，等全端口扫描重新确认。
+// （默认 1 小时）；超过该轮数后改为按 probeRetryBackoff 定期重试。
 const probeRetryLimit = 3
 
 // probeTargets 返回本轮深度探测的节点：
 //   - 当前可用节点；
-//   - 曾经测过、但当前不在可用列表里的候选（失败次数 < probeRetryLimit）。
+//   - 曾经测过、但当前不在可用列表里的候选（失败次数 < probeRetryLimit，
+//     或距上次探测已超过 probeRetryBackoff）。
 //
 // 后者用于快速恢复：某节点因为一次超时被移出列表后，下一轮深度探测仍会
 // 重测它，成功即可回到列表，避免「只剩一个差节点、一直选它」。
@@ -357,18 +399,44 @@ func probeTargets(g *config.ProxyGroupConfig, allNodes []*config.ProxyConfig, to
 		seen[n.Name] = true
 		out = append(out, n)
 	}
+	now := time.Now()
 	g.Stats.RLock()
 	for _, n := range allNodes {
 		if seen[n.Name] {
 			continue
 		}
 		st := g.Stats.ProxyStats[n.Name]
-		if st != nil && !st.LastCheck.IsZero() && st.FailCount < probeRetryLimit {
+		if st == nil || st.LastCheck.IsZero() {
+			continue
+		}
+		// 连续失败超过上限后不再每轮重测，但超过退避间隔仍会再试：
+		// 出口恢复/端口重新开放时不必等下一次全端口扫描或重启进程。
+		if st.FailCount < probeRetryLimit || now.Sub(st.LastCheck) >= probeRetryBackoff {
 			out = append(out, n)
 		}
 	}
 	g.Stats.RUnlock()
 	return out
+}
+
+// resetProbeFailures 在每轮全端口扫描前清空候选节点的失败计数与冷却。
+// 出口恢复或端口重新开放后，节点不应因为历史失败被永久排除；
+// 扫描结果会在本轮重新写入（成功清零，失败重新计数）。
+func resetProbeFailures(g *config.ProxyGroupConfig, nodes []*config.ProxyConfig) {
+	if g == nil || g.Stats == nil || len(nodes) == 0 {
+		return
+	}
+	g.Stats.Lock()
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		if st := g.Stats.ProxyStats[n.Name]; st != nil {
+			st.FailCount = 0
+			st.CooldownUntil = time.Time{}
+		}
+	}
+	g.Stats.Unlock()
 }
 
 // poolDuration 返回配置值，未配置或过小时回退到默认/下限。
@@ -394,19 +462,22 @@ func probeConcurrency(g *config.ProxyGroupConfig) int {
 	return concurrency
 }
 
-// probeAndApply 执行一轮深度探测（采样吞吐），返回可用节点数。
-func probeAndApply(ctx context.Context, name string, g *config.ProxyGroupConfig, nodes []*config.ProxyConfig) int {
+// probeAndApply 执行一轮探测，返回可用节点数。
+// light=true 时只验证连通性（1 字节 / RTSP 握手），不采样吞吐、不更新吞吐值。
+func probeAndApply(ctx context.Context, name string, g *config.ProxyGroupConfig, nodes []*config.ProxyConfig, light bool) int {
 	if g == nil || g.Pool == nil || len(nodes) == 0 || g.Pool.ProbeURL == "" {
 		return 0
 	}
-	results := probeAll(ctx, g, nodes, probeConcurrency(g))
-	// 对吞吐最高的前 2 名再做一轮采样取较小值：单次采样仍可能有抖动。
-	results = refineTopThroughput(ctx, g, results, 2)
-	return applyProbeResults(name, g, nodes, results)
+	results := probeAll(ctx, g, nodes, probeConcurrency(g), light)
+	if !light {
+		// 对吞吐最高的前 2 名再做一轮采样取较小值：单次采样仍可能有抖动。
+		results = refineTopThroughput(ctx, g, results, 2)
+	}
+	return applyProbeResults(name, g, nodes, results, light)
 }
 
 // applyProbeResults 写入一轮探测结果、按吞吐排序并替换池可用列表。
-func applyProbeResults(name string, g *config.ProxyGroupConfig, nodes []*config.ProxyConfig, results []probeResult) int {
+func applyProbeResults(name string, g *config.ProxyGroupConfig, nodes []*config.ProxyConfig, results []probeResult, light bool) int {
 	good := make([]*config.ProxyConfig, 0, len(results))
 	now := time.Now()
 	cooldown := g.Pool.FailCooldown
@@ -436,14 +507,29 @@ func applyProbeResults(name string, g *config.ProxyGroupConfig, nodes []*config.
 			// 无有效样本（-1）时同样保留旧吞吐，避免一次源站抖动把正常节点
 			// 永久标成跑不动。从未测过的节点（LastCheck 为零）则直接采用本轮结果。
 			measured := res.throughput
-			if res.inUse || measured < 0 {
+			switch {
+			case res.inUse:
+				measured = st.Throughput
+				// 冷启动/刚重启时还没有完整采样，而正在播放的节点又不额外采样，
+				// 只用延迟排序会把「延迟低但跑一会儿就卡」的节点选出来。
+				// 这里用真实播放流量（proxy.UsageRate，不含探测流量）估算：
+				// 出口真在传数据就有一个与码率相当的值，停住则接近 0。
+				if measured <= 0 {
+					if rate := proxy.UsageRate(*res.node); rate > 0 {
+						measured = rate
+						notes[res.node.Name] = "（播放中，按实际播放流量估算）"
+					} else {
+						notes[res.node.Name] = "（播放中，等待流量样本）"
+					}
+				} else {
+					notes[res.node.Name] = "（播放中，沿用上次完整采样）"
+				}
+			case measured < 0:
+				// 无有效样本（分片太小/采样窗口不足）：保留旧值，避免源站抖动误判。
 				measured = st.Throughput
 			}
 			st.Throughput = measured
 			throughput[res.node.Name] = measured
-			if res.inUse {
-				notes[res.node.Name] = "（播放中，沿用上次完整采样）"
-			}
 			st.StatusCode = res.status
 			st.FailCount = 0
 			st.CooldownUntil = time.Time{}
@@ -451,7 +537,11 @@ func applyProbeResults(name string, g *config.ProxyGroupConfig, nodes []*config.
 			good = append(good, res.node)
 		} else {
 			st.Alive = false
-			st.Throughput = 0
+			if !light {
+				// 连通性扫描没有测速，不能把已有的吞吐样本清掉：
+				// 节点恢复后仍可依此排序，而不是从「未测」重新开始。
+				st.Throughput = 0
+			}
 			st.FailCount++
 			st.StatusCode = res.status
 			st.CooldownUntil = now.Add(cooldown)
@@ -475,19 +565,26 @@ func applyProbeResults(name string, g *config.ProxyGroupConfig, nodes []*config.
 	}
 	good = limitNodes(good, topN)
 
-	// 逐节点打印成功节点的延迟/吞吐：选路日志只会出现被选中的节点，
-	// 不打印的话其它端口（例如吞吐第二的节点）这轮测了多少完全看不到。
-	for _, n := range good {
-		fmtTP := "-"
-		if v := throughput[n.Name]; v > 0 {
-			fmtTP = fmt.Sprintf("%.1fMbps", float64(v)*8/1e6)
+	if !light {
+		// 逐节点打印成功节点的延迟/吞吐：选路日志只会出现被选中的节点，
+		// 不打印的话其它端口（例如吞吐第二的节点）这轮测了多少完全看不到。
+		for _, n := range good {
+			fmtTP := "-"
+			if v := throughput[n.Name]; v > 0 {
+				fmtTP = fmt.Sprintf("%.1fMbps", float64(v)*8/1e6)
+			}
+			logger.LogPrintf("📊 代理池 %s 节点: %-40s 延迟: %-10v 吞吐: %s%s",
+				name, n.Name, latency[n.Name].Truncate(time.Millisecond), fmtTP, notes[n.Name])
 		}
-		logger.LogPrintf("📊 代理池 %s 节点: %-40s 延迟: %-10v 吞吐: %s%s",
-			name, n.Name, latency[n.Name].Truncate(time.Millisecond), fmtTP, notes[n.Name])
 	}
 
 	if len(good) > 0 {
 		g.SetPoolNodes(good)
+		if light {
+			// 端口扫描不测速，最快节点仍按上次深度探测的吞吐排序。
+			logger.LogPrintf("✅ 代理池 %s 端口扫描完成: 可用 %d 个", name, len(good))
+			return len(good)
+		}
 		best := good[0].Name
 		tp := throughput[best]
 		if tp > 0 {
@@ -504,11 +601,15 @@ func applyProbeResults(name string, g *config.ProxyGroupConfig, nodes []*config.
 	if len(g.ActiveProxies()) <= len(g.Proxies) {
 		g.SetPoolNodes(limitNodes(nodes, topN))
 	}
-	logger.LogPrintf("⚠️ 代理池 %s 本轮探测无可用节点", name)
+	if light {
+		logger.LogPrintf("⚠️ 代理池 %s 本轮端口扫描无可用节点", name)
+	} else {
+		logger.LogPrintf("⚠️ 代理池 %s 本轮探测无可用节点", name)
+	}
 	return 0
 }
 
-func probeAll(ctx context.Context, g *config.ProxyGroupConfig, nodes []*config.ProxyConfig, concurrency int) []probeResult {
+func probeAll(ctx context.Context, g *config.ProxyGroupConfig, nodes []*config.ProxyConfig, concurrency int, light bool) []probeResult {
 	if concurrency <= 0 {
 		concurrency = 1
 	}
@@ -529,7 +630,7 @@ loop:
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			resultCh <- probeOne(ctx, g, n)
+			resultCh <- probeOne(ctx, g, n, light)
 		}()
 	}
 	wg.Wait()
@@ -570,7 +671,7 @@ func refineTopThroughput(ctx context.Context, g *config.ProxyGroupConfig, result
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			second := probeOne(ctx, g, results[c.idx].node)
+			second := probeOne(ctx, g, results[c.idx].node, false)
 			if second.err != nil || second.throughput <= 0 {
 				return
 			}
@@ -592,9 +693,13 @@ func proxyInUse(g *config.ProxyGroupConfig, name string, now time.Time) bool {
 	if g == nil || g.Stats == nil {
 		return false
 	}
-	window := g.Interval
-	if window <= 0 {
-		window = 3 * time.Minute
+	// 窗口与播放判定保持一致：HLS 每个分片都会刷新 LastUsed，
+	// 静默 45s 说明这个节点已不在承载播放，可以恢复完整采样。
+	// 用组的 interval（可能是 3 分钟）会把已经空闲的节点继续当成「播放中」，
+	// 导致它一直无法获得吞吐样本，只能按延迟参与排序。
+	window := playbackIdleWindow
+	if g.Interval > 0 && g.Interval < window {
+		window = g.Interval
 	}
 	g.Stats.RLock()
 	st := g.Stats.ProxyStats[name]
@@ -604,15 +709,16 @@ func proxyInUse(g *config.ProxyGroupConfig, name string, now time.Time) bool {
 }
 
 // groupInPlayback 判断组内是否有节点最近承载过播放。
-// LastUsed 由 lb 选路与真实请求刷新；窗口取组的 interval，播放停止后
-// 超过该窗口即视为空闲，深度探测随之暂停。
+// LastUsed 由 lb 选路与真实请求刷新；HLS 播放时每个分片都会刷新，
+// 静默超过 playbackIdleWindow 即视为播放结束，深度探测随之暂停。
+// 这里不用组的 interval（可能是 3 分钟）：否则播放关闭后还会继续测速好几分钟。
 func groupInPlayback(g *config.ProxyGroupConfig, now time.Time) bool {
 	if g == nil || g.Stats == nil {
 		return false
 	}
-	window := g.Interval
-	if window <= 0 {
-		window = 3 * time.Minute
+	window := playbackIdleWindow
+	if g.Interval > 0 && g.Interval < window {
+		window = g.Interval
 	}
 	nodes := g.ActiveProxies()
 	g.Stats.RLock()
@@ -631,7 +737,7 @@ func groupInPlayback(g *config.ProxyGroupConfig, now time.Time) bool {
 
 // probeOne 探测单个节点：复用 lb.CheckTarget（HTTP/RTSP 同一套直播检测），
 // 采样吞吐。UA 取代理组 probe_ua → 全局 player.ua → 不发送。
-func probeOne(ctx context.Context, g *config.ProxyGroupConfig, node *config.ProxyConfig) probeResult {
+func probeOne(ctx context.Context, g *config.ProxyGroupConfig, node *config.ProxyConfig, light bool) probeResult {
 	res := probeResult{node: node}
 	if ctx.Err() != nil {
 		res.err = ctx.Err()
@@ -661,7 +767,8 @@ func probeOne(ctx context.Context, g *config.ProxyGroupConfig, node *config.Prox
 
 	// 节点正在承载播放时，把它的实际在用带宽（播放流量）加回去，
 	// 得到总容量估算；只冻结上一次的空闲吞吐会掩盖节点真实变慢。
-	inUse := proxyInUse(g, node.Name, time.Now())
+	// 轻量扫描不采样正文，也就不存在「和播放抢带宽」的问题。
+	inUse := !light && proxyInUse(g, node.Name, time.Now())
 	res.inUse = inUse
 
 	// 单轮探测内按 probe_retries 立即重试：动态端口偶发握手慢/抖动时，
@@ -672,7 +779,10 @@ func probeOne(ctx context.Context, g *config.ProxyGroupConfig, node *config.Prox
 			return res
 		}
 		probeCtx, cancel := context.WithTimeout(ctx, timeout)
-		if inUse {
+		if light {
+			// 端口扫描只验连通：HTTP 读 1 字节、RTSP 只到 PLAY 握手，不做吞吐采样。
+			probeCtx = lb.WithProbeLight(probeCtx, true)
+		} else if inUse {
 			// 播放中不采样正文：只读 1 字节验证连通，吞吐沿用上次完整采样。
 			probeCtx = lb.WithProbeSampleSize(probeCtx, busyProbeSampleSize)
 		}
