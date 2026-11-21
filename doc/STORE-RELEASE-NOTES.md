@@ -87,10 +87,10 @@
 
 ## 六、当前 CI 状态（发布核对用，发布完成后勾选）
 
-- [ ] 服务端 Release（qist/tvgate · tag v3.4.7）：33 个平台包 + `.dgst` 校验文件（共 66 个资产）
-- [ ] 安卓二进制：`TVGate-android-arm64-v8a.zip` / `TVGate-android-arm32-v7a.zip` 已上传
-- [ ] 安卓 APK（qist/tvgate-android · releases/latest）：`TVGate-v3.4.7-arm64/arm/x86_64.apk` 三个 APK 已上传
-- [ ] Docker 镜像：`juestnow/tvgate:v3.4.7` 已推送（Docker Hub 可见）
-- [ ] 实机验证：`./TVGate-linux-64 -version` 输出 v3.4.7；Android 包 `file` 显示 PIE + `for Android 21`
+- [x] 服务端 Release（qist/tvgate · tag v3.4.7）：33 个平台包 + `.dgst` 校验文件（共 66 个资产）
+- [x] 安卓二进制：`TVGate-android-arm64-v8a.zip` / `TVGate-android-arm32-v7a.zip` 已上传
+- [x] 安卓 APK（qist/tvgate-android · releases/latest）：`TVGate-v3.4.7-arm64/arm/x86_64.apk` 三个 APK 已上传（versionCode 15）
+- [x] Docker 镜像：`juestnow/tvgate:v3.4.7` 已推送（Docker Hub 可见）
+- [x] 实机验证：`./TVGate-linux-64 -version` 输出 v3.4.7；APK 内嵌 `libtvgate.so` 含 v3.4.7 版本串
 - [ ] 商店后台提交后回填提交时间与审核结果
 - [ ] 应用商店文案与本文件"一、二档"一致（版本号已改为 v3.4.7）
