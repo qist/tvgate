@@ -199,7 +199,12 @@ jobs:
             echo "未配置 TVGATE_SIGNING_KEY，跳过升级包签名（升级仍校验结构与 SHA-256）"
             exit 0
           fi
-          go run ./scripts/sign-release "$FILE" "$FILE.sig"
+          # go run 会继承作业级的 GOOS/GOARCH（交叉编译目标），在 ubuntu runner 上会产出
+          # 目标平台可执行文件再执行 → "exec format error"（windows/darwin/android 全挂）。
+          # 签名工具只在本机跑，显式固定为宿主平台；GOARM/GO386/GOMIPS 也一并清掉。
+          env -u GOARM -u GO386 -u GOMIPS \
+            GOOS="$(go env GOHOSTOS)" GOARCH="$(go env GOHOSTARCH)" CGO_ENABLED=0 \
+            go run ./scripts/sign-release "$FILE" "$FILE.sig"
           echo "SIGNED=1" >> $GITHUB_ENV
 
       - name: Set asset names
