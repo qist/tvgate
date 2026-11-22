@@ -116,7 +116,7 @@ export function SyncPage() {
         protect: (e.protect || []).filter((p) => p.trim() !== ""),
       }))
       .filter((e) => e.repo !== "");
-    if (clean.length === 0) return notify("err", "请至少填写一个仓库标识");
+    // 允许保存空列表：删掉最后一个仓库后需要能把 sync: [] 落盘（后端按空列表停止同步）
     try {
       await api.saveConfig(clean);
       notify("ok", "配置保存成功，同步模块将自动重启");

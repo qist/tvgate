@@ -113,6 +113,8 @@ export function TasksPage() {
   const [snapshot, setSnapshot] = useState<Record<number, Task>>({});
   const [groupFilter, setGroupFilter] = useState("");
   const [notice, setNotice] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
+  // 有未保存改动（含删除到空列表）：用于保持保存按钮可见，并阻止轮询覆盖本地列表
+  const [dirty, setDirty] = useState(false);
 
   const refresh = useCallback(async () => {
     const [t, s] = await Promise.all([listTasks(), listStatus()]);
@@ -120,16 +122,19 @@ export function TasksPage() {
     const map: Record<string, TaskStatus> = {};
     s.forEach((st) => (map[st.key] = st));
     setStatusMap(map);
+    setDirty(false);
   }, []);
 
   const editingRef = useRef<Set<number>>(editing);
   editingRef.current = editing;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
 
   useEffect(() => {
     refresh();
     const id = setInterval(async () => {
-      if (editingRef.current.size > 0) {
-        // 编辑中（含新增未保存行）：只刷新运行状态，不覆盖正在编辑的任务列表
+      if (editingRef.current.size > 0 || dirtyRef.current) {
+        // 编辑中（含新增未保存行）或有未保存改动：只刷新运行状态，不覆盖本地任务列表
         const s = await listStatus();
         const map: Record<string, TaskStatus> = {};
         s.forEach((st) => (map[st.key] = st));
@@ -171,12 +176,14 @@ export function TasksPage() {
   };
 
   const update = (i: number, patch: Partial<Task>) => {
+    setDirty(true);
     setTasks((prev) => prev.map((t, idx) => (idx === i ? { ...t, ...patch } : t)));
   };
 
   const addNew = () => {
     const t: Task = { name: "", enabled: false, group: "", cron: buildCron(DEFAULT_VISUAL), command: "", timeout: "", notes: "" };
     const idx = tasks.length;
+    setDirty(true);
     setTasks((prev) => [...prev, t]);
     // 新任务的 visual/cron 已知（DEFAULT_VISUAL），直接进入编辑态；
     // 不能走 openEdit(tasks.length)——闭包里的 tasks 还是旧数组，[length] 越界 undefined。
@@ -185,6 +192,7 @@ export function TasksPage() {
   };
 
   const remove = (i: number) => {
+    setDirty(true);
     setTasks((prev) => prev.filter((_, idx) => idx !== i));
     setEditing((prev) => {
       const next = new Set(prev);
@@ -202,6 +210,7 @@ export function TasksPage() {
       await saveTasks(data);
       setNotice({ type: "ok", msg: "配置保存成功，定时任务将自动重启" });
       setEditing(new Set());
+      setDirty(false);
       setTimeout(refresh, 1500);
     } catch (e) {
       setNotice({ type: "err", msg: (e as Error).message });
@@ -298,7 +307,13 @@ export function TasksPage() {
         />
       )}
 
-      {shown.length > 0 && (
+      {tasks.length === 0 && (
+        <div className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
+          暂无定时任务，点击右上角「添加任务」新建
+        </div>
+      )}
+
+      {(shown.length > 0 || dirty) && (
         <div className="flex gap-2">
           <AsyncActionButton action={save} busyText="保存中…">保存全部配置</AsyncActionButton>
           <AsyncActionButton variant="secondary" action={refresh} busyText="加载中…">

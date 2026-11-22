@@ -60,6 +60,8 @@ export function ProxyGroupsPage() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [editing, setEditing] = useState<Set<number>>(new Set());
   const [notice, setNotice] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
+  // 有未保存改动（如删除代理组）：阻止 15s 轮询用后端配置覆盖本地列表
+  const [dirty, setDirty] = useState(false);
   // entries 的最新值供稳定回调读取：save / 清理缓存不能依赖 entries，
   // 否则每次输入都会重建回调，导致所有卡片 memo 失效。
   const entriesRef = useRef<Entry[]>(entries);
@@ -81,6 +83,7 @@ export function ProxyGroupsPage() {
       if (merged.length === prev.length && merged.every((e, i) => e === prev[i])) return prev;
       return merged;
     });
+    setDirty(false);
   }, []);
 
   useEffect(() => {
@@ -88,24 +91,27 @@ export function ProxyGroupsPage() {
   }, [refresh]);
 
   // 池探测是后台定时任务：空闲时轻量轮询，让"成功端口/延迟"自动更新；
-  // 编辑中不刷新，避免覆盖未保存的修改。
+  // 编辑中或有未保存改动时不刷新，避免覆盖本地修改（含删除的代理组）。
   useEffect(() => {
-    if (editing.size > 0) return;
+    if (editing.size > 0 || dirty) return;
     const timer = window.setInterval(refresh, 15000);
     return () => window.clearInterval(timer);
-  }, [editing, refresh]);
+  }, [editing, dirty, refresh]);
 
   // 所有更新函数都用 useCallback 保持引用稳定：卡片的 memo 依赖这些回调，
   // 每次渲染新建闭包会让 memo 完全失效（输入一个字符就重渲染整页）。
   const updateGroup = useCallback((i: number, patch: Partial<ProxyGroup>) => {
+    setDirty(true);
     setEntries((prev) => prev.map((e, idx) => (idx === i ? { ...e, g: { ...e.g, ...patch } } : e)));
   }, []);
 
   const updateName = useCallback((i: number, name: string) => {
+    setDirty(true);
     setEntries((prev) => prev.map((e, idx) => (idx === i ? { ...e, name } : e)));
   }, []);
 
   const updateProxy = useCallback((gi: number, pi: number, patch: Partial<Proxy>) => {
+    setDirty(true);
     setEntries((prev) =>
       prev.map((e, idx) =>
         idx === gi
@@ -116,6 +122,7 @@ export function ProxyGroupsPage() {
   }, []);
 
   const removeProxy = useCallback((gi: number, pi: number) => {
+    setDirty(true);
     setEntries((prev) =>
       prev.map((e, idx) =>
         idx === gi ? { ...e, g: { ...e.g, proxies: e.g.proxies.filter((_, j) => j !== pi) } } : e,
@@ -137,12 +144,14 @@ export function ProxyGroupsPage() {
 
   const addGroup = () => {
     // 新组插到最前面并直接进入编辑，避免组多时滚到底部才能添加
+    setDirty(true);
     setEntries((prev) => [{ name: "", g: emptyGroup() }, ...prev]);
     setEditing((prev) => new Set([0, ...[...prev].map((i) => i + 1)]));
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const remove = (i: number) => {
+    setDirty(true);
     setEntries((prev) => prev.filter((_, idx) => idx !== i));
     setEditing((prev) => {
       const n = new Set(prev);
@@ -183,6 +192,7 @@ export function ProxyGroupsPage() {
       await saveProxyGroups(map);
       setNotice({ type: "ok", msg: "配置保存成功，热重载生效中" });
       setEditing(new Set());
+      setDirty(false);
       // 代理组走"写文件 + 热重载（debounce ~5s）"，等完成后再拉取以同步 stats 等派生字段
       setTimeout(refresh, 6500);
     } catch (e) {
