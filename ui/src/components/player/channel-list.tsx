@@ -141,22 +141,28 @@ function MobileChannelList({ channels, groups, currentChannel, onChannelSelect, 
   // EPG 数据可能很大，同样用 deferred 值，避免节目名映射阻塞搜索 / 筛选的即时反馈。
   const deferredEpgData = useDeferredValue(epgData);
 
+  const visibleChannels = useMemo(
+    () => pickMatchingChannels(channels, deferredSearchText, deferredActiveGroup),
+    [channels, deferredSearchText, deferredActiveGroup],
+  );
+
+  /**
+   * 当前节目映射：只算**当前可见**的频道。
+   * EPG 预取是分批到达的（一次可见区可能连发几十次 setState），若每次都遍历整份订阅
+   * （上千频道 × 每台几十档节目），滚动会明显卡顿；而表格只渲染 visibleChannels，
+   * 不在其中的频道有没有节目标题并不影响显示。
+   */
   const nowPlayingTitleByChannelId = useMemo(() => {
     const titles: Record<string, string> = {};
-    if (!channels || !deferredEpgData) return titles;
-    for (const channel of channels) {
+    if (!visibleChannels.length || !deferredEpgData) return titles;
+    for (const channel of visibleChannels) {
       const epgId = getEPGChannelId(channel, deferredEpgData);
       if (!epgId) continue;
       const program = getCurrentProgram(epgId, deferredEpgData, currentMoment);
       if (program?.title) titles[channel.id] = program.title;
     }
     return titles;
-  }, [channels, deferredEpgData, currentMoment]);
-
-  const visibleChannels = useMemo(
-    () => pickMatchingChannels(channels, deferredSearchText, deferredActiveGroup),
-    [channels, deferredSearchText, deferredActiveGroup],
-  );
+  }, [visibleChannels, deferredEpgData, currentMoment]);
 
   const visibleListContainsPlayingChannel = useMemo(
     () => Boolean(currentChannel && visibleChannels.some((channel) => channel.id === currentChannel.id)),

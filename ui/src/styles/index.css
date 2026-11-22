@@ -276,6 +276,10 @@ html.dark[class*="panel-alpha-"] .player-performance-dock .player-performance-li
 .player-pane-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgb(100 116 139 / 0.22) transparent;
+  /* 浮层内部滚动不向页面/父级传递：手机上滚到列表尽头继续拖不会整页回弹 */
+  overscroll-behavior: contain;
+  /* 旧 iOS WebView 的惯性滚动开关（新内核默认已开，写上是无害的兼容兜底） */
+  -webkit-overflow-scrolling: touch;
 }
 .player-pane-scroll:hover {
   scrollbar-color: rgb(100 116 139 / 0.42) transparent;
@@ -311,6 +315,20 @@ html.dark .player-pane-scroll::-webkit-scrollbar-thumb {
 }
 html.dark .player-pane-scroll:hover::-webkit-scrollbar-thumb {
   background-color: rgb(148 163 184 / 0.48);
+}
+
+/* 节目单日期头是 sticky 定位且压在滚动内容之上：大半径 backdrop-blur 会在滚动时逐帧
+ * 重算「背后正在移动的节目行」，是低端 H5 上节目单滚动掉帧的主要来源之一。
+ * 手机上改为近乎不透明底：视觉差异很小，但省掉逐帧模糊。 */
+@media (max-width: 767px) {
+  .player-performance-epg-header {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background-color: rgb(255 255 255 / 0.94);
+  }
+  html.dark .player-performance-epg-header {
+    background-color: rgb(2 6 23 / 0.94);
+  }
 }
 
 /* ===== 频道卡片（移动端两列网格） =====

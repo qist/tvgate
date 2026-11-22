@@ -11,6 +11,7 @@
  * 只调节"编排节奏"：重试预算、控件隐藏延时、看门狗阈值等。
  */
 import {
+  memo,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -2503,4 +2504,9 @@ function VideoPlayerShell({
   );
 }
 
-export { VideoPlayerShell as VideoPlayer };
+/**
+ * memo：播放时钟（pages/player.tsx 每秒一次）、侧栏预览频道、面板开合等状态都会让页面重渲染，
+ * 但这些都不是播放器壳的输入——壳内部的重活（双槽 DOM、门户、控制条）不该每秒跟着协调一遍。
+ * 时间读数走 PlaybackTimeContext，由叶子组件自行订阅，memo 不会挡住时钟更新。
+ */
+export const VideoPlayer = memo(VideoPlayerShell);

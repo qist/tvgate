@@ -9,8 +9,8 @@
  * 1. 滚动意图单例（nextScrollBehaviorRef）：频道列表、节目单、页面容器分属不同组件子树，
  *    而"下一次自动滚动该怎么滚"是跨组件的事件时序约定（点节目要抑制居中、切台后要平滑居中），
  *    用组件 state 表达会把渲染时序与事件时序搅在一起，所以用模块级 ref 作共享信箱。
- * 2. 延迟时钟：每秒跳动的 now 驱动整张列表重算"已结束/播出中"，属于低优先级更新；
- *    用 useDeferredValue 包一层后，用户交互渲染不与秒跳重渲争抢优先级。
+ * 2. 延迟时钟：分钟跳动的 now 驱动整张列表重算"已结束/播出中"，属于低优先级更新；
+ *    用 useDeferredValue 包一层后，用户交互渲染不与重渲争抢优先级。
  */
 import { Circle, History } from "lucide-react";
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
@@ -27,7 +27,11 @@ import { PLAYER_EPG_LIST_ITEM_CLASS, PLAYER_LIST_SURFACE_BASE_CLASS, PLAYER_LIST
  */
 export const nextScrollBehaviorRef: RefObject<"smooth" | "instant" | "skip"> = { current: "instant" };
 
-/** 时钟步长：着色判定只需分钟级精度，1 秒一跳在流畅与及时之间取平衡。 */
+/**
+ * 时钟轮询步长：节目起止是分钟级数据，"已结束 / 播出中"的着色只需分钟精度。
+ * 仍按 1 秒检查，但只在分钟进位时提交新时刻——避免每秒重渲整张节目单（低端 H5 上
+ * 这会让滚动明显掉帧）。
+ */
 const CLOCK_TICK_MS = 1_000;
 
 /** 自动滚动后把意图复位为 smooth 的延迟：0ms 即可，只需保证排在本次 effect 读取之后执行。 */
@@ -299,11 +303,17 @@ function EpgPanel({ channelId, epgData, onProgramSelect, locale, supportsCatchup
   const t = usePlayerTranslation(locale);
   const playingRowRef = useRef<HTMLButtonElement>(null);
   const [wallClock, setWallClock] = useState(() => new Date());
-  // 秒跳时钟只服务着色与回看判定：走 deferred 低优先级，不抢占用户交互渲染
+  // 时钟只服务着色与回看判定（分钟精度即可）：deferred 低优先级，不抢占用户交互渲染
   const deferredWallClock = useDeferredValue(wallClock);
 
   useEffect(() => {
-    const ticker = window.setInterval(() => setWallClock(new Date()), CLOCK_TICK_MS);
+    let lastMinute = Math.floor(Date.now() / MS_PER_MINUTE);
+    const ticker = window.setInterval(() => {
+      const minute = Math.floor(Date.now() / MS_PER_MINUTE);
+      if (minute === lastMinute) return;
+      lastMinute = minute;
+      setWallClock(new Date());
+    }, CLOCK_TICK_MS);
     return () => window.clearInterval(ticker);
   }, []);
 
