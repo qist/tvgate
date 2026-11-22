@@ -119,12 +119,13 @@ TVGate-android-*.zip。
 | Android App | 独立仓库 `qist/tvgate-android` 的 `TVGate-v3.4.10-{arm64,arm,x86_64}.apk` | 覆盖安装，或 App 内在线更新 |
 | 源码 | tag `v3.4.10` | `make linux-64`（自动构建 Web UI） |
 
-## 五、发布核对清单（打 tag 后按 CI 实际结果勾选）
+## 五、发布核对清单（v3.4.10 已完成项）
 
-- [ ] 服务端 Release：tag `v3.4.10` 已推送，66 个资产（33 平台包 + 33 `.dgst`）上传完成
-- [ ] Docker 镜像：`juestnow/tvgate:v3.4.10` 已推送，`latest` 随 tag 更新
-- [ ] Android 二进制：`android-arm64-v8a` / `android-arm32-v7a` 构建成功并上传
-- [ ] Android APK：`tvgate-android` 仓库 v3.4.10 已发布（arm64 / arm / x86_64，内嵌同版本服务端，versionCode 18）
-- [ ] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.10
-- [ ] GitHub Release 标题与正文已填写（取自「一」「二」精简版）
-- [ ] 本地归档：`download/TVGate-3.4.10.7z`、`download/tvgate-android-3.4.10.zip`
+- [x] 服务端 Release：tag `v3.4.10` 已推送，33 平台包 + 33 `.dgst` + 33 `.sig` 共 99 个资产上传完成
+- [x] Docker 镜像：`juestnow/tvgate:v3.4.10` 已推送，`latest` 随 tag 更新
+- [x] Android 二进制：`android-arm64-v8a` / `android-arm32-v7a` 构建成功并上传
+- [x] Android APK：`tvgate-android` 仓库 v3.4.10 已发布（arm64 / arm / x86_64，内嵌同版本服务端，versionCode 18）
+- [x] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.10；
+      `.dgst` 中 SHA2-256 与本地 `sha256sum` 一致
+- [x] GitHub Release 标题与正文已填写（取自「一」「二」精简版）
+- [ ] 本地归档：`download/TVGate-3.4.10.7z`、`download/tvgate-android-3.4.10.zip`（可选，未归档）
