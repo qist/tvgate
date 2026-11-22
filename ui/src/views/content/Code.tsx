@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import * as code from "@/api/code";
 import type { CodeItem } from "@/api/code";
 
@@ -131,6 +132,8 @@ export function CodePage() {
   const [busy, setBusy] = useState("");
   const [findOpen, setFindOpen] = useState<null | { focusReplace: boolean; initialFind: string; findOnly: boolean }>(null);
   const [replOpen, setReplOpen] = useState(false);
+  /** 待确认的删除目标：只有点弹窗里的「删除」才会真正调用后端 */
+  const [pendingDelete, setPendingDelete] = useState<{ rel: string; isDir: boolean } | null>(null);
   /** 编辑器高亮：查找当前打开时由 FindReplace 回传，镜像层据此渲染全部匹配 */
   const [highlight, setHighlight] = useState<{ matches: Match[]; cur: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -335,9 +338,18 @@ export function CodePage() {
     }
   };
 
-  const remove = async (it: CodeItem) => {
+  /** 删除入口只登记目标并弹确认：WebView 里 window.confirm 可能被静默放行/忽略，
+   * 改用应用内确认弹窗，保证「点确认才删除」。 */
+  const askRemove = (it: CodeItem) => {
     const rel = dir ? `${dir}/${it.name}` : it.name;
-    if (!window.confirm(`删除 ${it.isDir ? "目录" : "文件"} ${rel}？`)) return;
+    setPendingDelete({ rel, isDir: it.isDir });
+  };
+
+  const remove = async () => {
+    if (!pendingDelete) return;
+    const { rel } = pendingDelete;
+    // 先关弹窗再执行：删除请求期间不让确认框一直挂在界面上
+    setPendingDelete(null);
     try {
       await code.deleteFile(rel);
       if (current === rel) {
@@ -638,7 +650,7 @@ export function CodePage() {
                   <button className="rounded p-0.5 text-muted-foreground hover:text-foreground" title="重命名" onClick={() => doRename(it)}>
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
-                  <button className="rounded p-0.5 text-muted-foreground hover:text-destructive" title="删除" onClick={() => remove(it)}>
+                  <button className="rounded p-0.5 text-muted-foreground hover:text-destructive" title="删除" onClick={() => askRemove(it)}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </span>
@@ -821,6 +833,19 @@ export function CodePage() {
           }}
           onErr={(msg) => notify("err", msg)}
           onBusy={setBusy}
+        />
+      )}
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title={pendingDelete.isDir ? "确认删除目录" : "确认删除文件"}
+          description={
+            pendingDelete.isDir
+              ? `确定删除目录「${pendingDelete.rel}」及其全部内容吗？此操作不可恢复。`
+              : `确定删除文件「${pendingDelete.rel}」吗？此操作不可恢复。`
+          }
+          onConfirm={remove}
+          onClose={() => setPendingDelete(null)}
         />
       )}
     </div>
