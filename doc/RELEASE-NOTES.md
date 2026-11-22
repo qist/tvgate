@@ -128,4 +128,4 @@ TVGate-android-*.zip。
 - [x] 发布后抽查：Release 二进制（linux-64 包解压）实测 `-version` 输出 v3.4.10；
       `.dgst` 中 SHA2-256 与本地 `sha256sum` 一致
 - [x] GitHub Release 标题与正文已填写（取自「一」「二」精简版）
-- [ ] 本地归档：`download/TVGate-3.4.10.7z`、`download/tvgate-android-3.4.10.zip`（可选，未归档）
+- [x] 本地归档：`download/TVGate-3.4.10.7z`（22 平台，79M）、`download/tvgate-android-3.4.10.zip`（3 APK，37M），均已通过完整性校验
