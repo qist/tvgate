@@ -11,16 +11,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@hookform/resolvers": "^3.9.0",
+    "@hookform/resolvers": "^7.0.8",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "fast-xml-parser": "^5.11.1",
     "lucide-react": "^0.462.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.54.0",
     "react-router-dom": "^7.1.0",
-    "zod": "^3.24.0",
+    "zod": "^4.6.7",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
@@ -37,6 +36,14 @@
     "terser": "^5.51.2",
     "typescript": "^5.7.2",
     "vite": "^6.4.5",
-    "vitest": "^5.0.0"
+    "vitest": "^5.1.1"
+  },
+  "overrides": {
+    "tailwindcss": {
+      "postcss-selector-parser": "^6.1.5"
+    },
+    "postcss-nested": {
+      "postcss-selector-parser": "^6.1.5"
+    }
   }
 }
